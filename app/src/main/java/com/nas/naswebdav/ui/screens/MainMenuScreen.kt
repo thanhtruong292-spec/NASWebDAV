@@ -1,0 +1,1901 @@
+package com.nas.naswebdav.ui.screens
+
+import com.nas.naswebdav.*
+import com.nas.naswebdav.ui.dialogs.AppStatusDialog
+import com.nas.naswebdav.ui.dialogs.DialogType
+import com.nas.naswebdav.ui.dialogs.*
+
+import android.content.Context
+
+import kotlinx.coroutines.launch
+
+import androidx.compose.runtime.collectAsState
+
+import androidx.compose.animation.*
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
+
+// ============ BẢNG MÀU CHUYÊN NGHIỆP ============
+private val DarkSurface = Color(0xFF1A1A2E)
+private val DarkCard = Color(0xFF16213E)
+private val AccentBlue = Color(0xFF0F3460)
+private val AccentCyan = Color(0xFF00D2FF)
+private val AccentGreen = Color(0xFF00E676)
+private val AccentOrange = Color(0xFFFF9100)
+private val AccentRed = Color(0xFFFF1744)
+private val AccentPurple = Color(0xFFBB86FC)
+private val AccentPink = Color(0xFFFF6EC7)
+private val TextPrimary = Color(0xFFE8E8E8)
+private val TextSecondary = Color(0xFF8892B0)
+
+// ============ FAN SPEED ANIMATED ICON ============
+@Composable
+fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
+    val level = when {
+        percent <= 0  -> 0
+        percent <= 25 -> 1
+        percent <= 65 -> 2
+        else          -> 3
+    }
+    val durationMs = when (level) { 1 -> 2400; 2 -> 1000; 3 -> 420; else -> 9999 }
+    val infiniteTransition = rememberInfiniteTransition(label = "fan")
+    val angle by infiniteTransition.animateFloat(
+        initialValue = 0f, targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMs, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ), label = "fan_angle"
+    )
+    val currentAngle = if (level > 0) angle else 0f
+
+    // Ghost blur: màu xám giống ảnh tham chiếu
+    val ghostCount = when (level) { 3 -> 5; 2 -> 3; 1 -> 1; else -> 0 }
+    val ghostStep  = when (level) { 3 -> 13f; 2 -> 9f; else -> 6f }
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val R  = minOf(cx, cy)
+            val cr = R * 0.23f
+
+            // Cánh quạt: oval ở góc chéo 45° (giống ảnh gốc)
+            fun drawBlade(rotAngle: Float, bladeColor: Color) {
+                withTransform({ rotate(rotAngle, Offset(cx, cy)) }) {
+                    for (i in 0 until 4) {
+                        // Offset 45° để cánh nằm ở vị trí chéo như ảnh gốc
+                        withTransform({ rotate(90f * i + 45f, Offset(cx, cy)) }) {
+                            drawOval(
+                                color = bladeColor,
+                                topLeft = Offset(cx - R * 0.33f, cy - R * 0.85f),
+                                size = Size(R * 0.66f, R * 0.72f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 1. Ghost blur xám
+            val blurGray = Color(0xFF9E9E9E)
+            for (g in ghostCount downTo 1) {
+                val a = (0.06f + 0.05f * (ghostCount - g)).coerceIn(0f, 0.40f)
+                drawBlade(currentAngle - g * ghostStep, blurGray.copy(alpha = a))
+            }
+            // 2. Cánh chính
+            drawBlade(currentAngle, color)
+            // 3. Vòng tâm TRắNG
+            drawCircle(Color.White, radius = cr, center = Offset(cx, cy))
+        }
+        Text(text = level.toString(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1A1A2E))
+    }
+}
+
+// --- MAIN MENU / DASHBOARD ---
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun MainMenuScreen(
+    viewModel: WebDavViewModel,
+    onOpenFiles: () -> Unit,
+    onOpenFolder: (webdavPath: String) -> Unit,
+    onGlobalSearch: (String) -> Unit,
+    onOpenLatestPhotos: () -> Unit,
+    onOpenRecentVideos: () -> Unit,
+    onOpenTrash: () -> Unit,
+    onOpenPerformance: () -> Unit,
+    onLogout: () -> Unit,
+    // ── TÍNH NĂNG MỚI ──────────────────────────────────────────────────────────
+    onOpenOrganizer: () -> Unit = {},
+    onOpenGuestPass: () -> Unit = {},
+    onOpenSocialExtractor: () -> Unit = {}
+) {
+    val mContext = LocalContext.current
+    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+
+    // STATE CHO POPUP TẢI TỪ XA
+    var showDownloadDialog by remember { mutableStateOf(false) }
+    var downloadLink by remember { mutableStateOf("") }
+
+    // STATE CHO WAKE-ON-LAN
+    var showWolDialog by remember { mutableStateOf(false) }
+    var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
+
+    // STATE CHO DIALOG THÔNG BÁO
+    var commonDialogMessage by remember { mutableStateOf("") }
+    var commonDialogType by remember { mutableStateOf(DialogType.SUCCESS) }
+    var showCommonDialog by remember { mutableStateOf(false) }
+
+    // STATE CHO XÁC NHẬN NGUỒN VÀ TOOLBOX
+    var showPowerMenu by remember { mutableStateOf(false) }
+    var showRebootConfirm by remember { mutableStateOf(false) }
+    var showShutdownConfirm by remember { mutableStateOf(false) }
+    var showToolboxDialog by remember { mutableStateOf(false) }
+
+    // STATE CHO AUTO-BACKUP
+    var showAutoBackupDialog by remember { mutableStateOf(false) }
+    var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
+    var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+
+    // STATE CHO LAN WHITELIST
+    var showLanWhitelistDialog by remember { mutableStateOf(false) }
+
+    // STATE CHO LIVESTREAM RECORD
+    var showLivestreamDialog by remember { mutableStateOf(false) }
+    // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
+    LaunchedEffect(Unit) {
+        viewModel.checkSmartNetwork(mContext)
+    }
+
+    // --- DIALOGS (từ ui/dialogs/Dialogs.kt) ---
+    if (showRebootConfirm) {
+        RebootConfirmDialog(
+            onConfirm = {
+                viewModel.sendCommandToNas("power/reboot")
+                commonDialogType = DialogType.WARNING; commonDialogMessage = "Đã gửi lệnh khởi động lại NAS!"; showCommonDialog = true
+                showRebootConfirm = false
+            },
+            onDismiss = { showRebootConfirm = false }
+        )
+    }
+    if (showShutdownConfirm) {
+        ShutdownConfirmDialog(
+            onConfirm = {
+                viewModel.sendCommandToNas("power/shutdown")
+                commonDialogType = DialogType.WARNING; commonDialogMessage = "Đã gửi lệnh tắt nguồn NAS!"; showCommonDialog = true
+                showShutdownConfirm = false
+            },
+            onDismiss = { showShutdownConfirm = false }
+        )
+    }
+    if (showDownloadDialog) {
+        DownloadDialog(
+            downloadLink = downloadLink,
+            onLinkChange = { downloadLink = it },
+            onConfirm = {
+                if (downloadLink.isNotBlank()) {
+                    viewModel.sendDownloadLink(downloadLink)
+                    showDownloadDialog = false
+                    downloadLink = ""
+                }
+            },
+            onDismiss = { showDownloadDialog = false }
+        )
+    }
+    if (showWolDialog) {
+        WolDialog(
+            macAddress = macAddress,
+            onMacChange = { macAddress = it },
+            onConfirm = {
+                if (macAddress.isNotBlank()) {
+                    sharedPrefs.edit().putString("mac_address", macAddress).apply()
+                    viewModel.sendWakeOnLan(macAddress)
+                    showWolDialog = false
+                    commonDialogType = DialogType.SUCCESS
+                    commonDialogMessage = "Đã bắn tín hiệu Wake-on-LAN!"
+                    showCommonDialog = true
+                }
+            },
+            onDismiss = { showWolDialog = false }
+        )
+    }
+    if (viewModel.showSmartDialog) {
+        SmartDiskDialog(viewModel = viewModel, onDismiss = { viewModel.showSmartDialog = false })
+    }
+    if (showAutoBackupDialog) {
+        AutoBackupDialog(
+            context = mContext,
+            isAutoBackupEnabled = isAutoBackupEnabled,
+            onAutoBackupEnabledChange = { isAutoBackupEnabled = it },
+            deleteAfterBackup = deleteAfterBackup,
+            onDeleteAfterBackupChange = { deleteAfterBackup = it },
+            onSaveAndSchedule = {
+                sharedPrefs.edit()
+                    .putBoolean("auto_backup", isAutoBackupEnabled)
+                    .putBoolean("delete_after_backup", deleteAfterBackup)
+                    .apply()
+                if (isAutoBackupEnabled) {
+                    val constraints = androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+                        .setRequiresCharging(true)
+                        .build()
+                    val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(24, java.util.concurrent.TimeUnit.HOURS)
+                        .setConstraints(constraints)
+                        .build()
+                    androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
+                        "AutoBackupWork",
+                        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                        backupWorkRequest
+                    )
+                    commonDialogType = DialogType.SUCCESS
+                    commonDialogMessage = "Đã lưu cấu hình Auto-Backup!"
+                    showCommonDialog = true
+                } else {
+                    androidx.work.WorkManager.getInstance(mContext).cancelUniqueWork("AutoBackupWork")
+                }
+                showAutoBackupDialog = false
+            },
+            onTriggerManualSync = {
+                viewModel.triggerManualBackup(mContext)
+                showAutoBackupDialog = false
+            },
+            onDismiss = { showAutoBackupDialog = false }
+        )
+    }
+    if (viewModel.showLogDialog) {
+        SystemLogDialog(viewModel = viewModel, onDismiss = { viewModel.showLogDialog = false })
+    }
+    if (viewModel.showDockerDialog) {
+        DockerDialog(viewModel = viewModel, onDismiss = { viewModel.showDockerDialog = false })
+    }
+    if (showLanWhitelistDialog) {
+        LanWhitelistDialog(
+            viewModel = viewModel,
+            onDismiss = { showLanWhitelistDialog = false }
+        )
+    }
+    if (showLivestreamDialog) {
+        LivestreamRecordDialog(
+            viewModel = viewModel,
+            onDismiss = { showLivestreamDialog = false }
+        )
+    }
+
+    // ============ GIAO DIỆN DASHBOARD CHUYÊN NGHIỆP ============
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    val pullRefreshState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    if (pullRefreshState.isRefreshing) {
+        LaunchedEffect(true) {
+            viewModel.checkSmartNetwork(mContext)
+            viewModel.fetchSmartData()
+            kotlinx.coroutines.delay(1000)
+            pullRefreshState.endRefresh()
+        }
+    }
+
+    Box(Modifier.fillMaxSize().nestedScroll(pullRefreshState.nestedScrollConnection)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DarkSurface)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+        ) {
+        Spacer(Modifier.height(48.dp))
+
+        // ═══ HEADER ═══
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Đèn tín hiệu trạng thái (Pulse animation)
+            val currentStatus = viewModel.systemStatus.status
+            val statusColor = when {
+                currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
+                currentStatus.contains("Chờ", true) -> AccentOrange
+                else -> AccentRed
+            }
+            Column {
+                Text("NAS Dashboard", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Chainedbox L1 Pro", fontSize = 12.sp, color = TextSecondary)
+                    Text("  \u2022  ", fontSize = 12.sp, color = TextSecondary)
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
+                    Spacer(Modifier.width(4.dp))
+                    Text(currentStatus, fontSize = 12.sp, color = statusColor, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                
+                // ── SMART SWITCH BADGE ──
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (viewModel.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (viewModel.isOnLan) "Đã LAN" else "Đã Tailscale",
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        color = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                val ut = viewModel.systemStatus.uptime
+                if (ut.isNotBlank() && ut != "--") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
+                        Spacer(Modifier.width(3.dp))
+                        Text(ut, fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { showPowerMenu = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
+                    
+                    DropdownMenu(
+                        expanded = showPowerMenu,
+                        onDismissRequest = { showPowerMenu = false },
+                        modifier = Modifier.background(DarkCard)
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Đăng xuất", color = AccentOrange) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
+                            onClick = { showPowerMenu = false; onLogout() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Khởi động lại NAS", color = AccentGreen) },
+                            leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
+                            onClick = { showPowerMenu = false; showRebootConfirm = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Tắt nguồn NAS", color = AccentRed) },
+                            leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentRed) },
+                            onClick = { showPowerMenu = false; showShutdownConfirm = true }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        // Đã THANH TÌM KIẾM Đã 
+        var globalSearchQuery by remember { mutableStateOf("") }
+        OutlinedTextField(
+            value = globalSearchQuery,
+            onValueChange = { globalSearchQuery = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Tìm kiếm trên NAS...", color = TextSecondary) },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = TextSecondary) },
+            singleLine = true,
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                onSearch = { if (globalSearchQuery.isNotBlank()) onGlobalSearch(globalSearchQuery) }
+            ),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AccentCyan,
+                unfocusedBorderColor = TextSecondary.copy(alpha = 0.3f),
+                cursorColor = AccentCyan,
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary
+            )
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã 
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                Text("HỆ THỐNG", fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    GaugeCard(
+                        title = "CPU", value = viewModel.systemStatus.cpu,
+                        subValue = viewModel.systemStatus.cpuTemp,
+                        icon = Icons.Default.DeveloperBoard,
+                        gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
+                        modifier = Modifier.weight(1f)
+                    )
+                    GaugeCard(
+                        title = "RAM", value = viewModel.systemStatus.ram, subValue = null,
+                        icon = Icons.Default.Memory,
+                        gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
+                        modifier = Modifier.weight(1f),
+                        overridePercent = viewModel.systemStatus.ramPercent.toFloatOrNull()
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    InlineStatRow("🌡️?", "NHIỆT HDD", viewModel.systemStatus.temp, Color(0xFFFF6B6B))
+                    androidx.compose.material3.VerticalDivider(modifier = Modifier.height(20.dp), color = TextSecondary.copy(alpha = 0.12f))
+                    InlineStatRow("↓", "TẢI XUỐNG", viewModel.systemStatus.netRx, Color(0xFF42A5F5))
+                    androidx.compose.material3.VerticalDivider(modifier = Modifier.height(20.dp), color = TextSecondary.copy(alpha = 0.12f))
+                    InlineStatRow("↑", "TẢI LÊN", viewModel.systemStatus.netTx, Color(0xFFAB47BC))
+                }
+                
+                // Disk info gộp thẳng vào thẻ Hệ thống
+                if (viewModel.systemStatus.diskParts.isNotEmpty()) {
+                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.1f), modifier = Modifier.padding(vertical = 10.dp))
+                    viewModel.systemStatus.diskParts.forEach { part ->
+                         DiskPartitionBar(mount = part.mount, percent = part.percent, total = part.total, used = part.used)
+                         Spacer(Modifier.height(6.dp))
+                    }
+                }
+            }
+        }
+        
+        // Disk Partitions đã được gộp vào Thẻ hệ thống ở trên.
+        Spacer(Modifier.height(14.dp))
+        Text("TÁC VỤ NỀN", fontSize = 12.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 16.dp))
+        Spacer(Modifier.height(8.dp))
+        SystemStatusCards(viewModel, mContext)
+
+        // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
+        if (viewModel.systemStatus.torrents.isNotEmpty()) {
+            val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
+                val s = t.state
+                // Active or paused download - NOT yet completed
+                s.contains("DL", ignoreCase = false) || s == "downloading" || s == "stalledDL" || s == "forcedDL" || s == "metaDL" || s.isEmpty()
+            }
+            val completedTorrents = viewModel.systemStatus.torrents.filter { t ->
+                val s = t.state
+                // stoppedUP, uploading, pausedUP, forcedUP = seeding after completion
+                s.contains("UP", ignoreCase = false) || t.progress >= 1f
+            }
+            
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    if (downloadingTorrents.isNotEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CloudDownload, null, tint = AccentGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Đang tải xuống (${downloadingTorrents.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        downloadingTorrents.take(5).forEach { torrent ->
+                            var showTorrentMenu by remember { mutableStateOf(false) }
+                            Box(Modifier.fillMaxWidth()) {
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .pointerInput(torrent.hash) { detectTapGestures(onLongPress = { showTorrentMenu = true }) }
+                                        .padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(torrent.name, fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text(torrent.speed, fontSize = 11.sp, color = AccentCyan, modifier = Modifier.padding(start = 8.dp))
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        LinearProgressIndicator(
+                                            progress = { torrent.progress },
+                                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                            color = AccentGreen, trackColor = TextSecondary.copy(alpha = 0.2f)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    val isPaused = if (torrent.state.isNotEmpty()) {
+                                        torrent.state == "pausedDL" || torrent.state == "stoppedDL"
+                                    } else {
+                                        torrent.speed == "0 B/s"
+                                    }
+                                    Box(
+                                        modifier = Modifier.size(26.dp).clip(CircleShape).background(DarkSurface).clickable {
+                                            if (isPaused) viewModel.controlTorrent("resume", torrent.hash) else viewModel.controlTorrent("pause", torrent.hash)
+                                        },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (isPaused) AccentGreen else AccentOrange, modifier = Modifier.size(12.dp))
+                                    }
+                                }
+                                DropdownMenu(expanded = showTorrentMenu, onDismissRequest = { showTorrentMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Tạm dừng") }, leadingIcon = { Icon(Icons.Default.Pause, null, tint = AccentOrange) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("pause", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Tiếp tục") }, leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = AccentGreen) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("resume", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Xóa", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (completedTorrents.isNotEmpty()) {
+                        if (downloadingTorrents.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.1f), thickness = 0.7.dp)
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Đã hoàn thành (${completedTorrents.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        completedTorrents.take(5).forEach { torrent ->
+                            var showCompletedMenu by remember { mutableStateOf(false) }
+                            Box(Modifier.fillMaxWidth()) {
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .pointerInput(torrent.hash) { detectTapGestures(
+                                            onTap = {
+                                                if (torrent.savePath.isNotEmpty()) {
+                                                    // /downloads/* on NAS is symlinked as Downloads/ in WebDAV root
+                                                    val base = viewModel.webDavManager.currentBaseUrl
+                                                    val linuxPath = torrent.savePath.trimEnd('/')
+                                                    // Replace /downloads prefix with WebDAV symlink folder name "Downloads"
+                                                    val webdavRel = if (linuxPath.startsWith("/downloads", ignoreCase = true)) {
+                                                        "Downloads" + linuxPath.substring("/downloads".length)
+                                                    } else {
+                                                        // Generic: strip leading slash and hope it matches WebDAV path
+                                                        linuxPath.trimStart('/')
+                                                    }
+                                                    onOpenFolder("$base$webdavRel/")
+                                                } else {
+                                                    onGlobalSearch(torrent.name)
+                                                }
+                                            },
+                                            onLongPress = { showCompletedMenu = true }
+                                        )}
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Folder, null, tint = Color(0xFFFFCA28), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(torrent.name, fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                    IconButton(
+                                        onClick = { viewModel.controlTorrent("delete", torrent.hash) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Close, null, tint = TextSecondary.copy(alpha=0.6f), modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                                DropdownMenu(expanded = showCompletedMenu, onDismissRequest = { showCompletedMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+
+
+        // Đã DANH MỤC TRUY CẬP NHANH Đã 
+        Text("Truy cập nhanh", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 6.dp))
+
+        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onOpenFiles)
+            BigMenuTile("Tự Đồng Bộ", "Cấu hình sao lưu định kỳ", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B)), Modifier.weight(1f), { showAutoBackupDialog = true })
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BigMenuTile("Ghi Livestream", "Record TikTok, FB, YT", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828)), Modifier.weight(1f), { showLivestreamDialog = true })
+            BigMenuTile("Smart Organizer", "Phân loại tệp tự động", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0)), Modifier.weight(1f), onOpenOrganizer)
+        }
+
+        Spacer(Modifier.height(16.dp))
+        
+        // Nút mở Toolbox mở rộng
+        Button(
+            onClick = { showToolboxDialog = true },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.BuildCircle, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Công cụ & Cài đặt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(8.dp))
+
+        // THÔNG BÁO DIALOG
+        if (showCommonDialog) {
+            AppStatusDialog(
+                type = commonDialogType,
+                message = commonDialogMessage,
+                onDismiss = { showCommonDialog = false }
+            )
+        }
+        // DIALOG THÔNG BÁO TỪ VIEWMODEL
+        if (viewModel.showCommonDialog) {
+            AppStatusDialog(
+                type = viewModel.commonDialogType,
+                message = viewModel.commonDialogMessage,
+                onDismiss = { viewModel.showCommonDialog = false }
+            )
+        }
+
+        Spacer(Modifier.height(32.dp))
+    }
+    
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    androidx.compose.material3.pulltorefresh.PullToRefreshContainer(
+        state = pullRefreshState,
+        modifier = Modifier.align(Alignment.TopCenter),
+        containerColor = DarkCard,
+        contentColor = AccentCyan
+    )
+    }
+
+    // Đã HỘP CÔNG CỤ TOOLBOX Đã 
+    if (showToolboxDialog) {
+        ToolboxDialog(
+            viewModel = viewModel,
+            sharedPrefs = sharedPrefs,
+            context = mContext,
+            onDismiss = { showToolboxDialog = false },
+            onOpenLatestPhotos = onOpenLatestPhotos,
+            onOpenRecentVideos = onOpenRecentVideos,
+            onOpenTrash = onOpenTrash,
+            showAutoBackupDialog = { showAutoBackupDialog = true },
+            showLanWhitelistDialog = { showLanWhitelistDialog = true },
+            showLivestreamDialog = { showLivestreamDialog = true }
+        )
+    }
+}
+
+
+// ============ COMPONENT: Inline stat row (emoji + label + value) ============
+@Composable
+fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(emoji, fontSize = 13.sp)
+        Spacer(Modifier.width(5.dp))
+        Column {
+            Text(label, fontSize = 8.sp, color = TextSecondary, letterSpacing = 0.8.sp)
+            Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = valueColor, maxLines = 1)
+        }
+    }
+}
+
+// ============ COMPONENT: Thẻ đo lớn (CPU / RAM) với gradient ============
+@Composable
+fun GaugeCard(
+    title: String,
+    value: String,
+    subValue: String? = null,
+    icon: ImageVector,
+    gradientColors: List<Color>,
+    modifier: Modifier = Modifier,
+    overridePercent: Float? = null,
+    label: String? = null
+) {
+    val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
+    val progress = (numericValue / 100f).coerceIn(0f, 1f)
+    val accentColor = gradientColors.first()
+
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.size(64.dp),
+                        color = accentColor,
+                        trackColor = TextSecondary.copy(alpha = 0.15f),
+                        strokeWidth = 5.dp,
+                        strokeCap = StrokeCap.Round
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = title,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor.copy(alpha = 0.85f),
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Text(value, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!subValue.isNullOrBlank() && subValue != "--\u00b0C") {
+                        Text("  $subValue", fontSize = 10.sp, color = Color(0xFFFF6B6B), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============ COMPONENT: Thẻ thống kê nhỏ? ============
+@Composable
+fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.height(4.dp))
+            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 9.sp, color = TextSecondary, maxLines = 1)
+        }
+    }
+}
+
+// ============ COMPONENT: Thanh phân vùng ổ đĩa ============
+@Composable
+fun DiskPartitionBar(mount: String, percent: Float, total: String, used: String) {
+    val barColor = when {
+        percent >= 90f -> AccentRed
+        percent >= 75f -> AccentOrange
+        else -> AccentGreen
+    }
+    Column {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(mount, fontSize = 12.sp, color = TextPrimary)
+            Text("$used / $total", fontSize = 11.sp, color = TextSecondary)
+        }
+        Spacer(Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = { (percent / 100f).coerceIn(0f, 1f) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp)),
+            color = barColor,
+            trackColor = TextSecondary.copy(alpha = 0.15f)
+        )
+    }
+}
+
+// ============ COMPONENT: Quick Action Chip ============
+@Composable
+fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Card(
+        modifier = modifier
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.3f))
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.height(2.dp))
+            Text(label, fontSize = 10.sp, color = color, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+// ============ COMPONENT: Thẻ menu lớn (gradient) ============
+@Composable
+fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Card(
+        modifier = modifier
+            .clickable { onClick() },
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(Brush.linearGradient(gradientColors))
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(8.dp))
+                Column {
+                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+                }
+            }
+        }
+    }
+}
+
+// ============ COMPONENT: Settings Menu Card ============
+@Composable
+fun SettingsMenuCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    color: Color,
+    checked: Boolean? = null,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .background(color.copy(alpha = 0.15f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                Text(subtitle, fontSize = 11.sp, color = TextSecondary)
+            }
+            if (checked != null) {
+                Switch(
+                    checked = checked,
+                    onCheckedChange = { onClick() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = color,
+                        checkedTrackColor = color.copy(alpha = 0.4f),
+                        uncheckedThumbColor = TextSecondary,
+                        uncheckedTrackColor = TextSecondary.copy(alpha = 0.2f)
+                    ),
+                    modifier = Modifier.graphicsLayer { scaleX = 0.8f; scaleY = 0.8f }
+                )
+            } else {
+                Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+// ============ HÀM TIỆN ÍCH (Giữ lại tương thích) ============
+fun getStatusColor(title: String, value: String, rawPercent: String = ""): Color {
+    try {
+        val extractNumber = { str: String -> Regex("[^0-9.]").replace(str, "").toFloatOrNull() ?: 0f }
+        return when (title) {
+            "Nhiệt độ" -> {
+                val t = extractNumber(value)
+                when { t >= 75f -> AccentRed; t >= 60f -> AccentOrange; t > 0f -> AccentGreen; else -> Color.Gray }
+            }
+            "CPU", "Ổ đĩa" -> {
+                val p = extractNumber(value)
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+            }
+            "RAM" -> {
+                val p = if (rawPercent.isNotBlank()) extractNumber(rawPercent) else extractNumber(value)
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+            }
+            else -> Color.Gray
+        }
+    } catch (e: Exception) { return Color.Gray }
+}
+
+// Giữ lại MenuCard tương thích cho các file khác nếu cần
+@Composable
+fun MenuCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    color: Color,
+    checked: Boolean? = null,
+    onClick: () -> Unit
+) {
+    SettingsMenuCard(title = title, subtitle = subtitle, icon = icon, color = color, checked = checked, onClick = onClick)
+}
+
+@Composable
+fun SystemStatusItem(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    MiniStatCard(title = title, value = value, icon = icon, color = color, modifier = modifier)
+}
+
+
+
+@Composable
+fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "BIỂU ĐỒ NHIỆT ĐỘ",
+                    fontSize = 9.sp,
+                    color = Color.LightGray,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                // Legend
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFFFF9800)))
+                        Spacer(Modifier.width(4.dp))
+                        Text("CPU", fontSize = 9.sp, color = Color.White)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFF03A9F4)))
+                        Spacer(Modifier.width(4.dp))
+                        Text("HDD", fontSize = 9.sp, color = Color.White)
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            
+            // Vẽ Biểu đồ bằng Native Canvas (Chiếm 0MB RAM)
+            Canvas(modifier = Modifier.fillMaxWidth().height(100.dp)) {
+                val width = size.width
+                val height = size.height
+                
+                // Mức giới hạn đo nhiệt độ từ 30°C đến 100°C
+                val minTemp = 30f
+                val maxTemp = 100f
+                val range = maxTemp - minTemp
+                
+                // Đường lưới đứt nét ngang (Grid Lines)
+                val gridPaint = androidx.compose.ui.graphics.Paint().apply {
+                    color = Color.DarkGray
+                    strokeWidth = 1f
+                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                }
+                for (i in 0..4) {
+                    val y = height - (i * (height / 4))
+                    drawLine(
+                        color = Color.DarkGray.copy(alpha = 0.5f),
+                        start = androidx.compose.ui.geometry.Offset(0f, y),
+                        end = androidx.compose.ui.geometry.Offset(width, y),
+                        strokeWidth = 1f,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                    )
+                }
+
+                if (history.size < 2) return@Canvas
+                
+                val pointWidth = width / (40f - 1) // 40 points max
+                
+                // Vẽ Data
+                val cpuPath = androidx.compose.ui.graphics.Path()
+                val hddPath = androidx.compose.ui.graphics.Path()
+                
+                history.forEachIndexed { index, (cpu, hdd) ->
+                    val x = index * pointWidth
+                    // Calculate Y and clamp it
+                    val clampedCpu = cpu.coerceIn(minTemp, maxTemp)
+                    val cpuY = height - ((clampedCpu - minTemp) / range * height)
+                    
+                    val clampedHdd = hdd.coerceIn(minTemp, maxTemp)
+                    val hddY = height - ((clampedHdd - minTemp) / range * height)
+                    
+                    if (index == 0) {
+                        cpuPath.moveTo(x, cpuY)
+                        hddPath.moveTo(x, hddY)
+                    } else {
+                        val prevX = (index - 1) * pointWidth
+                        val prevCpu = history[index - 1].first.coerceIn(minTemp, maxTemp)
+                        val prevCpuY = height - ((prevCpu - minTemp) / range * height)
+                        val prevHdd = history[index - 1].second.coerceIn(minTemp, maxTemp)
+                        val prevHddY = height - ((prevHdd - minTemp) / range * height)
+                        
+                        // Bezier Curve tạo đường cong mượt
+                        cpuPath.cubicTo(
+                            prevX + pointWidth / 2, prevCpuY,
+                            x - pointWidth / 2, cpuY,
+                            x, cpuY
+                        )
+                        hddPath.cubicTo(
+                            prevX + pointWidth / 2, prevHddY,
+                            x - pointWidth / 2, hddY,
+                            x, hddY
+                        )
+                    }
+                }
+                
+                // Vẽ nét đôi
+                drawPath(
+                    path = cpuPath,
+                    color = Color(0xFFFF9800),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 4f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                )
+                drawPath(
+                    path = hddPath,
+                    color = Color(0xFF03A9F4),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 4f,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                )
+                
+                // Vẽ điểm gút cuối cùng (cục tròn phát sáng nhẹ)
+                val lastPoint = history.last()
+                val lastX = (history.size - 1) * pointWidth
+                
+                val lastCpuY = height - ((lastPoint.first.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
+                drawCircle(color = Color(0xFFFF9800), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
+                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
+                
+                val lastHddY = height - ((lastPoint.second.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
+                drawCircle(color = Color(0xFF03A9F4), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
+                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
+                
+                // Vẽ chữ hiển thị thông số tại thời điểm đo
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.WHITE
+                    textSize = 24f
+                    textAlign = android.graphics.Paint.Align.RIGHT
+                }
+                drawContext.canvas.nativeCanvas.drawText(
+                    "${String.format("%.1f", lastPoint.first)}°C", 
+                    lastX - 15f, 
+                    lastCpuY - 15f, 
+                    paint
+                )
+                paint.color = android.graphics.Color.parseColor("#03A9F4")
+                drawContext.canvas.nativeCanvas.drawText(
+                    "${String.format("%.1f", lastPoint.second)}°C", 
+                    lastX - 15f, 
+                    lastHddY + 30f, 
+                    paint
+                )
+            }
+        }
+    }
+}
+
+// ============ COMPONENT: Hộp công cụ Toolbox mở rộng ============
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ToolboxDialog(
+    viewModel: WebDavViewModel,
+    sharedPrefs: android.content.SharedPreferences,
+    context: android.content.Context,
+    onDismiss: () -> Unit,
+    onOpenLatestPhotos: () -> Unit,
+    onOpenRecentVideos: () -> Unit,
+    onOpenTrash: () -> Unit,
+    showAutoBackupDialog: () -> Unit,
+    showLanWhitelistDialog: () -> Unit,
+    showLivestreamDialog: () -> Unit
+) {
+    var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
+    var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
+    var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = DarkSurface,
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+        ) {
+            Text("🔧 CÔNG CỤ HỆ THỐNG", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
+            
+            // Nhóm Media
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BigMenuTile("Ảnh mới", "Bộ sưu tập", Icons.Default.Collections, listOf(Color(0xFF42A5F5), Color(0xFF1565C0)), Modifier.weight(1f), { onDismiss(); onOpenLatestPhotos() })
+                BigMenuTile("Video", "Phim gần đây", Icons.Default.VideoLibrary, listOf(Color(0xFF66BB6A), Color(0xFF2E7D32)), Modifier.weight(1f), { onDismiss(); onOpenRecentVideos() })
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // Nhóm SettingsCard
+            SettingsMenuCard(
+                title = "Thùng Rác",
+                subtitle = "Khôi phục tệp bị xoá",
+                icon = Icons.Default.Delete,
+                color = Color(0xFFEF5350),
+                onClick = { onDismiss(); onOpenTrash() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Khóa Sinh trắc học",
+                subtitle = "Vân tay / FaceID",
+                icon = Icons.Default.Lock,
+                color = AccentPurple,
+                checked = isBiometricEnabled,
+                onClick = {
+                    val newValue = !isBiometricEnabled
+                    sharedPrefs.edit().putBoolean("biometric_enabled", newValue).apply()
+                    isBiometricEnabled = newValue
+                }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Auto-Backup",
+                subtitle = if (deleteAfterBackup) "Copy & Xóa gốc" else "Chỉ Copy",
+                icon = Icons.Default.Sync,
+                color = AccentGreen,
+                checked = isAutoBackupEnabled,
+                onClick = { onDismiss(); showAutoBackupDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+
+            androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
+            SettingsMenuCard(
+                title = "Docker / qBittorrent",
+                subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Đã tắt (tiết kiệm RAM)",
+                icon = Icons.Default.ViewInAr,
+                color = Color(0xFF1E88E5),
+                checked = viewModel.isDockerRunning,
+                onClick = {
+                    viewModel.toggleDockerPower(!viewModel.isDockerRunning)
+                }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Nhật ký hệ thống",
+                subtitle = "Lịch sử tiến trình",
+                icon = Icons.Default.Assignment,
+                color = AccentCyan,
+                onClick = {
+                    viewModel.loadSystemLogs()
+                    onDismiss()
+                    viewModel.showLogDialog = true
+                }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "LAN Whitelist",
+                subtitle = "IP LAN truy cập thẳng",
+                icon = Icons.Default.Wifi,
+                color = Color(0xFF66BB6A),
+                onClick = { onDismiss(); showLanWhitelistDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Ghi Livestream",
+                subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Dang ghi ${viewModel.activeLivestreams.size} stream..." else "TikTok / Facebook / YouTube",
+                icon = Icons.Default.Videocam,
+                color = Color(0xFFEE1D52),
+                onClick = { onDismiss(); showLivestreamDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Dọn Thùng Rác (30 ngày)",
+                subtitle = "Xóa rác cũ hơn 30 ngày",
+                icon = Icons.Default.DeleteSweep,
+                color = Color(0xFFEF5350),
+                onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Smart Gallery",
+                subtitle = if (viewModel.aiRunning) "Đang quét ảnh..." else "Quét và phân loại ảnh",
+                icon = Icons.Default.AutoAwesome,
+                color = Color(0xFFAB47BC),
+                onClick = { onDismiss(); viewModel.triggerAiScan(context) }
+            )
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+
+@Composable
+fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Context) {
+  Column(Modifier.fillMaxWidth()) {
+        // Đã THẺ THUMBNAIL STATUS Đã 
+        // Auto-fetch THỜI GIAN THỰC: 2s khi đang chạy/tạm dừng, 10s khi rảnh
+        LaunchedEffect(Unit) {
+            viewModel.fetchThumbStatus()
+            while (true) {
+                val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
+                kotlinx.coroutines.delay(interval)
+                viewModel.fetchThumbStatus()
+            }
+        }
+        val thumbPercent = if (viewModel.thumbTotal > 0)
+            viewModel.thumbGenerated * 100f / viewModel.thumbTotal else 0f
+            
+        val thumbIsActive = viewModel.thumbRunning || viewModel.thumbPaused || (thumbPercent > 0f && thumbPercent < 100f)
+        androidx.compose.animation.AnimatedVisibility(visible = thumbIsActive) {
+            Column {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+            Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.PhotoLibrary, null,
+                            tint = Color(0xFFAB47BC),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Trình Tạo Ảnh Thu Nhỏ?",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            when {
+                                viewModel.thumbPaused -> "Đã Tạm dừng"
+                                viewModel.thumbRunning -> "🟢 Đang chạy"
+                                else -> "💤 Tạm nghỉ"
+                            },
+                            fontSize = 11.sp,
+                            color = when {
+                                viewModel.thumbPaused -> Color(0xFFFFA726)
+                                viewModel.thumbRunning -> Color(0xFF66BB6A)
+                                else -> TextSecondary
+                            }
+                        )
+                    }
+                    // Nút Tạm dừng / Tiếp tục
+                    if (viewModel.thumbRunning || viewModel.thumbPaused) {
+                        IconButton(
+                            onClick = { viewModel.toggleThumbPause() },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                if (viewModel.thumbPaused) "Tiếp tục" else "Tạm dừng",
+                                tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    // Nút refresh
+                    IconButton(
+                        onClick = { viewModel.fetchThumbStatus() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh, "Làm mới",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                // Thanh tiến trình
+                LinearProgressIndicator(
+                    progress = { (thumbPercent / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = Color(0xFFAB47BC),
+                    trackColor = Color(0xFF2A2A2A),
+                )
+                Spacer(Modifier.height(6.dp))
+                // Số liệu
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "${viewModel.thumbGenerated} / ${viewModel.thumbTotal}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextPrimary
+                    )
+                    Text(
+                        "%.1f%%".format(thumbPercent),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFAB47BC)
+                    )
+                }
+                if (viewModel.thumbErrors > 0) {
+                    Text(
+                        "⚠ ${viewModel.thumbErrors} lỗi",
+                        fontSize = 10.sp,
+                        color = Color(0xFFFF7043)
+                    )
+                }
+                if (viewModel.thumbLastFile.isNotBlank()) {
+                    Text(
+                        viewModel.thumbLastFile,
+                        fontSize = 10.sp,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+                if (viewModel.thumbRunning && viewModel.thumbElapsed > 0) {
+                    val textToShow = if (viewModel.thumbEta > 0) {
+                        "Đã ${viewModel.thumbElapsedFmt} / ${viewModel.thumbEtaFmt}"
+                    } else {
+                        "Đã ${viewModel.thumbElapsedFmt}"
+                    }
+                    
+                    Text(
+                        textToShow,
+                        fontSize = 10.sp,
+                        color = TextSecondary
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        // Đã THẺ QUÉT TRÙNG LẶP (DuplicateScanWorker) Đã 
+        val dupStage by DuplicateProgressState.stage.collectAsState()
+        val dupPercent by DuplicateProgressState.percent.collectAsState()
+        val dupScanned by DuplicateProgressState.scannedCount.collectAsState()
+        val dupFound by DuplicateProgressState.foundCount.collectAsState()
+        val dupStageDesc by DuplicateProgressState.stageDescription.collectAsState()
+        val dupStageNum by DuplicateProgressState.stageNumber.collectAsState()
+        val dupTotalStages by DuplicateProgressState.totalStages.collectAsState()
+        val dupElapsed by DuplicateProgressState.elapsedTime.collectAsState()
+        val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
+        val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
+        val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && dupPercent < 1f && dupPercent > 0f
+        
+        val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..."
+        androidx.compose.animation.AnimatedVisibility(visible = dupIsActive) {
+            Column {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+            Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .background(Color(0xFFEF5350).copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.ContentCopy, null,
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Quét trùng lặp",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
+                        )
+                        Text(
+                            if (dupIsRunning) { if (dupIsPaused) "Đã Đang tạm dừng" else "🟢 $dupStage" } else if (dupPercent >= 1f) "✅ Hoàn tất" else "Đã Chờ",
+                            fontSize = 11.sp,
+                            color = if (dupIsRunning) { if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A) }
+                                    else if (dupPercent >= 1f) Color(0xFF66BB6A) else TextSecondary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    // Hiển thị giai đoạn
+                    if (dupIsRunning || dupPercent >= 1f) {
+                        Text(
+                            "$dupStageNum/$dupTotalStages",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFEF5350)
+                        )
+                    }
+                }
+                if (dupIsRunning || dupPercent >= 1f) {
+                    Spacer(Modifier.height(10.dp))
+                    LinearProgressIndicator(
+                        progress = { dupPercent.coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = Color(0xFFEF5350),
+                        trackColor = Color(0xFF2A2A2A),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Đã quét: $dupScanned | Trùng: $dupFound",
+                            fontSize = 11.sp,
+                            color = TextPrimary
+                        )
+                        Text(
+                            "%.0f%%".format(dupPercent * 100f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFEF5350)
+                        )
+                    }
+                    if (dupStageDesc.isNotBlank()) {
+                        Text(
+                            dupStageDesc,
+                            fontSize = 10.sp,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    if (dupIsRunning && dupElapsed > 0L) {
+                        val elapsedMin = dupElapsed / 60000
+                        val elapsedSec = (dupElapsed / 1000) % 60
+                        val etaText = if (dupEta > 0L) {
+                            val etaMin = dupEta / 60000
+                            val etaSec = (dupEta / 1000) % 60
+                            " | ETA: ${etaMin}p${etaSec}s"
+                        } else ""
+                        Text(
+                            "Đã ${elapsedMin}p${elapsedSec}s$etaText",
+                            fontSize = 10.sp,
+                            color = TextSecondary
+                        )
+                    }
+                    if (dupIsRunning) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) {
+                                Text("Hủy bỏ?", color = Color(0xFFE57373), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(onClick = { viewModel.togglePauseDuplicateScan() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) {
+                                Text(if (dupIsPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        // Đã THẺ TỰ ĐỘNG ĐỒNG BỘ (AutoBackup) Đã 
+        val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+        val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
+
+        // Đọc log gần nhất từ DB cho AutoBackup và SmartSync — THỜI GIAN THỰC mỗi 10s
+        var lastSyncLog by remember { mutableStateOf("") }
+        var lastBackupLog by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val db = NasApplication.instance.database
+                        val syncLogs = db.logDao().getLogsByModule("SmartSync", 1)
+                        if (syncLogs.isNotEmpty()) lastSyncLog = syncLogs[0].message
+                        val backupLogs = db.logDao().getLogsByModule("AutoBackup", 1)
+                        if (backupLogs.isNotEmpty()) lastBackupLog = backupLogs[0].message
+                    } catch (_: Exception) {}
+                }
+                kotlinx.coroutines.delay(10_000L)
+            }
+        }
+
+        Column {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(38.dp)
+                                .background(Color(0xFF26A69A).copy(alpha = 0.15f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.CloudDone, null,
+                                tint = Color(0xFF26A69A),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Tự động đồng bộ",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                if (autoBackupEnabled) "Trạng thái: Bật đồng bộ ngầm định kỳ" else "Trạng thái: Chờ đồng bộ thủ công",
+                                fontSize = 10.sp,
+                                color = if (autoBackupEnabled) Color(0xFF66BB6A) else TextSecondary
+                            )
+                        }
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (viewModel.isAutoBackupRunning) {
+                                IconButton(onClick = { viewModel.toggleAutoBackupPause() }) {
+                                    Icon(
+                                        if (viewModel.autoBackupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                        contentDescription = "Tạm dừng",
+                                        tint = if (viewModel.autoBackupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            IconButton(onClick = {
+                                viewModel.triggerManualBackup(mContext)
+                            }) {
+                                Icon(
+                                    Icons.Default.Sync,
+                                    contentDescription = "Sync Now",
+                                    tint = Color(0xFF26A69A),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                    if (viewModel.isAutoBackupRunning) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            if (viewModel.autoBackupIsPaused) "Tạm dừng sao lưu..." else "Đang sao lưu: ${viewModel.autoBackupCurrentFile}",
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else AccentCyan, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        val totalPercent = if(viewModel.autoBackupTotalCount > 0) viewModel.autoBackupProcessedCount.toFloat() / viewModel.autoBackupTotalCount else 0f
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Tổng tiến trình: ${viewModel.autoBackupProcessedCount}/${viewModel.autoBackupTotalCount} tệp", fontSize = 10.sp, color = TextSecondary)
+                            Text("${(totalPercent * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64B5F6))
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        LinearProgressIndicator(
+                            progress = { totalPercent.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = Color(0xFF64B5F6), trackColor = DarkSurface
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        
+                        Text("Tiến trình tệp cục bộ:", fontSize = 10.sp, color = TextSecondary)
+                        Spacer(Modifier.height(2.dp))
+                        LinearProgressIndicator(
+                            progress = { viewModel.autoBackupProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                            color = AccentCyan, trackColor = DarkSurface
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Đã Chạy: ${formatElapsedTimeUI(viewModel.autoBackupElapsedTime)}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, modifier = Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
+                            Text("${(viewModel.autoBackupProgress * 100).toInt()}% tệp", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
+                        }
+                    } else if (lastBackupLog.isNotBlank() || lastSyncLog.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        if (lastBackupLog.isNotBlank()) {
+                            Text(
+                                "📦 $lastBackupLog",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                        if (lastSyncLog.isNotBlank()) {
+                            Text(
+                                "🔄 $lastSyncLog",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    } else if (!autoBackupEnabled) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Nhấn vào đây để thiết lập sao lưu",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // THÔNG BÁO DIALOG
+   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// LoginScreen (từ LoginScreen.kt)
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+private const val URL_PREFIX = "http://"
+private const val URL_SUFFIX = ":8822/webdav/"
+
+private fun ipToFullUrl(ip: String): String {
+    val trimmed = ip.trim()
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
+    return if (trimmed.contains(":")) "${URL_PREFIX}$trimmed/webdav/" else "${URL_PREFIX}$trimmed${URL_SUFFIX}"
+}
+
+private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (_: Exception) { url }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
+    val context = LocalContext.current
+    val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
+    var historyIps by remember { mutableStateOf(rawHistory.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }) }
+    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
+    var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "admin" }) }
+    var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Icon(Icons.Default.Storage, contentDescription = "NAS", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(16.dp))
+        Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(32.dp))
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(value = ipInput, onValueChange = { ipInput = it }, label = { Text("Địa chỉ IP / DDNS của NAS") }, modifier = Modifier.fillMaxWidth().menuAnchor(), singleLine = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
+            if (historyIps.isNotEmpty()) {
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    historyIps.forEach { ipOption ->
+                        DropdownMenuItem(text = { Text(ipOption) }, onClick = { ipInput = ipOption; expanded = false },
+                            trailingIcon = { IconButton(onClick = { historyIps = historyIps.filter { it != ipOption } }) { Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp)) } })
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+        Spacer(Modifier.height(24.dp))
+        val interactionSource = remember { MutableInteractionSource() }
+        Button(onClick = {
+            val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
+            val newHistoryIps = mutableListOf(currentIp); newHistoryIps.addAll(historyIps.filter { it != currentIp && it.isNotEmpty() }); historyIps = newHistoryIps
+            val fullUrlList = newHistoryIps.map { ipToFullUrl(it) }
+            viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
+                viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
+            }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
+        }, enabled = !viewModel.isLoading && ipInput.isNotEmpty(), interactionSource = interactionSource,
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
+            modifier = Modifier.fillMaxWidth().height(50.dp).background(brush = Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), shape = RoundedCornerShape(24.dp))
+        ) {
+            if (viewModel.isLoading) { CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.5.dp); Spacer(Modifier.width(8.dp)); Text("Đang kết nối...", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            else Text("Đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// GuestPassScreen (từ GuestPassScreen.kt)
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+private val GpDarkSurface   = Color(0xFF1A1A2E)
+private val GpDarkCard      = Color(0xFF16213E)
+private val GpAccentGreen   = Color(0xFF00E676)
+private val GpAccentOrange  = Color(0xFFFF9100)
+private val GpAccentRed     = Color(0xFFFF1744)
+private val GpAccentCyan    = Color(0xFF00D2FF)
+private val GpAccentPurple  = Color(0xFFBB86FC)
+private val GpTextPrimary   = Color(0xFFE8E8E8)
+private val GpTextSecondary = Color(0xFF8892B0)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    var durationMinutes by remember { mutableIntStateOf(AppConfig.GUEST_PASS_DEFAULT_MINUTES) }
+    var copiedField by remember { mutableStateOf("") }
+    Scaffold(topBar = {
+        TopAppBar(title = { Column { Text("Local Guest Pass", fontWeight = FontWeight.Bold, color = GpTextPrimary); Text("Cấp vé FTP tạm thời cho khách", fontSize = 11.sp, color = GpTextSecondary) } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = GpTextPrimary) } },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = GpDarkSurface))
+    }, containerColor = GpDarkSurface) { pad ->
+        Column(modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(Modifier.height(12.dp))
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentPurple.copy(alpha = 0.08f)), shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Default.Info, null, tint = GpAccentPurple, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
+                    Text("NAS sẽ tự động tạo một tài khoản FTP tạm thời với quyền Chỉ đọc (Read-Only). Khách dùng FTP client (FileZilla, ES File Explorer...) để kết nối vào kho phim. Tài khoản tự xóa sau thời hạn.", fontSize = 12.sp, color = GpTextSecondary, lineHeight = 18.sp)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Thời hạn Guest Pass", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = GpTextPrimary); Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(30 to "30 phút", 60 to "1 giờ?", 180 to "3 giờ?", 1440 to "1 ngày").forEach { (min, label) ->
+                            FilterChip(selected = durationMinutes == min, onClick = { durationMinutes = min }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f),
+                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = GpAccentCyan.copy(alpha = 0.2f), selectedLabelColor = GpAccentCyan, containerColor = GpDarkSurface, labelColor = GpTextSecondary))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp)); Text("Thời hạn đã chọn: $durationMinutes phút (${durationMinutes / 60} giờ? ${durationMinutes % 60} phút)", fontSize = 12.sp, color = GpAccentCyan)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            val pass = viewModel.activeGuestPass
+            AnimatedVisibility(visible = pass != null) {
+                pass?.let { gp ->
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, GpAccentGreen.copy(alpha = 0.4f))) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = GpAccentGreen, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Guest Pass đang hoạt động", fontWeight = FontWeight.Bold, color = GpAccentGreen) }
+                            Spacer(Modifier.height(14.dp))
+                            GuestInfoRow("Host", gp.host, clipboardManager, copiedField, "host") { copiedField = "host" }; Spacer(Modifier.height(8.dp))
+                            GuestInfoRow("Port FTP", gp.ftpPort.toString(), clipboardManager, copiedField, "port") { copiedField = "port" }; Spacer(Modifier.height(8.dp))
+                            GuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
+                            GuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass") { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
+                            val expiresMs = gp.expiresAt - System.currentTimeMillis(); val expiresMin = (expiresMs / 60000).coerceAtLeast(0)
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, null, tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️? Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
+                            Spacer(Modifier.height(14.dp))
+                            Button(onClick = { viewModel.revokeGuestPass() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), enabled = !viewModel.isGuestPassLoading, colors = ButtonDefaults.buttonColors(containerColor = GpAccentRed.copy(alpha = 0.8f))) { Icon(Icons.Default.PersonRemove, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Thu hồi ngay", fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
+            }
+            viewModel.guestPassError?.let { err -> Spacer(Modifier.height(10.dp)); Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentRed.copy(alpha = 0.1f)), shape = RoundedCornerShape(12.dp)) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Error, null, tint = GpAccentRed, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(err, color = GpAccentRed, fontSize = 12.sp) } } }
+            Spacer(Modifier.height(14.dp))
+            if (pass == null) {
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (!viewModel.isGuestPassLoading) Brush.horizontalGradient(listOf(GpAccentPurple, Color(0xFF6200EA))) else Brush.horizontalGradient(listOf(GpTextSecondary.copy(alpha=0.2f), GpTextSecondary.copy(alpha=0.2f)))).clickable(enabled = !viewModel.isGuestPassLoading) { viewModel.createGuestPass(durationMinutes) }.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+                    if (viewModel.isGuestPassLoading) { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(color = GpTextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Đang tạo tài khoản...", color = GpTextPrimary, fontWeight = FontWeight.Bold) } }
+                    else { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PersonAdd, null, tint = Color.White, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Cấp Guest Pass ($durationMinutes phút)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun GuestInfoRow(label: String, value: String, clipboardManager: androidx.compose.ui.platform.ClipboardManager, copiedField: String, fieldKey: String, onCopied: () -> Unit) {
+    val isCopied = copiedField == fieldKey
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0F3460).copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold); Text(value, fontSize = 14.sp, color = Color(0xFFE8E8E8), fontWeight = FontWeight.SemiBold) }
+        IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(32.dp)) {
+            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, null, tint = if (isCopied) Color(0xFF00E676) else Color(0xFF8892B0), modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// PerformanceScreen (từ PerformanceScreen.kt)
+// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PerformanceScreen(onBack: () -> Unit) {
+    val mContext = LocalContext.current
+    val metrics by PerformanceMonitor.metricsFlow.collectAsState()
+    LaunchedEffect(Unit) { PerformanceMonitor.startMonitoring(mContext) }
+    Scaffold(topBar = { TopAppBar(title = { Text("Màn Giám Sát Kỹ Thuật (DevOps Monitor)", fontSize = 18.sp, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Trở lại") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) }) { padding ->
+        Column(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1E1E)).padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            MetricCard("Động Cơ JVM (App RAM)", Icons.Default.Memory, "${metrics.usedJvmMemoryMb} MB / ${metrics.maxJvmMemoryMb} MB", if (metrics.maxJvmMemoryMb > 0) metrics.usedJvmMemoryMb.toFloat() / metrics.maxJvmMemoryMb else 0f, if (metrics.usedJvmMemoryMb > metrics.maxJvmMemoryMb * 0.8) Color.Red else Color.Green)
+            MetricCard("Bộ Nhớ Hệ Thống (Màng RAM)", Icons.Default.Adb, "Trống: ${metrics.freeRamMb} MB (Tổng: ${metrics.totalRamMb} MB)", metrics.ramUsagePercent / 100f, if (metrics.ramUsagePercent > 85) Color.Red else Color(0xFF03A9F4))
+            MetricCard("Trái Tim Chip Bán Dẫn (CPU Thread)", Icons.Default.Speed, "Hoạt động: ${metrics.cpuUsagePercent}% (Dao động ảo)", metrics.cpuUsagePercent / 100f, if (metrics.cpuUsagePercent > 70) Color(0xFFFF9800) else Color.Cyan)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NetworkBadge(Modifier.weight(1f), "Tải Xuống", "${metrics.rxSpeedKbps} KB/s", Icons.Default.ArrowDownward, Color.Green)
+                NetworkBadge(Modifier.weight(1f), "Đẩy Lên", "${metrics.txSpeedKbps} KB/s", Icons.Default.ArrowUpward, Color(0xFFFF5722))
+            }
+            MetricCard("Kho Gạch Ngói Hình Ảnh (Coil Disk Cache)", Icons.Default.Storage, "${metrics.diskCacheSizeMb} MB đang ngốn rác", (metrics.diskCacheSizeMb / 800f).coerceIn(0f, 1f), Color(0xFF9C27B0))
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = { coil.Coil.imageLoader(mContext).memoryCache?.clear(); System.gc() }, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))) { Icon(Icons.Default.DeleteForever, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("BĂM NÚT BỘ ĐỆM RAM (Tránh Đơ Máy)", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+fun MetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, progress: Float, progressColor: Color) {
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C)), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, color = Color.Gray, fontSize = 14.sp) }
+            Spacer(Modifier.height(8.dp)); Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(12.dp))
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)), color = progressColor, trackColor = Color(0xFF424242))
+        }
+    }
+}
+
+@Composable
+fun NetworkBadge(modifier: Modifier, title: String, speed: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color) {
+    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C)), shape = RoundedCornerShape(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp)); Spacer(Modifier.height(4.dp)); Text(title, color = Color.Gray, fontSize = 12.sp); Text(speed, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+fun formatElapsedTimeUI(millis: Long): String {
+    if (millis <= 0) return "0 giây"
+    val totalSeconds = millis / 1000
+    val days = totalSeconds / 86400
+    val hours = (totalSeconds % 86400) / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+
+    val parts = mutableListOf<String>()
+    if (days > 0) parts.add("$days ngày")
+    if (hours > 0) parts.add("$hours giờ?")
+    if (minutes > 0) parts.add("$minutes phút")
+    if (seconds > 0 || parts.isEmpty()) parts.add("$seconds giây")
+
+    return parts.joinToString(", ")
+}
+

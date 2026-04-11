@@ -1,0 +1,11 @@
+Line 144: // â”€â”€ TÃNH NĂNG MỚI ──────────────────────────────────────────────────────────
+Line 160: // STATE CHO DIALOG THÃ”NG BÃO
+Line 165: // STATE CHO XÃC NHẬN NGUỒN VÀ TOOLBOX
+Line 192: commonDialogType = DialogType.WARNING; commonDialogMessage = "Äã gửi lệnh khởi động lại NAS!"; showCommonDialog = true
+Line 202: commonDialogType = DialogType.WARNING; commonDialogMessage = "Äã gửi lệnh tắt nguồn NAS!"; showCommonDialog = true
+Line 232: commonDialogMessage = "Äã bắn tín hiệu Wake-on-LAN!"
+Line 313: // Äèn tín hiệu trạng thái (Pulse animation)
+Line 316: currentStatus.contains("Online", true) || currentStatus.contains("Äã kết nối", true) -> AccentGreen
+Line 1622: subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Äã tắt (tiết kiệm RAM)",
+Line 1655: subtitle = "Äồng bộ thư mục",
+Line 2021: // THÃ”NG BÃO DIALOG

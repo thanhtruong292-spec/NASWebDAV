@@ -1,0 +1,297 @@
+package com.nas.naswebdav
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.work.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
+
+/**
+ * LivestreamMonitorWorker — Foreground Worker theo dõi tiến trình ghi livestream trên NAS.
+ *
+ * Chạy hoàn toàn độc lập với vòng đời app:
+ *  - Khi user ẩn app  → vẫn chạy, vẫn hiện notification
+ *  - Khi user thoát app → vẫn chạy, WorkManager giữ lại
+ *  - Khi stream kết thúc → tự thoát, thông báo "Hoàn tất"
+ *
+ * Input:
+ *   KEY_JOB_ID    : job_id từ NAS API
+ *   KEY_NAS_HOST  : IP của NAS (vd: 192.168.100.254)
+ *   KEY_PLATFORM  : tiktok | facebook | youtube | ...
+ */
+class LivestreamMonitorWorker(
+    appContext: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(appContext, workerParams) {
+
+    companion object {
+        const val CHANNEL_ID     = "livestream_recording_channel"
+        const val NOTIFICATION_BASE_ID = 9020   // ID cơ sở, mỗi job +1
+        const val WORK_NAME_PREFIX = "LIVESTREAM_MONITOR_"
+
+        const val KEY_JOB_ID   = "job_id"
+        const val KEY_NAS_HOST = "nas_host"
+        const val KEY_PLATFORM = "platform"
+        const val KEY_NOTIF_ID = "notif_id"
+
+        // Output keys
+        const val OUT_STATUS      = "status"
+        const val OUT_FILE_SIZE   = "file_size"
+        const val OUT_DURATION    = "duration"
+        const val OUT_SPEED       = "speed"
+        const val OUT_OUTPUT_FILE = "output_file"
+        const val OUT_JOB_ID      = "job_id_out"
+
+        fun createChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "Ghi hình Livestream",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Thông báo tiến trình ghi livestream về NAS"
+                    setShowBadge(true)
+                    setSound(null, null)
+                }
+                context.getSystemService(NotificationManager::class.java)
+                    ?.createNotificationChannel(channel)
+            }
+        }
+
+        fun enqueue(context: Context, jobId: String, nasHost: String, platform: String): androidx.work.Operation {
+            createChannel(context)
+            // Mỗi job có notifId riêng (9020, 9021, 9022...)
+            val notifId = NOTIFICATION_BASE_ID + (Math.abs(jobId.hashCode()) % 100)
+            val request = OneTimeWorkRequestBuilder<LivestreamMonitorWorker>()
+                .setInputData(workDataOf(
+                    KEY_JOB_ID   to jobId,
+                    KEY_NAS_HOST to nasHost,
+                    KEY_PLATFORM to platform,
+                    KEY_NOTIF_ID to notifId
+                ))
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .addTag(WORK_NAME_PREFIX + jobId)
+                .addTag("LIVESTREAM_ALL")  // Tag chung để query tất cả
+                .build()
+            return WorkManager.getInstance(context)
+                .enqueueUniqueWork(WORK_NAME_PREFIX + jobId, ExistingWorkPolicy.KEEP, request)
+        }
+
+        fun cancelJob(context: Context, jobId: String) {
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_PREFIX + jobId)
+        }
+
+        fun cancelAll(context: Context) {
+            WorkManager.getInstance(context).cancelAllWorkByTag("LIVESTREAM_ALL")
+        }
+    }
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
+        return buildForegroundInfo(notifId, "Đang ghi hình...", "Đang khởi động...")
+    }
+
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val jobId    = inputData.getString(KEY_JOB_ID)    ?: return@withContext Result.failure()
+        val nasHost  = inputData.getString(KEY_NAS_HOST)  ?: return@withContext Result.failure()
+        val platform = inputData.getString(KEY_PLATFORM)  ?: "livestream"
+
+        val platformLabel = when (platform) {
+            "tiktok"   -> "TikTok"
+            "facebook" -> "Facebook"
+            "youtube"  -> "YouTube"
+            "shopee"   -> "Shopee"
+            else       -> "Livestream"
+        }
+        val platformIcon = when (platform) {
+            "tiktok"   -> "\uD83C\uDFB5"  // 🎵
+            "facebook" -> "\uD83D\uDCD8"  // 📘
+            "youtube"  -> "▶"
+            else       -> "\uD83D\uDCF9"  // 📹
+        }
+
+        val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
+
+        createChannel(applicationContext)
+        setForeground(buildForegroundInfo(
+            notifId = notifId,
+            title   = "$platformIcon Đang ghi $platformLabel Live",
+            content = "Đang kết nối..."
+        ))
+
+        // Lấy credentials
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+
+        val statusUrl = "http://$nasHost:5050/api/livestream/status"
+        var consecutiveErrors = 0
+
+        while (!isStopped) {
+            delay(3_000L)
+
+            try {
+                val requestBuilder = Request.Builder().url(statusUrl)
+                if (user.isNotEmpty() && pass.isNotEmpty()) {
+                    val credential = okhttp3.Credentials.basic(user, pass)
+                    requestBuilder.header("Authorization", credential)
+                }
+
+                val response = httpClient.newCall(requestBuilder.build()).execute()
+                val bodyStr = response.use { resp ->
+                    if (!resp.isSuccessful) {
+                        consecutiveErrors++
+                        if (consecutiveErrors >= 5) return@use null
+                        return@use null
+                    }
+                    resp.body?.string() ?: "{}"
+                }
+                if (bodyStr == null) {
+                    if (consecutiveErrors >= 5) break
+                    continue
+                }
+                val json = JSONObject(bodyStr)
+                val jobs = json.optJSONArray("jobs") ?: continue
+
+                // Tim job cua chung ta
+                var found = false
+                var finalStatus = ""
+                for (i in 0 until jobs.length()) {
+                    val job = jobs.getJSONObject(i)
+                    if (job.optString("job_id") != jobId) continue
+                    found = true
+                    finalStatus = job.optString("status", "recording")
+
+                    val fileSize  = job.optString("file_size", "0 B")
+                    val duration  = job.optString("duration_display", "0h00m00s")
+                    val speed     = job.optString("avg_speed", "")
+                    val outFile   = job.optString("output_file", "")
+                    consecutiveErrors = 0
+
+                    // Cập nhật notification
+                    val contentLine = buildString {
+                        append("⏱ $duration  •  💾 $fileSize")
+                        if (speed.isNotEmpty()) append("  •  📡 $speed")
+                    }
+                    // Cập nhật notification qua NotificationManager để bypass giới hạn setForeground throttling của Android 12+
+                    val foregroundInfo = buildForegroundInfo(
+                        notifId = notifId,
+                        title   = "$platformIcon Đang ghi $platformLabel Live",
+                        content = contentLine,
+                        subText = if (outFile.isNotEmpty()) outFile else null
+                    )
+                    try {
+                        androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                            .notify(notifId, foregroundInfo.notification)
+                    } catch (_: SecurityException) {}
+
+                    // Cập nhật output data để ViewModel observe được
+                    setProgress(workDataOf(
+                        OUT_JOB_ID      to jobId,
+                        OUT_STATUS      to finalStatus,
+                        OUT_FILE_SIZE   to fileSize,
+                        OUT_DURATION    to duration,
+                        OUT_SPEED       to speed,
+                        OUT_OUTPUT_FILE to outFile
+                    ))
+
+                    // Nếu stream kết thúc → thoát vòng lặp
+                    if (finalStatus !in listOf("recording")) {
+                        break
+                    }
+                }
+
+                if (!found) {
+                    // Job không còn trên NAS → coi như xong
+                    consecutiveErrors++
+                    if (consecutiveErrors >= 3) break
+                } else if (finalStatus !in listOf("recording")) {
+                    break
+                }
+
+            } catch (_: Exception) {
+                consecutiveErrors++
+                if (consecutiveErrors >= 10) break
+            }
+        }
+
+        // Hiện thông báo hoàn tất
+        showCompletionNotification(notifId, platformLabel, platformIcon)
+        return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
+    }
+
+    private fun buildForegroundInfo(
+        notifId: Int,
+        title: String,
+        content: String,
+        subText: String? = null
+    ): ForegroundInfo {
+        // PendingIntent mở lại app khi bấm notification
+        val openIntent = applicationContext.packageManager
+            .getLaunchIntentForPackage(applicationContext.packageName)
+            ?.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
+        val openPending = PendingIntent.getActivity(
+            applicationContext, 0, openIntent ?: Intent(),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setContentText(content)
+            .apply { if (subText != null) setSubText(subText) }
+            .setOngoing(true)          // Không thể vuốt bỏ
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(openPending)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .build()
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                notifId, notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(notifId, notification)
+        }
+    }
+
+    private fun showCompletionNotification(baseNotifId: Int, platformLabel: String, icon: String) {
+        val openIntent = applicationContext.packageManager
+            .getLaunchIntentForPackage(applicationContext.packageName)
+            ?.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
+        val openPending = PendingIntent.getActivity(
+            applicationContext, 1, openIntent ?: Intent(),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("$icon Ghi hình $platformLabel hoàn tất!")
+            .setContentText("Video đã lưu vào thư mục Livestream/ trên NAS")
+            .setAutoCancel(true)
+            .setContentIntent(openPending)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        try {
+            applicationContext.getSystemService(NotificationManager::class.java)
+                ?.notify(baseNotifId + 1000, notification)
+        } catch (_: Exception) {}
+    }
+}
