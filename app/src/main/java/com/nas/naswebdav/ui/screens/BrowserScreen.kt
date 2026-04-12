@@ -161,7 +161,7 @@ fun BrowserScreen(
             text = {
                 if (viewModel.isLoading && viewModel.textPreviewContent == null) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                        CircularProgressIndicator(modifier = Modifier.padding(10.dp))
                     }
                 } else if (!viewModel.textPreviewContent.isNullOrBlank()) {
                     SelectionContainer { // Cấp quyền bôi đen copy đoạn Text mồi này
@@ -494,7 +494,7 @@ fun BrowserScreen(
                         modifier = Modifier.padding(start = 22.dp)
                     )
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     // ═══ PROGRESS BAR CHÍNH XÁC (2 THANH) ═══
                     val progressValue by androidx.compose.animation.core.animateFloatAsState(
@@ -860,13 +860,13 @@ fun BrowserScreen(
                 exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut()
             ) {
                 Card(
-                    modifier = Modifier.fillMaxWidth(0.9f).padding(bottom = 16.dp),
+                    modifier = Modifier.fillMaxWidth(0.9f).padding(bottom = 8.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        modifier = Modifier.padding(10.dp).fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -1407,7 +1407,7 @@ fun BrowserScreen(
             // TÍNH NĂNG 3.E: Lịch sử Tìm kiếm nằm ngay dưới Thanh Tìm Kiếm
             if (isSearching && searchQuery.isEmpty() && searchHistory.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    item { Text("Tìm kiếm gần đây", color = Color.Gray, modifier = Modifier.padding(16.dp)) }
+                    item { Text("Tìm kiếm gần đây", color = Color.Gray, modifier = Modifier.padding(10.dp)) }
                     items(items = searchHistory, key = { it.query }) { history ->
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; historyManager.saveQuery(history.query); focusManager.clearFocus() }.padding(16.dp),
@@ -1534,7 +1534,7 @@ fun BrowserScreen(
                         Text("Không thể kết nối NAS", fontWeight = FontWeight.Bold, color = Color(0xFFEF5350))
                         Spacer(Modifier.height(4.dp))
                         Text(currentError, color = Color.Gray, fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                         Button(onClick = { viewModel.refresh() }) { Text("Thử lại") }
                     }
                 } else if (!viewModel.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {

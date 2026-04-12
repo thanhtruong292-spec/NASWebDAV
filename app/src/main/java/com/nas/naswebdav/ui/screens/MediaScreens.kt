@@ -79,8 +79,8 @@ private val categoryColors = mapOf(
     "Thể Thao"           to listOf(Color(0xFF56AB2F), Color(0xFFA8E063))
 )
 
-private val DarkSurface = Color(0xFF0F0F1A)
-private val DarkCard    = Color(0xFF1A1A2E)
+private val DarkSurface = Color.Black
+private val DarkCard    = Color.Black
 private val AccentCyan  = Color(0xFF00D2FF)
 private val TextPrimary = Color(0xFFE8E8E8)
 private val TextSecondary = Color(0xFF8892B0)
@@ -586,7 +586,7 @@ private fun AiEmptyState(status: String, aiRunning: Boolean) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("🤖", fontSize = 48.sp, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             if (aiRunning) "AI đang phân loại ảnh..." else "Chưa có dữ liệu AI",
             fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary,
@@ -601,7 +601,7 @@ private fun AiEmptyState(status: String, aiRunning: Boolean) {
             fontSize = 13.sp, color = TextSecondary, textAlign = TextAlign.Center
         )
         if (aiRunning) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(color = AccentCyan, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)))
         }
         if (status.isNotEmpty() && status != "ok") {
@@ -693,9 +693,21 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
     var isInPiP by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     
+    // Gắn theo dõi trạng thái hiển thị của thanh ExoPlayer Controller
+    var isControllerVisible by remember { mutableStateOf(true) }
+    
+    // Trạng thái riêng cho các nút overlay Compose (Mute, PiP, Repeat...)
+    // Luôn hiện khi chạm màn hình, tự ẩn sau 3 giây
+    var showOverlayButtons by remember { mutableStateOf(true) }
+    
     // Trạng thái mới: Tắt tiếng (Mute) và Lặp lại (Repeat)
     var isMuted by remember { mutableStateOf(false) }
     var isRepeat by remember { mutableStateOf(false) }
+
+    // Cập nhật trạng thái hiển thị overlay lập tức theo ExoPlayer, bỏ delay
+    LaunchedEffect(isControllerVisible) {
+        showOverlayButtons = isControllerVisible
+    }
 
     // ═══ PHÁT HIỆN ĐỊNH DẠNG LEGACY NGAY LÚC MỞ PLAYER ═══
     // Formats ExoPlayer KHÔNG decode được (MPEG-2, WMV, v.v.)
@@ -729,7 +741,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         }
         activity?.addOnPictureInPictureModeChangedListener(listener)
         onDispose {
-            if (activity is MainActivity) {
+            if (activity is VideoPlayerActivity) {
                 activity.isPlayingVideo = false
             }
             activity?.removeOnPictureInPictureModeChangedListener(listener)
@@ -743,12 +755,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         // 1. LOAD CONTROL CỰC ĐOAN — Tối ưu cho MẠNG LAN TỐC ĐỘ CAO (PHÁT NGAY + KHÔNG KHỰNG)
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000,   // Nạp sắn (pre_buffer) 15 giây liên tục để đảm bảo luồng phát mượt mà không bị khựng
-                120_000,  // Nạp thả ga tối đa tới 2 phút (để chạy trơn tru kể cả khi bị rớt mạng vài giây)
+                60_000,   // Nạp sẵn (pre_buffer) 60 giây liên tục để bao trọn mốc tua 30s-60s
+                250_000,  // Nạp thả ga tối đa tới hơn 4 phút (vắt kiệt băng thông LAN)
                 50,       // QUAN TRỌNG NHẤT: Vẫn giữ 50ms để PHÁT NGAY LẬP TỨC khi mới mở hoặc tua
                 500       // Nếu vô tình bị nấc mạng, chỉ chờ 0.5s là phát tiếp luôn
             )
-            .setBackBuffer(15_000, true)  // Giữ 15s đệm RAM để lùi lại
+            .setBackBuffer(60_000, true)  // Giữ 60s đệm RAM để nhấn lùi lại là ăn ngay không cần load
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
@@ -791,14 +803,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             .apply { if (mimeType != null) setMimeType(mimeType) }
             .build()
 
-        // 7. BUILD EXOPLAYER
-        ExoPlayer.Builder(context)
+        // 7. BUILD EXOPLAYER BẢN GỐC
+        val basePlayer = ExoPlayer.Builder(context)
             .setRenderersFactory(renderersFactory)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
             .setBandwidthMeter(app.bandwidthMeter)
-            .setSeekBackIncrementMs(15000)
-            .setSeekForwardIncrementMs(15000)
             .build()
             .apply {
                 addListener(object : androidx.media3.common.Player.Listener {
@@ -807,7 +817,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         // Bắt lỗi khi phần cứng điện thoại (Hardware Decoder) KHÔNG HỖ TRỢ định dạng 
                         // Ví dụ: Video 4K HDR HEVC trên máy tính bảng cũ, hoặc Âm thanh Dolby AC3 trong file MKV.
                         // Tại đây, ta báo cho giao diện bật Dialog hỏi chuyển sang VLC
-                        (context as? MainActivity)?.runOnUiThread {
+                        (activity as? MainActivity)?.runOnUiThread {
                             viewModel?.showCommonDialog = true
                             viewModel?.commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                             viewModel?.commonDialogMessage = "Thiết bị của bạn không hỗ trợ giải mã định dạng phim này (Lỗi: ${error.errorCodeName}).\n\nVui lòng nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC hoặc MX Player."
@@ -817,9 +827,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                     override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                         super.onVideoSizeChanged(videoSize)
                         if (videoSize.width > 0 && videoSize.height > 0) {
-                            val act = context as? MainActivity
+                            val act = activity as? VideoPlayerActivity
                             if (act != null) {
-                                // 1. Truyền tỉ lệ thực tế về MainActivity để nó dùng khi gọi từ phím Home (onUserLeaveHint)
+                                // 1. Truyền tỉ lệ thực tế về VideoPlayerActivity để nó dùng khi gọi từ phím Home (onUserLeaveHint)
                                 act.videoAspectRatio = android.util.Rational(videoSize.width, videoSize.height)
                                 
                                 // 2. Lập tức cập nhật System PiP Params trên Android 12+ (Auto-PiP behavior)
@@ -830,10 +840,17 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         super.onIsPlayingChanged(isPlaying)
+                        // Khóa sáng màn hình khi ĐANG PHÁT, tự động cho ngủ màn hình khi PAUSE
+                        if (isPlaying) {
+                            activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        
                         // Bắt buộc: Tính năng PiP khi vuốt Home chỉ kích hoạt nếu video ĐANG PHÁT.
                         // Tránh lỗi khi người dùng ấn "Mở bằng VLC", ứng dụng này bị văng ra sau (onUserLeaveHint) 
                         // và vô tình bật PiP đè lên cả VLC.
-                        (context as? MainActivity)?.isPlayingVideo = isPlaying
+                        (activity as? VideoPlayerActivity)?.isPlayingVideo = isPlaying
                     }
                 })
                 setMediaItem(mediaItem)
@@ -845,6 +862,31 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                 prepare()
                 playWhenReady = true
             }
+
+        // 8. BỌC EXOPLAYER TRONG FORWARDING PLAYER ĐỂ TÙY DỤNG GIA TỐC TUA THEO ĐỘ DÀI TRUYỆN/VIDEO
+        object : androidx.media3.common.ForwardingPlayer(basePlayer) {
+            private fun getDynamicSeekIncrement(): Long {
+                val dur = duration
+                return when {
+                    dur == androidx.media3.common.C.TIME_UNSET -> 15000L
+                    dur > 3600_000L -> 60000L // Dài hơn 1 tiếng -> tua 60s
+                    dur > 1800_000L -> 30000L // Dài hơn 30 phút -> tua 30s
+                    dur < 300_000L -> 5000L   // Ngắn hơn 5 phút -> tua 5s
+                    else -> 15000L            // Mặc định 15s
+                }
+            }
+
+            override fun getSeekForwardIncrement(): Long = getDynamicSeekIncrement()
+            override fun getSeekBackIncrement(): Long = getDynamicSeekIncrement()
+
+            override fun seekForward() {
+                seekTo((currentPosition + getDynamicSeekIncrement()).coerceAtMost(duration.coerceAtLeast(0L)))
+            }
+
+            override fun seekBack() {
+                seekTo((currentPosition - getDynamicSeekIncrement()).coerceAtLeast(0L))
+            }
+        }
     }
 
     // Effect để lắng nghe thay đổi trạng thái và áp dụng ngay lập tức
@@ -870,8 +912,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             override fun onReceive(ctx: android.content.Context?, intent: android.content.Intent?) {
                 when (intent?.action) {
                     PIP_ACTION_REWIND -> {
-                        val pos = exoPlayer.currentPosition - 15000L
-                        exoPlayer.seekTo(pos.coerceAtLeast(0L))
+                        exoPlayer.seekBack()
                     }
                     PIP_ACTION_PLAY_PAUSE -> {
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -879,8 +920,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         activity?.let { updatePipActions(it, exoPlayer) }
                     }
                     PIP_ACTION_FAST_FORWARD -> {
-                        val pos = exoPlayer.currentPosition + 15000L
-                        exoPlayer.seekTo(pos.coerceAtMost(exoPlayer.duration.coerceAtLeast(0L)))
+                        exoPlayer.seekForward()
                     }
                 }
             }
@@ -937,6 +977,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    
+                    // Lắng nghe sự kiện hiện/ẩn thanh điều khiển để đồng bộ với Compose
+                    setControllerVisibilityListener(androidx.media3.ui.PlayerView.ControllerVisibilityListener { visibility ->
+                        isControllerVisible = (visibility == android.view.View.VISIBLE)
+                    })
+                    
                     playerViewRef.value = this
                 }
             },
@@ -948,24 +994,57 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             modifier = Modifier.fillMaxSize()
         )
 
-        // Chỉ hiển thị các nút điều khiển khi KHÔNG ở chế độ Popup
-        if (!isInPiP) {
-            // Nút Back thoát video
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 32.dp, start = 16.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
-            }
+        // Overlay buttons nằm trên PlayerView nhưng KHÔNG chặn touch (chỉ đọc)
+        Box(Modifier.fillMaxSize()) {
 
-            // Nhóm nút tiện ích bên phải (Mở bằng VLC, Thu nhỏ PiP)
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 32.dp, end = 16.dp),
+        // Chỉ hiển thị các nút điều khiển khi KHÔNG ở chế độ Popup
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !isInPiP && showOverlayButtons,
+            enter = androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.fadeOut()
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                // Tiêu đề Video & Nút Back
+                val fileName = url.substringAfterLast("/").let {
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                }
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopStart)
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                            )
+                        )
+                        .padding(top = 24.dp, start = 16.dp, end = 16.dp, bottom = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.background(Color.White.copy(alpha = 0.2f), CircleShape)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = fileName,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Nhóm nút tiện ích bên phải (Mở bằng VLC, Thu nhỏ PiP, vv)
+                // Đặt margin top lớn hơn để tránh đè lên Tên video
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 96.dp, end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Nút Phát bằng ứng dụng ngoài (VLC/MX Player)
@@ -1062,10 +1141,11 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                     }
                 )
             }
-        }
-    }
-}
-
+            } // Close Box (AnimatedVisibility content)
+        } // Close AnimatedVisibility
+        } // Close touch-intercept Box
+    } // Close outer Box
+} // Close VideoPlayerScreen
 // ============ HÀM TẠO NÚT PIP ============
 
 /** Tạo danh sách 3 nút: Tua lùi 15s | Play/Pause | Tua tới 15s */
@@ -1112,11 +1192,11 @@ private fun buildPipActions(
 }
 
 /** Vào chế độ PiP với 3 nút điều khiển và tỉ lệ khung hình tự động */
-private fun enterPipMode(activity: ComponentActivity, exoPlayer: ExoPlayer) {
-    val videoFormat = exoPlayer.videoFormat
+private fun enterPipMode(activity: ComponentActivity, exoPlayer: androidx.media3.common.Player) {
+    val videoSize = exoPlayer.videoSize
     // Tự động phát hiện tỉ lệ khung hình thực tế của video (thay vì hardcode 16:9)
-    val aspectRatio = if (videoFormat != null && videoFormat.width > 0 && videoFormat.height > 0) {
-        Rational(videoFormat.width, videoFormat.height)
+    val aspectRatio = if (videoSize.width > 0 && videoSize.height > 0) {
+        Rational(videoSize.width, videoSize.height)
     } else {
         Rational(16, 9) // Fallback nếu chưa có thông tin video
     }
@@ -1129,10 +1209,10 @@ private fun enterPipMode(activity: ComponentActivity, exoPlayer: ExoPlayer) {
 }
 
 /** Cập nhật các nút PiP (Ví dụ: đổi icon Play → Pause sau khi bấm) */
-private fun updatePipActions(activity: ComponentActivity, exoPlayer: ExoPlayer) {
-    val videoFormat = exoPlayer.videoFormat
-    val aspectRatio = if (videoFormat != null && videoFormat.width > 0 && videoFormat.height > 0) {
-        Rational(videoFormat.width, videoFormat.height)
+private fun updatePipActions(activity: ComponentActivity, exoPlayer: androidx.media3.common.Player) {
+    val videoSize = exoPlayer.videoSize
+    val aspectRatio = if (videoSize.width > 0 && videoSize.height > 0) {
+        Rational(videoSize.width, videoSize.height)
     } else {
         Rational(16, 9)
     }
@@ -1220,7 +1300,7 @@ fun SmartOrganizerScreen(
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(10.dp)) {
                     Text("Thư mục nguồn", fontSize = 12.sp, color = TextSecondary)
                     Spacer(Modifier.height(8.dp))
 
@@ -1249,7 +1329,7 @@ fun SmartOrganizerScreen(
                         )
                     }
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     // ═══ BỘ LỌC ═══
                     Text("Loại file", fontSize = 12.sp, color = TextSecondary)
@@ -1280,7 +1360,7 @@ fun SmartOrganizerScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(8.dp))
 
                     // ═══ NÚT QUÉT ═══
                     Button(
@@ -1310,7 +1390,7 @@ fun SmartOrganizerScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
             // ═══ PROGRESS BAR QUÉT ═══
             if (isScanning) {
@@ -1321,11 +1401,11 @@ fun SmartOrganizerScreen(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
-                        Modifier.padding(24.dp).fillMaxWidth(),
+                        Modifier.padding(12.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text("Phân tích cấu trúc thư mục NAS...", fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth()
                                 .height(6.dp)
@@ -1335,7 +1415,7 @@ fun SmartOrganizerScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
             // ═══ HIỂN THỊ LỖI ═══
@@ -1368,7 +1448,7 @@ fun SmartOrganizerScreen(
                         Icon(Icons.Default.CheckCircle, null, tint = AccentGreen, modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(12.dp))
                         Text(organizeResult!!, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentGreen)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
                                 viewModel.organizerResult = null
@@ -1384,7 +1464,7 @@ fun SmartOrganizerScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
             // ═══ ĐANG SẮP XẾP ═══
@@ -1396,11 +1476,11 @@ fun SmartOrganizerScreen(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
-                        Modifier.padding(24.dp).fillMaxWidth(),
+                        Modifier.padding(12.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text("Đang di chuyển tệp vào đúng thư mục...", fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth()
                                 .height(6.dp)
@@ -1416,7 +1496,7 @@ fun SmartOrganizerScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
             }
 
             // ═══ KẾT QUẢ QUÉT (Preview nhóm tháng) ═══
@@ -1429,7 +1509,7 @@ fun SmartOrganizerScreen(
                     colors = CardDefaults.cardColors(containerColor = DarkCard),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(Modifier.padding(10.dp)) {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1635,9 +1715,9 @@ private fun formatSize(bytes: Long): String = com.nas.naswebdav.utils.FormatUtil
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Bảng màu ─────────────────────────────────────────────────────────────────
-private val SeDarkBg        = Color(0xFF0D0D1A)
-private val SeDarkCard      = Color(0xFF16213E)
-private val SeDarkCardAlt   = Color(0xFF0F3460)
+private val SeDarkBg        = Color.Black
+private val SeDarkCard      = Color(0xFF0A0A0A)
+private val SeDarkCardAlt   = Color(0xFF0A0A0A)
 private val SeAccentGreen   = Color(0xFF00E676)
 private val SeAccentOrange  = Color(0xFFFF9100)
 private val SeAccentRed     = Color(0xFFFF1744)
@@ -1822,7 +1902,7 @@ fun SocialExtractorScreen(
                     "yt-dlp Mode: NAS tự tải. Cần cài yt-dlp trên NAS.",
                 fontSize = 11.sp, color = SeTextSecondary, textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 

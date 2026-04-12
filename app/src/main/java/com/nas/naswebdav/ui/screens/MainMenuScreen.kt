@@ -122,7 +122,7 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
             // 3. Vòng tâm TRắNG
             drawCircle(Color.White, radius = cr, center = Offset(cx, cy))
         }
-        Text(text = level.toString(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF1A1A2E))
+        Text(text = level.toString(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color.Black)
     }
 }
 
