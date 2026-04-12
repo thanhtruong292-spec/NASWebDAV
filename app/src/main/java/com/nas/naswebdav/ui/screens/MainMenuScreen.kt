@@ -454,8 +454,12 @@ fun MainMenuScreen(
                     
                     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
                     if (hddDisk != null) {
+                        val fmtTotal = hddDisk.total.let {
+                            val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                            if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
+                        }
                         GaugeCard(
-                            title = "Ổ CỨNG", value = "${hddDisk.used} / ${hddDisk.total}",
+                            title = "Ổ CỨNG", value = "${hddDisk.used} / $fmtTotal",
                             subValue = "${hddDisk.percent}%",
                             icon = Icons.Default.Storage,
                             gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
@@ -757,14 +761,20 @@ fun GaugeCard(
                             color = accentColor.copy(alpha = 0.85f),
                             letterSpacing = 0.5.sp
                         )
+                        if (!subValue.isNullOrBlank() && subValue != "--\u00b0C" && subValue != "--°C") {
+                            Text(
+                                text = subValue,
+                                fontSize = 8.sp,
+                                color = if (subValue.contains("°C") || subValue.contains("\u00b0C")) Color(0xFFFF6B6B) else accentColor.copy(alpha=0.9f),
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                     Text(value, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (!subValue.isNullOrBlank() && subValue != "--\u00b0C") {
-                        Text("  $subValue", fontSize = 10.sp, color = Color(0xFFFF6B6B), fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
                 }
             }
         }
