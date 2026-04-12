@@ -399,33 +399,6 @@ fun MainMenuScreen(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-
-        // Đã THANH TÌM KIẾM Đã 
-        var globalSearchQuery by remember { mutableStateOf("") }
-        OutlinedTextField(
-            value = globalSearchQuery,
-            onValueChange = { globalSearchQuery = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Tìm kiếm trên NAS...", color = TextSecondary) },
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = TextSecondary) },
-            singleLine = true,
-            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                onSearch = { if (globalSearchQuery.isNotBlank()) onGlobalSearch(globalSearchQuery) }
-            ),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AccentCyan,
-                unfocusedBorderColor = TextSecondary.copy(alpha = 0.3f),
-                cursorColor = AccentCyan,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary
-            )
-        )
-
-        Spacer(Modifier.height(14.dp))
-
         // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã 
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -752,14 +725,18 @@ fun GaugeCard(
                         strokeWidth = 5.dp,
                         strokeCap = StrokeCap.Round
                     )
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(18.dp))
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy((-3).dp)
+                    ) {
+                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(16.dp).offset(y = 2.dp))
                         Text(
                             text = title,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             color = accentColor.copy(alpha = 0.85f),
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.5.sp,
+                            modifier = Modifier.offset(y = 1.dp)
                         )
                         if (!subValue.isNullOrBlank() && subValue != "--\u00b0C" && subValue != "--°C") {
                             Text(
@@ -767,7 +744,8 @@ fun GaugeCard(
                                 fontSize = 8.sp,
                                 color = if (subValue.contains("°C") || subValue.contains("\u00b0C")) Color(0xFFFF6B6B) else accentColor.copy(alpha=0.9f),
                                 fontWeight = FontWeight.Bold,
-                                maxLines = 1
+                                maxLines = 1,
+                                modifier = Modifier.offset(y = (-1).dp)
                             )
                         }
                     }
