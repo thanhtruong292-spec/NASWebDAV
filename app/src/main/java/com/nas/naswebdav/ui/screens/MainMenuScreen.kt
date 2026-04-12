@@ -158,6 +158,12 @@ fun MainMenuScreen(
     // STATE CHO DIALOG THÔNG BÁO
     var commonDialogMessage by remember { mutableStateOf("") }
     var commonDialogType by remember { mutableStateOf(DialogType.SUCCESS) }
+
+    // STATE CHO DANH MỤC TRUY CẬP NHANH ĐỘNG
+    var slot2Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
+    var slot3Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
+    var slot4Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
+    var editingSlot by remember { mutableStateOf<Int?>(null) }
     var showCommonDialog by remember { mutableStateOf(false) }
 
     // STATE CHO XÁC NHẬN NGUỒN VÀ TOOLBOX
@@ -298,6 +304,18 @@ fun MainMenuScreen(
     // ============ GIAO DIỆN DASHBOARD CHUYÊN NGHIỆP ============
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     val pullRefreshState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    
+    val handleQuickAction = { id: String ->
+        when (id) {
+            "sync" -> showAutoBackupDialog = true
+            "stream" -> showLivestreamDialog = true
+            "trash" -> onOpenTrash()
+            "organizer" -> onOpenOrganizer()
+            "guest" -> onOpenGuestPass()
+            "log" -> { viewModel.loadSystemLogs(); viewModel.showLogDialog = true }
+        }
+    }
+
     if (pullRefreshState.isRefreshing) {
         LaunchedEffect(true) {
             viewModel.checkSmartNetwork(mContext)
@@ -351,6 +369,13 @@ fun MainMenuScreen(
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Icon(
+                            if (viewModel.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
+                            contentDescription = null,
+                            tint = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
                         Text(
                             if (viewModel.isOnLan) "LAN" else "Tailscale",
                             fontSize = 10.sp, fontWeight = FontWeight.Bold,
@@ -604,13 +629,45 @@ fun MainMenuScreen(
 
         // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onOpenFiles)
-            BigMenuTile("Tự Đồng Bộ", "Cấu hình sao lưu định kỳ", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B)), Modifier.weight(1f), { showAutoBackupDialog = true })
+            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onClick = onOpenFiles)
+            val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
+            BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s2.id) }, onLongClick = { editingSlot = 2 })
         }
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BigMenuTile("Ghi Livestream", "Record TikTok, FB, YT", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828)), Modifier.weight(1f), { showLivestreamDialog = true })
-            BigMenuTile("Smart Organizer", "Phân loại tệp tự động", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0)), Modifier.weight(1f), onOpenOrganizer)
+            val s3 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot3Id } ?: AVAILABLE_QUICK_ACTIONS[1]
+            BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s3.id) }, onLongClick = { editingSlot = 3 })
+            val s4 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot4Id } ?: AVAILABLE_QUICK_ACTIONS[2]
+            BigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s4.id) }, onLongClick = { editingSlot = 4 })
+        }
+
+        if (editingSlot != null) {
+            QuickActionSelectorDialog(
+                currentSlots = setOf(slot2Id, slot3Id, slot4Id),
+                onDismiss = { editingSlot = null },
+                onSelect = { newId ->
+                    val edit = sharedPrefs.edit()
+                    when (editingSlot) {
+                        2 -> {
+                            if (slot3Id == newId) { slot3Id = slot2Id; edit.putString("qa_slot3", slot3Id) }
+                            if (slot4Id == newId) { slot4Id = slot2Id; edit.putString("qa_slot4", slot4Id) }
+                            slot2Id = newId; edit.putString("qa_slot2", slot2Id)
+                        }
+                        3 -> {
+                            if (slot2Id == newId) { slot2Id = slot3Id; edit.putString("qa_slot2", slot2Id) }
+                            if (slot4Id == newId) { slot4Id = slot3Id; edit.putString("qa_slot4", slot4Id) }
+                            slot3Id = newId; edit.putString("qa_slot3", slot3Id)
+                        }
+                        4 -> {
+                            if (slot2Id == newId) { slot2Id = slot4Id; edit.putString("qa_slot2", slot2Id) }
+                            if (slot3Id == newId) { slot3Id = slot4Id; edit.putString("qa_slot3", slot3Id) }
+                            slot4Id = newId; edit.putString("qa_slot4", slot4Id)
+                        }
+                    }
+                    edit.apply()
+                    editingSlot = null
+                }
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -832,11 +889,17 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
 }
 
 // ============ COMPONENT: Thẻ menu lớn (gradient) ============
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
         modifier = modifier
-            .clickable { onClick() },
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { if (onLongClick != null) onLongClick() else onClick() }
+                )
+            },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
@@ -844,14 +907,14 @@ fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColo
             Modifier
                 .fillMaxWidth()
                 .background(Brush.linearGradient(gradientColors))
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
-                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(28.dp))
-                Spacer(Modifier.height(8.dp))
+                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
+                Spacer(Modifier.height(6.dp))
                 Column {
-                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+                    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text(subtitle, fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
                 }
             }
         }
@@ -1590,6 +1653,66 @@ fun NetworkBadge(modifier: Modifier, title: String, speed: String, icon: android
     Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp)); Spacer(Modifier.height(4.dp)); Text(title, color = Color.Gray, fontSize = 12.sp); Text(speed, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+data class QuickActionDef(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val gradientColors: List<androidx.compose.ui.graphics.Color>
+)
+
+val AVAILABLE_QUICK_ACTIONS = listOf(
+    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B))),
+    QuickActionDef("stream", "Ghi Livestream", "Record TikTok, FB", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
+    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(Color(0xFFEF5350), Color(0xFFD32F2F))),
+    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
+    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
+    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7)))
+)
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun QuickActionSelectorDialog(
+    currentSlots: Set<String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())
+        ) {
+            Text("TUỲ CHỌN LỐI TẮT TRUY CẬP", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
+            AVAILABLE_QUICK_ACTIONS.forEach { action ->
+                val isSelected = currentSlots.contains(action.id)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).clickable { if (!isSelected) onSelect(action.id) },
+                    colors = CardDefaults.cardColors(containerColor = if (isSelected) AccentCyan.copy(alpha=0.15f) else DarkCard),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(36.dp).clip(CircleShape).background(Brush.linearGradient(action.gradientColors)), contentAlignment = Alignment.Center) {
+                            Icon(action.icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(action.title, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(action.subtitle, color = TextSecondary, fontSize = 11.sp)
+                        }
+                        if (isSelected) {
+                            Icon(Icons.Default.CheckCircle, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(32.dp))
         }
     }
 }
