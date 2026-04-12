@@ -343,26 +343,27 @@ fun MainMenuScreen(
                 
                 // ── SMART SWITCH BADGE ──
                 Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (viewModel.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        if (viewModel.isOnLan) "Đã LAN" else "Đã Tailscale",
-                        fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                        color = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                val ut = viewModel.systemStatus.uptime
-                if (ut.isNotBlank() && ut != "--") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (viewModel.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (viewModel.isOnLan) "LAN" else "Tailscale",
+                            fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                            color = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
+                        )
+                    }
+                    val ut = viewModel.systemStatus.uptime
+                    if (ut.isNotBlank() && ut != "--") {
+                        val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
+                        Spacer(Modifier.width(8.dp))
                         Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
                         Spacer(Modifier.width(3.dp))
-                        Text(ut, fontSize = 12.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                        Text(cleanUt, fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -405,10 +406,10 @@ fun MainMenuScreen(
             colors = CardDefaults.cardColors(containerColor = DarkCard),
             shape = RoundedCornerShape(20.dp)
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text("HỆ THỐNG", fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(
                         title = "CPU", value = viewModel.systemStatus.cpu,
@@ -441,7 +442,7 @@ fun MainMenuScreen(
                         )
                     } else Spacer(Modifier.weight(1f))
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
 
                 Row(
                     Modifier.fillMaxWidth(),
