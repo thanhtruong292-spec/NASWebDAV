@@ -314,6 +314,7 @@ fun SmartDiskDialog(
 // ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AutoBackupDialog(
     context: Context,
@@ -325,114 +326,110 @@ fun AutoBackupDialog(
     onTriggerManualSync: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        containerColor = Color(0xFF161616),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                 Icon(Icons.Default.Sync, null, tint = Color(0xFF43A047), modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sao lưu tự động", fontWeight = FontWeight.Bold)
+                Text("Sao lưu tự động", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 20.sp)
             }
-        },
-        text = {
-            Column {
-                Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 13.sp)
-                Spacer(Modifier.height(16.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onAutoBackupEnabledChange(!isAutoBackupEnabled) }) {
-                    Switch(
-                        checked = isAutoBackupEnabled,
-                        onCheckedChange = onAutoBackupEnabledChange,
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00897B), checkedTrackColor = Color(0xFF80CBC4))
+            Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 13.sp, color = Color.LightGray)
+            Spacer(Modifier.height(16.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onAutoBackupEnabledChange(!isAutoBackupEnabled) }.padding(vertical = 4.dp)) {
+                Switch(
+                    checked = isAutoBackupEnabled,
+                    onCheckedChange = onAutoBackupEnabledChange,
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00897B), checkedTrackColor = Color(0xFF80CBC4), uncheckedThumbColor = Color.Gray, uncheckedTrackColor = Color.DarkGray)
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) Color(0xFF00897B) else Color.Gray)
+            }
+            
+            Spacer(Modifier.height(8.dp))
+            
+            OutlinedCard(
+                colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFF00897B).copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF4DB6AC), modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Các tệp sẽ được lưu và giữ nguyên cấu trúc thư mục của máy vào trong thư mục /AutoBackup/ trên NAS.",
+                        fontSize = 11.sp, color = Color(0xFFB2DFDB), lineHeight = 14.sp
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) Color(0xFF00897B) else Color.Gray)
                 }
-                
-                Spacer(Modifier.height(8.dp))
-                
-                // Giải thích về cách lưu của bản nâng cấp mới
-                OutlinedCard(
-                    colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFE0F2F1).copy(alpha = 0.5f)),
-                    border = BorderStroke(1.dp, Color(0xFFB2DFDB)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00897B), modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Các tệp sẽ được lưu và giữ nguyên cấu trúc thư mục của máy vào trong thư mục /AutoBackup/ trên NAS.",
-                            fontSize = 11.sp, color = Color(0xFF00695C), lineHeight = 14.sp
-                        )
-                    }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = Color.DarkGray)
+            Spacer(Modifier.height(16.dp))
+
+            Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(false) }.padding(vertical = 4.dp)) {
+                RadioButton(
+                    selected = !deleteAfterBackup,
+                    onClick = { onDeleteAfterBackupChange(false) },
+                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF43A047), unselectedColor = Color.Gray)
+                )
+                Column {
+                    Text("Chỉ Sao lưu (Copy)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (!deleteAfterBackup) Color(0xFF43A047) else Color.LightGray)
+                    Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 12.sp, color = Color.Gray)
                 }
+            }
 
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = Color.Gray.copy(alpha = 0.2f))
-                Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
-                Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(false) }) {
-                    RadioButton(
-                        selected = !deleteAfterBackup,
-                        onClick = { onDeleteAfterBackupChange(false) },
-                        colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00897B))
-                    )
-                    Column {
-                        Text("Chỉ Sao lưu (Copy)", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 11.sp, color = Color.Gray)
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(true) }.padding(vertical = 4.dp)) {
+                RadioButton(
+                    selected = deleteAfterBackup,
+                    onClick = { onDeleteAfterBackupChange(true) },
+                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFE53935), unselectedColor = Color.Gray)
+                )
+                Column {
+                    Text("Sao lưu & Giải phóng (Move)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) Color(0xFFE53935) else Color.LightGray)
+                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 12.sp, color = Color.Gray)
                 }
+            }
 
-                Spacer(Modifier.height(8.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(true) }) {
-                    RadioButton(
-                        selected = deleteAfterBackup,
-                        onClick = { onDeleteAfterBackupChange(true) },
-                        colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFE53935))
-                    )
-                    Column {
-                        Text("Sao lưu & Giải phóng (Move)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
-                        Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 11.sp, color = Color.Gray)
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
+            
+            // Buttons Row
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onTriggerManualSync,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE0F2F1)),
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.Sync, contentDescription = "Sync Now", tint = Color(0xFF00897B))
-                    Spacer(Modifier.width(8.dp))
-                    Text("ĐỒNG BỘ NGAY BÂY GIỜ", color = Color(0xFF00897B), fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("ĐỒNG BỘ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                
+                Button(
+                    onClick = { onSaveAndSchedule(); onDismiss() },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
-        },
-        confirmButton = {
-            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-            Button(
-                onClick = onSaveAndSchedule,
-                interactionSource = interactionSource,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                contentPadding = PaddingValues(),
-                modifier = Modifier.background(
-                    brush = androidx.compose.ui.graphics.Brush.linearGradient(colors = listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))),
-                    shape = RoundedCornerShape(24.dp)
-                )
-            ) {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Lưu", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF00897B)) } },
-        shape = RoundedCornerShape(16.dp)
-    )
+            Spacer(Modifier.height(32.dp))
+        }
+    }
 }
 
 // ====================================================================
@@ -856,6 +853,7 @@ fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 // LanWhitelistDialog — Quản lý danh sách IP/Subnet được truy cập nội bộ
 // ════════════════════════════════════════════════════════════════════════════
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LanWhitelistDialog(
     viewModel: WebDavViewModel,
@@ -870,12 +868,15 @@ fun LanWhitelistDialog(
     var newEntry by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { viewModel.loadLanWhitelist() }
 
-    AlertDialog(
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF16213E),
-        shape = RoundedCornerShape(20.dp),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).heightIn(max = 600.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                 Icon(Icons.Default.Wifi, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Column {
@@ -883,92 +884,101 @@ fun LanWhitelistDialog(
                     Text("IP truy cập không cần Tailscale", color = Color(0xFF8892B0), fontSize = 11.sp)
                 }
             }
-        },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = newEntry,
-                        onValueChange = { newEntry = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("192.168.1.0/24", color = Color(0xFF8892B0), fontSize = 13.sp) },
-                        singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Color(0xFFE8E8E8)),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF66BB6A),
-                            unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                            cursorColor = Color(0xFF66BB6A),
-                            focusedTextColor = Color(0xFFE8E8E8),
-                            unfocusedTextColor = Color(0xFFE8E8E8)
-                        )
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newEntry,
+                    onValueChange = { newEntry = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("192.168.1.0/24", color = Color(0xFF8892B0), fontSize = 13.sp) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Color(0xFFE8E8E8)),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF66BB6A),
+                        unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
+                        cursorColor = Color(0xFF66BB6A),
+                        focusedTextColor = Color(0xFFE8E8E8),
+                        unfocusedTextColor = Color(0xFFE8E8E8)
                     )
-                    Spacer(Modifier.width(8.dp))
-                    IconButton(
-                        onClick = {
-                            if (newEntry.isNotBlank()) {
-                                viewModel.addLanWhitelistEntry(newEntry.trim())
-                                newEntry = ""
-                            }
-                        },
-                        modifier = Modifier.size(40.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape)
-                    ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A)) }
+                )
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = {
+                        if (newEntry.isNotBlank()) {
+                            viewModel.addLanWhitelistEntry(newEntry.trim())
+                            newEntry = ""
+                        }
+                    },
+                    modifier = Modifier.size(48.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A)) }
+            }
+
+            if (statusMessage.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(statusMessage, fontSize = 12.sp, color = if (statusMessage.startsWith("✅")) Color(0xFF66BB6A) else if (statusMessage.startsWith("❌")) Color(0xFFFF1744) else Color(0xFF8892B0))
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            if (isLoading) {
+                Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF66BB6A), modifier = Modifier.size(28.dp))
                 }
-
-                if (statusMessage.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(statusMessage, fontSize = 11.sp, color = if (statusMessage.startsWith("✅")) Color(0xFF66BB6A) else if (statusMessage.startsWith("❌")) Color(0xFFFF1744) else Color(0xFF8892B0))
+            } else if (errorMessage.isNotBlank()) {
+                Text(errorMessage, color = Color(0xFFFF1744), fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+            } else if (subnetList.isEmpty() && ipList.isEmpty()) {
+                Box(Modifier.fillMaxWidth().weight(1f, fill = false), contentAlignment = Alignment.Center) {
+                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.padding(16.dp))
                 }
-
-                Spacer(Modifier.height(12.dp))
-
-                if (isLoading) {
-                    Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color(0xFF66BB6A), modifier = Modifier.size(28.dp))
-                    }
-                } else if (errorMessage.isNotBlank()) {
-                    Text(errorMessage, color = Color(0xFFFF1744), fontSize = 13.sp, modifier = Modifier.padding(8.dp))
-                } else if (subnetList.isEmpty() && ipList.isEmpty()) {
-                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.padding(8.dp))
-                } else {
-                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        if (subnetList.isNotEmpty()) {
-                            Text("SUBNET", fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            Spacer(Modifier.height(4.dp))
-                            subnetList.forEach { subnet ->
-                                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                                    IconButton(
-                                        onClick = { viewModel.removeLanWhitelistEntry(subnet, true) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
-                                }
+            } else {
+                Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    if (subnetList.isNotEmpty()) {
+                        Text("SUBNET", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Spacer(Modifier.height(4.dp))
+                        subnetList.forEach { subnet ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                IconButton(
+                                    onClick = { viewModel.removeLanWhitelistEntry(subnet, true) },
+                                    modifier = Modifier.size(28.dp)
+                                ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
                             }
                         }
-                        if (ipList.isNotEmpty()) {
-                            if (subnetList.isNotEmpty()) Spacer(Modifier.height(8.dp))
-                            Text("IP", fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            Spacer(Modifier.height(4.dp))
-                            ipList.forEach { ip ->
-                                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                                    IconButton(
-                                        onClick = { viewModel.removeLanWhitelistEntry(ip, false) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
-                                }
+                    }
+                    if (ipList.isNotEmpty()) {
+                        if (subnetList.isNotEmpty()) Spacer(Modifier.height(12.dp))
+                        Text("IP", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Spacer(Modifier.height(4.dp))
+                        ipList.forEach { ip ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                IconButton(
+                                    onClick = { viewModel.removeLanWhitelistEntry(ip, false) },
+                                    modifier = Modifier.size(28.dp)
+                                ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Đóng", color = Color(0xFF66BB6A), fontWeight = FontWeight.SemiBold) } }
-    )
+
+            Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF263238)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("ĐÓNG", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(32.dp))
+        }
+    }
 }
 
 // (Đã xoá SmartSyncDialog theo yêu cầu)
@@ -1342,6 +1352,7 @@ fun MultiDeleteDialog(
 // LivestreamRecordDialog — Ghi hinh Livestream TikTok / Facebook / YouTube
 // ════════════════════════════════════════════════════════════════════════════
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LivestreamRecordDialog(
     viewModel: WebDavViewModel,
@@ -1365,180 +1376,185 @@ fun LivestreamRecordDialog(
         }
     }
     val activePlatform = detectedPlatform.ifEmpty { "livestream" }
-    val platformIcon = when (activePlatform) { "tiktok" -> "\uD83C\uDFB5"; "facebook" -> "\uD83D\uDCD8"; "youtube" -> "\u25B6\uFE0F"; "shopee" -> "\uD83D\uDED2"; else -> "\uD83D\uDCF9" }
+    val platformIcon = when (activePlatform) { "tiktok" -> "🎵"; "facebook" -> "📘"; "youtube" -> "▶️"; "shopee" -> "🛒"; else -> "📹" }
     val platformName = when (activePlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
     val accentColor = when (activePlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
 
-    AlertDialog(
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = { if (activeLivestreams.isEmpty()) onDismiss() },
-        containerColor = Color(0xFF16213E),
-        shape = RoundedCornerShape(20.dp),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(platformIcon, fontSize = 22.sp)
-                Spacer(Modifier.width(8.dp))
-                Column {
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).heightIn(max = 600.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                Text(platformIcon, fontSize = 24.sp)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Ghi hình Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Ghi trực tiếp > NAS HDD", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("Ghi trực tiếp vào NAS HDD", color = Color(0xFF8892B0), fontSize = 12.sp)
+                }
+                if (activeLivestreams.isNotEmpty()) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Thu nhỏ", tint = Color.Gray)
+                    }
                 }
             }
-        },
-        text = {
-            Box {
-                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
-                
-                // --- PHẦN 1: FORM TẠO JOB MỚI ---
-                OutlinedTextField(
-                    value = liveUrl,
-                    onValueChange = { liveUrl = it },
-                    label = { Text("Dán link livestream", color = Color(0xFF8892B0)) },
-                    placeholder = { Text("https://www.tiktok.com/@user/live", color = Color(0xFF8892B0).copy(alpha = 0.5f), fontSize = 12.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = accentColor,
-                        unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                        cursorColor = accentColor,
-                        focusedTextColor = Color(0xFFE8E8E8),
-                        unfocusedTextColor = Color(0xFFE8E8E8)
-                    ),
-                    trailingIcon = { if (detectedPlatform.isNotEmpty()) { Text(platformIcon, fontSize = 18.sp) } }
-                )
+
+            // --- PHẦN 1: FORM TẠO JOB MỚI ---
+            OutlinedTextField(
+                value = liveUrl,
+                onValueChange = { liveUrl = it },
+                label = { Text("Dán link livestream", color = Color(0xFF8892B0)) },
+                placeholder = { Text("https://www.tiktok.com/@user/live", color = Color(0xFF8892B0).copy(alpha = 0.5f), fontSize = 12.sp) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = accentColor,
+                    unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
+                    cursorColor = accentColor,
+                    focusedTextColor = Color(0xFFE8E8E8),
+                    unfocusedTextColor = Color(0xFFE8E8E8)
+                ),
+                trailingIcon = { if (detectedPlatform.isNotEmpty()) { Text(platformIcon, fontSize = 18.sp) } }
+            )
+            
+            Spacer(Modifier.height(12.dp))
+            
+            if (detectedPlatform.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(platformIcon, fontSize = 16.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Đã nhận diện: $platformName Live", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
                 Spacer(Modifier.height(12.dp))
-                if (detectedPlatform.isNotEmpty()) {
-                    Row(
-                        Modifier.fillMaxWidth().background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(platformIcon, fontSize = 16.sp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Đã nhận diện: $platformName Live", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    }
-                    Spacer(Modifier.height(12.dp))
+            }
+            
+            Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
+                    val selected = selectedQuality == value
+                    FilterChip(
+                        selected = selected,
+                        onClick = { selectedQuality = value },
+                        label = { Text(label, fontSize = 12.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = accentColor.copy(alpha = 0.2f),
+                            selectedLabelColor = accentColor,
+                            containerColor = Color.Transparent,
+                            labelColor = Color(0xFF8892B0)
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            borderColor = Color(0xFF8892B0).copy(alpha = 0.2f),
+                            selectedBorderColor = accentColor.copy(alpha = 0.5f),
+                            enabled = true,
+                            selected = selected
+                        ),
+                        modifier = Modifier.height(36.dp)
+                    )
                 }
-                Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
-                        val selected = selectedQuality == value
-                        FilterChip(
-                            selected = selected,
-                            onClick = { selectedQuality = value },
-                            label = { Text(label, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = accentColor.copy(alpha = 0.2f),
-                                selectedLabelColor = accentColor,
-                                containerColor = Color.Transparent,
-                                labelColor = Color(0xFF8892B0)
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                borderColor = Color(0xFF8892B0).copy(alpha = 0.2f),
-                                selectedBorderColor = accentColor.copy(alpha = 0.5f),
-                                enabled = true,
-                                selected = selected
-                            )
-                        )
-                    }
-                }
-                
-                if (viewModel.isStartingLivestream) {
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = accentColor, strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                } else if (message.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(message, color = Color(0xFF8892B0), fontSize = 12.sp)
-                }
-
+            }
+            
+            if (viewModel.isStartingLivestream) {
                 Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else if (message.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(message, color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            } else {
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = { if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) { viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality) } },
+                    enabled = liveUrl.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
 
-                // --- PHẦN 2: DANH SÁCH CÁC JOB ĐANG GHI ---
-                if (activeLivestreams.isNotEmpty()) {
-                    Text("ĐANG GHI HÌNH (${activeLivestreams.size})", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Spacer(Modifier.height(8.dp))
-                    
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(activeLivestreams.size) { index ->
-                            val job = activeLivestreams[index]
-                            val jobPlatform = job.platform.ifEmpty { "livestream" }
-                            val jobPlatformName = when (jobPlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
-                            val jobAccentColor = when (jobPlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
+            Spacer(Modifier.height(20.dp))
 
-                            Column(
-                                Modifier.fillMaxWidth()
-                                    .background(Brush.verticalGradient(listOf(jobAccentColor.copy(alpha = 0.12f), Color.Transparent)), RoundedCornerShape(14.dp))
-                                    .border(1.dp, jobAccentColor.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-                                    .padding(16.dp)
+            // --- PHẦN 2: DANH SÁCH CÁC JOB ĐANG GHI ---
+            if (activeLivestreams.isNotEmpty()) {
+                HorizontalDivider(color = Color.DarkGray)
+                Spacer(Modifier.height(12.dp))
+                Text("ĐANG GHI HÌNH (${activeLivestreams.size})", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.height(12.dp))
+                
+                androidx.compose.foundation.lazy.LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f, fill = false)
+                ) {
+                    items(activeLivestreams.size) { index ->
+                        val job = activeLivestreams[index]
+                        val jobPlatform = job.platform.ifEmpty { "livestream" }
+                        val jobPlatformName = when (jobPlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
+                        val jobAccentColor = when (jobPlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
+
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .background(Brush.verticalGradient(listOf(jobAccentColor.copy(alpha = 0.12f), Color.Transparent)), RoundedCornerShape(14.dp))
+                                .border(1.dp, jobAccentColor.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                                .padding(16.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val pulse = rememberInfiniteTransition(label = "pulse")
+                                val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.3f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "pulseAlpha")
+                                Box(Modifier.size(10.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                                Spacer(Modifier.width(8.dp))
+                                Text("GHI HÌNH", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                Spacer(Modifier.weight(1f))
+                                Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column {
+                                    Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
+                                    LaunchedEffect(job.jobId, job.durationSeconds) {
+                                        localSeconds = job.durationSeconds
+                                        while(true) { delay(1000); localSeconds++ }
+                                    }
+                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                    Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("Dung lượng (tạm tính)", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (job.speed.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text("Tốc độ: ${job.speed}", color = Color(0xFF8892B0), fontSize = 12.sp) }
+                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            Spacer(Modifier.height(16.dp))
+                            Button(
+                                onClick = { viewModel.stopLivestreamRecord(context, job.jobId) },
+                                modifier = Modifier.fillMaxWidth().height(42.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
+                                shape = RoundedCornerShape(10.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val pulse = rememberInfiniteTransition(label = "pulse")
-                                    val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.3f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "pulseAlpha")
-                                    Box(Modifier.size(10.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("GHI HÌNH", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Spacer(Modifier.weight(1f))
-                                    Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                                Spacer(Modifier.height(12.dp))
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Column {
-                                        Text("Thời gian tải", color = Color(0xFF8892B0), fontSize = 9.sp)
-                                        var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
-                                        LaunchedEffect(job.jobId, job.durationSeconds) {
-                                            localSeconds = job.durationSeconds
-                                            while(true) { delay(1000); localSeconds++ }
-                                        }
-                                        val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
-                                        Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 9.sp)
-                                        Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                                if (job.speed.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text("Tốc độ ghi: ${job.speed}", color = Color(0xFF8892B0), fontSize = 11.sp) }
-                                if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                Spacer(Modifier.height(12.dp))
-                                Button(
-                                    onClick = { viewModel.stopLivestreamRecord(context, job.jobId) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Icon(Icons.Default.Stop, null, tint = Color.Red, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Dừng Ghi", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                }
+                                Icon(Icons.Default.Stop, null, tint = Color.Red, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("DỪNG GHI", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
                 }
-                } // Đong Column
-                
-                // Đã gỡ bỏ Overlay Loading chiếm vị trí vì nó che hết UI, dùng cái inline Text ở phía trên
-            }
-        },
-        confirmButton = {
-            Row {
-                TextButton(onClick = onDismiss) { Text(if (activeLivestreams.isNotEmpty()) "Thu nhỏ" else "Đóng", color = Color(0xFF8892B0)) }
-                Spacer(Modifier.width(8.dp))
-                Button(
-                        onClick = { if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) { viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality) } },
-                        enabled = liveUrl.isNotBlank() && !viewModel.isStartingLivestream,
-                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Bắt đầu ghi", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    }
+            } else {
+                Spacer(Modifier.height(24.dp))
             }
         }
-    )
+    }
 }

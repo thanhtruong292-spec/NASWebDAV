@@ -1304,14 +1304,6 @@ fun ToolboxDialog(
                 color = Color(0xFFEF5350),
                 onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
             )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Smart Gallery",
-                subtitle = if (viewModel.aiRunning) "Đang quét ảnh..." else "Quét và phân loại ảnh",
-                icon = Icons.Default.AutoAwesome,
-                color = Color(0xFFAB47BC),
-                onClick = { onDismiss(); viewModel.triggerAiScan(context) }
-            )
             Spacer(Modifier.height(32.dp))
         }
     }
