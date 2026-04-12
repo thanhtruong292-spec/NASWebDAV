@@ -52,9 +52,9 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 
 // ============ BẢNG MÀU CHUYÊN NGHIỆP ============
-private val DarkSurface = Color(0xFF1A1A2E)
-private val DarkCard = Color(0xFF16213E)
-private val AccentBlue = Color(0xFF0F3460)
+private val DarkSurface = Color.Black
+private val DarkCard = Color(0xFF0F0F0F)
+private val AccentBlue = Color(0xFF1976D2)
 private val AccentCyan = Color(0xFF00D2FF)
 private val AccentGreen = Color(0xFF00E676)
 private val AccentOrange = Color(0xFFFF9100)
@@ -436,7 +436,7 @@ fun MainMenuScreen(
                 Text("HỆ THỐNG", fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp)
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(
                         title = "CPU", value = viewModel.systemStatus.cpu,
                         subValue = viewModel.systemStatus.cpuTemp,
@@ -449,10 +449,23 @@ fun MainMenuScreen(
                         icon = Icons.Default.Memory,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
                         modifier = Modifier.weight(1f),
-                        overridePercent = viewModel.systemStatus.ramPercent.toFloatOrNull()
+                        overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull()
                     )
+                    
+                    val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
+                    if (hddDisk != null) {
+                        GaugeCard(
+                            title = "Ổ CỨNG", value = "${hddDisk.used} / ${hddDisk.total}",
+                            subValue = "${hddDisk.percent}%",
+                            icon = Icons.Default.Storage,
+                            gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
+                            modifier = Modifier.weight(1f),
+                            overridePercent = hddDisk.percent
+                        )
+                    } else Spacer(Modifier.weight(1f))
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
+
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -464,22 +477,14 @@ fun MainMenuScreen(
                     androidx.compose.material3.VerticalDivider(modifier = Modifier.height(20.dp), color = TextSecondary.copy(alpha = 0.12f))
                     InlineStatRow("↑", "TẢI LÊN", viewModel.systemStatus.netTx, Color(0xFFAB47BC))
                 }
-                
-                // Disk info gộp thẳng vào thẻ Hệ thống
-                if (viewModel.systemStatus.diskParts.isNotEmpty()) {
-                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.1f), modifier = Modifier.padding(vertical = 10.dp))
-                    viewModel.systemStatus.diskParts.forEach { part ->
-                         DiskPartitionBar(mount = part.mount, percent = part.percent, total = part.total, used = part.used)
-                         Spacer(Modifier.height(6.dp))
-                    }
-                }
             }
         }
         
-        // Disk Partitions đã được gộp vào Thẻ hệ thống ở trên.
-        Spacer(Modifier.height(14.dp))
-        Text("TÁC VỤ NỀN", fontSize = 12.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 16.dp))
+        // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
         Spacer(Modifier.height(8.dp))
+        com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
+        Spacer(Modifier.height(4.dp))
+        
         SystemStatusCards(viewModel, mContext)
 
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
@@ -965,7 +970,7 @@ fun SystemStatusItem(title: String, value: String, icon: ImageVector, color: Col
 fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+        colors = CardDefaults.cardColors(containerColor = Color.Black),
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -1249,442 +1254,160 @@ fun ToolboxDialog(
 
 @Composable
 fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Context) {
-  Column(Modifier.fillMaxWidth()) {
-        // Đã THẺ THUMBNAIL STATUS Đã 
-        // Auto-fetch THỜI GIAN THỰC: 2s khi đang chạy/tạm dừng, 10s khi rảnh
-        LaunchedEffect(Unit) {
+    // 1. Thumbnail Status
+    LaunchedEffect(Unit) {
+        viewModel.fetchThumbStatus()
+        while (true) {
+            val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
+            kotlinx.coroutines.delay(interval)
             viewModel.fetchThumbStatus()
-            while (true) {
-                val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
-                kotlinx.coroutines.delay(interval)
-                viewModel.fetchThumbStatus()
-            }
         }
-        val thumbPercent = if (viewModel.thumbTotal > 0)
-            viewModel.thumbGenerated * 100f / viewModel.thumbTotal else 0f
-            
-        val thumbIsActive = viewModel.thumbRunning || viewModel.thumbPaused || (thumbPercent > 0f && thumbPercent < 100f)
-        androidx.compose.animation.AnimatedVisibility(visible = thumbIsActive) {
-            Column {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-            Column(Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(38.dp)
-                            .background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.PhotoLibrary, null,
-                            tint = Color(0xFFAB47BC),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Trình Tạo Ảnh Thu Nhỏ?",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            when {
-                                viewModel.thumbPaused -> "Đã Tạm dừng"
-                                viewModel.thumbRunning -> "🟢 Đang chạy"
-                                else -> "💤 Tạm nghỉ"
-                            },
-                            fontSize = 11.sp,
-                            color = when {
-                                viewModel.thumbPaused -> Color(0xFFFFA726)
-                                viewModel.thumbRunning -> Color(0xFF66BB6A)
-                                else -> TextSecondary
-                            }
-                        )
-                    }
-                    // Nút Tạm dừng / Tiếp tục
-                    if (viewModel.thumbRunning || viewModel.thumbPaused) {
-                        IconButton(
-                            onClick = { viewModel.toggleThumbPause() },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                if (viewModel.thumbPaused) "Tiếp tục" else "Tạm dừng",
-                                tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                    // Nút refresh
-                    IconButton(
-                        onClick = { viewModel.fetchThumbStatus() },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Refresh, "Làm mới",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                // Thanh tiến trình
-                LinearProgressIndicator(
-                    progress = { (thumbPercent / 100f).coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = Color(0xFFAB47BC),
-                    trackColor = Color(0xFF2A2A2A),
-                )
-                Spacer(Modifier.height(6.dp))
-                // Số liệu
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "${viewModel.thumbGenerated} / ${viewModel.thumbTotal}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextPrimary
-                    )
-                    Text(
-                        "%.1f%%".format(thumbPercent),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFAB47BC)
-                    )
-                }
-                if (viewModel.thumbErrors > 0) {
-                    Text(
-                        "⚠ ${viewModel.thumbErrors} lỗi",
-                        fontSize = 10.sp,
-                        color = Color(0xFFFF7043)
-                    )
-                }
-                if (viewModel.thumbLastFile.isNotBlank()) {
-                    Text(
-                        viewModel.thumbLastFile,
-                        fontSize = 10.sp,
-                        color = TextSecondary,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                }
-                if (viewModel.thumbRunning && viewModel.thumbElapsed > 0) {
-                    val textToShow = if (viewModel.thumbEta > 0) {
-                        "Đã ${viewModel.thumbElapsedFmt} / ${viewModel.thumbEtaFmt}"
-                    } else {
-                        "Đã ${viewModel.thumbElapsedFmt}"
-                    }
-                    
-                    Text(
-                        textToShow,
-                        fontSize = 10.sp,
-                        color = TextSecondary
-                    )
-                }
-            }
-        }
+    }
+    val thumbPercent = if (viewModel.thumbTotal > 0) viewModel.thumbGenerated * 100f / viewModel.thumbTotal else 0f
+    val thumbIsActive = viewModel.thumbRunning || viewModel.thumbPaused || (thumbPercent > 0f && thumbPercent < 100f)
+
+    // 2. Duplicate Scan
+    val dupStage by DuplicateProgressState.stage.collectAsState()
+    val dupPercent by DuplicateProgressState.percent.collectAsState()
+    val dupScanned by DuplicateProgressState.scannedCount.collectAsState()
+    val dupFound by DuplicateProgressState.foundCount.collectAsState()
+    val dupStageDesc by DuplicateProgressState.stageDescription.collectAsState()
+    val dupStageNum by DuplicateProgressState.stageNumber.collectAsState()
+    val dupTotalStages by DuplicateProgressState.totalStages.collectAsState()
+    val dupElapsed by DuplicateProgressState.elapsedTime.collectAsState()
+    val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
+    val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
+    val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
+    val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..."
+
+    // 3. Auto Backup
+    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
+    val autoBackupIsActive = viewModel.isAutoBackupRunning
+    
+    // 4. Livestream
+    val activeStreams = viewModel.activeLivestreams
+
+    val hasAnyTasks = thumbIsActive || dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty()
+
+    if (!hasAnyTasks) return
+
+    Column(Modifier.fillMaxWidth()) {
+        Spacer(Modifier.height(14.dp))
+        Text("TÁC VỤ NỀN", fontSize = 12.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 16.dp))
         Spacer(Modifier.height(8.dp))
-            }
-        }
 
-        // Đã THẺ QUÉT TRÙNG LẶP (DuplicateScanWorker) Đã 
-        val dupStage by DuplicateProgressState.stage.collectAsState()
-        val dupPercent by DuplicateProgressState.percent.collectAsState()
-        val dupScanned by DuplicateProgressState.scannedCount.collectAsState()
-        val dupFound by DuplicateProgressState.foundCount.collectAsState()
-        val dupStageDesc by DuplicateProgressState.stageDescription.collectAsState()
-        val dupStageNum by DuplicateProgressState.stageNumber.collectAsState()
-        val dupTotalStages by DuplicateProgressState.totalStages.collectAsState()
-        val dupElapsed by DuplicateProgressState.elapsedTime.collectAsState()
-        val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
-        val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
-        val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && dupPercent < 1f && dupPercent > 0f
-        
-        val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..."
-        androidx.compose.animation.AnimatedVisibility(visible = dupIsActive) {
-            Column {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
+        Card(
+            modifier = Modifier.fillMaxWidth().animateContentSize(),
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+            shape = RoundedCornerShape(14.dp)
+        ) {
             Column(Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(38.dp)
-                            .background(Color(0xFFEF5350).copy(alpha = 0.15f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Default.ContentCopy, null,
-                            tint = Color(0xFFEF5350),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Quét trùng lặp",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            if (dupIsRunning) { if (dupIsPaused) "Đã Đang tạm dừng" else "🟢 $dupStage" } else if (dupPercent >= 1f) "✅ Hoàn tất" else "Đã Chờ",
-                            fontSize = 11.sp,
-                            color = if (dupIsRunning) { if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A) }
-                                    else if (dupPercent >= 1f) Color(0xFF66BB6A) else TextSecondary,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                    }
-                    // Hiển thị giai đoạn
-                    if (dupIsRunning || dupPercent >= 1f) {
-                        Text(
-                            "$dupStageNum/$dupTotalStages",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFEF5350)
-                        )
-                    }
-                }
-                if (dupIsRunning || dupPercent >= 1f) {
-                    Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { dupPercent.coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                        color = Color(0xFFEF5350),
-                        trackColor = Color(0xFF2A2A2A),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            "Đã quét: $dupScanned | Trùng: $dupFound",
-                            fontSize = 11.sp,
-                            color = TextPrimary
-                        )
-                        Text(
-                            "%.0f%%".format(dupPercent * 100f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFEF5350)
-                        )
-                    }
-                    if (dupStageDesc.isNotBlank()) {
-                        Text(
-                            dupStageDesc,
-                            fontSize = 10.sp,
-                            color = TextSecondary,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                    }
-                    if (dupIsRunning && dupElapsed > 0L) {
-                        val elapsedMin = dupElapsed / 60000
-                        val elapsedSec = (dupElapsed / 1000) % 60
-                        val etaText = if (dupEta > 0L) {
-                            val etaMin = dupEta / 60000
-                            val etaSec = (dupEta / 1000) % 60
-                            " | ETA: ${etaMin}p${etaSec}s"
-                        } else ""
-                        Text(
-                            "Đã ${elapsedMin}p${elapsedSec}s$etaText",
-                            fontSize = 10.sp,
-                            color = TextSecondary
-                        )
-                    }
-                    if (dupIsRunning) {
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) {
-                                Text("Hủy bỏ?", color = Color(0xFFE57373), fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            TextButton(onClick = { viewModel.togglePauseDuplicateScan() }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) {
-                                Text(if (dupIsPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        // Đã THẺ TỰ ĐỘNG ĐỒNG BỘ (AutoBackup) Đã 
-        val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
-
-        // Đọc log gần nhất từ DB cho AutoBackup và SmartSync — THỜI GIAN THỰC mỗi 10s
-        var lastSyncLog by remember { mutableStateOf("") }
-        var lastBackupLog by remember { mutableStateOf("") }
-        LaunchedEffect(Unit) {
-            while (true) {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        val db = NasApplication.instance.database
-                        val syncLogs = db.logDao().getLogsByModule("SmartSync", 1)
-                        if (syncLogs.isNotEmpty()) lastSyncLog = syncLogs[0].message
-                        val backupLogs = db.logDao().getLogsByModule("AutoBackup", 1)
-                        if (backupLogs.isNotEmpty()) lastBackupLog = backupLogs[0].message
-                    } catch (_: Exception) {}
-                }
-                kotlinx.coroutines.delay(10_000L)
-            }
-        }
-
-        Column {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(38.dp)
-                                .background(Color(0xFF26A69A).copy(alpha = 0.15f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.CloudDone, null,
-                                tint = Color(0xFF26A69A),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "Tự động đồng bộ",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                if (autoBackupEnabled) "Trạng thái: Bật đồng bộ ngầm định kỳ" else "Trạng thái: Chờ đồng bộ thủ công",
-                                fontSize = 10.sp,
-                                color = if (autoBackupEnabled) Color(0xFF66BB6A) else TextSecondary
-                            )
-                        }
-                        
+                // --- THÔNG LỆ THUMBNAIL ---
+                androidx.compose.animation.AnimatedVisibility(visible = thumbIsActive) {
+                    Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (viewModel.isAutoBackupRunning) {
-                                IconButton(onClick = { viewModel.toggleAutoBackupPause() }) {
-                                    Icon(
-                                        if (viewModel.autoBackupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                        contentDescription = "Tạm dừng",
-                                        tint = if (viewModel.autoBackupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                            Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.PhotoLibrary, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Trình Tạo Ảnh Thu Nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text(when { viewModel.thumbPaused -> "Đã Tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
+                            }
+                            if (viewModel.thumbRunning || viewModel.thumbPaused) {
+                                IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
+                            }
+                            IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp)) }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(progress = { (thumbPercent / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFFAB47BC), trackColor = Color(0xFF161616))
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("${viewModel.thumbGenerated} / ${viewModel.thumbTotal}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                            Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFAB47BC))
+                        }
+                    }
+                }
+
+                if (thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
+                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                }
+
+                // --- DUPLICATE QUÉT ---
+                androidx.compose.animation.AnimatedVisibility(visible = dupIsActive) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(38.dp).background(Color(0xFF29B6F6).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Quét Trùng Lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text(if (dupIsPaused) "⏸ Đã tạm dừng" else (if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét"), fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
+                            }
+                            if (dupIsRunning || dupIsPaused) {
+                                IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
+                                    Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
+                                }
+                                IconButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                 }
                             }
-                            IconButton(onClick = {
-                                viewModel.triggerManualBackup(mContext)
-                            }) {
-                                Icon(
-                                    Icons.Default.Sync,
-                                    contentDescription = "Sync Now",
-                                    tint = Color(0xFF26A69A),
-                                    modifier = Modifier.size(24.dp)
-                                )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(progress = { dupPercent.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFF29B6F6), trackColor = Color(0xFF161616))
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("$dupStage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                            Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                        }
+                    }
+                }
+
+                if (dupIsActive && (autoBackupIsActive || activeStreams.isNotEmpty())) {
+                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                }
+
+                // --- AUTO BACKUP ---
+                androidx.compose.animation.AnimatedVisibility(visible = autoBackupIsActive) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text("🟢 Đang đồng bộ nền...", fontSize = 11.sp, color = Color(0xFF66BB6A))
                             }
                         }
                     }
-                    if (viewModel.isAutoBackupRunning) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            if (viewModel.autoBackupIsPaused) "Tạm dừng sao lưu..." else "Đang sao lưu: ${viewModel.autoBackupCurrentFile}",
-                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else AccentCyan, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        val totalPercent = if(viewModel.autoBackupTotalCount > 0) viewModel.autoBackupProcessedCount.toFloat() / viewModel.autoBackupTotalCount else 0f
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Tổng tiến trình: ${viewModel.autoBackupProcessedCount}/${viewModel.autoBackupTotalCount} tệp", fontSize = 10.sp, color = TextSecondary)
-                            Text("${(totalPercent * 100).toInt()}%", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF64B5F6))
+                }
+
+                if (autoBackupIsActive && activeStreams.isNotEmpty()) {
+                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                }
+
+                // --- LIVESTREAM ---
+                androidx.compose.animation.AnimatedVisibility(visible = activeStreams.isNotEmpty()) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(38.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(18.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Livestream Recording", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 11.sp, color = Color(0xFFFF7043))
+                            }
                         }
-                        Spacer(Modifier.height(2.dp))
-                        LinearProgressIndicator(
-                            progress = { totalPercent.coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                            color = Color(0xFF64B5F6), trackColor = DarkSurface
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        
-                        Text("Tiến trình tệp cục bộ:", fontSize = 10.sp, color = TextSecondary)
-                        Spacer(Modifier.height(2.dp))
-                        LinearProgressIndicator(
-                            progress = { viewModel.autoBackupProgress.coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                            color = AccentCyan, trackColor = DarkSurface
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Đã Chạy: ${formatElapsedTimeUI(viewModel.autoBackupElapsedTime)}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, modifier = Modifier.weight(1f))
-                            Spacer(Modifier.width(8.dp))
-                            Text("${(viewModel.autoBackupProgress * 100).toInt()}% tệp", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
-                        }
-                    } else if (lastBackupLog.isNotBlank() || lastSyncLog.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        if (lastBackupLog.isNotBlank()) {
-                            Text(
-                                "📦 $lastBackupLog",
-                                fontSize = 10.sp,
-                                color = TextSecondary,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                        }
-                        if (lastSyncLog.isNotBlank()) {
-                            Text(
-                                "🔄 $lastSyncLog",
-                                fontSize = 10.sp,
-                                color = TextSecondary,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                        }
-                    } else if (!autoBackupEnabled) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Nhấn vào đây để thiết lập sao lưu",
-                            fontSize = 11.sp,
-                            color = TextSecondary,
-                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
-                        )
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
         }
-
-        // THÔNG BÁO DIALOG
-   }
+    }
 }
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// LoginScreen (từ LoginScreen.kt)
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
 private const val URL_PREFIX = "http://"
 private const val URL_SUFFIX = ":8822/webdav/"
 
@@ -1750,8 +1473,8 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
 // GuestPassScreen (từ GuestPassScreen.kt)
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-private val GpDarkSurface   = Color(0xFF1A1A2E)
-private val GpDarkCard      = Color(0xFF16213E)
+private val GpDarkSurface   = Color.Black
+private val GpDarkCard      = Color(0xFF0F0F0F)
 private val GpAccentGreen   = Color(0xFF00E676)
 private val GpAccentOrange  = Color(0xFFFF9100)
 private val GpAccentRed     = Color(0xFFFF1744)
@@ -1847,7 +1570,7 @@ fun PerformanceScreen(onBack: () -> Unit) {
     val metrics by PerformanceMonitor.metricsFlow.collectAsState()
     LaunchedEffect(Unit) { PerformanceMonitor.startMonitoring(mContext) }
     Scaffold(topBar = { TopAppBar(title = { Text("Màn Giám Sát Kỹ Thuật (DevOps Monitor)", fontSize = 18.sp, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Trở lại") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1E1E)).padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             MetricCard("Động Cơ JVM (App RAM)", Icons.Default.Memory, "${metrics.usedJvmMemoryMb} MB / ${metrics.maxJvmMemoryMb} MB", if (metrics.maxJvmMemoryMb > 0) metrics.usedJvmMemoryMb.toFloat() / metrics.maxJvmMemoryMb else 0f, if (metrics.usedJvmMemoryMb > metrics.maxJvmMemoryMb * 0.8) Color.Red else Color.Green)
             MetricCard("Bộ Nhớ Hệ Thống (Màng RAM)", Icons.Default.Adb, "Trống: ${metrics.freeRamMb} MB (Tổng: ${metrics.totalRamMb} MB)", metrics.ramUsagePercent / 100f, if (metrics.ramUsagePercent > 85) Color.Red else Color(0xFF03A9F4))
             MetricCard("Trái Tim Chip Bán Dẫn (CPU Thread)", Icons.Default.Speed, "Hoạt động: ${metrics.cpuUsagePercent}% (Dao động ảo)", metrics.cpuUsagePercent / 100f, if (metrics.cpuUsagePercent > 70) Color(0xFFFF9800) else Color.Cyan)
@@ -1864,7 +1587,7 @@ fun PerformanceScreen(onBack: () -> Unit) {
 
 @Composable
 fun MetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, progress: Float, progressColor: Color) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C)), shape = RoundedCornerShape(12.dp)) {
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, color = Color.Gray, fontSize = 14.sp) }
             Spacer(Modifier.height(8.dp)); Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(12.dp))
@@ -1875,7 +1598,7 @@ fun MetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVec
 
 @Composable
 fun NetworkBadge(modifier: Modifier, title: String, speed: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF2C2C2C)), shape = RoundedCornerShape(12.dp)) {
+    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp)); Spacer(Modifier.height(4.dp)); Text(title, color = Color.Gray, fontSize = 12.sp); Text(speed, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
