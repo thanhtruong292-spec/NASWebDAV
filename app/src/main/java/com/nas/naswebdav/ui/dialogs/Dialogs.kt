@@ -4,6 +4,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
+import kotlinx.coroutines.delay
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -437,26 +438,37 @@ fun AutoBackupDialog(
 // ====================================================================
 // DIALOG NHẬT KÝ HỆ THỐNG
 // ====================================================================
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SystemLogDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 600.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                 Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold)
+                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                Spacer(Modifier.weight(1f))
+                if (viewModel.systemLogsList.isNotEmpty()) {
+                    IconButton(onClick = { viewModel.clearSystemLogs() }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935))
+                    }
+                }
             }
-        },
-        text = {
+            
             if (viewModel.systemLogsList.isEmpty()) {
-                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(16.dp), color = Color.Gray)
+                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 16.dp), color = Color.Gray)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(items = viewModel.systemLogsList, key = { it.id }) { log ->
@@ -475,41 +487,29 @@ fun SystemLogDialog(
                         val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
 
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-                                Icon(logIcon, null, tint = logColor, modifier = Modifier.size(20.dp).padding(top = 2.dp))
+                                Icon(logIcon, null, tint = logColor, modifier = Modifier.size(18.dp).padding(top = 2.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Column {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(log.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text(log.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = logColor)
                                         Text(timeStr, fontSize = 10.sp, color = Color.Gray)
                                     }
                                     Spacer(Modifier.height(4.dp))
-                                    Text(log.message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    Text(log.message, fontSize = 12.sp, color = Color.White.copy(alpha=0.85f))
                                 }
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Đóng", color = Color(0xFF00ACC1), fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            if (viewModel.systemLogsList.isNotEmpty()) {
-                TextButton(onClick = { viewModel.clearSystemLogs() }) {
-                    Text("Xóa nhật ký", color = Color.Red)
-                }
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
 }
 
 // ====================================================================
@@ -1293,7 +1293,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 
 
 // ====================================================================
-// DIALOG T?O THU M?C M?I
+// DIALOG TẠO THƯ MỤC MỚI
 // ====================================================================
 @Composable
 fun CreateFolderDialog(
@@ -1303,25 +1303,25 @@ fun CreateFolderDialog(
     var folderName by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Thu m?c m?i") },
+        title = { Text("Thư mục mới") },
         text = {
             OutlinedTextField(
                 value = folderName,
                 onValueChange = { folderName = it },
-                label = { Text("Nh?p t�n thu m?c") },
+                label = { Text("Nhập tên thư mục") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(folderName) }) { Text("T?o") }
+            TextButton(onClick = { onConfirm(folderName) }) { Text("Tạo") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("H?y") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
     )
 }
 
 // ====================================================================
-// DIALOG X�A NHI?U T?P C�NG L�C
+// DIALOG XÓA NHIỀU TỆP CÙNG LÚC
 // ====================================================================
 @Composable
 fun MultiDeleteDialog(
@@ -1332,7 +1332,7 @@ fun MultiDeleteDialog(
 ) {
     AppStatusDialog(
         type = DialogType.WARNING,
-        message = if (isTrash) "B?n c� ch?c ch?n mu?n x�a vinh vi?n $selectedCount t?p n�y kh�ng? H�nh d?ng n�y kh�ng th? ho�n t�c." else "B?n c� ch?c ch?n mu?n dua $selectedCount t?p n�y v�o Th�ng r�c?",
+        message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn $selectedCount tệp này không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa $selectedCount tệp này vào Thùng rác?",
         onConfirm = onConfirm,
         onDismiss = onDismiss
     )
@@ -1378,19 +1378,20 @@ fun LivestreamRecordDialog(
                 Text(platformIcon, fontSize = 22.sp)
                 Spacer(Modifier.width(8.dp))
                 Column {
-                    Text("Ghi hinh Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Ghi truc tiep > NAS HDD", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("Ghi hình Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Ghi trực tiếp > NAS HDD", color = Color(0xFF8892B0), fontSize = 11.sp)
                 }
             }
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
+            Box {
+                Column(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
                 
                 // --- PHẦN 1: FORM TẠO JOB MỚI ---
                 OutlinedTextField(
                     value = liveUrl,
                     onValueChange = { liveUrl = it },
-                    label = { Text("Dan link livestream", color = Color(0xFF8892B0)) },
+                    label = { Text("Dán link livestream", color = Color(0xFF8892B0)) },
                     placeholder = { Text("https://www.tiktok.com/@user/live", color = Color(0xFF8892B0).copy(alpha = 0.5f), fontSize = 12.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -1411,14 +1412,14 @@ fun LivestreamRecordDialog(
                     ) {
                         Text(platformIcon, fontSize = 16.sp)
                         Spacer(Modifier.width(8.dp))
-                        Text("Da nhan dien: $platformName Live", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text("Đã nhận diện: $platformName Live", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
                     Spacer(Modifier.height(12.dp))
                 }
-                Text("CHAT LUONG", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("best" to "Tot nhat", "720p" to "720p", "audio" to "Chi am thanh").forEach { (value, label) ->
+                    listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
                         val selected = selectedQuality == value
                         FilterChip(
                             selected = selected,
@@ -1440,7 +1441,14 @@ fun LivestreamRecordDialog(
                     }
                 }
                 
-                if (message.isNotEmpty()) {
+                if (viewModel.isStartingLivestream) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = accentColor, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                } else if (message.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
                     Text(message, color = Color(0xFF8892B0), fontSize = 12.sp)
                 }
@@ -1480,15 +1488,21 @@ fun LivestreamRecordDialog(
                                 Spacer(Modifier.height(12.dp))
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column {
-                                        Text("Thoi luong", color = Color(0xFF8892B0), fontSize = 9.sp)
-                                        Text(job.duration.ifEmpty { "0h00m00s" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                        Text("Thời gian tải", color = Color(0xFF8892B0), fontSize = 9.sp)
+                                        var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
+                                        LaunchedEffect(job.jobId, job.durationSeconds) {
+                                            localSeconds = job.durationSeconds
+                                            while(true) { delay(1000); localSeconds++ }
+                                        }
+                                        val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                        Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                     Column(horizontalAlignment = Alignment.End) {
-                                        Text("Dung luong", color = Color(0xFF8892B0), fontSize = 9.sp)
+                                        Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 9.sp)
                                         Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
-                                if (job.speed.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text("Toc do ghi: ${job.speed}", color = Color(0xFF8892B0), fontSize = 11.sp) }
+                                if (job.speed.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text("Tốc độ ghi: ${job.speed}", color = Color(0xFF8892B0), fontSize = 11.sp) }
                                 if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(6.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                                 Spacer(Modifier.height(12.dp))
                                 Button(
@@ -1499,27 +1513,30 @@ fun LivestreamRecordDialog(
                                 ) {
                                     Icon(Icons.Default.Stop, null, tint = Color.Red, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Dung Ghi", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text("Dừng Ghi", color = Color.Red, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                                 }
                             }
                         }
                     }
                 }
+                } // Đong Column
+                
+                // Đã gỡ bỏ Overlay Loading chiếm vị trí vì nó che hết UI, dùng cái inline Text ở phía trên
             }
         },
         confirmButton = {
             Row {
-                TextButton(onClick = onDismiss) { Text(if (activeLivestreams.isNotEmpty()) "Thu nho" else "Dong", color = Color(0xFF8892B0)) }
+                TextButton(onClick = onDismiss) { Text(if (activeLivestreams.isNotEmpty()) "Thu nhỏ" else "Đóng", color = Color(0xFF8892B0)) }
                 Spacer(Modifier.width(8.dp))
                 Button(
-                        onClick = { if (liveUrl.isNotBlank()) { viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality) } },
-                        enabled = liveUrl.isNotBlank(),
+                        onClick = { if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) { viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality) } },
+                        enabled = liveUrl.isNotBlank() && !viewModel.isStartingLivestream,
                         colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Bat dau ghi", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text("Bắt đầu ghi", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
             }
         }
