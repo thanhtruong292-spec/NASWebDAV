@@ -301,6 +301,20 @@ fun MainMenuScreen(
         )
     }
 
+    // ============ TRẠNG THÁI SCROLL ============
+    val scrollState = rememberScrollState()
+    var hasOpenedToolboxAtBottom by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(scrollState.value, scrollState.maxValue) {
+        val isAtBottom = scrollState.value > 0 && scrollState.value >= scrollState.maxValue
+        if (isAtBottom && !hasOpenedToolboxAtBottom) {
+            showToolboxDialog = true
+            hasOpenedToolboxAtBottom = true
+        } else if (!isAtBottom) {
+            hasOpenedToolboxAtBottom = false
+        }
+    }
+
     // ============ GIAO DIỆN DASHBOARD CHUYÊN NGHIỆP ============
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     val pullRefreshState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
@@ -330,7 +344,7 @@ fun MainMenuScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(DarkSurface)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(horizontal = 16.dp)
         ) {
         Spacer(Modifier.height(48.dp))
