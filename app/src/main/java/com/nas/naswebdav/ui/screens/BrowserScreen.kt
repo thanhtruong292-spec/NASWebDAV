@@ -1641,7 +1641,13 @@ fun FileItemGridCell(
             .fillMaxWidth()
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onLongClick  // Luôn kích hoạt selection mode
+                onLongClick = {
+                    if (!selectionMode && file.isDirectory) {
+                        showMenu = true
+                    } else {
+                        onLongClick()
+                    }
+                }
             )
             .padding(horizontal = 1.dp, vertical = 1.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1805,7 +1811,7 @@ fun FileItemGridCell(
             }
 
             // NÚT "⋮" GÓC PHẢI TRÊN — không nền, chỉ icon
-            if (!selectionMode) {
+            if (!selectionMode && !file.isDirectory) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = "Tùy chọn",
