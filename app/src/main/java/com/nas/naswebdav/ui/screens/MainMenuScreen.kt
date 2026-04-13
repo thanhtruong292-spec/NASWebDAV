@@ -372,6 +372,7 @@ fun MainMenuScreen(
         LaunchedEffect(true) {
             viewModel.checkSmartNetwork(mContext)
             viewModel.fetchSmartData()
+            viewModel.listenToLocalNasApi() // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
             kotlinx.coroutines.delay(1000)
             pullRefreshState.endRefresh()
         }

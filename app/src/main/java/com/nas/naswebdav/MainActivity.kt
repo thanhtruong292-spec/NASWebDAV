@@ -174,6 +174,11 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                     // Quay lại trong vòng 1 phút → Hủy đếm ngược, KHÔNG lock
                     lockDelayJob?.cancel()
                     lockDelayJob = null
+                    
+                    // XÓA ĐỘ TRỄ KHI APP QUAY LẠI TỪ BACKGROUND (Force restart vòng lặp trạng thái với delay = 3s gốc)
+                    if (navController.currentDestination?.route == "main_menu") {
+                        viewModel.listenToLocalNasApi()
+                    }
                 }
                 else -> {}
             }
