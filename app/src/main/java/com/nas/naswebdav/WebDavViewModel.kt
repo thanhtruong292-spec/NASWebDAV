@@ -2154,11 +2154,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        withContext(Dispatchers.Main) { systemStatus = oldStatus } // Rollback neu loi
+                        android.util.Log.e("NasAPI", "Failed to set fan mode: HTTP ${response.code}")
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { systemStatus = oldStatus } // Rollback neu mat mang
                 android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { 
