@@ -1049,7 +1049,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 }
             }
-            if (backupCount > 0) SystemLogger.log("SUCCESS", "AutoBackup", "Đã sao lưu tự động $backupCount tệp đa phương tiện.")
+            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp trùng, Thất bại: $failedCount tệp."
+            if (backupCount > 0 || failedCount > 0) {
+                SystemLogger.log(if (failedCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
+            } else {
+                SystemLogger.log("INFO", "AutoBackup", logMessage)
+            }
             
             AutoBackupState.resultTotal.value = totalFilesToProcess
             AutoBackupState.resultSuccess.value = backupCount
