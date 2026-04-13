@@ -69,7 +69,7 @@ private val TextSecondary = Color(0xFF8892B0)
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(380, (38000 / maxOf(percent, 1))) else 9999
+    val durationMs = if (isRunning) maxOf(300, (30000 / maxOf(percent, 1))) else 9999
     
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
