@@ -1741,14 +1741,49 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
 
                         // --- AUTO BACKUP ---
                         if (autoBackupIsActive) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Box(
+                                    Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
                                     Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text("🟢 Đang đồng bộ nền...", fontSize = 11.sp, color = Color(0xFF66BB6A))
+                                    Spacer(Modifier.height(4.dp))
+                                    
+                                    val speed = if (viewModel.autoBackupElapsedTime > 1000L) {
+                                        "%.1f file/s".format(viewModel.autoBackupProcessedCount * 1000f / viewModel.autoBackupElapsedTime)
+                                    } else "Đang chuẩn bị..."
+                                    
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Tệp: ${viewModel.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        Text(speed, fontSize = 11.sp, color = Color(0xFF66BB6A), modifier = Modifier.padding(start = 4.dp))
+                                    }
+                                    
+                                    if (viewModel.autoBackupSourcePath.isNotEmpty()) {
+                                        val src = viewModel.autoBackupSourcePath.substringAfterLast("0/").trim('/')
+                                        Text("Từ: /$src", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (viewModel.autoBackupDestPath.isNotEmpty()) {
+                                        val dst = viewModel.autoBackupDestPath.substringAfter("/webdav/").trim('/')
+                                        Text("Lưu: /$dst", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+
+                                    Spacer(Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { viewModel.autoBackupProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = Color(0xFF66BB6A), trackColor = Color(0xFF161616)
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Tổng tiến trình: ${viewModel.autoBackupProcessedCount} / ${viewModel.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
+                                        val totalPercent = if(viewModel.autoBackupTotalCount > 0) (viewModel.autoBackupProcessedCount * 100f / viewModel.autoBackupTotalCount) else 0f
+                                        Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                    }
                                 }
                             }
                         }
