@@ -68,7 +68,7 @@ private val TextSecondary = Color(0xFF8892B0)
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(150, 3000 - (percent * 28)) else 9999
+    val durationMs = if (isRunning) maxOf(400, 2500 - (percent * 20)) else 9999
     
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
@@ -652,16 +652,26 @@ fun MainMenuScreen(
                                 }
                                 // Mute / Auto / Max Toggle
                                 var showFanSettings by remember { mutableStateOf(false) }
+                                var isFanControlLocked by remember { mutableStateOf(false) }
+                                val coroutineScope = rememberCoroutineScope()
                                 Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
                                     val modes = listOf("auto" to "Tự động", "custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                     val currentMode = viewModel.systemStatus.fanMode
                                     modes.forEach { (m, label) ->
                                         val active = m == currentMode
                                         Box(
-                                            Modifier.clickable {
-                                                if (m == "custom") showFanSettings = true else viewModel.setFanMode(m)
+                                            Modifier.clickable(enabled = !isFanControlLocked) {
+                                                if (m == "custom") showFanSettings = true else {
+                                                    viewModel.setFanMode(m)
+                                                    coroutineScope.launch {
+                                                        isFanControlLocked = true
+                                                        kotlinx.coroutines.delay(4000)
+                                                        isFanControlLocked = false
+                                                    }
+                                                }
                                             }
                                                 .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
+                                                .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
                                                 .padding(horizontal = 8.dp, vertical = 6.dp)
                                         ) {
                                             Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
@@ -685,10 +695,18 @@ fun MainMenuScreen(
                                             }
                                         },
                                         confirmButton = {
-                                            Button(onClick = { 
-                                                viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 65f, offTemp.toFloatOrNull() ?: 55f)
-                                                showFanSettings = false 
-                                            }) { Text("Lưu & Áp dụng") }
+                                            Button(
+                                                enabled = !isFanControlLocked,
+                                                onClick = { 
+                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 65f, offTemp.toFloatOrNull() ?: 55f)
+                                                    showFanSettings = false 
+                                                    coroutineScope.launch {
+                                                        isFanControlLocked = true
+                                                        kotlinx.coroutines.delay(4000)
+                                                        isFanControlLocked = false
+                                                    }
+                                                }
+                                            ) { Text("Lưu & Áp dụng") }
                                         },
                                         dismissButton = {
                                             androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
