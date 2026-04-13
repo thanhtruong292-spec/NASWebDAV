@@ -4342,26 +4342,13 @@ def api_livestream_status():
             pid = info.get("pid")
             status = info.get("status", "unknown")
 
-            # Kiem tra process con chay khong
-            if status == "recording":
-                is_running = False
-                try:
-                    os.kill(pid, 0)
-                    is_running = True
-                except Exception:
-                    pass
-                if not is_running:
-                    status = "finished"
-                    info["status"] = "finished"
-                    info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-            # Tim file output va lay size
+            # 1. Tim file output va lay size truoc khi danh gia status
             file_size = 0
             output_file = info.get("output_file", "")
             out_dir = info.get("output_dir", _LIVESTREAM_DIR)
             try:
                 if os.path.isdir(out_dir):
-                    # Tim file moi nhat trong thu muc Livestream
+                    # Tim file moi nhat trong thu muc Livestream cua luong nay
                     platform = info.get("platform", "")
                     timestamp_str = info.get("timestamp_str", "")
                     all_files = []
@@ -4377,6 +4364,25 @@ def api_livestream_status():
                         file_size = os.path.getsize(latest)
             except Exception:
                 pass
+
+            # 2. Kiem tra process con chay khong va set status dua vao file_size
+            if status == "recording":
+                is_running = False
+                try:
+                    os.kill(pid, 0)
+                    is_running = True
+                except Exception:
+                    pass
+                    
+                if not is_running:
+                    # Neu file be hon 150KB (thuong la cac trang bao loi HTML do CDN gui hoac file video bi hong)
+                    if file_size < 150 * 1024:
+                        status = "error"
+                        info["status"] = "error"
+                    else:
+                        status = "finished"
+                        info["status"] = "finished"
+                    info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
             # Tinh duration
             started_ts = info.get("started_ts", 0)
