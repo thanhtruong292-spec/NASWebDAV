@@ -427,11 +427,11 @@ fun MainMenuScreen(
                             onClick = { showPowerMenu = false; showShutdownConfirm = true }
                         )
                     }
-                }
             }
-        }
+            
+            Spacer(Modifier.height(12.dp))
 
-        // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã 
+            // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -450,7 +450,7 @@ fun MainMenuScreen(
                         modifier = Modifier.weight(1f)
                     )
                     GaugeCard(
-                        title = "RAM", value = viewModel.systemStatus.ram, subValue = viewModel.systemStatus.ramPercent,
+                        title = "RAM", value = viewModel.systemStatus.ram, subValue = "${viewModel.systemStatus.ramPercent}%",
                         icon = Icons.Default.Memory,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
                         modifier = Modifier.weight(1f),
