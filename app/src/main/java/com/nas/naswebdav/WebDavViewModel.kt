@@ -378,7 +378,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var showCommonDialog by mutableStateOf(false)
     // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
     private var lastNetworkErrorDialogAt = 0L
-    private var lastFanModeSettingTime = 0L
+    internal var lastFanModeSettingTime = 0L
     private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phút
 
     // STATE CHO SMART DIALOG VÀ SPEED TEST
