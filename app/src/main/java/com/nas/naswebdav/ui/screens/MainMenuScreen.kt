@@ -654,7 +654,7 @@ fun MainMenuScreen(
                                 // Mute / Auto / Max Toggle
                                 var showFanSettings by remember { mutableStateOf(false) }
                                 Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                                    val modes = listOf("auto" to "Tự động", "custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
+                                    val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                     val currentMode = viewModel.systemStatus.fanMode
                                     val isFanControlLocked = viewModel.isFanModeUpdating
                                     modes.forEach { (m, label) ->
