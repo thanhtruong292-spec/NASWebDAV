@@ -114,13 +114,22 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     val sel = i == viewModel.metricsChartTab
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (sel) _ChartAccentBlue else _ChartDarkSurface,
+                        color = if (sel) Color(0xFF1B5E20).copy(alpha = 0.5f) else _ChartDarkSurface,
                         modifier = Modifier.weight(1f).clickable { viewModel.metricsChartTab = i }
                     ) {
-                        Text(label, fontSize = 10.sp,
-                            color = if (sel) _ChartAccentCyan else _ChartTextSecond,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 5.dp).fillMaxWidth())
+                        Row(
+                            modifier = Modifier.padding(vertical = 5.dp).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (sel) {
+                                Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            Text(label, fontSize = 10.sp,
+                                color = if (sel) _ChartAccentGreen else _ChartTextSecond,
+                                textAlign = TextAlign.Center)
+                        }
                     }
                 }
             }
