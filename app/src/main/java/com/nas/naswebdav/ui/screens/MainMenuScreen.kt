@@ -73,7 +73,9 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
         percent <= 65 -> 2
         else          -> 3
     }
-    val durationMs = when (level) { 1 -> 2400; 2 -> 1000; 3 -> 420; else -> 9999 }
+    val isRunning = level > 0
+    val durationMs = when (level) { 1 -> 1500; 2 -> 600; 3 -> 250; else -> 9999 }
+    
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
         initialValue = 0f, targetValue = 360f,
@@ -82,47 +84,77 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
             repeatMode = RepeatMode.Restart
         ), label = "fan_angle"
     )
-    val currentAngle = if (level > 0) angle else 0f
-
-    // Ghost blur: màu xám giống ảnh tham chiếu
-    val ghostCount = when (level) { 3 -> 5; 2 -> 3; 1 -> 1; else -> 0 }
-    val ghostStep  = when (level) { 3 -> 13f; 2 -> 9f; else -> 6f }
+    val currentAngle = if (isRunning) angle else 0f
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
             val cx = size.width / 2f
             val cy = size.height / 2f
-            val R  = minOf(cx, cy)
-            val cr = R * 0.23f
+            val R = minOf(cx, cy)
+            
+            // Outer casing ring
+            drawCircle(
+                color = color.copy(alpha = 0.15f),
+                radius = R,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = R * 0.08f)
+            )
+            
+            // Glowing sweep background indicator
+            if (isRunning) {
+                drawCircle(
+                    brush = Brush.sweepGradient(
+                        colors = listOf(Color.Transparent, color.copy(alpha = 0.35f), Color.Transparent),
+                        center = Offset(cx, cy)
+                    ),
+                    radius = R * 0.9f
+                )
+            }
 
-            // Cánh quạt: oval ở góc chéo 45° (giống ảnh gốc)
-            fun drawBlade(rotAngle: Float, bladeColor: Color) {
-                withTransform({ rotate(rotAngle, Offset(cx, cy)) }) {
-                    for (i in 0 until 4) {
-                        // Offset 45° để cánh nằm ở vị trí chéo như ảnh gốc
-                        withTransform({ rotate(90f * i + 45f, Offset(cx, cy)) }) {
-                            drawOval(
-                                color = bladeColor,
-                                topLeft = Offset(cx - R * 0.33f, cy - R * 0.85f),
-                                size = Size(R * 0.66f, R * 0.72f)
-                            )
+            withTransform({ rotate(currentAngle, Offset(cx, cy)) }) {
+                // Draw 5 modern blades
+                val bladeCount = 5
+                for (i in 0 until bladeCount) {
+                    withTransform({ rotate((360f / bladeCount) * i, Offset(cx, cy)) }) {
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(cx, cy)
+                            // Right side curve
+                            quadraticBezierTo(cx + R * 0.6f, cy - R * 0.2f, cx + R * 0.2f, cy - R * 0.85f)
+                            // Top flat curve
+                            quadraticBezierTo(cx, cy - R * 0.95f, cx - R * 0.2f, cy - R * 0.85f)
+                            // Left side inward curve
+                            quadraticBezierTo(cx - R * 0.3f, cy - R * 0.3f, cx, cy)
+                            close()
                         }
+                        
+                        drawPath(
+                            path = path,
+                            brush = Brush.radialGradient(
+                                colors = listOf(color, color.copy(alpha = 0.4f)),
+                                center = Offset(cx, cy - R * 0.5f),
+                                radius = R * 0.8f
+                            )
+                        )
                     }
                 }
             }
-
-            // 1. Ghost blur xám
-            val blurGray = Color(0xFF9E9E9E)
-            for (g in ghostCount downTo 1) {
-                val a = (0.06f + 0.05f * (ghostCount - g)).coerceIn(0f, 0.40f)
-                drawBlade(currentAngle - g * ghostStep, blurGray.copy(alpha = a))
-            }
-            // 2. Cánh chính
-            drawBlade(currentAngle, color)
-            // 3. Vòng tâm TRắNG
-            drawCircle(Color.White, radius = cr, center = Offset(cx, cy))
+            
+            // Center Hub - Metallic Orb
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color(0xFFB0BEC5), Color(0xFF455A64)),
+                    center = Offset(cx - R * 0.08f, cy - R * 0.08f),
+                    radius = R * 0.35f
+                ),
+                radius = R * 0.22f,
+                center = Offset(cx, cy)
+            )
+            // Hub Core
+            drawCircle(
+                color = Color(0xFF263238),
+                radius = R * 0.08f,
+                center = Offset(cx, cy)
+            )
         }
-        Text(text = level.toString(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color.Black)
     }
 }
 

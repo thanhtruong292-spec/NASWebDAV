@@ -2156,6 +2156,8 @@ def api_fan_control():
             settings['mode'] = 'auto'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "start", "fan.service"])
+            if STATUS_CACHE:
+                STATUS_CACHE['fan_mode'] = 'auto'
             return jsonify({"status": "success", "mode": "auto"})
             
         elif mode == 'custom':
@@ -2164,6 +2166,10 @@ def api_fan_control():
             settings['off_temp'] = data.get('off_temp', settings.get('off_temp', 55))
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
+            if STATUS_CACHE:
+                STATUS_CACHE['fan_mode'] = 'custom'
+                STATUS_CACHE['fan_on_temp'] = settings['on_temp']
+                STATUS_CACHE['fan_off_temp'] = settings['off_temp']
             return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp']})
             
         elif mode == 'off':
@@ -2171,6 +2177,9 @@ def api_fan_control():
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            if STATUS_CACHE:
+                STATUS_CACHE['fan_mode'] = 'off'
+                STATUS_CACHE['fan_status'] = 'Dừng'
             return jsonify({"status": "success", "mode": "off"})
             
         elif mode == 'on':
@@ -2178,6 +2187,9 @@ def api_fan_control():
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            if STATUS_CACHE:
+                STATUS_CACHE['fan_mode'] = 'on'
+                STATUS_CACHE['fan_status'] = 'Đang chạy 100%'
             return jsonify({"status": "success", "mode": "on"})
             
         return jsonify({"error": "Invalid mode"}), 400
