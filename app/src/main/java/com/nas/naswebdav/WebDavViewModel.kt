@@ -61,6 +61,20 @@ data class TorrentInfo(
 data class SmartInfo(val status: String, val temperature: String, val rawLog: String)
 data class SpeedTestResult(val writeSpeed: String, val readSpeed: String)
 
+// DATA CLASS CHO OMV OVERVIEW
+data class OmvServiceInfo(val name: String, val title: String, val enabled: Boolean, val running: Boolean)
+data class OmvNetworkInfo(val name: String, val address: String, val mac: String, val speed: Int, val state: String, val gateway: String, val wol: Boolean)
+data class OmvFilesystem(val device: String, val label: String, val mountpoint: String, val used: String, val sizeBytes: Long, val percentage: Int, val description: String)
+data class OmvDiskInfo(val name: String, val model: String, val serial: String, val size: String, val isRoot: Boolean)
+data class OmvOverview(
+    val hostname: String = "", val omvVersion: String = "", val kernel: String = "",
+    val services: List<OmvServiceInfo> = emptyList(),
+    val network: List<OmvNetworkInfo> = emptyList(),
+    val filesystems: List<OmvFilesystem> = emptyList(),
+    val disks: List<OmvDiskInfo> = emptyList(),
+    val powerBtnAction: String = ""
+)
+
 // DATA CLASS CHO DOCKER
 data class DockerContainer(val id: String, val name: String, val status: String)
 
@@ -380,6 +394,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // Quản lý Nhật ký hệ thống
     var systemLogs by mutableStateOf(listOf<SystemLog>())
     var isFetchingDocker by mutableStateOf(false)
+
+    // STATE CHO OMV OVERVIEW
+    var omvOverview by mutableStateOf(OmvOverview())
 
     // STATE CHO LAN WHITELIST (tách logic ra khỏi UI)
     var lanWhitelistIps by mutableStateOf<List<String>>(emptyList())
@@ -2574,6 +2591,51 @@ fun WebDavViewModel.fetchSmartData() {
                 } else smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}")
             }
         } catch (e: Exception) { smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "") }
+    }
+}
+
+fun WebDavViewModel.fetchOmvOverview() {
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val apiBaseUrl = currentUrl.toApiBaseUrl()
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/omv/overview").build()
+            localApiClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    val sys = json.optJSONObject("system")
+                    val svcArr = json.optJSONArray("services") ?: org.json.JSONArray()
+                    val netArr = json.optJSONArray("network") ?: org.json.JSONArray()
+                    val fsArr = json.optJSONArray("filesystems") ?: org.json.JSONArray()
+                    val diskArr = json.optJSONArray("disks") ?: org.json.JSONArray()
+                    val pwr = json.optJSONObject("power")
+
+                    val services = (0 until svcArr.length()).map { i ->
+                        val s = svcArr.getJSONObject(i)
+                        OmvServiceInfo(s.optString("name"), s.optString("title"), s.optBoolean("enabled"), s.optBoolean("running"))
+                    }
+                    val network = (0 until netArr.length()).map { i ->
+                        val n = netArr.getJSONObject(i)
+                        OmvNetworkInfo(n.optString("name"), n.optString("address"), n.optString("mac"), n.optInt("speed", -1), n.optString("state"), n.optString("gateway"), n.optBoolean("wol"))
+                    }
+                    val filesystems = (0 until fsArr.length()).map { i ->
+                        val f = fsArr.getJSONObject(i)
+                        OmvFilesystem(f.optString("device"), f.optString("label"), f.optString("mountpoint"), f.optString("used"), f.optLong("size_bytes"), f.optInt("percentage"), f.optString("description"))
+                    }
+                    val disks = (0 until diskArr.length()).map { i ->
+                        val d = diskArr.getJSONObject(i)
+                        OmvDiskInfo(d.optString("name"), d.optString("model"), d.optString("serial"), d.optString("size"), d.optBoolean("is_root"))
+                    }
+                    omvOverview = OmvOverview(
+                        hostname = sys?.optString("hostname", "") ?: "",
+                        omvVersion = sys?.optString("omv_version", "") ?: "",
+                        kernel = sys?.optString("kernel", "") ?: "",
+                        services = services, network = network,
+                        filesystems = filesystems, disks = disks,
+                        powerBtnAction = pwr?.optString("powerbtn", "") ?: ""
+                    )
+                }
+            }
+        } catch (_: Exception) { }
     }
 }
 

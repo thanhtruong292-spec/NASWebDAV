@@ -186,6 +186,7 @@ fun MainMenuScreen(
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
         viewModel.fetchSmartData()
+        viewModel.fetchOmvOverview()
     }
 
     // --- DIALOGS (từ ui/dialogs/Dialogs.kt) ---
@@ -522,6 +523,79 @@ fun MainMenuScreen(
                     InlineStatRow("↓", "TẢI XUỐNG", viewModel.systemStatus.netRx, Color(0xFF42A5F5))
                     androidx.compose.material3.VerticalDivider(modifier = Modifier.height(20.dp), color = TextSecondary.copy(alpha = 0.12f))
                     InlineStatRow("↑", "TẢI LÊN", viewModel.systemStatus.netTx, Color(0xFFAB47BC))
+                }
+            }
+        }
+
+        // ═══ OMV SERVICES & HARDWARE ═══
+        if (viewModel.omvOverview.services.isNotEmpty() || viewModel.omvOverview.disks.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    // Header
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Dashboard, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("OMV", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF42A5F5), letterSpacing = 1.5.sp)
+                        if (viewModel.omvOverview.omvVersion.isNotBlank()) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(viewModel.omvOverview.omvVersion, fontSize = 9.sp, color = TextSecondary)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // Services Row
+                    if (viewModel.omvOverview.services.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            viewModel.omvOverview.services.forEach { svc ->
+                                val svcColor = if (svc.running) Color(0xFF00E676) else if (svc.enabled) Color(0xFFFFA726) else TextSecondary.copy(alpha = 0.4f)
+                                val svcIcon = when (svc.name) {
+                                    "ssh" -> Icons.Default.Terminal
+                                    "ftp" -> Icons.Default.CloudUpload
+                                    "samba" -> Icons.Default.FolderShared
+                                    "nfs" -> Icons.Default.Storage
+                                    else -> Icons.Default.SettingsEthernet
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                    Icon(svcIcon, null, tint = svcColor, modifier = Modifier.size(18.dp))
+                                    Text(svc.title, fontSize = 7.sp, color = svcColor, maxLines = 1, fontWeight = FontWeight.Bold)
+                                    Text(if (svc.running) "ON" else "OFF", fontSize = 7.sp, color = svcColor.copy(alpha = 0.7f))
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+
+                    // Network + Hardware info dạng compact
+                    val net = viewModel.omvOverview.network.firstOrNull()
+                    val hdd = viewModel.omvOverview.disks.find { !it.isRoot }
+                    if (net != null || hdd != null) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            if (net != null) {
+                                Column {
+                                    Text("${net.name} • ${net.speed}Mbps", fontSize = 8.sp, color = TextSecondary, letterSpacing = 0.5.sp)
+                                    Text("${net.address} | GW: ${net.gateway}", fontSize = 8.sp, color = Color(0xFF81D4FA))
+                                    Text("MAC: ${net.mac}", fontSize = 7.sp, color = TextSecondary.copy(alpha = 0.6f))
+                                }
+                            }
+                            if (hdd != null) {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(hdd.model, fontSize = 8.sp, color = TextSecondary, maxLines = 1)
+                                    Text("SN: ${hdd.serial}", fontSize = 7.sp, color = TextSecondary.copy(alpha = 0.6f))
+                                    val sizeGb = (hdd.size.toLongOrNull() ?: 0L) / (1024L * 1024 * 1024)
+                                    val sizeTb = if (sizeGb >= 1024) "%.1f TB".format(sizeGb / 1024f) else "$sizeGb GB"
+                                    Text(sizeTb, fontSize = 8.sp, color = Color(0xFFFFA726), fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
