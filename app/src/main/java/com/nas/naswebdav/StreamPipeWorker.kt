@@ -143,7 +143,8 @@ class StreamPipeWorker(
 
                 val streamBody = object : okhttp3.RequestBody() {
                     override fun contentType() = "video/mp4".toMediaTypeOrNull()
-                    override fun contentLength() = actualTotal
+                    // Dùng -1L để kích hoạt Chunked Transfer-Encoding, tránh lỗi 500 khi CDN không trả Content-Length chính xác
+                    override fun contentLength() = -1L
 
                     override fun writeTo(sink: okio.BufferedSink) {
                         val bufferSize = AppConfig.PROXY_BUFFER_SIZE.toLong()

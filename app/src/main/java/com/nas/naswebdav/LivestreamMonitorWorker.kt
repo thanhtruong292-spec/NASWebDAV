@@ -79,7 +79,6 @@ class LivestreamMonitorWorker(
                     KEY_PLATFORM to platform,
                     KEY_NOTIF_ID to notifId
                 ))
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(WORK_NAME_PREFIX + jobId)
                 .addTag("LIVESTREAM_ALL")  // Tag chung để query tất cả
                 .build()
@@ -140,6 +139,7 @@ class LivestreamMonitorWorker(
 
         val statusUrl = "http://$nasHost:5050/api/livestream/status"
         var consecutiveErrors = 0
+        var finalStatus = "recording"
 
         while (!isStopped) {
             delay(3_000L)
@@ -167,9 +167,8 @@ class LivestreamMonitorWorker(
                 val json = JSONObject(bodyStr)
                 val jobs = json.optJSONArray("jobs") ?: continue
 
-                // Tim job cua chung ta
+                // Tìm job của chúng ta
                 var found = false
-                var finalStatus = ""
                 for (i in 0 until jobs.length()) {
                     val job = jobs.getJSONObject(i)
                     if (job.optString("job_id") != jobId) continue
@@ -218,7 +217,10 @@ class LivestreamMonitorWorker(
                 if (!found) {
                     // Job không còn trên NAS → coi như xong
                     consecutiveErrors++
-                    if (consecutiveErrors >= 3) break
+                    if (consecutiveErrors >= 3) {
+                        finalStatus = "error"
+                        break
+                    }
                 } else if (finalStatus !in listOf("recording")) {
                     break
                 }
@@ -229,9 +231,14 @@ class LivestreamMonitorWorker(
             }
         }
 
-        // Hiện thông báo hoàn tất
-        showCompletionNotification(notifId, platformLabel, platformIcon)
-        return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
+        // Hiện thông báo hoàn tất tùy theo kết quả
+        if (finalStatus == "error") {
+            showCompletionNotification(notifId, platformLabel, "⚠️", "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp.")
+            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error"))
+        } else {
+            showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã lưu vào thư mục Livestream/ trên NAS")
+            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
+        }
     }
 
     private fun buildForegroundInfo(
@@ -271,7 +278,7 @@ class LivestreamMonitorWorker(
         }
     }
 
-    private fun showCompletionNotification(baseNotifId: Int, platformLabel: String, icon: String) {
+    private fun showCompletionNotification(baseNotifId: Int, platformLabel: String, icon: String, contentText: String) {
         val openIntent = applicationContext.packageManager
             .getLaunchIntentForPackage(applicationContext.packageName)
             ?.apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
@@ -280,10 +287,13 @@ class LivestreamMonitorWorker(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Tính tiêu đề phù hợp (Nếu có icon cảnh báo => lỗi)
+        val titleText = if (icon == "⚠️") "$icon Ghi hình $platformLabel thất bại!" else "$icon Ghi hình $platformLabel hoàn tất!"
+
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("$icon Ghi hình $platformLabel hoàn tất!")
-            .setContentText("Video đã lưu vào thư mục Livestream/ trên NAS")
+            .setSmallIcon(if (icon == "⚠️") android.R.drawable.stat_notify_error else android.R.drawable.stat_sys_download_done)
+            .setContentTitle(titleText)
+            .setContentText(contentText)
             .setAutoCancel(true)
             .setContentIntent(openPending)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)

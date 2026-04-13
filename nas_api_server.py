@@ -105,6 +105,26 @@ def init_db():
     cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
     cur.execute('CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY, type TEXT, module TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     cur.execute('CREATE TABLE IF NOT EXISTS system_temperature_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, cpu_temp REAL, hdd_temp REAL)')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS system_metrics_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            cpu_percent REAL,
+            ram_percent REAL,
+            cpu_temp REAL,
+            hdd_temp REAL,
+            net_rx_kbps REAL,
+            net_tx_kbps REAL
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS daily_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date TEXT UNIQUE,
+            report_json TEXT,
+            generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -623,12 +643,22 @@ def get_uptime():
     """Format uptime thanh dang de doc."""
     try:
         up_seconds = time.time() - psutil.boot_time()
-        days = int(up_seconds // 86400)
-        hours = int((up_seconds % 86400) // 3600)
-        minutes = int((up_seconds % 3600) // 60)
-        if days > 0:
-            return "%dd %dh %dm" % (days, hours, minutes)
-        return "%dh %dm" % (hours, minutes)
+        months = int(up_seconds // (30 * 86400))
+        rem = up_seconds % (30 * 86400)
+        days = int(rem // 86400)
+        rem %= 86400
+        hours = int(rem // 3600)
+        rem %= 3600
+        minutes = int(rem // 60)
+        seconds = int(rem % 60)
+        
+        parts = []
+        if months > 0: parts.append("%d tháng" % months)
+        if days > 0: parts.append("%d ngày" % days)
+        if hours > 0: parts.append("%d giờ" % hours)
+        if minutes > 0: parts.append("%d phút" % minutes)
+        parts.append("%d giây" % seconds)
+        return ", ".join(parts)
     except Exception:
         return "--"
 
@@ -708,6 +738,11 @@ def get_main_disk_usage():
         best_usage = None
         best_total = 0
         for partition in psutil.disk_partitions(all=False):
+            # Bo qua loi do Docker overlay hoac cac FS ao gay fluctuation RAM/ROM
+            if partition.fstype in ["overlay", "squashfs", "tmpfs", "devtmpfs"]:
+                continue
+            if partition.mountpoint.startswith(("/var/lib/docker", "/snap")):
+                continue
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
                 # Chon phan vung co tong dung luong lon nhat (= o cung data)
@@ -1169,49 +1204,285 @@ def _cron_worker():
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = False
 
-            # Ghi Lịch sử Nhiệt độ vào SQLite (Lưu lâu dài để load Chart lịch sử)
+            # --- 3. Ghi Lịch sử Metrics vào SQLite (mỗi 60s — dùng cho biểu đồ real-time) ---
             try:
-                curr_cpu_raw = get_cpu_temp()
-                curr_hdd_raw = get_hdd_temp()
-                cpu_f = float(curr_cpu_raw.replace("\u00b0C", "")) if curr_cpu_raw and "\u00b0C" in curr_cpu_raw else 0.0
-                hdd_f = float(curr_hdd_raw.replace("\u00b0C", "")) if curr_hdd_raw and "\u00b0C" in curr_hdd_raw else 0.0
-                if cpu_f > 0 or hdd_f > 0:
-                    conn = sqlite3.connect(DB_PATH, timeout=20.0)
-                    cur = conn.cursor()
-                    cur.execute("INSERT INTO system_temperature_history (cpu_temp, hdd_temp) VALUES (?, ?)", (cpu_f, hdd_f))
-                    # Xoá dữ liệu cũ hơn 30 ngày (Tránh đầy ổ cứng dẫu lưu trên HDD)
+                with _cache_lock:
+                    snap = dict(_status_cache)
+                cpu_pct = float(snap.get("cpu", "0%").replace("%", "").strip() or 0)
+                ram_pct = float(snap.get("ram_percent", 0) or 0)
+                cpu_raw = snap.get("cpu_temp", "0°C")
+                hdd_raw = snap.get("temperature", "0°C")
+                cpu_t = float(cpu_raw.replace("°C", "").strip()) if cpu_raw and "°C" in cpu_raw else 0.0
+                hdd_t = float(hdd_raw.replace("°C", "").strip()) if hdd_raw and "°C" in hdd_raw else 0.0
+                rx_str = snap.get("net_rx", "0 B/s")
+                tx_str = snap.get("net_tx", "0 B/s")
+                def _parse_speed_kbps(s):
+                    try:
+                        s = s.strip()
+                        if "MB/s" in s: return float(s.replace("MB/s","").strip()) * 1024
+                        if "KB/s" in s: return float(s.replace("KB/s","").strip())
+                        if "GB/s" in s: return float(s.replace("GB/s","").strip()) * 1024 * 1024
+                        return float(s.split()[0])
+                    except Exception: return 0.0
+                rx_kbps = _parse_speed_kbps(rx_str)
+                tx_kbps = _parse_speed_kbps(tx_str)
+                conn = sqlite3.connect(DB_PATH, timeout=10.0)
+                cur = conn.cursor()
+                cur.execute("INSERT INTO system_metrics_history (cpu_percent, ram_percent, cpu_temp, hdd_temp, net_rx_kbps, net_tx_kbps) VALUES (?,?,?,?,?,?)",
+                            (cpu_pct, ram_pct, cpu_t, hdd_t, rx_kbps, tx_kbps))
+                # Tương thích Python 3.5: dùng date string thay vì f-string
+                cur.execute("DELETE FROM system_metrics_history WHERE timestamp <= datetime('now', '-30 days')")
+                # Giữ lại bảng nhiệt độ cũ để tương thích
+                if cpu_t > 0 or hdd_t > 0:
+                    cur.execute("INSERT INTO system_temperature_history (cpu_temp, hdd_temp) VALUES (?, ?)", (cpu_t, hdd_t))
                     cur.execute("DELETE FROM system_temperature_history WHERE timestamp <= datetime('now', '-30 days')")
-                    conn.commit()
-                    conn.close()
-            except Exception as e:
+                conn.commit()
+                conn.close()
+            except Exception:
                 pass
 
-            # --- 3. Don dep Thung rac (moi 24h = 1440 vong x 60s) ---
+            # --- 4. Don dep Thung rac (moi 24h) ---
             check_interval += 1
             with _alert_state_lock:
                 last_clean = _alert_states["trash_last_clean"]
             if (now_ts - last_clean) > 86400:  # 24h
                 deleted = _clean_trash(WEBDAV_FILE_ROOT, max_age_days=30)
                 if deleted > 0:
-                    msg = "Tu dong don dep: Da xoa %d file trong Thung rac (qua 30 ngay)." % deleted
+                    msg = "Tự động dọn dẹp: Đã xóa %d tệp trong Thùng rác (quá 30 ngày)." % deleted
                     _push_alert("TRASH_CLEANED", msg, "INFO")
                 with _alert_state_lock:
                     _alert_states["trash_last_clean"] = now_ts
 
-            # --- 4. Quet phan loai anh nhe luc 3h sang (moi ngay, Python 3.5 thuan) ---
+            # --- 5. Quet phan loai anh nhe luc 3h sang ---
             with _alert_state_lock:
                 last_ai = _alert_states["ai_last_scan"]
-            is_night = (now_dt.hour == 3 and now_dt.minute < 5)  # 3h sang (gio it dung nhat)
-            if is_night and (now_ts - last_ai) > 82800:  # 23h troi qua
+            is_3am = (now_dt.hour == 3 and now_dt.minute < 5)
+            if is_3am and (now_ts - last_ai) > 82800:
                 started = _scan_photos_lightweight()
                 if started:
-                    _push_alert("AI_SCAN_STARTED", "Smart Gallery: Da phan loai anh theo thu muc.", "INFO")
+                    _push_alert("AI_SCAN_STARTED", "Smart Gallery: Đã phân loại ảnh theo thư mục.", "INFO")
+
+            # --- 6. Tạo Báo Cáo Hàng Ngày lúc 6h sáng ---
+            is_6am = (now_dt.hour == 6 and now_dt.minute < 2)
+            if is_6am:
+                yesterday = (now_dt - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+                    cur = conn.cursor()
+                    cur.execute("SELECT COUNT(*) FROM daily_reports WHERE report_date = ?", (yesterday,))
+                    already_done = cur.fetchone()[0] > 0
+                    conn.close()
+                except Exception:
+                    already_done = False
+                if not already_done:
+                    _generate_daily_report(yesterday)
+
         except Exception:
             pass
         time.sleep(60)
 
 
+def _generate_daily_report(report_date):
+    """Tổng hợp số liệu 24h của report_date, lưu vào DB và push alert cho Android.
+    report_date: chuỗi 'YYYY-MM-DD' của ngày cần tổng hợp.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        # Lấy dữ liệu metrics trong ngày
+        cur.execute("""
+            SELECT cpu_percent, ram_percent, cpu_temp, hdd_temp, net_rx_kbps, net_tx_kbps
+            FROM system_metrics_history
+            WHERE date(timestamp) = ?
+        """, (report_date,))
+        rows = cur.fetchall()
+
+        # Lấy số lượng cảnh báo trong ngày
+        cur.execute("""
+            SELECT type, COUNT(*) as cnt FROM system_logs
+            WHERE date(timestamp) = ? AND type IN ('ERROR','WARNING')
+            GROUP BY type
+        """, (report_date,))
+        alert_counts = {r[0]: r[1] for r in cur.fetchall()}
+        conn.close()
+
+        if not rows:
+            return  # Không có dữ liệu
+
+        # Thống kê
+        cpu_vals = [r[0] for r in rows if r[0] is not None and r[0] > 0]
+        ram_vals = [r[1] for r in rows if r[1] is not None and r[1] > 0]
+        cput_vals = [r[2] for r in rows if r[2] is not None and r[2] > 0]
+        hddt_vals = [r[3] for r in rows if r[3] is not None and r[3] > 0]
+        rx_vals   = [r[4] for r in rows if r[4] is not None]
+        tx_vals   = [r[5] for r in rows if r[5] is not None]
+
+        def _avg(lst): return round(sum(lst)/len(lst), 1) if lst else 0
+        def _max(lst): return round(max(lst), 1) if lst else 0
+        def _sum_mb(lst): return round(sum(lst) * 60 / 1024, 1) if lst else 0  # KB/s * 60s = KB/min → MB
+
+        report = {
+            "date": report_date,
+            "samples": len(rows),
+            "cpu": {"avg": _avg(cpu_vals), "peak": _max(cpu_vals)},
+            "ram": {"avg": _avg(ram_vals), "peak": _max(ram_vals)},
+            "cpu_temp": {"avg": _avg(cput_vals), "peak": _max(cput_vals)},
+            "hdd_temp": {"avg": _avg(hddt_vals), "peak": _max(hddt_vals)},
+            "network": {
+                "total_download_mb": _sum_mb(rx_vals),
+                "total_upload_mb": _sum_mb(tx_vals)
+            },
+            "alerts": {
+                "errors": alert_counts.get("ERROR", 0),
+                "warnings": alert_counts.get("WARNING", 0)
+            },
+            "health_score": _calc_health_score(
+                _max(cput_vals), _max(hddt_vals),
+                _max(cpu_vals), _max(ram_vals),
+                alert_counts.get("ERROR", 0)
+            )
+        }
+
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO daily_reports (report_date, report_json) VALUES (?, ?)",
+            (report_date, json.dumps(report, ensure_ascii=False))
+        )
+        conn.commit()
+        conn.close()
+
+        # Xây dựng message tóm tắt
+        score = report["health_score"]
+        score_icon = "🟢" if score >= 80 else ("🟡" if score >= 60 else "🔴")
+        msg = (
+            "Báo cáo %s %s Sức khỏe: %d%% | CPU đỉnh: %.0f%% | RAM đỉnh: %.0f%% | "
+            "Nhiệt CPU max: %.0f°C | Tải về: %.0f MB | Lỗi: %d"
+        ) % (
+            report_date, score_icon, score,
+            report["cpu"]["peak"], report["ram"]["peak"],
+            report["cpu_temp"]["peak"],
+            report["network"]["total_download_mb"],
+            report["alerts"]["errors"]
+        )
+        _push_alert("DAILY_REPORT", msg, "INFO")
+        log.info("[Report] Đã tạo báo cáo ngày %s — Điểm sức khỏe: %d%%", report_date, score)
+    except Exception as e:
+        log.error("[Report] Lỗi tạo báo cáo: %s", e)
+
+
+def _calc_health_score(cpu_temp_peak, hdd_temp_peak, cpu_peak, ram_peak, error_count):
+    """Tính điểm sức khỏe NAS từ 0-100. Cao là tốt."""
+    score = 100
+    # Trừ điểm theo nhiệt độ CPU (ngưỡng an toàn < 75°C)
+    if cpu_temp_peak > 85: score -= 25
+    elif cpu_temp_peak > 75: score -= 15
+    elif cpu_temp_peak > 65: score -= 5
+    # Trừ điểm theo nhiệt độ HDD (ngưỡng an toàn < 50°C với ST4000VX)
+    if hdd_temp_peak > 60: score -= 20
+    elif hdd_temp_peak > 50: score -= 10
+    elif hdd_temp_peak > 45: score -= 5
+    # Trừ điểm CPU & RAM
+    if cpu_peak > 90: score -= 10
+    if ram_peak > 90: score -= 10
+    # Trừ điểm theo số lỗi
+    if error_count > 10: score -= 20
+    elif error_count > 3: score -= 10
+    elif error_count > 0: score -= 5
+    return max(0, min(100, score))
+
+
 # ============ API ENDPOINTS ============
+
+# ─── Biểu đồ giám sát real-time ────────────────────────────────────────────
+@app.route("/api/metrics/history")
+@requires_auth
+def api_metrics_history():
+    """Trả về lịch sử metrics cho biểu đồ Android.
+    ?hours=N  — số giờ cần lấy (mặc định 1, tối đa 24).
+    Resample về tối đa 120 điểm để giảm tải băng thông.
+    """
+    try:
+        hours = min(int(request.args.get("hours", 1)), 24)
+    except (ValueError, TypeError):
+        hours = 1
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        cur = conn.cursor()
+        # QUAN TRONG: Khong dung % operator vi conflict voi %Y, %m... trong strftime SQLite
+        # Tinh san WHERE time filter bang Python roi truyen vao query
+        hours_filter = "-%d hours" % hours
+        cur.execute(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%S', timestamp),"
+            " cpu_percent, ram_percent, cpu_temp, hdd_temp,"
+            " net_rx_kbps, net_tx_kbps"
+            " FROM system_metrics_history"
+            " WHERE timestamp >= datetime('now', ?)"
+            " ORDER BY timestamp ASC",
+            (hours_filter,)
+        )
+        rows = cur.fetchall()
+        conn.close()
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Resample: nếu nhiều hơn 120 điểm thì lấy đều nhau
+    if len(rows) > 120:
+        step = len(rows) // 120
+        rows = rows[::step]
+
+    result = {
+        "timestamps": [r[0] for r in rows],
+        "cpu_percent": [round(r[1] or 0, 1) for r in rows],
+        "ram_percent": [round(r[2] or 0, 1) for r in rows],
+        "cpu_temp":    [round(r[3] or 0, 1) for r in rows],
+        "hdd_temp":    [round(r[4] or 0, 1) for r in rows],
+        "net_rx_kbps": [round(r[5] or 0, 1) for r in rows],
+        "net_tx_kbps": [round(r[6] or 0, 1) for r in rows],
+        "hours": hours,
+        "count": len(rows)
+    }
+    return jsonify(result)
+
+
+@app.route("/api/report/daily")
+@requires_auth
+def api_report_daily():
+    """Lấy báo cáo ngày. ?date=YYYY-MM-DD (mặc định hôm qua)."""
+    date_str = request.args.get("date", "")
+    if not date_str:
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        date_str = yesterday.strftime("%Y-%m-%d")
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        cur = conn.cursor()
+        cur.execute("SELECT report_json, generated_at FROM daily_reports WHERE report_date = ?", (date_str,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            report = json.loads(row[0])
+            report["generated_at"] = row[1]
+            return jsonify(report)
+        else:
+            return jsonify({"error": "Chưa có báo cáo cho ngày %s" % date_str, "date": date_str}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/report/generate", methods=["POST"])
+@requires_auth
+def api_report_generate():
+    """Tạo báo cáo thủ công cho một ngày. Body: {"date": "YYYY-MM-DD"} hoặc để trống = hôm qua."""
+    data = request.get_json(force=True, silent=True) or {}
+    date_str = data.get("date", "")
+    if not date_str:
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        date_str = yesterday.strftime("%Y-%m-%d")
+    threading.Thread(target=_generate_daily_report, args=(date_str,), daemon=True).start()
+    return jsonify({"result": "ok", "date": date_str, "message": "Đang tạo báo cáo ngầm..."})
+
+
 
 @app.route("/api/status")
 @requires_auth
@@ -1236,51 +1507,118 @@ def api_status():
 @app.route("/api/disk/smart")
 @requires_auth
 def api_smart():
-    """Thong tin S.M.A.R.T o cung hoac canh bao neu dung eMMC."""
+    """Thong tin S.M.A.R.T o cung — uu tien lay tu OMV, fallback smartctl."""
     raw_log = ""
     status = "Unknown"
+    temperature = "--\u00b0C"
+
+    # === Phuong phap 1: Lay tu OMV RPC (chinh xac nhat) ===
+    try:
+        omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=15)
+        if omv_out and omv_out.strip().startswith("["):
+            import json as _json
+            devices = _json.loads(omv_out)
+            # Tim o cung that (khong phai eMMC/mmcblk)
+            real_devs = [d for d in devices if "mmc" not in d.get("devicename", "")]
+            if real_devs:
+                dev = real_devs[0]
+                overall = dev.get("overallstatus", "")
+                # OMV tra ve: "GOOD" hoac "BAD" hoac ""
+                if overall.upper() == "GOOD":
+                    status = "PASSED"
+                elif overall.upper() == "BAD":
+                    status = "FAILED"
+                else:
+                    status = overall if overall else "Unknown"
+                # Nhiet do tu OMV
+                temp_val = dev.get("temperature", "")
+                if temp_val and str(temp_val) != "0":
+                    temperature = "%s\u00b0C" % str(temp_val)
+                # Model + Serial de hien thi
+                model = dev.get("model", "")
+                serial = dev.get("serialnumber", "")
+                devname = dev.get("devicename", "")
+                raw_log = "Thiet bi: /dev/%s\nModel: %s\nSerial: %s\nTrang thai OMV: %s\nNhiet do: %s" % (
+                    devname, model, serial, overall, temperature
+                )
+                # Lay them raw SMART attributes tu OMV neu co
+                try:
+                    dev_file = dev.get("devicefile", "/dev/%s" % devname)
+                    attr_params = _json.dumps({"devicefile": dev_file, "type": ""})
+                    attr_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "getAttributes", attr_params], timeout=15)
+                    if attr_out and attr_out.strip().startswith("["):
+                        attrs = _json.loads(attr_out)
+                        raw_log += "\n\n=== S.M.A.R.T Attributes ===\n"
+                        raw_log += "%-4s %-24s %-6s %-6s %-6s %s\n" % ("ID", "Attribute", "Value", "Worst", "Thresh", "Raw")
+                        for a in attrs:
+                            raw_log += "%-4s %-24s %-6s %-6s %-6s %s\n" % (
+                                a.get("id", ""), a.get("attrname", ""),
+                                a.get("value", ""), a.get("worst", ""),
+                                a.get("threshold", ""), a.get("rawvalue", "")
+                            )
+                except Exception:
+                    pass
+
+                # Bo sung nhiet do tu get_hdd_temp() neu OMV khong tra ve
+                if temperature == "--\u00b0C":
+                    try:
+                        temperature = get_hdd_temp()
+                    except Exception:
+                        pass
+
+                return jsonify({
+                    "status": status,
+                    "temperature": temperature,
+                    "raw_log": raw_log
+                })
+            else:
+                # OMV chi thay eMMC
+                return jsonify({
+                    "status": "eMMC Only",
+                    "temperature": "--\u00b0C",
+                    "raw_log": "OMV chi phat hien bo nho trong (eMMC). Khong co HDD/SSD."
+                })
+    except Exception:
+        pass  # Fallback sang smartctl
+
+    # === Phuong phap 2: Fallback smartctl truc tiep ===
     has_real_hdd = False
-    
-    # Kiem tra cac o cung that truoc (sda, sdb, vda)
     real_disks = [d for d in SMART_DISKS if "mmc" not in d]
     for disk_path in real_disks:
         try:
-            # Dung 2>&1 de lay ca stdout va stderr
             if not _validate_disk_path(disk_path):
                 continue
-            log = run_cmd(["sudo", "smartctl", "-A", disk_path, "-d", "sat"], merge_stderr=True)
-            if not log or "open device" in log.lower():
-                log = run_cmd(["sudo", "smartctl", "-A", disk_path], merge_stderr=True)
-            if log and ("PASSED" in log or "FAILED" in log or "Temperature" in log):
-                raw_log = log
+            log_out = run_cmd(["sudo", "smartctl", "-a", disk_path, "-d", "sat"], merge_stderr=True)
+            if not log_out or "open device" in log_out.lower():
+                log_out = run_cmd(["sudo", "smartctl", "-a", disk_path], merge_stderr=True)
+            if log_out and ("PASSED" in log_out or "FAILED" in log_out or "Temperature" in log_out):
+                raw_log = log_out
                 has_real_hdd = True
                 break
         except Exception:
             continue
-    
+
     if not has_real_hdd:
-        raw_log = "CANH BAO: Khong tim thay o cung HDD/SSD. He thong hien tai dang chay tren bo nho trong (eMMC/SD) nen khong ho tro hien thi thong so S.M.A.R.T. Vui long cam HDD hoac the nho de tang tang toc do doc ghi."
+        raw_log = "Khong tim thay o cung HDD/SSD. He thong dang chay tren eMMC/SD."
         status = "eMMC Only"
     else:
-        if "PASSED" in raw_log:
+        if "test result: PASSED" in raw_log:
             status = "PASSED"
-        elif "FAILED" in raw_log:
+        elif "test result: FAILED" in raw_log:
             status = "FAILED"
+        else:
+            status = "Unknown"
 
     try:
         temperature = get_hdd_temp()
+    except Exception:
+        pass
 
-        return jsonify({
-            "status": status,
-            "temperature": temperature,
-            "raw_log": raw_log
-        })
-    except Exception as e:
-        return jsonify({
-            "status": "Loi",
-            "temperature": "--\u00b0C",
-            "raw_log": str(e)
-        })
+    return jsonify({
+        "status": status,
+        "temperature": temperature,
+        "raw_log": raw_log
+    })
 
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
@@ -2562,7 +2900,8 @@ def _thumbnail_generator():
                         time.sleep(3)  # Giam toc de RAM giai phong
                     elif mem.percent > 70:
                         time.sleep(0.5)
-                    # Khong sleep khi RAM < 70% -> toc do toi da
+                    else:
+                        time.sleep(0.05)  # TOI UU I/O CAO CHO ST4000VX (Hoãn 50ms chống quá tải cơ học đĩa cứng)
                 except Exception:
                     pass
                 return False
@@ -2935,6 +3274,13 @@ def _system_health_watchdog():
     hdd_error_cycles = 0
     lan_error_cycles = 0
 
+    # THIẾT LẬP TỐI ƯU CƠ HỌC CHO Ổ SEAGATE SKYHAWK ST4000VX (SURVEILLANCE): 
+    # CẤM APM VÀ CẤM STANDBY CHỐNG HAO MÒN KHỞI ĐỘNG MOTOR (SPIN-DOWN)
+    try:
+        run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", "/dev/sda"], merge_stderr=True)
+    except Exception:
+        pass
+
     while True:
         try:
             # 1. Kiem tra tailscaled process
@@ -3259,9 +3605,7 @@ def _livestream_watchdog():
                         pass
 
                     if not is_running:
-                        # Process da ket thuc tu nhien (stream het)
-                        info["status"] = "finished"
-                        # Lay kich thuoc file cuoi cung
+                        # Process da ket thuc tu nhien (stream het hoac loi)
                         try:
                             out_pattern = info.get("output_dir", "")
                             # Tim file moi nhat trong thu muc output
@@ -3276,8 +3620,17 @@ def _livestream_watchdog():
                                     info["file_size"] = os.path.getsize(files[0])
                         except Exception:
                             pass
+                            
+                        # Kiem tra dung luong file de xac dinh thanh cong hay that bai
+                        if info.get("file_size", 0) < 1000:
+                            info["status"] = "error"
+                            log.error("[Livestream] Job %s (PID %d) da ket thuc voi loi (File < 1KB).", jid, pid)
+                        else:
+                            info["status"] = "finished"
+                            log.info("[Livestream] Job %s (PID %d) da ket thuc tu nhien.", jid, pid)
+                            
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                        log.info("[Livestream] Job %s (PID %d) da ket thuc tu nhien.", jid, pid)
+                        
                         # Ghi log
                         try:
                             conn = sqlite3.connect(DB_PATH, timeout=20.0)
@@ -3436,7 +3789,8 @@ def api_livestream_record():
                 "started_at": now_str,
                 "started_ts": time.time(),
                 "quality": quality,
-                "log_file": log_file
+                "log_file": log_file,
+                "timestamp_str": timestamp_str
             }
 
         # Ghi log he thong
@@ -3498,10 +3852,13 @@ def api_livestream_status():
                 if os.path.isdir(out_dir):
                     # Tim file moi nhat trong thu muc Livestream
                     platform = info.get("platform", "")
+                    timestamp_str = info.get("timestamp_str", "")
                     all_files = []
                     for f in os.listdir(out_dir):
                         fp = os.path.join(out_dir, f)
                         if os.path.isfile(fp) and not f.endswith(".log"):
+                            if timestamp_str and timestamp_str not in f:
+                                continue
                             all_files.append(fp)
                     if all_files:
                         latest = max(all_files, key=os.path.getmtime)

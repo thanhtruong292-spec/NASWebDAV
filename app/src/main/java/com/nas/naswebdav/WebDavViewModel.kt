@@ -119,6 +119,35 @@ data class SocialDownloadItem(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+// DATA CLASS CHO BIỂU ĐỒ GIÁM SÁT
+data class MetricsSnapshot(
+    val timestamp: String = "",
+    val cpuPercent: Float = 0f,
+    val ramPercent: Float = 0f,
+    val cpuTemp: Float = 0f,
+    val hddTemp: Float = 0f,
+    val netRxKbps: Float = 0f,
+    val netTxKbps: Float = 0f
+)
+
+data class DailyReportData(
+    val date: String = "",
+    val healthScore: Int = 0,
+    val cpuAvg: Float = 0f,
+    val cpuPeak: Float = 0f,
+    val ramAvg: Float = 0f,
+    val ramPeak: Float = 0f,
+    val cpuTempAvg: Float = 0f,
+    val cpuTempPeak: Float = 0f,
+    val hddTempAvg: Float = 0f,
+    val hddTempPeak: Float = 0f,
+    val downloadMb: Float = 0f,
+    val uploadMb: Float = 0f,
+    val errorCount: Int = 0,
+    val warningCount: Int = 0,
+    val samples: Int = 0
+)
+
 /**
  * Kiểm tra URL có trỏ đến một địa chỉ Tailscale hay không.
  * Tailscale dùng dải CGNAT 100.64.0.0/10 (octet 2 từ 64 đến 127).
@@ -166,7 +195,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     // Biến lưu trữ trạng thái giám sát hệ thống (Local API)
     var systemStatus by mutableStateOf(NasSystemStatus())
-    var temperatureHistory by mutableStateOf<List<Pair<Float, Float>>>(emptyList()) // Lưu cặp [CPU, HDD]
+    var temperatureHistory by mutableStateOf<List<Pair<Float, Float>>>(emptyList())
+
+    // ─── BIỂU ĐỒ GIÁM SÁT REAL-TIME ──────────────────────────────────────────────
+    var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
+    var metricsHours by mutableIntStateOf(1)         // 1 / 6 / 24 giờ
+    var metricsChartTab by mutableIntStateOf(0)       // 0=Nhiệt độ, 1=Tài nguyên, 2=Mạng
+    var isLoadingMetrics by mutableStateOf(false)
+    var metricsError by mutableStateOf<String?>(null)  // Nếu có lỗi, hiển thị thay vì spinner vô hạn
+    var dailyReport by mutableStateOf<DailyReportData?>(null)
+    var isDailyReportLoading by mutableStateOf(false)
+    private var metricsPollingJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
 
     // TÍNH NĂNG 4.H: Lắng nghe trạng thái mạng Ping (ms)
@@ -214,10 +253,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var textPreviewContent by mutableStateOf<String?>(null)
 
     fun fetchTextPreview(url: String) {
-        viewModelScope.launch {
-            isLoading = true
-            textPreviewContent = webDavManager.readFileText(url)
-            isLoading = false
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoading = true; textPreviewContent = null }
+            val content = webDavManager.readFileText(url)
+            withContext(Dispatchers.Main) { textPreviewContent = content; isLoading = false }
         }
     }
 
@@ -456,20 +495,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun openSpecificUrl(url: String, title: String) {
         // Fix cú pháp và đồng bộ tiêu đề Sub-menu
-        viewModelScope.launch {
-            urlStack.clear()
-            isSpecialMode = true
-            specialTitle = title
-            val targetUrl = if (url.endsWith("/")) url else "$url/"
-            currentUrl = targetUrl
-
-            if (title == "Thùng rác") {
-                try { withContext(Dispatchers.IO) { webDavManager.createFolder(targetUrl) } } catch(e: Exception) {}
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                urlStack.clear()
+                isSpecialMode = true
+                specialTitle = title
+                val targetUrl = if (url.endsWith("/")) url else "$url/"
+                currentUrl = targetUrl
+                fileList = emptyList()
+                isLoading = true
             }
-
-            fileList = emptyList()
-            isLoading = true
-            loadCurrentUrl()
+            val targetUrl = if (url.endsWith("/")) url else "$url/"
+            if (title == "Thùng rác") {
+                try { webDavManager.createFolder(targetUrl) } catch(e: Exception) {}
+            }
+            withContext(Dispatchers.Main) { loadCurrentUrl() }
         }
     }
 
@@ -520,38 +560,29 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         return false
     }
     fun showLatestPhotos() {
-        viewModelScope.launch {
-            isLoading = true
-            isSpecialMode = true
-            specialTitle = "Ảnh mới nhất"
-            // TỰ ĐỘNG LÀM MỚI: Quét nhanh thư mục gốc để cập nhật ảnh mới trước khi hiện
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Ảnh mới nhất" }
             try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
-            fileList = repository.getLatestPhotos()
-            isLoading = false
+            val photos = repository.getLatestPhotos()
+            withContext(Dispatchers.Main) { fileList = photos; isLoading = false }
         }
     }
 
     fun showRecentVideos() {
-        viewModelScope.launch {
-            isLoading = true
-            isSpecialMode = true
-            specialTitle = "Video gần đây"
-            // TỰ ĐỘNG LÀM MỚI: Cập nhật danh sách từ mạng trước khi hiển thị
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gần đây" }
             try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
-            fileList = repository.getRecentVideos()
-            isLoading = false
+            val videos = repository.getRecentVideos()
+            withContext(Dispatchers.Main) { fileList = videos; isLoading = false }
         }
     }
     // TÍNH NĂNG TÌM KIẾM TOÀN CẦU
     fun searchGlobal(keyword: String) {
         if (keyword.isBlank()) return
-        viewModelScope.launch {
-            isLoading = true
-            isSpecialMode = true
-            specialTitle = "Tìm kiếm: $keyword"
-            urlStack.clear()
-            fileList = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
-            isLoading = false
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Tìm kiếm: $keyword"; urlStack.clear() }
+            val results = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
+            withContext(Dispatchers.Main) { fileList = results; isLoading = false }
         }
     }
     // TÍNH NĂNG ĐIỀU KHIỂN NGUỒN VÀ DỊCH VỤ
@@ -658,6 +689,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         var status: String = "recording",
         var fileSize: String = "0 B",
         var duration: String = "0h00m00s",
+        var durationSeconds: Long = 0,
         var speed: String = "",
         var outputFile: String = ""
     )
@@ -668,7 +700,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var livestreamMessage by mutableStateOf("")
         private set
 
+    var isStartingLivestream by mutableStateOf(false)
+        private set
+
     fun startLivestreamRecord(context: Context, url: String, quality: String = "best", referer: String = "", userAgent: String = "") {
+        isStartingLivestream = true
+        livestreamMessage = "Đang phân tích liên kết & kết nối..."
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
@@ -680,12 +717,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     put("user_agent", userAgent)
                 }.toString().toRequestBody(jsonMediaType)
 
-                val request = okhttp3.Request.Builder()
+                val requestBuilder = okhttp3.Request.Builder()
                     .url("http://$host:5050/api/livestream/record")
                     .post(body)
-                    .build()
 
-                localApiClient.newCall(request).execute().use { response ->
+                val user = SecurePrefsHelper.getUser(context)
+                val pass = SecurePrefsHelper.getPass(context)
+                if (user.isNotEmpty() && pass.isNotEmpty()) {
+                    requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                }
+
+                localApiClient.newCall(requestBuilder.build()).execute().use { response ->
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
@@ -906,7 +948,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // HELPER: Chèn Tác vụ vào Hàng đợi Offline WorkManager (TÍNH NĂNG 5.I)
     private fun enqueueOfflineAction(context: Context, actionType: String, sourcePath: String, destPath: String? = null) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val db = (context.applicationContext as NasApplication).database
                 db.syncActionDao().insert(SyncAction(
@@ -925,11 +967,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 androidx.work.WorkManager.getInstance(context).enqueue(request)
                 
                 // Hiển thị Dialog báo cho User
-                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào kho lưu ngầm (Offline Queue)!"
-                showCommonDialog = true
+                withContext(Dispatchers.Main) {
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
+                    commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào kho lưu ngầm (Offline Queue)!"
+                    showCommonDialog = true
+                }
             } catch (e: Exception) {
-                errorMessage = "Lỗi khi lưu Offline Queue: ${e.message}"
+                withContext(Dispatchers.Main) { errorMessage = "Lỗi khi lưu Offline Queue: ${e.message}" }
             }
         }
     }
@@ -1110,20 +1154,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
     fun createFolder(context: Context, folderName: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                isLoading = true
+                withContext(Dispatchers.Main) { isLoading = true }
                 // Đảm bảo URL thư mục mới kết thúc bằng dấu gạch chéo '/'
                 val newFolderUrl = currentUrl + folderName + "/"
                 webDavManager.createFolder(newFolderUrl)
                 repository.addSystemLog("SUCCESS", "File Ops", "Đã tạo thư mục mới: '$folderName'")
-                refresh() // Tải lại danh sách sau khi tạo thành công
+                withContext(Dispatchers.Main) { refresh() } // Tải lại danh sách sau khi tạo thành công
             } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, Offline Queue: ${e.message?.take(80)}")
                 val newFolderUrl = currentUrl + folderName + "/"
                 enqueueOfflineAction(context, "CREATE_FOLDER", newFolderUrl)
             } finally {
-                isLoading = false
+                withContext(Dispatchers.Main) { isLoading = false }
             }
         }
     }
@@ -1404,9 +1448,145 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 kotlinx.coroutines.delay(30000)
             }
         }
+
+        // Khởi động vòng lặp lấy metrics biểu đồ:
+        // Chờ cho URL sẵn sàng rồi mới fetch lần đầu, sau đó poll mỗi 30s
+        launchMetricsPolling()
     }
 
     // Dọn các listener (nếu có)
+
+    // =======================================================
+    // ======== BIỂU ĐỒ GIÁM SÁT + BÁO CÁO NGÀY ============
+    // =======================================================
+
+    fun launchMetricsPolling() {
+        metricsPollingJob?.cancel()
+        metricsPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            // Chờ tối đa 60s cho đến khi URL sẵn sàng (tránh fetch khi chưa login)
+            var waited = 0
+            while (isActive && webDavManager.currentBaseUrl.isEmpty() && waited < 60) {
+                delay(1_000L)
+                waited++
+            }
+            // Lấy lần đầu ngay sau khi URL sẵn sàng
+            if (isActive && webDavManager.currentBaseUrl.isNotEmpty()) {
+                fetchMetricsHistory(metricsHours)
+            }
+            // Sau đó poll mỗi 30 giây
+            while (isActive) {
+                delay(30_000L)
+                if (webDavManager.currentBaseUrl.isNotEmpty()) {
+                    fetchMetricsHistory(metricsHours)
+                }
+            }
+        }
+    }
+
+    fun fetchMetricsHistory(hours: Int = 1) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val baseUrl = webDavManager.currentBaseUrl
+            if (baseUrl.isEmpty()) return@launch
+            isLoadingMetrics = true
+            metricsError = null
+            try {
+                val apiBase = baseUrl.toApiBaseUrl()
+                val url = "$apiBase/api/metrics/history?hours=$hours"
+                val request = okhttp3.Request.Builder().url(url).build()
+                localApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        withContext(Dispatchers.Main) {
+                            metricsError = "Lỗi HTTP ${resp.code}: $body"
+                        }
+                        return@launch
+                    }
+                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    if (json.has("error")) {
+                        withContext(Dispatchers.Main) { metricsError = json.optString("error") }
+                        return@launch
+                    }
+                    val timestamps = json.optJSONArray("timestamps") ?: run {
+                        withContext(Dispatchers.Main) { metricsError = "Server trả về dữ liệu không hợp lệ" }
+                        return@launch
+                    }
+                    val cpuArr   = json.optJSONArray("cpu_percent")
+                    val ramArr   = json.optJSONArray("ram_percent")
+                    val cptArr   = json.optJSONArray("cpu_temp")
+                    val hdtArr   = json.optJSONArray("hdd_temp")
+                    val rxArr    = json.optJSONArray("net_rx_kbps")
+                    val txArr    = json.optJSONArray("net_tx_kbps")
+                    val snaps = mutableListOf<MetricsSnapshot>()
+                    for (i in 0 until timestamps.length()) {
+                        snaps.add(MetricsSnapshot(
+                            timestamp  = timestamps.optString(i),
+                            cpuPercent = cpuArr?.optDouble(i)?.toFloat() ?: 0f,
+                            ramPercent = ramArr?.optDouble(i)?.toFloat() ?: 0f,
+                            cpuTemp    = cptArr?.optDouble(i)?.toFloat() ?: 0f,
+                            hddTemp    = hdtArr?.optDouble(i)?.toFloat() ?: 0f,
+                            netRxKbps  = rxArr?.optDouble(i)?.toFloat() ?: 0f,
+                            netTxKbps  = txArr?.optDouble(i)?.toFloat() ?: 0f
+                        ))
+                    }
+                    withContext(Dispatchers.Main) {
+                        metricsHistory.clear()
+                        metricsHistory.addAll(snaps)
+                        metricsHours = hours
+                        metricsError = null
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { metricsError = "Ấn Refresh để thử lại: ${e.message?.take(80)}" }
+            } finally {
+                isLoadingMetrics = false
+            }
+        }
+    }
+
+    fun fetchDailyReport(date: String = "") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val baseUrl = webDavManager.currentBaseUrl
+            if (baseUrl.isEmpty()) return@launch
+            isDailyReportLoading = true
+            try {
+                val apiBase = baseUrl.toApiBaseUrl()
+                val dateParam = if (date.isNotEmpty()) "?date=$date" else ""
+                val url = "$apiBase/api/report/daily$dateParam"
+                val request = okhttp3.Request.Builder().url(url).build()
+                localApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@launch
+                    val j = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    if (j.has("error")) return@launch
+                    val cpu = j.optJSONObject("cpu")
+                    val ram = j.optJSONObject("ram")
+                    val ct  = j.optJSONObject("cpu_temp")
+                    val ht  = j.optJSONObject("hdd_temp")
+                    val net = j.optJSONObject("network")
+                    val al  = j.optJSONObject("alerts")
+                    withContext(Dispatchers.Main) {
+                        dailyReport = DailyReportData(
+                            date         = j.optString("date"),
+                            healthScore  = j.optInt("health_score"),
+                            cpuAvg       = cpu?.optDouble("avg")?.toFloat() ?: 0f,
+                            cpuPeak      = cpu?.optDouble("peak")?.toFloat() ?: 0f,
+                            ramAvg       = ram?.optDouble("avg")?.toFloat() ?: 0f,
+                            ramPeak      = ram?.optDouble("peak")?.toFloat() ?: 0f,
+                            cpuTempAvg   = ct?.optDouble("avg")?.toFloat() ?: 0f,
+                            cpuTempPeak  = ct?.optDouble("peak")?.toFloat() ?: 0f,
+                            hddTempAvg   = ht?.optDouble("avg")?.toFloat() ?: 0f,
+                            hddTempPeak  = ht?.optDouble("peak")?.toFloat() ?: 0f,
+                            downloadMb   = net?.optDouble("total_download_mb")?.toFloat() ?: 0f,
+                            uploadMb     = net?.optDouble("total_upload_mb")?.toFloat() ?: 0f,
+                            errorCount   = al?.optInt("errors") ?: 0,
+                            warningCount = al?.optInt("warnings") ?: 0,
+                            samples      = j.optInt("samples")
+                        )
+                    }
+                }
+            } catch (_: Exception) {}
+            isDailyReportLoading = false
+        }
+    }
 
     // =======================================================
     // ======== CÁC HÀM XỬ LÝ API NỘI BỘ (LOCAL NAS API) ======
@@ -2006,9 +2186,9 @@ fun WebDavViewModel.loadDuplicateResultsFromCache(context: android.content.Conte
     }
 
 fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                isLoading = true
+                withContext(Dispatchers.Main) { isLoading = true }
                 val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
 
                 // 1. Kiểm tra nếu file đang ở trong thùng rác rồi thì xoá vĩnh viễn
@@ -2022,26 +2202,27 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                     webDavManager.renameFile(file.path, targetUrl)
                 }
 
-                duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
-                withContext(Dispatchers.IO) {
-                    repository.removeDuplicateFromDb(file.path)
+                repository.removeDuplicateFromDb(file.path)
+                withContext(Dispatchers.Main) {
+                    duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
+                    refresh()
                 }
-                refresh()
             } catch (e: Exception) {
-                errorMessage = "Lỗi xử lý thùng rác: ${e.message}"
+                withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý thùng rác: ${e.message}" }
             } finally {
-                isLoading = false
+                withContext(Dispatchers.Main) { isLoading = false }
             }
         }
     }
 
 fun WebDavViewModel.deleteSelectedDuplicates() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                isLoading = true
+                withContext(Dispatchers.Main) { isLoading = true }
                 val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
                 try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
 
+                var processed = 0
                 for (file in selectedDuplicates) {
                     if (file.path.contains(TRASH_FOLDER_NAME)) {
                         webDavManager.deleteFile(file.path)
@@ -2049,21 +2230,22 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
                         val targetUrl = trashUrl + file.name
                         webDavManager.renameFile(file.path, targetUrl)
                     }
+                    processed++
+                    if (processed % 5 == 0) kotlinx.coroutines.delay(10)
                 }
 
                 val deletedPaths = selectedDuplicates.map { it.path }.toSet()
-                withContext(Dispatchers.IO) {
-                    for (path in deletedPaths) {
-                        repository.removeDuplicateFromDb(path)
-                    }
+                for (path in deletedPaths) { repository.removeDuplicateFromDb(path) }
+
+                withContext(Dispatchers.Main) {
+                    duplicateFilesList = duplicateFilesList.filter { it.path !in deletedPaths }
+                    selectedDuplicates.clear()
+                    refresh()
                 }
-                duplicateFilesList = duplicateFilesList.filter { it.path !in deletedPaths }
-                selectedDuplicates.clear()
-                refresh()
             } catch (e: Exception) {
-                errorMessage = "Lỗi dọn rác hàng loạt: ${e.message}"
+                withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý hàng loạt: ${e.message}" }
             } finally {
-                isLoading = false
+                withContext(Dispatchers.Main) { isLoading = false }
             }
         }
     }

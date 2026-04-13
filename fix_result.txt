@@ -1,0 +1,4 @@
+﻿Line 1312:                 label = { Text("Nhß║¡p t├¬n th╞░ mß╗Ñc") },
+Line 1325: // DIALOG X├ôA NHIß╗ÇU Tß╗åP C├ÖNG L├ÜC
+Line 1336:         message = if (isTrash) "Bß║ín c├│ chß║»c chß║»n muß╗æn x├│a v─⌐nh viß╗àn $selectedCount tß╗çp n├áy kh├┤ng? H├ánh ─æß╗Öng n├áy kh├┤ng thß╗â ho├án t├íc." else "Bß║ín c├│ chß║»c chß║»n muß╗æn ─æ╞░a $selectedCount tß╗çp n├áy v├áo Th├╣ng r├íc?",
+Done!

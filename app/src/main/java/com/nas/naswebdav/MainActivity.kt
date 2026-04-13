@@ -114,7 +114,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         coil.Coil.setImageLoader(imageLoaderInstance)
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme()) {
                 Surface {
                     NasAppNavigation(viewModel)
                 }

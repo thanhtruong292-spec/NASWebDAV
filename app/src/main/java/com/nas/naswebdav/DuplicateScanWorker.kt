@@ -860,6 +860,9 @@ object UploadNotificationHelper {
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
+        val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
+        wakeLock.acquire(180 * 60 * 1000L) // Giữ WakeLock tối đa 3 tiếng nếu lượng file quá mức khổng lồ
         val baseUrl = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
@@ -994,6 +997,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
                         } catch (e: Exception) { if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải tệp $fileName: ${e.message}") }
+                        // Nhường luồng cho CPU để tránh văng app do tác vụ I/O nặng
+                        kotlinx.coroutines.yield()
                     }
                 }
             }
@@ -1003,6 +1008,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng AutoBackup: ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
+        } finally {
+            if (wakeLock.isHeld) wakeLock.release()
+            try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
         }
     }
 }

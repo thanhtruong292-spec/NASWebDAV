@@ -27,11 +27,11 @@ data class CachedFile(
 
 @Dao
 interface FileDao {
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path")
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
     fun getFiles(path: String): List<CachedFile>
 
     // KIẾN TRÚC MỚI: Paging 3 cho hàng trăm ngàn tệp tin
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name ASC")
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
     fun getFilesPaged(path: String): androidx.paging.PagingSource<Int, CachedFile>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

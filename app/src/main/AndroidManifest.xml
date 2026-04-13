@@ -39,7 +39,8 @@
             android:name=".VideoPlayerActivity"
             android:exported="false"
             android:supportsPictureInPicture="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
         <service
             android:name=".WolTileService"
             android:label="Bật NAS Chainedbox"

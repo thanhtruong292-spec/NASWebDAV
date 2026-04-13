@@ -268,7 +268,7 @@ object WebDavManager {
     ) = withContext(Dispatchers.IO) {
         val requestBody = object : RequestBody() {
             override fun contentType() = contentType.toMediaTypeOrNull()
-            override fun contentLength() = totalContentLength
+            override fun contentLength() = -1L
             override fun writeTo(sink: BufferedSink) {
                 inputStream.source().use { source ->
                     var totalBytesRead = 0L

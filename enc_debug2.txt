@@ -1,0 +1,3 @@
+﻿Line 1312: b'                label = { Text("Nh?p t\xef\xbf\xbdn thu m?c") },'
+Line 1325: b'// DIALOG X\xef\xbf\xbdA NHI?U T?P C\xef\xbf\xbdNG L\xef\xbf\xbdC'
+Line 1336: b'        message = if (isTrash) "B?n c\xef\xbf\xbd ch?c ch?n mu?n x\xef\xbf\xbda vinh vi?n $selectedCount t?p n\xef\xbf\xbdy kh\xef\xbf\xbdng? H\xef\xbf\xbdnh d?ng n\xef\xbf\xbdy kh\xef\xbf\xbdng th? ho\xef\xbf\xbdn t\xef\xbf\xbdc." else "B?n c\xef\xbf\xbd ch?c ch?n mu?n dua $selectedCount t?p n\xef\xbf\xbdy v\xef\xbf\xbdo Th\xef\xbf\xbdng r\xef\xbf\xbdc?",'

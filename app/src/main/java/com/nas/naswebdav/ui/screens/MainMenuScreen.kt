@@ -185,6 +185,7 @@ fun MainMenuScreen(
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
+        viewModel.fetchSmartData()
     }
 
     // --- DIALOGS (từ ui/dialogs/Dialogs.kt) ---
@@ -480,6 +481,34 @@ fun MainMenuScreen(
                             overridePercent = hddDisk.percent
                         )
                     } else Spacer(Modifier.weight(1f))
+                    
+                    val smartStatusText = viewModel.smartInfo.status.uppercase().trim()
+                    
+                    val isSmartOk = smartStatusText.contains("PASSED") || smartStatusText == "OK"
+                    val isSmartFailed = smartStatusText.contains("FAILED")
+                    val isSmartEmmc = smartStatusText.contains("EMMC")
+                    
+                    val smartColors = when {
+                        isSmartOk -> listOf(Color(0xFF00E676), Color(0xFF1DE9B6))
+                        isSmartEmmc -> listOf(Color(0xFF42A5F5), Color(0xFF1E88E5)) // Nhận diện eMMC màu Xanh Dương
+                        isSmartFailed -> listOf(Color(0xFFFF1744), Color(0xFFFF5252)) // FAILED hiển thị màu Đỏ
+                        else -> listOf(Color(0xFF9E9E9E), Color(0xFFBDBDBD)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
+                    }
+                    val smartPercent = when {
+                        isSmartOk -> 100f
+                        isSmartEmmc -> 100f
+                        isSmartFailed -> 0f
+                        else -> 50f
+                    }
+                    GaugeCard(
+                        title = "S.M.A.R.T",
+                        value = smartStatusText,
+                        subValue = viewModel.smartInfo.temperature.replace("°C", "°").replace("--", ""),
+                        icon = Icons.Default.HealthAndSafety,
+                        gradientColors = smartColors,
+                        modifier = Modifier.weight(1f),
+                        overridePercent = smartPercent
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
 
@@ -824,7 +853,8 @@ fun GaugeCard(
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Text(value, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val textSize = if (value.length > 7) 8.5.sp else 11.sp
+                    Text(value, fontSize = textSize, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
