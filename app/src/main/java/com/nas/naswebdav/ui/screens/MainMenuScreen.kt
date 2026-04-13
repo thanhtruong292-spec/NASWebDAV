@@ -69,7 +69,7 @@ private val TextSecondary = Color(0xFF8892B0)
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(400, 2500 - (percent * 20)) else 9999
+    val durationMs = if (isRunning) maxOf(350, 2350 - (percent * 20)) else 9999
     
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
@@ -644,7 +644,22 @@ fun MainMenuScreen(
                                     val isFanRunning = fanStatusStr != "Dừng" && fanStatusStr != "--"
                                     val percentStr = fanStatusStr.replace(Regex("[^0-9]"), "")
                                     val realPercent = if (percentStr.isNotEmpty()) percentStr.toInt() else if (isFanRunning) 100 else 0
-                                    FanSpeedIcon(percent = realPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                    
+                                    var displayPercent = realPercent
+                                    if (viewModel.systemStatus.fanMode == "custom" && isFanRunning) {
+                                        val cpuVal = viewModel.systemStatus.cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                                        val onT = viewModel.systemStatus.fanOnTemp
+                                        val offT = viewModel.systemStatus.fanOffTemp
+                                        if (cpuVal >= onT) {
+                                            displayPercent = 100
+                                        } else if (cpuVal <= offT) {
+                                            displayPercent = 20
+                                        } else if (onT > offT) {
+                                            displayPercent = 20 + ((cpuVal - offT) / (onT - offT) * 80).toInt()
+                                        }
+                                    }
+                                    
+                                    FanSpeedIcon(percent = displayPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
