@@ -620,7 +620,7 @@ fun MainMenuScreen(
                                     if (net != null) {
                                         Column {
                                             Text("${net.name} • ${net.speed}Mbps", fontSize = 10.sp, color = TextSecondary, letterSpacing = 0.5.sp)
-                                            Text("${net.address} | GW: ${net.gateway}", fontSize = 10.sp, color = Color(0xFF81D4FA))
+                                            Text("${net.address} | Gateway: ${net.gateway}", fontSize = 10.sp, color = Color(0xFF81D4FA))
                                             Text("MAC: ${net.mac}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                         }
                                     }
