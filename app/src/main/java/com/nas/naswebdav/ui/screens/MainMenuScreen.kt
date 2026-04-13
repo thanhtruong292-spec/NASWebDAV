@@ -932,7 +932,17 @@ fun GaugeCard(
                             Text(
                                 text = subValue,
                                 fontSize = 8.sp,
-                                color = if (subValue.contains("°C") || subValue.contains("\u00b0C")) Color(0xFFFF6B6B) else accentColor.copy(alpha=0.9f),
+                                color = if (subValue.contains("°C") || subValue.contains("\u00b0C") || subValue.contains("°")) {
+                                    val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
+                                    val isDisk = title == "S.M.A.R.T" || title == "Ổ CỨNG"
+                                    when {
+                                        isDisk && tempVal >= 55f -> Color(0xFFEF5350)
+                                        isDisk && tempVal >= 45f -> Color(0xFFFFA726)
+                                        !isDisk && tempVal >= 80f -> Color(0xFFEF5350)
+                                        !isDisk && tempVal >= 60f -> Color(0xFFFFA726) // CPU 60+ is Yellow
+                                        else -> Color(0xFF66BB6A)
+                                    }
+                                } else accentColor.copy(alpha = 0.9f),
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 modifier = Modifier.offset(y = (-1).dp)
