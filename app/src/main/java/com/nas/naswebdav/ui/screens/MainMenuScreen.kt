@@ -646,6 +646,8 @@ fun MainMenuScreen(
                                     val realPercent = if (percentStr.isNotEmpty()) percentStr.toInt() else if (isFanRunning) 100 else 0
                                     
                                     var displayPercent = realPercent
+                                    var displayStatusStr = fanStatusStr
+                                    
                                     if (viewModel.systemStatus.fanMode == "custom" && isFanRunning) {
                                         val cpuVal = viewModel.systemStatus.cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                                         val onT = viewModel.systemStatus.fanOnTemp
@@ -657,13 +659,14 @@ fun MainMenuScreen(
                                         } else if (onT > offT) {
                                             displayPercent = 20 + ((cpuVal - offT) / (onT - offT) * 80).toInt()
                                         }
+                                        displayStatusStr = "Đang biểu diễn $displayPercent%"
                                     }
                                     
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                        Text(viewModel.systemStatus.fanStatus, fontSize = 9.sp, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary)
+                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary)
                                     }
                                 }
                                 // Mute / Auto / Max Toggle
