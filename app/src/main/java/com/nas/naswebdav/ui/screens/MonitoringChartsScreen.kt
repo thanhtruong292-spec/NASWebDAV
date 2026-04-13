@@ -506,7 +506,17 @@ fun NasDailyReportPanel(report: DailyReportData) {
             c2 = if (report.cpuTempPeak > 75) _ChartAccentOrange else _ChartAccentGreen)
         StatPair("HDD °C TB", "%.1f".format(report.hddTempAvg), "HDD °C đỉnh", "%.1f".format(report.hddTempPeak),
             c2 = if (report.hddTempPeak > 50) _ChartAccentOrange else _ChartAccentGreen)
-        StatPair("Tải về", "%.1f MB".format(report.downloadMb), "Tải lên", "%.1f MB".format(report.uploadMb))
+        val fmtSize = { mb: Float ->
+            val bytes = mb * 1024 * 1024
+            when {
+                bytes >= 1024L * 1024 * 1024 * 1024 -> "%.2f TB".format(bytes / (1024.0 * 1024 * 1024 * 1024))
+                bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / (1024.0 * 1024 * 1024))
+                bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
+                bytes >= 1024 -> "%.0f KB".format(bytes / 1024.0)
+                else -> "%.0f B".format(bytes.toDouble())
+            }
+        }
+        StatPair("Tải về", fmtSize(report.downloadMb), "Tải lên", fmtSize(report.uploadMb))
         StatPair("Lỗi hệ thống", "${report.errorCount}", "Cảnh báo", "${report.warningCount}",
             c1 = if (report.errorCount > 0) _ChartAccentRed else _ChartAccentGreen,
             c2 = if (report.warningCount > 0) _ChartAccentOrange else _ChartAccentGreen)
