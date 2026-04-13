@@ -2121,6 +2121,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // ==========================================
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val oldStatus = systemStatus
             try {
                 val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
                 val jsonBody = org.json.JSONObject().put("mode", mode)
@@ -2136,15 +2137,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
 
+                // Optimistic UI Update de giao dien phan hoi lap tuc khong bi delay
+                var optimisticStatus = systemStatus.copy(fanMode = mode)
+                if (mode == "custom" && onTemp != null && offTemp != null) {
+                    optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
+                }
+                systemStatus = optimisticStatus
+
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        systemStatus = systemStatus.copy(fanMode = mode)
-                        if (mode == "custom" && onTemp != null && offTemp != null) {
-                            systemStatus = systemStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
-                        }
+                    if (!response.isSuccessful) {
+                        systemStatus = oldStatus // Rollback neu loi
                     }
                 }
             } catch (e: Exception) {
+                systemStatus = oldStatus // Rollback neu mat mang
                 android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
             }
         }

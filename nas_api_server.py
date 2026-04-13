@@ -4103,11 +4103,19 @@ def _fan_controller_watchdog():
                 if out == "active":
                     subprocess.run(["systemctl", "stop", "fan.service"])
                     
-                # Hysteresis Logic
+                # Linear PWM Hysteresis Logic
                 if current_temp >= on_temp:
-                    subprocess.run(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
-                elif current_temp <= off_temp:
-                    subprocess.run(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+                    duty = 10000
+                elif current_temp < off_temp:
+                    duty = 0
+                else:
+                    if on_temp > off_temp:
+                        # 40 -> 20% (2000), 60 -> 100% (10000)
+                        duty = 2000 + int(((current_temp - off_temp) / (on_temp - off_temp)) * 8000)
+                    else:
+                        duty = 10000
+                        
+                subprocess.run(["sh", "-c", f"echo {duty} > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
                 
         except Exception as e:
             log.error("[FanWatchdog] Loi: %s", e)

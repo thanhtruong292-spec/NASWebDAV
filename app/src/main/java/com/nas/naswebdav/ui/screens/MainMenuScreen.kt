@@ -67,14 +67,8 @@ private val TextSecondary = Color(0xFF8892B0)
 // ============ FAN SPEED ANIMATED ICON ============
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
-    val level = when {
-        percent <= 0  -> 0
-        percent <= 25 -> 1
-        percent <= 65 -> 2
-        else          -> 3
-    }
-    val isRunning = level > 0
-    val durationMs = when (level) { 1 -> 1500; 2 -> 600; 3 -> 250; else -> 9999 }
+    val isRunning = percent > 0
+    val durationMs = if (isRunning) maxOf(150, 3000 - (percent * 28)) else 9999
     
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
