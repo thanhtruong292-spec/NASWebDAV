@@ -498,13 +498,13 @@ fun NasDailyReportPanel(report: DailyReportData) {
             }
         }
 
-        StatPair("CPU TB", "%.1f%%".format(report.cpuAvg), "CPU đỉnh", "%.1f%%".format(report.cpuPeak),
+        StatPair("CPU trung bình", "%.1f%%".format(report.cpuAvg), "CPU cao nhất", "%.1f%%".format(report.cpuPeak),
             c2 = if (report.cpuPeak > 90) _ChartAccentRed else _ChartTextPrimary)
-        StatPair("RAM TB", "%.1f%%".format(report.ramAvg), "RAM đỉnh", "%.1f%%".format(report.ramPeak),
+        StatPair("RAM trung bình", "%.1f%%".format(report.ramAvg), "RAM cao nhất", "%.1f%%".format(report.ramPeak),
             c2 = if (report.ramPeak > 90) _ChartAccentRed else _ChartTextPrimary)
-        StatPair("CPU °C TB", "%.1f".format(report.cpuTempAvg), "CPU °C đỉnh", "%.1f".format(report.cpuTempPeak),
+        StatPair("CPU °C trung bình", "%.1f".format(report.cpuTempAvg), "CPU °C cao nhất", "%.1f".format(report.cpuTempPeak),
             c2 = if (report.cpuTempPeak > 75) _ChartAccentOrange else _ChartAccentGreen)
-        StatPair("HDD °C TB", "%.1f".format(report.hddTempAvg), "HDD °C đỉnh", "%.1f".format(report.hddTempPeak),
+        StatPair("HDD °C trung bình", "%.1f".format(report.hddTempAvg), "HDD °C cao nhất", "%.1f".format(report.hddTempPeak),
             c2 = if (report.hddTempPeak > 50) _ChartAccentOrange else _ChartAccentGreen)
         val fmtSize = { mb: Float ->
             val bytes = mb * 1024 * 1024
