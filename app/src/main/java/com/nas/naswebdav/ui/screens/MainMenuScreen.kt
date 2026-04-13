@@ -885,7 +885,16 @@ fun GaugeCard(
 ) {
     val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
     val progress = (numericValue / 100f).coerceIn(0f, 1f)
-    val accentColor = gradientColors.first()
+    
+    val accentColor = if (title == "S.M.A.R.T") {
+        gradientColors.first()
+    } else {
+        when {
+            progress >= 0.90f -> Color(0xFFEF5350) // Gần đầy / Quá tải -> Đỏ
+            progress >= 0.70f -> Color(0xFFFFA726) // Cảnh báo -> Vàng
+            else -> Color(0xFF66BB6A) // Bình thường -> Xanh
+        }
+    }
 
     Card(
         modifier = modifier,
