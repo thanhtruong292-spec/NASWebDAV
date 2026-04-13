@@ -379,6 +379,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
     private var lastNetworkErrorDialogAt = 0L
     internal var lastFanModeSettingTime = 0L
+    var isFanModeUpdating by mutableStateOf(false)
     private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phút
 
     // STATE CHO SMART DIALOG VÀ SPEED TEST
@@ -2121,16 +2122,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // THIẾT LẬP HOẠT ĐỘNG QUẠT (FAN CONTROL)
     // ==========================================
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
-        // Optimistic UI Update MÀ KHÔNG ĐỢI IO CHUYỂN NGỮ CẢNH: Đảm bảo 0ms delay!
-        val oldStatus = systemStatus
-        var optimisticStatus = systemStatus.copy(fanMode = mode)
-        if (mode == "custom" && onTemp != null && offTemp != null) {
-            optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
-        }
-        systemStatus = optimisticStatus
-        lastFanModeSettingTime = System.currentTimeMillis()
+        if (isFanModeUpdating) return
+        isFanModeUpdating = true
         
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val oldStatus = systemStatus
             try {
                 val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
                 val jsonBody = org.json.JSONObject().put("mode", mode)
@@ -2146,15 +2142,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
 
+                // Optimistic UI Update de giao dien phan hoi lap tuc khong bi delay
+                var optimisticStatus = systemStatus.copy(fanMode = mode)
+                if (mode == "custom" && onTemp != null && offTemp != null) {
+                    optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
+                }
+                
+                withContext(Dispatchers.Main) {
+                    systemStatus = optimisticStatus
+                }
+
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        // Rollback tren Main thread neu API that bai
-                        withContext(Dispatchers.Main) { systemStatus = oldStatus }
+                        withContext(Dispatchers.Main) { systemStatus = oldStatus } // Rollback neu loi
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { systemStatus = oldStatus }
+                withContext(Dispatchers.Main) { systemStatus = oldStatus } // Rollback neu mat mang
                 android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { 
+                    isFanModeUpdating = false 
+                    // Chống bounce: bắt đầu đếm 4s SAU KHI API thực sự chạy xong
+                    lastFanModeSettingTime = System.currentTimeMillis()
+                }
             }
         }
     }
@@ -2592,8 +2603,8 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             withContext(Dispatchers.Main) {
-                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu vừa set thủ công < 4s
-                                if (System.currentTimeMillis() - lastFanModeSettingTime < 4000L) {
+                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 4s (để chờ NAS sync cache)
+                                if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 4000L) {
                                     systemStatus = newStatus.copy(
                                         fanMode = systemStatus.fanMode,
                                         fanOnTemp = systemStatus.fanOnTemp,

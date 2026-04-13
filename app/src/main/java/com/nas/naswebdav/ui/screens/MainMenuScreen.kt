@@ -653,22 +653,16 @@ fun MainMenuScreen(
                                 }
                                 // Mute / Auto / Max Toggle
                                 var showFanSettings by remember { mutableStateOf(false) }
-                                var isFanControlLocked by remember { mutableStateOf(false) }
-                                val coroutineScope = rememberCoroutineScope()
                                 Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
                                     val modes = listOf("auto" to "Tự động", "custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                     val currentMode = viewModel.systemStatus.fanMode
+                                    val isFanControlLocked = viewModel.isFanModeUpdating
                                     modes.forEach { (m, label) ->
                                         val active = m == currentMode
                                         Box(
                                             Modifier.clickable(enabled = !isFanControlLocked) {
                                                 if (m == "custom") showFanSettings = true else {
                                                     viewModel.setFanMode(m)
-                                                    coroutineScope.launch {
-                                                        isFanControlLocked = true
-                                                        kotlinx.coroutines.delay(4000)
-                                                        isFanControlLocked = false
-                                                    }
                                                 }
                                             }
                                                 .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
@@ -696,16 +690,12 @@ fun MainMenuScreen(
                                             }
                                         },
                                         confirmButton = {
+                                            val isFanControlLocked = viewModel.isFanModeUpdating
                                             Button(
                                                 enabled = !isFanControlLocked,
                                                 onClick = { 
                                                     viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 65f, offTemp.toFloatOrNull() ?: 55f)
                                                     showFanSettings = false 
-                                                    coroutineScope.launch {
-                                                        isFanControlLocked = true
-                                                        kotlinx.coroutines.delay(4000)
-                                                        isFanControlLocked = false
-                                                    }
                                                 }
                                             ) { Text("Lưu & Áp dụng") }
                                         },
