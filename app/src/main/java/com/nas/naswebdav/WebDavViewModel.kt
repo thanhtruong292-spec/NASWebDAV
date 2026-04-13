@@ -2125,7 +2125,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         if (isFanModeUpdating) return
         
         // Cập nhật Optimistic UI ngay lập tức trên Main Thread để tránh delay 1-5 frames gây chớp (bounce)
-        var optimisticStatus = systemStatus.copy(fanMode = mode)
+        var optimisticStatus = systemStatus.copy(
+            fanMode = mode,
+            fanStatus = when (mode) {
+                "off" -> "Dừng"
+                "on" -> "Đang chạy 100%"
+                else -> systemStatus.fanStatus
+            }
+        )
         if (mode == "custom" && onTemp != null && offTemp != null) {
             optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
         }
@@ -2599,10 +2606,11 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             withContext(Dispatchers.Main) {
-                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 4s (để chờ NAS sync cache)
-                                if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 4000L) {
+                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 15s (để chờ NAS xử lý service tốn thời gian)
+                                if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 15000L) {
                                     systemStatus = newStatus.copy(
                                         fanMode = systemStatus.fanMode,
+                                        fanStatus = systemStatus.fanStatus, // Bảo toàn chuỗi trạng thái tốc độ quạt ảo
                                         fanOnTemp = systemStatus.fanOnTemp,
                                         fanOffTemp = systemStatus.fanOffTemp
                                     )
