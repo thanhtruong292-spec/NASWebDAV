@@ -535,8 +535,25 @@ def get_cpu_temp():
 
 
 def get_hdd_temp():
-    """Lay nhiet do o cung tu nhieu phuong phap (Chainedbox rk3328)."""
+    """Lay nhiet do o cung — uu tien OMV RPC, fallback smartctl/sysfs."""
     import re
+    # Phuong phap 0 (uu tien): Lay tu OMV Smart enumerateDevices
+    try:
+        omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=10)
+        if omv_out and omv_out.strip().startswith("{"):
+            devs = json.loads(omv_out)
+            for key in devs:
+                dev = devs[key]
+                if "mmc" in dev.get("devicename", ""):
+                    continue
+                temp_str = dev.get("temperature", "")
+                if temp_str and temp_str != "--\u00b0C":
+                    # OMV tra ve "31°C" hoac "31"
+                    temp_str = str(temp_str).replace("\u00b0C", "").strip()
+                    if temp_str.isdigit() and 10 < int(temp_str) < 100:
+                        return "%s\u00b0C" % temp_str
+    except Exception:
+        pass
     # Phuong phap 1: smartctl voi regex chinh xac
     for disk_path in SMART_DISKS:
         try:
@@ -1515,71 +1532,73 @@ def api_smart():
     # === Phuong phap 1: Lay tu OMV RPC (chinh xac nhat) ===
     try:
         omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=15)
-        if omv_out and omv_out.strip().startswith("["):
-            import json as _json
-            devices = _json.loads(omv_out)
+        if omv_out and omv_out.strip():
+            raw_parsed = json.loads(omv_out)
+            # OMV co the tra ve object {"1": {...}} hoac array [{...}]
+            if isinstance(raw_parsed, dict):
+                devices = list(raw_parsed.values())
+            else:
+                devices = raw_parsed
             # Tim o cung that (khong phai eMMC/mmcblk)
-            real_devs = [d for d in devices if "mmc" not in d.get("devicename", "")]
+            real_devs = [d for d in devices if isinstance(d, dict) and "mmc" not in d.get("devicename", "")]
             if real_devs:
                 dev = real_devs[0]
                 overall = dev.get("overallstatus", "")
-                # OMV tra ve: "GOOD" hoac "BAD" hoac ""
                 if overall.upper() == "GOOD":
                     status = "PASSED"
                 elif overall.upper() == "BAD":
                     status = "FAILED"
                 else:
                     status = overall if overall else "Unknown"
-                # Nhiet do tu OMV
-                temp_val = dev.get("temperature", "")
-                if temp_val and str(temp_val) != "0":
-                    temperature = "%s\u00b0C" % str(temp_val)
+                # Nhiet do tu OMV (co the la "31°C" hoac "31")
+                temp_val = str(dev.get("temperature", "")).strip()
+                if temp_val and temp_val != "0":
+                    if "\u00b0" in temp_val:
+                        temperature = temp_val
+                    else:
+                        temperature = "%s\u00b0C" % temp_val
                 # Model + Serial de hien thi
+                vendor = dev.get("vendor", "")
                 model = dev.get("model", "")
                 serial = dev.get("serialnumber", "")
                 devname = dev.get("devicename", "")
+                full_model = ("%s %s" % (vendor, model)).strip()
                 raw_log = "Thiet bi: /dev/%s\nModel: %s\nSerial: %s\nTrang thai OMV: %s\nNhiet do: %s" % (
-                    devname, model, serial, overall, temperature
+                    devname, full_model, serial, overall, temperature
                 )
-                # Lay them raw SMART attributes tu OMV neu co
+                # Lay SMART attributes tu OMV
                 try:
                     dev_file = dev.get("devicefile", "/dev/%s" % devname)
-                    attr_params = _json.dumps({"devicefile": dev_file, "type": ""})
+                    attr_params = json.dumps({"devicefile": dev_file, "type": ""})
                     attr_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "getAttributes", attr_params], timeout=15)
-                    if attr_out and attr_out.strip().startswith("["):
-                        attrs = _json.loads(attr_out)
+                    if attr_out and attr_out.strip():
+                        attrs_raw = json.loads(attr_out)
+                        if isinstance(attrs_raw, dict):
+                            attrs = list(attrs_raw.values())
+                        else:
+                            attrs = attrs_raw
                         raw_log += "\n\n=== S.M.A.R.T Attributes ===\n"
                         raw_log += "%-4s %-24s %-6s %-6s %-6s %s\n" % ("ID", "Attribute", "Value", "Worst", "Thresh", "Raw")
                         for a in attrs:
-                            raw_log += "%-4s %-24s %-6s %-6s %-6s %s\n" % (
-                                a.get("id", ""), a.get("attrname", ""),
-                                a.get("value", ""), a.get("worst", ""),
-                                a.get("threshold", ""), a.get("rawvalue", "")
-                            )
+                            if isinstance(a, dict):
+                                raw_log += "%-4s %-24s %-6s %-6s %-6s %s\n" % (
+                                    a.get("id", ""), a.get("attrname", ""),
+                                    a.get("value", ""), a.get("worst", ""),
+                                    a.get("threshold", ""), a.get("rawvalue", "")
+                                )
                 except Exception:
                     pass
-
-                # Bo sung nhiet do tu get_hdd_temp() neu OMV khong tra ve
+                # Bo sung nhiet do fallback
                 if temperature == "--\u00b0C":
                     try:
                         temperature = get_hdd_temp()
                     except Exception:
                         pass
-
-                return jsonify({
-                    "status": status,
-                    "temperature": temperature,
-                    "raw_log": raw_log
-                })
+                return jsonify({"status": status, "temperature": temperature, "raw_log": raw_log})
             else:
-                # OMV chi thay eMMC
-                return jsonify({
-                    "status": "eMMC Only",
-                    "temperature": "--\u00b0C",
-                    "raw_log": "OMV chi phat hien bo nho trong (eMMC). Khong co HDD/SSD."
-                })
+                return jsonify({"status": "eMMC Only", "temperature": "--\u00b0C", "raw_log": "OMV chi phat hien eMMC. Khong co HDD/SSD."})
     except Exception:
-        pass  # Fallback sang smartctl
+        pass
 
     # === Phuong phap 2: Fallback smartctl truc tiep ===
     has_real_hdd = False
@@ -1614,11 +1633,7 @@ def api_smart():
     except Exception:
         pass
 
-    return jsonify({
-        "status": status,
-        "temperature": temperature,
-        "raw_log": raw_log
-    })
+    return jsonify({"status": status, "temperature": temperature, "raw_log": raw_log})
 
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
