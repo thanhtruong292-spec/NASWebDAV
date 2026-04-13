@@ -378,6 +378,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var showCommonDialog by mutableStateOf(false)
     // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
     private var lastNetworkErrorDialogAt = 0L
+    private var lastFanModeSettingTime = 0L
     private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phút
 
     // STATE CHO SMART DIALOG VÀ SPEED TEST
@@ -2142,7 +2143,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 if (mode == "custom" && onTemp != null && offTemp != null) {
                     optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
                 }
-                systemStatus = optimisticStatus
+                
+                withContext(Dispatchers.Main) {
+                    systemStatus = optimisticStatus
+                    lastFanModeSettingTime = System.currentTimeMillis()
+                }
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
@@ -2589,7 +2594,17 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             withContext(Dispatchers.Main) {
-                                systemStatus = newStatus
+                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu vừa set thủ công < 4s
+                                if (System.currentTimeMillis() - lastFanModeSettingTime < 4000L) {
+                                    systemStatus = newStatus.copy(
+                                        fanMode = systemStatus.fanMode,
+                                        fanOnTemp = systemStatus.fanOnTemp,
+                                        fanOffTemp = systemStatus.fanOffTemp
+                                    )
+                                } else {
+                                    systemStatus = newStatus
+                                }
+                                
                                 if (hddVal > 0f || cpuVal > 0f) {
                                     val currentHistory = temperatureHistory.toMutableList()
                                     currentHistory.add(Pair(cpuVal, hddVal))
