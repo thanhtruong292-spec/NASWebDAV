@@ -980,6 +980,13 @@ def get_fan_info():
     try:
         duty_path = os.path.join(PWM_DIR, "duty_cycle")
         period_path = os.path.join(PWM_DIR, "period")
+        
+        # Xem daemon fan.service con song khong
+        mode = "auto"
+        out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
+        if out != "active":
+            mode = "manual"  # tam thoi set the, se detect theo duty_cycle
+
         if os.path.exists(duty_path):
             with open(duty_path) as f:
                 duty = int(f.read().strip())
@@ -991,10 +998,15 @@ def get_fan_info():
                 except Exception:
                     pass
             percent = int((duty * 100.0) / period)
+
+            if mode == "manual":
+                if duty == 0: mode = "off"
+                else: mode = "on"
+
             if duty == 0:
-                return {"rpm": None, "status": "Dung", "percent": 0}
+                return {"rpm": None, "status": "Dừng", "percent": 0, "mode": mode}
             else:
-                return {"rpm": None, "status": "Dang chay %d%%" % percent, "percent": percent}
+                return {"rpm": None, "status": "Đang chạy %d%%" % percent, "percent": percent, "mode": mode}
     except Exception:
         pass
 
@@ -1109,6 +1121,7 @@ def _update_status_cache():
                 "status": "Online",
                 "fan_rpm": cached_fan.get("rpm"),
                 "fan_status": cached_fan.get("status", "--"),
+                "fan_mode": cached_fan.get("mode", "auto"),
                 "top_processes": cached_top,
                 "torrents": cached_torrents,
                 "disk_parts": cached_disk_parts
@@ -2094,6 +2107,33 @@ def api_docker_control():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# ============ FAN CONTROL ============
+
+@app.route('/api/fan/control', methods=['POST'])
+@requires_auth
+def api_fan_control():
+    try:
+        data = request.json or {}
+        mode = data.get('mode', 'auto')
+        
+        if mode == 'auto':
+            run_cmd(["systemctl", "start", "fan.service"])
+            return jsonify({"status": "success", "mode": "auto"})
+            
+        elif mode == 'off':
+            run_cmd(["systemctl", "stop", "fan.service"])
+            run_cmd(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            return jsonify({"status": "success", "mode": "off"})
+            
+        elif mode == 'on':
+            run_cmd(["systemctl", "stop", "fan.service"])
+            run_cmd(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            return jsonify({"status": "success", "mode": "on"})
+            
+        return jsonify({"error": "Invalid mode"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ============ TORRENT (qBittorrent) ============
 

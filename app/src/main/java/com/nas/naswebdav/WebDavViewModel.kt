@@ -112,7 +112,8 @@ data class NasSystemStatus(
     val torrents: List<TorrentInfo> = emptyList(),
     val diskParts: List<DiskPart> = emptyList(),
     val fanStatus: String = "--",  // Trạng thái quạt (Dừng / Đang chạy)
-    val fanRpm: Int? = null,        // Số vòng quạt (nếu có)
+    val fanMode: String = "auto",  // auto, on, off
+    val fanRpm: Int? = null,       // Số vòng quạt (nếu có)
     val topProcesses: List<Pair<String, Float>> = emptyList() // Top tiến trình ăn CPU
 )
 
@@ -2112,6 +2113,35 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         AutoBackupState.isPaused.value = newState
         autoBackupIsPaused = newState
     }
+
+    // ==========================================
+    // THIẾT LẬP HOẠT ĐỘNG QUẠT (FAN CONTROL)
+    // ==========================================
+    fun setFanMode(mode: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                // local API route: POST /api/fan/control
+                val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
+                val jsonPayload = org.json.JSONObject().put("mode", mode).toString()
+                val requestBody = okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), jsonPayload)
+
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+
+                NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        systemStatus = systemStatus.copy(fanMode = mode)
+                        // Trigger immediate fetch to sync dashboard
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
+            }
+        }
+    }
 } // end class WebDavViewModel
 
 // LỚP PHỤ TRỢ: Bộ đếm Rate Limiter (2.C)
@@ -2536,10 +2566,11 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             val diskPartList = mutableListOf<DiskPart>()
                             jsonObject.optJSONArray("disk_parts")?.let { arr -> for (i in 0 until arr.length()) { val dObj = arr.getJSONObject(i); diskPartList.add(DiskPart(dObj.optString("mount", "/"), dObj.optDouble("percent", 0.0).toFloat(), dObj.optString("total", "0GB"), dObj.optString("used", "0GB"))) } }
                             val fanStatus = jsonObject.optString("fan_status", "--")
+                            val fanMode = jsonObject.optString("fan_mode", "auto")
                             val fanRpmRaw = jsonObject.opt("fan_rpm"); val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
                             val topProcs = mutableListOf<Pair<String, Float>>()
                             jsonObject.optJSONArray("top_processes")?.let { arr -> for (i in 0 until arr.length()) { val p = arr.getJSONObject(i); topProcs.add(Pair(p.optString("name", "?"), p.optDouble("cpu", 0.0).toFloat())) } }
-                            val newStatus = NasSystemStatus(temp, cpu, cpuTemp, ram, disk, diskCapacity, netRx, netTx, uptime, status, ramPercent, torrentList, diskPartList, fanStatus, fanRpm, topProcs)
+                            val newStatus = NasSystemStatus(temp, cpu, cpuTemp, ram, disk, diskCapacity, netRx, netTx, uptime, status, ramPercent, torrentList, diskPartList, fanStatus, fanMode, fanRpm, topProcs)
                             val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             withContext(Dispatchers.Main) {

@@ -608,6 +608,35 @@ fun MainMenuScreen(
                                     }
                                 }
                             }
+                            
+                            // Fan Control
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val isFanRunning = viewModel.systemStatus.fanStatus != "Dừng" && viewModel.systemStatus.fanStatus != "--"
+                                    FanSpeedIcon(percent = if (isFanRunning) 100 else 0, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                        Text(viewModel.systemStatus.fanStatus, fontSize = 9.sp, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary)
+                                    }
+                                }
+                                // Mute / Auto / Max Toggle
+                                Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
+                                    val modes = listOf("auto" to "Tự động", "on" to "Bật", "off" to "Tắt")
+                                    val currentMode = viewModel.systemStatus.fanMode
+                                    modes.forEach { (m, label) ->
+                                        val active = m == currentMode
+                                        Box(
+                                            Modifier.clickable { viewModel.setFanMode(m) }
+                                                .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
+                                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
