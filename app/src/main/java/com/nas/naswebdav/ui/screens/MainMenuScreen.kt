@@ -639,8 +639,11 @@ fun MainMenuScreen(
                             Spacer(Modifier.height(8.dp))
                             Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val isFanRunning = viewModel.systemStatus.fanStatus != "Dừng" && viewModel.systemStatus.fanStatus != "--"
-                                    FanSpeedIcon(percent = if (isFanRunning) 100 else 0, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                    val fanStatusStr = viewModel.systemStatus.fanStatus
+                                    val isFanRunning = fanStatusStr != "Dừng" && fanStatusStr != "--"
+                                    val percentStr = fanStatusStr.replace(Regex("[^0-9]"), "")
+                                    val realPercent = if (percentStr.isNotEmpty()) percentStr.toInt() else if (isFanRunning) 100 else 0
+                                    FanSpeedIcon(percent = realPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
