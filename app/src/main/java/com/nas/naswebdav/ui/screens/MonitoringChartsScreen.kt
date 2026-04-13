@@ -2,6 +2,7 @@ package com.nas.naswebdav.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -60,27 +61,52 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(Modifier.padding(12.dp)) {
+            var chartExpanded by remember { mutableStateOf(false) }
 
-            // Header + Bộ chọn khoảng thời gian
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("GIÁM SÁT", fontSize = 9.sp, color = _ChartTextSecond, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Header — nhấn để mở/đóng (không ripple)
+            Row(
+                Modifier.fillMaxWidth().clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { chartExpanded = !chartExpanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Insights, null, tint = _ChartAccentCyan, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("GIÁM SÁT", fontSize = 9.sp, color = _ChartTextSecond, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     hourLabels.forEachIndexed { i, label ->
                         val selected = hourValues[i] == viewModel.metricsHours
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = if (selected) _ChartAccentCyan.copy(alpha = 0.2f) else Color.Transparent,
-                            modifier = Modifier.clickable { viewModel.fetchMetricsHistory(hourValues[i]) }
+                            modifier = Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { viewModel.fetchMetricsHistory(hourValues[i]) }
                         ) {
                             Text(label, fontSize = 10.sp,
                                 color = if (selected) _ChartAccentCyan else _ChartTextSecond,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                         }
                     }
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        if (chartExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = _ChartTextSecond,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            // Nội dung mở rộng
+            androidx.compose.animation.AnimatedVisibility(visible = chartExpanded) {
+                Column {
+                    Spacer(Modifier.height(8.dp))
 
             // Tab chọn loại biểu đồ
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -207,6 +233,9 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                 Spacer(Modifier.height(8.dp))
                 NasDailyReportPanel(report)
             }
+
+                } // end Column inside AnimatedVisibility
+            } // end AnimatedVisibility
         }
     }
 }

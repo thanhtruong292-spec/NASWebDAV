@@ -526,7 +526,10 @@ fun MainMenuScreen(
                 Column(Modifier.padding(12.dp)) {
                     // Header — nhấn để mở/đóng
                     Row(
-                        Modifier.fillMaxWidth().clickable { omvExpanded = !omvExpanded },
+                        Modifier.fillMaxWidth().clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { omvExpanded = !omvExpanded },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -1468,9 +1471,9 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
     if (!hasAnyTasks) return
 
     Column(Modifier.fillMaxWidth()) {
+        var tasksExpanded by remember { mutableStateOf(false) }
+        val activeCount = listOf(thumbIsActive, dupIsActive, autoBackupIsActive, activeStreams.isNotEmpty()).count { it }
         Spacer(Modifier.height(14.dp))
-        Text("TÁC VỤ NỀN", fontSize = 12.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 16.dp))
-        Spacer(Modifier.height(8.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth().animateContentSize(),
@@ -1478,103 +1481,129 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
             shape = RoundedCornerShape(14.dp)
         ) {
             Column(Modifier.padding(14.dp)) {
-                // --- THÔNG LỆ THUMBNAIL ---
-                androidx.compose.animation.AnimatedVisibility(visible = thumbIsActive) {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.PhotoLibrary, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Trình Tạo Ảnh Thu Nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                Text(when { viewModel.thumbPaused -> "Đã Tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
-                            }
-                            if (viewModel.thumbRunning || viewModel.thumbPaused) {
-                                IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
-                            }
-                            IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp)) }
+                // Header — nhấn để mở/đóng
+                Row(
+                    Modifier.fillMaxWidth().clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { tasksExpanded = !tasksExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Sync, null, tint = AccentGreen, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("TÁC VỤ NỀN", fontSize = 10.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("$activeCount đang chạy", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(progress = { (thumbPercent / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFFAB47BC), trackColor = Color(0xFF161616))
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("${viewModel.thumbGenerated} / ${viewModel.thumbTotal}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-                            Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFAB47BC))
-                        }
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            if (tasksExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
-                if (thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
-                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
-                }
-
-                // --- DUPLICATE QUÉT ---
-                androidx.compose.animation.AnimatedVisibility(visible = dupIsActive) {
+                // Nội dung mở rộng
+                androidx.compose.animation.AnimatedVisibility(visible = tasksExpanded) {
                     Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(38.dp).background(Color(0xFF29B6F6).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Quét Trùng Lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                Text(if (dupIsPaused) "⏸ Đã tạm dừng" else (if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét"), fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
-                            }
-                            if (dupIsRunning || dupIsPaused) {
-                                IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
+                        // --- THUMBNAIL ---
+                        if (thumbIsActive) {
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.PhotoLibrary, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(18.dp))
                                 }
-                                IconButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Trình Tạo Ảnh Thu Nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(when { viewModel.thumbPaused -> "Đã Tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
+                                }
+                                if (viewModel.thumbRunning || viewModel.thumbPaused) {
+                                    IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
+                                }
+                                IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp)) }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            LinearProgressIndicator(progress = { (thumbPercent / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFFAB47BC), trackColor = Color(0xFF161616))
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("${viewModel.thumbGenerated} / ${viewModel.thumbTotal}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFAB47BC))
+                            }
+                        }
+
+                        if (thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                        }
+
+                        // --- DUPLICATE QUÉT ---
+                        if (dupIsActive) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(38.dp).background(Color(0xFF29B6F6).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Quét Trùng Lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(if (dupIsPaused) "⏸ Đã tạm dừng" else (if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét"), fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
+                                }
+                                if (dupIsRunning || dupIsPaused) {
+                                    IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
+                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
+                                    }
+                                    IconButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
+                                        Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            LinearProgressIndicator(progress = { dupPercent.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFF29B6F6), trackColor = Color(0xFF161616))
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("$dupStage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                            }
+                        }
+
+                        if (dupIsActive && (autoBackupIsActive || activeStreams.isNotEmpty())) {
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                        }
+
+                        // --- AUTO BACKUP ---
+                        if (autoBackupIsActive) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("🟢 Đang đồng bộ nền...", fontSize = 11.sp, color = Color(0xFF66BB6A))
                                 }
                             }
                         }
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(progress = { dupPercent.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFF29B6F6), trackColor = Color(0xFF161616))
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("$dupStage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-                            Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+
+                        if (autoBackupIsActive && activeStreams.isNotEmpty()) {
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
                         }
-                    }
-                }
 
-                if (dupIsActive && (autoBackupIsActive || activeStreams.isNotEmpty())) {
-                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
-                }
-
-                // --- AUTO BACKUP ---
-                androidx.compose.animation.AnimatedVisibility(visible = autoBackupIsActive) {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                Text("🟢 Đang đồng bộ nền...", fontSize = 11.sp, color = Color(0xFF66BB6A))
-                            }
-                        }
-                    }
-                }
-
-                if (autoBackupIsActive && activeStreams.isNotEmpty()) {
-                    androidx.compose.material3.Divider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
-                }
-
-                // --- LIVESTREAM ---
-                androidx.compose.animation.AnimatedVisibility(visible = activeStreams.isNotEmpty()) {
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(38.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Livestream Recording", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 11.sp, color = Color(0xFFFF7043))
+                        // --- LIVESTREAM ---
+                        if (activeStreams.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(38.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Livestream Recording", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 11.sp, color = Color(0xFFFF7043))
+                                }
                             }
                         }
                     }
