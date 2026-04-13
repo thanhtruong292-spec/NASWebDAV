@@ -911,12 +911,25 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             var processedFilesCount = 0
             val startTime = System.currentTimeMillis()
             
+            // Đẩy trạng thái ban đầu để UI không bị kẹt ở "0 / 0 tệp"
+            setProgressAsync(workDataOf(
+                "fileName" to "Đang chuẩn bị danh sách...",
+                "sourcePath" to "Thiết bị máy trạm",
+                "destPath" to backupFolderBase,
+                "progress" to 0f,
+                "processedCount" to 0,
+                "totalCount" to totalFilesToProcess,
+                "elapsedTime" to 0L
+            ))
+            
             for (mediaUri in urisToQuery) {
                 if (isStopped) break
                 applicationContext.contentResolver.query(mediaUri, projection, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { cursor ->
                     val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                    var lastSkipProgressTime = 0L
+                    
                     while (cursor.moveToNext() && !isStopped) {
                         while (AutoBackupState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
                         processedFilesCount++
@@ -951,7 +964,30 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         if (!localFile.exists() || localFile.length() == 0L) continue
                         try {
                             val fileHash: String? = try { ImageFingerprint.computeFromFile(localFile) } catch (_: Exception) { null }
-                            if (fileHash != null) { val existingFp = db.fingerprintDao().findByExactHash(fileHash); if (existingFp != null) continue }
+                            var isSkipped = false
+                            if (fileHash != null) { 
+                                val existingFp = db.fingerprintDao().findByExactHash(fileHash); 
+                                if (existingFp != null) isSkipped = true 
+                            }
+                            
+                            if (isSkipped) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastSkipProgressTime > 300) {
+                                    lastSkipProgressTime = now
+                                    val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
+                                    setProgressAsync(workDataOf(
+                                        "fileName" to "Bỏ qua (đã đồng bộ): $fileName",
+                                        "sourcePath" to dataPath,
+                                        "destPath" to targetFileNasPath,
+                                        "progress" to 1f,
+                                        "processedCount" to processedFilesCount,
+                                        "totalCount" to totalFilesToProcess,
+                                        "elapsedTime" to (now - startTime)
+                                    ))
+                                }
+                                continue
+                            }
+                            
                             val mimeType = try { applicationContext.contentResolver.getType(ContentUris.withAppendedId(mediaUri, id)) ?: "application/octet-stream" } catch (_: Exception) { "application/octet-stream" }
                             
                             val fileSize = localFile.length()
