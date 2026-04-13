@@ -622,19 +622,51 @@ fun MainMenuScreen(
                                     }
                                 }
                                 // Mute / Auto / Max Toggle
+                                var showFanSettings by remember { mutableStateOf(false) }
                                 Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                                    val modes = listOf("auto" to "Tự động", "on" to "Bật", "off" to "Tắt")
+                                    val modes = listOf("auto" to "Tự động", "custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                     val currentMode = viewModel.systemStatus.fanMode
                                     modes.forEach { (m, label) ->
                                         val active = m == currentMode
                                         Box(
-                                            Modifier.clickable { viewModel.setFanMode(m) }
+                                            Modifier.clickable {
+                                                if (m == "custom") showFanSettings = true else viewModel.setFanMode(m)
+                                            }
                                                 .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
                                                 .padding(horizontal = 8.dp, vertical = 6.dp)
                                         ) {
                                             Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
                                         }
                                     }
+                                }
+                                
+                                if (showFanSettings) {
+                                    var onTemp by remember { mutableStateOf(viewModel.systemStatus.fanOnTemp.toInt().toString()) }
+                                    var offTemp by remember { mutableStateOf(viewModel.systemStatus.fanOffTemp.toInt().toString()) }
+                                    androidx.compose.material.AlertDialog(
+                                        onDismissRequest = { showFanSettings = false },
+                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                                        text = { 
+                                            Column {
+                                                Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
+                                                Spacer(Modifier.height(12.dp))
+                                                OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                                Spacer(Modifier.height(8.dp))
+                                                OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                            }
+                                        },
+                                        confirmButton = {
+                                            Button(onClick = { 
+                                                viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 65f, offTemp.toFloatOrNull() ?: 55f)
+                                                showFanSettings = false 
+                                            }) { Text("Lưu & Áp dụng") }
+                                        },
+                                        dismissButton = {
+                                            androidx.compose.material.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
+                                        },
+                                        backgroundColor = Color(0xFF1E1E1E),
+                                        contentColor = Color.White
+                                    )
                                 }
                             }
                         }

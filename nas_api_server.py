@@ -975,22 +975,31 @@ def get_disk_partitions():
 
 def get_fan_info():
     """Lay thong tin quat lam mat - Chainedbox rk3328 dung PWM pwmchip0."""
-    # Duong dan PWM chinh xac cua Chainedbox (doc tu /sbin/fan)
     PWM_DIR = "/sys/class/pwm/pwmchip0/pwm0"
     try:
         duty_path = os.path.join(PWM_DIR, "duty_cycle")
         period_path = os.path.join(PWM_DIR, "period")
         
-        # Xem daemon fan.service con song khong
-        mode = "auto"
+        # Doc setting tu JSON
+        settings = {"mode": "auto", "on_temp": 65, "off_temp": 55}
+        try:
+            if os.path.exists("/opt/fan_custom.json"):
+                with open("/opt/fan_custom.json", "r") as f:
+                    settings.update(json.load(f))
+        except Exception:
+            pass
+            
+        mode = settings.get("mode", "auto")
+        
+        # Kiem tra thuc te
         out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
-        if out != "active":
-            mode = "manual"  # tam thoi set the, se detect theo duty_cycle
+        if out == "active":
+            mode = "auto"
 
         if os.path.exists(duty_path):
             with open(duty_path) as f:
                 duty = int(f.read().strip())
-            period = 10000  # Mac dinh 10000 (theo /sbin/fan)
+            period = 10000
             if os.path.exists(period_path):
                 try:
                     with open(period_path) as f:
@@ -999,14 +1008,22 @@ def get_fan_info():
                     pass
             percent = int((duty * 100.0) / period)
 
-            if mode == "manual":
+            if mode not in ["auto", "custom"]:
                 if duty == 0: mode = "off"
                 else: mode = "on"
 
+            payload = {
+                "rpm": None, 
+                "percent": percent, 
+                "mode": mode,
+                "on_temp": settings.get("on_temp", 65),
+                "off_temp": settings.get("off_temp", 55)
+            }
             if duty == 0:
-                return {"rpm": None, "status": "Dừng", "percent": 0, "mode": mode}
+                payload["status"] = "Dừng"
             else:
-                return {"rpm": None, "status": "Đang chạy %d%%" % percent, "percent": percent, "mode": mode}
+                payload["status"] = "Đang chạy %d%%" % percent
+            return payload
     except Exception:
         pass
 
@@ -1122,6 +1139,8 @@ def _update_status_cache():
                 "fan_rpm": cached_fan.get("rpm"),
                 "fan_status": cached_fan.get("status", "--"),
                 "fan_mode": cached_fan.get("mode", "auto"),
+                "fan_on_temp": cached_fan.get("on_temp", 65),
+                "fan_off_temp": cached_fan.get("off_temp", 55),
                 "top_processes": cached_top,
                 "torrents": cached_torrents,
                 "disk_parts": cached_disk_parts
@@ -2110,23 +2129,53 @@ def api_docker_control():
 
 # ============ FAN CONTROL ============
 
+FAN_SETTINGS_FILE = "/opt/fan_custom.json"
+def _load_fan_settings():
+    try:
+        if os.path.exists(FAN_SETTINGS_FILE):
+            with open(FAN_SETTINGS_FILE, "r") as f:
+                return json.load(f)
+    except Exception: pass
+    return {"mode": "auto", "on_temp": 65, "off_temp": 55}
+
+def _save_fan_settings(settings):
+    try:
+        with open(FAN_SETTINGS_FILE, "w") as f:
+            json.dump(settings, f)
+    except Exception: pass
+
 @app.route('/api/fan/control', methods=['POST'])
 @requires_auth
 def api_fan_control():
     try:
         data = request.json or {}
-        mode = data.get('mode', 'auto')
+        settings = _load_fan_settings()
+        mode = data.get('mode', settings.get('mode', 'auto'))
         
         if mode == 'auto':
+            settings['mode'] = 'auto'
+            _save_fan_settings(settings)
             run_cmd(["systemctl", "start", "fan.service"])
             return jsonify({"status": "success", "mode": "auto"})
             
+        elif mode == 'custom':
+            settings['mode'] = 'custom'
+            settings['on_temp'] = data.get('on_temp', settings.get('on_temp', 65))
+            settings['off_temp'] = data.get('off_temp', settings.get('off_temp', 55))
+            _save_fan_settings(settings)
+            run_cmd(["systemctl", "stop", "fan.service"])
+            return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp']})
+            
         elif mode == 'off':
+            settings['mode'] = 'off'
+            _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
             return jsonify({"status": "success", "mode": "off"})
             
         elif mode == 'on':
+            settings['mode'] = 'on'
+            _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
             return jsonify({"status": "success", "mode": "on"})
@@ -4027,7 +4076,33 @@ def _livestream_watchdog():
         except Exception as e:
             log.error("[Livestream] Watchdog error: %s", e)
 
+def _fan_controller_watchdog():
+    """Tien trinh ngam dieu khien quat theo che do tuy chinh (Hysteresis)"""
+    while True:
+        try:
+            settings = _load_fan_settings()
+            if settings.get("mode") == "custom":
+                on_temp = float(settings.get("on_temp", 65))
+                off_temp = float(settings.get("off_temp", 55))
+                current_temp = float(get_cpu_temp())
+                
+                # Dam bao OS daemon da duoc tat
+                out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
+                if out == "active":
+                    subprocess.run(["systemctl", "stop", "fan.service"])
+                    
+                # Hysteresis Logic
+                if current_temp >= on_temp:
+                    subprocess.run(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+                elif current_temp <= off_temp:
+                    subprocess.run(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+                
+        except Exception as e:
+            log.error("[FanWatchdog] Loi: %s", e)
+        time.sleep(10)
+
 # Khoi dong watchdog thread
+threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
 threading.Thread(target=_livestream_watchdog, daemon=True).start()
 
 
