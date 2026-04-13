@@ -104,26 +104,47 @@ object WebDavManager {
         currentPass = pass
     }
 
-    // TÍNH NĂNG 4.H: Đo lường Sức Khoẻ Mạng bằng HTTP OPTIONS cực nhẹ
+    // TÍNH NĂNG 4.H: Đo lường Sức Khoẻ Mạng bằng ICMP PING (Native Ping) cực nhẹ
     suspend fun checkPingServer(): Long? = withContext(Dispatchers.IO) {
         if (currentBaseUrl.isEmpty()) return@withContext null
         try {
-            val start = System.currentTimeMillis()
-            val request = Request.Builder()
-                .url(currentBaseUrl)
-                .method("OPTIONS", null)
-                .build()
+            val host = java.net.URL(currentBaseUrl).host
+            if (host.isEmpty()) return@withContext null
             
-            // XỬ LÝ THEO YÊU CẦU: Rút ngắn thời gian Timeout mặc định của client xuống 3s cho truy vấn gốc.
-            val quickClient = optimizedClient.newBuilder()
-                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-
-            quickClient.newCall(request).execute().use { }
-            return@withContext System.currentTimeMillis() - start
+            // Dùng lệnh ping gốc của Android (ICMP) thay vì gửi gói HTTP cấu trúc cồng kềnh
+            val start = System.currentTimeMillis()
+            val process = Runtime.getRuntime().exec("ping -c 1 -W 1 $host")
+            val exitCode = process.waitFor()
+            
+            if (exitCode == 0) {
+                // Phân tích stdout để lấy số mili-giây chuẩn xác từ lõi Linux, loại trừ độ trễ của máy ảo Java
+                // VD: "64 bytes from 192.168.1.5: icmp_seq=1 ttl=64 time=3.45 ms"
+                val reader = process.inputStream.bufferedReader()
+                var ms = -1L
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    if (line!!.contains("time=")) {
+                        try {
+                            val timeStr = line!!.substringAfter("time=").substringBefore(" ms")
+                            ms = timeStr.toDouble().toLong()
+                        } catch (e: Exception) {}
+                    }
+                }
+                reader.close()
+                if (ms >= 0) return@withContext ms
+                return@withContext System.currentTimeMillis() - start
+            } else {
+                // Nhỡ ICMP bị firewall chặn, dự phòng bằng HTTP Options (tốn thời gian hơn chút xíu)
+                val request = Request.Builder().url(currentBaseUrl).method("OPTIONS", null).build()
+                val quickClient = optimizedClient.newBuilder()
+                    .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                quickClient.newCall(request).execute().use { }
+                return@withContext System.currentTimeMillis() - start
+            }
         } catch (e: Exception) {
-            return@withContext -1L // Chết mạng hoặc bị chặn
+            return@withContext -1L // Chết mạng
         }
     }
 
