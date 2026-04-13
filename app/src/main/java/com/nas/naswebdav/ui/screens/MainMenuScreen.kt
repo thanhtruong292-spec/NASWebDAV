@@ -2164,8 +2164,7 @@ fun ProcessListBottomSheet(
             // Header
             Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 Text("TIẾN TRÌNH", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.weight(1f))
-                Text("RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-                Text("CPU", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                Text(if (sortBy == "cpu") "CPU" else "RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
             androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
@@ -2220,8 +2219,8 @@ fun ProcessListBottomSheet(
                             Text(proc.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
                         }
-                        Text("${proc.mem}%", color = if (sortBy == "mem") AccentCyan else TextSecondary, fontSize = 12.sp, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = if(sortBy=="mem") FontWeight.Bold else FontWeight.Normal)
-                        Text("${proc.cpu}%", color = if (sortBy == "cpu") AccentCyan else TextSecondary, fontSize = 12.sp, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = if(sortBy=="cpu") FontWeight.Bold else FontWeight.Normal)
+                        val displayValue = if (sortBy == "cpu") "${proc.cpu}%" else "${proc.mem}%"
+                        Text(displayValue, color = AccentCyan, fontSize = 12.sp, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = FontWeight.Bold)
                     }
                 }
             }
