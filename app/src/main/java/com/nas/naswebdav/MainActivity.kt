@@ -114,7 +114,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         coil.Coil.setImageLoader(imageLoaderInstance)
 
         setContent {
-            MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme()) {
+            MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme(), typography = com.nas.naswebdav.ui.theme.AppTypography) {
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication,
                     androidx.compose.material.ripple.LocalRippleTheme provides com.nas.naswebdav.ui.theme.NoRippleTheme

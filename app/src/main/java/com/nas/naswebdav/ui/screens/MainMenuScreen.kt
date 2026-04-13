@@ -531,7 +531,13 @@ fun MainMenuScreen(
                             Text("OMV", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF42A5F5), letterSpacing = 1.5.sp)
                             if (viewModel.omvOverview.omvVersion.isNotBlank()) {
                                 Spacer(Modifier.width(6.dp))
-                                Text(viewModel.omvOverview.omvVersion, fontSize = 9.sp, color = TextSecondary)
+                                Text(viewModel.omvOverview.omvVersion, fontSize = 10.sp, color = TextSecondary)
+                            }
+                            val ping = viewModel.networkPingMs
+                            if (ping != null) {
+                                Spacer(Modifier.width(8.dp))
+                                val pingColor = if (ping < 50) Color(0xFF00E676) else if (ping < 150) Color(0xFFFFA726) else Color(0xFFEF5350)
+                                Text("${ping}ms", fontSize = 10.sp, color = pingColor, fontWeight = FontWeight.Bold)
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -552,7 +558,7 @@ fun MainMenuScreen(
                     // Nội dung mở rộng
                     androidx.compose.animation.AnimatedVisibility(visible = omvExpanded) {
                         Column {
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(Modifier.height(8.dp))
 
                             // Services Row
                             if (viewModel.omvOverview.services.isNotEmpty()) {
@@ -571,12 +577,12 @@ fun MainMenuScreen(
                                         }
                                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                                             Icon(svcIcon, null, tint = svcColor, modifier = Modifier.size(18.dp))
-                                            Text(svc.title, fontSize = 7.sp, color = svcColor, maxLines = 1, fontWeight = FontWeight.Bold)
-                                            Text(if (svc.running) "ON" else "OFF", fontSize = 7.sp, color = svcColor.copy(alpha = 0.7f))
+                                            Text(svc.title, fontSize = 9.sp, color = svcColor, maxLines = 1, fontWeight = FontWeight.Bold)
+                                            Text(if (svc.running) "ON" else "OFF", fontSize = 9.sp, color = svcColor.copy(alpha = 0.7f))
                                         }
                                     }
                                 }
-                                Spacer(Modifier.height(10.dp))
+                                Spacer(Modifier.height(8.dp))
                             }
 
                             // Network + Hardware info
@@ -586,18 +592,18 @@ fun MainMenuScreen(
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     if (net != null) {
                                         Column {
-                                            Text("${net.name} • ${net.speed}Mbps", fontSize = 8.sp, color = TextSecondary, letterSpacing = 0.5.sp)
-                                            Text("${net.address} | GW: ${net.gateway}", fontSize = 8.sp, color = Color(0xFF81D4FA))
-                                            Text("MAC: ${net.mac}", fontSize = 7.sp, color = TextSecondary.copy(alpha = 0.6f))
+                                            Text("${net.name} • ${net.speed}Mbps", fontSize = 10.sp, color = TextSecondary, letterSpacing = 0.5.sp)
+                                            Text("${net.address} | GW: ${net.gateway}", fontSize = 10.sp, color = Color(0xFF81D4FA))
+                                            Text("MAC: ${net.mac}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                         }
                                     }
                                     if (hdd != null) {
                                         Column(horizontalAlignment = Alignment.End) {
-                                            Text(hdd.model, fontSize = 8.sp, color = TextSecondary, maxLines = 1)
-                                            Text("SN: ${hdd.serial}", fontSize = 7.sp, color = TextSecondary.copy(alpha = 0.6f))
+                                            Text(hdd.model, fontSize = 10.sp, color = TextSecondary, maxLines = 1)
+                                            Text("SN: ${hdd.serial}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                             val sizeGb = (hdd.size.toLongOrNull() ?: 0L) / (1024L * 1024 * 1024)
                                             val sizeTb = if (sizeGb >= 1024) "%.1f TB".format(sizeGb / 1024f) else "$sizeGb GB"
-                                            Text(sizeTb, fontSize = 8.sp, color = Color(0xFFFFA726), fontWeight = FontWeight.Bold)
+                                            Text(sizeTb, fontSize = 10.sp, color = Color(0xFFFFA726), fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
