@@ -1635,6 +1635,152 @@ def api_smart():
 
     return jsonify({"status": status, "temperature": temperature, "raw_log": raw_log})
 
+
+@app.route("/api/omv/overview")
+@requires_auth
+def api_omv_overview():
+    """Tong hop thong tin tu OMV RPC: he thong, dich vu, mang, filesystem, o cung."""
+    result = {}
+
+    # 1. System Information (Hostname, Version, Kernel, Uptime, CPU, RAM, Load)
+    try:
+        sys_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "System", "getInformation", "{}"], timeout=15)
+        if sys_out:
+            sys_data = json.loads(sys_out)
+            sys_info = {}
+            for item in sys_data:
+                name = item.get("name", "")
+                val = item.get("value", "")
+                if name == "Hostname": sys_info["hostname"] = val
+                elif name == "Version": sys_info["omv_version"] = val
+                elif name == "Kernel": sys_info["kernel"] = val
+                elif name == "Uptime": sys_info["uptime"] = val
+                elif name == "Load average": sys_info["load_average"] = val
+                elif name == "CPU usage":
+                    sys_info["cpu_usage_text"] = val.get("text", "") if isinstance(val, dict) else str(val)
+                    sys_info["cpu_usage_percent"] = val.get("value", 0) if isinstance(val, dict) else 0
+                elif name == "Memory usage":
+                    sys_info["mem_usage_text"] = val.get("text", "") if isinstance(val, dict) else str(val)
+                    sys_info["mem_usage_percent"] = val.get("value", 0) if isinstance(val, dict) else 0
+            result["system"] = sys_info
+    except Exception:
+        result["system"] = {}
+
+    # 2. Services Status (SSH, FTP, SMB, NFS, Rsync)
+    try:
+        svc_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Services", "getStatus", "{}"], timeout=10)
+        if svc_out:
+            svc_data = json.loads(svc_out)
+            services = []
+            for s in svc_data.get("data", []):
+                services.append({
+                    "name": s.get("name", ""),
+                    "title": s.get("title", ""),
+                    "enabled": s.get("enabled", False),
+                    "running": s.get("running", False)
+                })
+            result["services"] = services
+    except Exception:
+        result["services"] = []
+
+    # 3. Network Interfaces
+    try:
+        net_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Network", "enumerateDevices", "{}"], timeout=10)
+        if net_out:
+            net_data = json.loads(net_out)
+            interfaces = []
+            for iface in net_data:
+                if iface.get("type") == "loopback":
+                    continue
+                interfaces.append({
+                    "name": iface.get("devicename", ""),
+                    "address": iface.get("address", ""),
+                    "netmask": iface.get("netmask", ""),
+                    "gateway": iface.get("gateway", ""),
+                    "mac": iface.get("ether", ""),
+                    "state": iface.get("state", ""),
+                    "speed": iface.get("speed", -1),
+                    "mtu": iface.get("mtu", ""),
+                    "wol": iface.get("wol", False)
+                })
+            result["network"] = interfaces
+    except Exception:
+        result["network"] = []
+
+    # 4. Filesystems
+    try:
+        fs_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "FileSystemMgmt", "enumerateFilesystems", "{}"], timeout=10)
+        if fs_out:
+            fs_data = json.loads(fs_out)
+            filesystems = []
+            for fs in fs_data:
+                # Bo qua zram (log2ram) va phan vung < 500MB
+                size = int(fs.get("size", 0) or 0)
+                if size < 500 * 1024 * 1024:
+                    continue
+                filesystems.append({
+                    "device": fs.get("devicefile", ""),
+                    "label": fs.get("label", ""),
+                    "type": fs.get("type", ""),
+                    "mountpoint": fs.get("mountpoint", ""),
+                    "used": fs.get("used", ""),
+                    "size_bytes": size,
+                    "percentage": fs.get("percentage", 0),
+                    "description": fs.get("description", "")
+                })
+            result["filesystems"] = filesystems
+    except Exception:
+        result["filesystems"] = []
+
+    # 5. Disk Devices
+    try:
+        disk_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "DiskMgmt", "enumerateDevices", "{}"], timeout=10)
+        if disk_out:
+            disk_data = json.loads(disk_out)
+            disks = []
+            for d in disk_data:
+                vendor = d.get("vendor", "")
+                model = d.get("model", "")
+                disks.append({
+                    "name": d.get("devicename", ""),
+                    "device": d.get("devicefile", ""),
+                    "model": ("%s %s" % (vendor, model)).strip(),
+                    "serial": d.get("serialnumber", ""),
+                    "size": d.get("size", "0"),
+                    "description": d.get("description", ""),
+                    "is_root": d.get("isroot", False)
+                })
+            result["disks"] = disks
+    except Exception:
+        result["disks"] = []
+
+    # 6. Shared Folders
+    try:
+        share_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "ShareMgmt", "enumerateSharedFolders", "{}"], timeout=10)
+        if share_out:
+            share_data = json.loads(share_out)
+            shares = []
+            for s in share_data:
+                shares.append({
+                    "name": s.get("name", ""),
+                    "description": s.get("description", ""),
+                    "device": s.get("device", ""),
+                    "path": s.get("reldirpath", "")
+                })
+            result["shared_folders"] = shares
+    except Exception:
+        result["shared_folders"] = []
+
+    # 7. Power Management
+    try:
+        pwr_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "PowerMgmt", "get", "{}"], timeout=5)
+        if pwr_out:
+            result["power"] = json.loads(pwr_out)
+    except Exception:
+        result["power"] = {}
+
+    return jsonify(result)
+
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
 def api_speedtest():
