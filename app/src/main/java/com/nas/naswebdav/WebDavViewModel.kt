@@ -2129,8 +2129,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     jsonBody.put("off_temp", offTemp)
                 }
                 
-                val requestBody = okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), jsonBody.toString())
-                val request = Request.Builder()
+                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
                     .url(url)
                     .post(requestBody)
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))

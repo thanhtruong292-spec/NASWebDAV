@@ -643,9 +643,9 @@ fun MainMenuScreen(
                                 if (showFanSettings) {
                                     var onTemp by remember { mutableStateOf(viewModel.systemStatus.fanOnTemp.toInt().toString()) }
                                     var offTemp by remember { mutableStateOf(viewModel.systemStatus.fanOffTemp.toInt().toString()) }
-                                    androidx.compose.material.AlertDialog(
+                                    androidx.compose.material3.AlertDialog(
                                         onDismissRequest = { showFanSettings = false },
-                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
                                         text = { 
                                             Column {
                                                 Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
@@ -662,10 +662,10 @@ fun MainMenuScreen(
                                             }) { Text("Lưu & Áp dụng") }
                                         },
                                         dismissButton = {
-                                            androidx.compose.material.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
+                                            androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
                                         },
-                                        backgroundColor = Color(0xFF1E1E1E),
-                                        contentColor = Color.White
+                                        containerColor = Color(0xFF1E1E1E),
+                                        textContentColor = Color.White
                                     )
                                 }
                             }
