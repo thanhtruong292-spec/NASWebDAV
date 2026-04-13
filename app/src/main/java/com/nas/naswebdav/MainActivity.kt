@@ -115,8 +115,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme()) {
-                Surface {
-                    NasAppNavigation(viewModel)
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication,
+                    androidx.compose.material.ripple.LocalRippleTheme provides com.nas.naswebdav.ui.theme.NoRippleTheme
+                ) {
+                    Surface {
+                        NasAppNavigation(viewModel)
+                    }
                 }
             }
         }

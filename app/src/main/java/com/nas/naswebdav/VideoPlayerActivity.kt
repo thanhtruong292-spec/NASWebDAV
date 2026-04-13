@@ -27,14 +27,19 @@ class VideoPlayerActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                Surface {
-                    VideoPlayerScreen(
-                        url = url,
-                        user = user,
-                        pass = pass,
-                        viewModel = null,
-                        onBack = { finish() }
-                    )
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication,
+                    androidx.compose.material.ripple.LocalRippleTheme provides com.nas.naswebdav.ui.theme.NoRippleTheme
+                ) {
+                    Surface {
+                        VideoPlayerScreen(
+                            url = url,
+                            user = user,
+                            pass = pass,
+                            viewModel = null,
+                            onBack = { finish() }
+                        )
+                    }
                 }
             }
         }
