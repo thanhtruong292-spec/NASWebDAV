@@ -1685,6 +1685,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(request).execute().use { resp ->
                     val res = org.json.JSONObject(resp.body?.string() ?: "{}")
                     val msg = res.optString("message", "Hoàn tất dọn Thùng rác!")
+                    repository.addSystemLog("INFO", "File Ops", "Người dùng đã thực hiện XÓA THÙNG RÁC: $msg")
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                     commonDialogMessage = msg
                     showCommonDialog = true
@@ -2664,7 +2665,7 @@ fun WebDavViewModel.loadLastAutoSpeedTest(context: Context) {
     if (t.isNotEmpty() && !isTestingSpeed) { speedTestResult = SpeedTestResult(w, r); lastAutoSpeedTime = "Đo tự động ngầm lúc: $t" }
 }
 
-fun WebDavViewModel.sendWakeOnLan(macStr: String) { if (macStr.isNotBlank() && macStr.matches(Regex("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"))) viewModelScope.launch(Dispatchers.IO) { com.nas.naswebdav.utils.WolUtil.sendMagicPacket(macStr) } }
+fun WebDavViewModel.sendWakeOnLan(macStr: String) { if (macStr.isNotBlank() && macStr.matches(Regex("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"))) viewModelScope.launch(Dispatchers.IO) { com.nas.naswebdav.utils.WolUtil.sendMagicPacket(macStr); repository.addSystemLog("INFO", "Power", "Người dùng đã gửi gói tin Wake-on-LAN đánh thức NAS tại định danh MAC: $macStr") } }
 
 fun WebDavViewModel.sendCommandToNas(endpoint: String) {
     viewModelScope.launch(Dispatchers.IO) {
@@ -2800,7 +2801,13 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
                 .build()
             localApiClient.newCall(request).execute().use { response ->
                 withContext(Dispatchers.Main) {
-                    lanWhitelistStatus = if (response.isSuccessful) "✅ Đã thêm $entry" else "❌ Lỗi: ${response.code}"
+                    if (response.isSuccessful) {
+                        lanWhitelistStatus = "✅ Đã thêm $entry"
+                        repository.addSystemLog("INFO", "Network", "Người dùng đã THÊM IP/Subnet '$entry' vào danh sách LAN Whitelist.")
+                    } else {
+                        lanWhitelistStatus = "❌ Lỗi: ${response.code}"
+                        repository.addSystemLog("WARNING", "Network", "Cố gắng thêm IP/Subnet '$entry' vào LAN Whitelist thất bại.")
+                    }
                 }
             }
             if (lanWhitelistStatus.startsWith("✅")) loadLanWhitelist()
@@ -2822,7 +2829,13 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
                 .build()
             localApiClient.newCall(request).execute().use { response ->
                 withContext(Dispatchers.Main) {
-                    lanWhitelistStatus = if (response.isSuccessful) "✅ Đã xóa $entry" else "❌ Lỗi: ${response.code}"
+                    if (response.isSuccessful) {
+                        lanWhitelistStatus = "✅ Đã xóa $entry"
+                        repository.addSystemLog("INFO", "Network", "Người dùng đã XÓA IP/Subnet '$entry' khỏi danh sách LAN Whitelist.")
+                    } else {
+                        lanWhitelistStatus = "❌ Lỗi: ${response.code}"
+                        repository.addSystemLog("WARNING", "Network", "Cố gắng xóa IP/Subnet '$entry' khỏi LAN Whitelist thất bại.")
+                    }
                 }
             }
             if (lanWhitelistStatus.startsWith("✅")) loadLanWhitelist()
