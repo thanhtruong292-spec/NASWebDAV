@@ -445,13 +445,13 @@ fun MainMenuScreen(
                     GaugeCard(
                         title = "CPU", value = viewModel.systemStatus.cpu,
                         subValue = viewModel.systemStatus.cpuTemp,
-                        icon = Icons.Default.DeveloperBoard,
+                        icon = Icons.Default.Memory,
                         gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
                         modifier = Modifier.weight(1f)
                     )
                     GaugeCard(
                         title = "RAM", value = viewModel.systemStatus.ram, subValue = "${viewModel.systemStatus.ramPercent}%",
-                        icon = Icons.Default.Memory,
+                        icon = Icons.Default.DeveloperBoard,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
                         modifier = Modifier.weight(1f),
                         overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull()
@@ -464,7 +464,7 @@ fun MainMenuScreen(
                             if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
                         }
                         GaugeCard(
-                            title = "Ổ CỨNG", value = "${hddDisk.used} / $fmtTotal",
+                            title = "HDD", value = "${hddDisk.used} / $fmtTotal",
                             subValue = "${hddDisk.percent}%",
                             icon = Icons.Default.Storage,
                             gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
@@ -934,7 +934,7 @@ fun GaugeCard(
                                 fontSize = 8.sp,
                                 color = if (subValue.contains("°C") || subValue.contains("\u00b0C") || subValue.contains("°")) {
                                     val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
-                                    val isDisk = title == "S.M.A.R.T" || title == "Ổ CỨNG"
+                                    val isDisk = title == "S.M.A.R.T" || title == "HDD"
                                     when {
                                         isDisk && tempVal >= 55f -> Color(0xFFEF5350)
                                         isDisk && tempVal >= 45f -> Color(0xFFFFA726)
