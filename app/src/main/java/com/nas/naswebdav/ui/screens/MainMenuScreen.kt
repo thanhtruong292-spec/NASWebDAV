@@ -2265,7 +2265,7 @@ fun SmartDetailBottomSheet(
             // Title
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
-                    "S.M.A.R.T Detail",
+                    "Thông tin S.M.A.R.T",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
@@ -2285,13 +2285,40 @@ fun SmartDetailBottomSheet(
             Spacer(Modifier.height(12.dp))
 
             // Device info header
+            val labelMap = mapOf(
+                "Thiet bi" to "Thiết bị",
+                "Trang thai OMV" to "Trạng thái OMV",
+                "Nhiet do" to "Nhiệt độ"
+            )
             for (line in headerLines) {
                 if (line.startsWith("===")) continue
                 val parts = line.split(":", limit = 2)
                 if (parts.size == 2) {
+                    val rawLabel = parts[0].trim()
+                    val label = labelMap[rawLabel] ?: rawLabel
+                    val rawValue = parts[1].trim()
+                    
+                    // Màu sắc theo trạng thái
+                    val valueColor = when {
+                        rawLabel == "Trang thai OMV" -> when {
+                            rawValue.uppercase().contains("GOOD") || rawValue.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
+                            rawValue.uppercase().contains("BAD") || rawValue.uppercase().contains("FAILED") -> Color(0xFFEF5350)
+                            else -> Color(0xFFFFA726)
+                        }
+                        rawLabel == "Nhiet do" -> {
+                            val temp = rawValue.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
+                            when {
+                                temp >= 55 -> Color(0xFFEF5350)  // Nóng - Đỏ
+                                temp >= 45 -> Color(0xFFFFA726)  // Ấm - Vàng
+                                else -> Color(0xFF66BB6A)         // Mát - Xanh
+                            }
+                        }
+                        else -> Color.White
+                    }
+                    
                     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                        Text(parts[0].trim(), color = TextSecondary, fontSize = 11.sp, modifier = Modifier.width(140.dp))
-                        Text(parts[1].trim(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(label, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.width(140.dp))
+                        Text(rawValue, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -2303,8 +2330,8 @@ fun SmartDetailBottomSheet(
             // Table header
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Text("ID", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(28.dp))
-                Text("Attribute", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.weight(1f))
-                Text("Val", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                Text("Thuộc tính", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+                Text("Giá trị", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 Text("Raw", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(80.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
 
