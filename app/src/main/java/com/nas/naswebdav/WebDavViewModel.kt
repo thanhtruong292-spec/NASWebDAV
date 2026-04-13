@@ -2121,8 +2121,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // THIẾT LẬP HOẠT ĐỘNG QUẠT (FAN CONTROL)
     // ==========================================
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
+        // Optimistic UI Update MÀ KHÔNG ĐỢI IO CHUYỂN NGỮ CẢNH: Đảm bảo 0ms delay!
+        val oldStatus = systemStatus
+        var optimisticStatus = systemStatus.copy(fanMode = mode)
+        if (mode == "custom" && onTemp != null && offTemp != null) {
+            optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
+        }
+        systemStatus = optimisticStatus
+        lastFanModeSettingTime = System.currentTimeMillis()
+        
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val oldStatus = systemStatus
             try {
                 val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
                 val jsonBody = org.json.JSONObject().put("mode", mode)
@@ -2138,24 +2146,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
 
-                // Optimistic UI Update de giao dien phan hoi lap tuc khong bi delay
-                var optimisticStatus = systemStatus.copy(fanMode = mode)
-                if (mode == "custom" && onTemp != null && offTemp != null) {
-                    optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
-                }
-                
-                withContext(Dispatchers.Main) {
-                    systemStatus = optimisticStatus
-                    lastFanModeSettingTime = System.currentTimeMillis()
-                }
-
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        systemStatus = oldStatus // Rollback neu loi
+                        // Rollback tren Main thread neu API that bai
+                        withContext(Dispatchers.Main) { systemStatus = oldStatus }
                     }
                 }
             } catch (e: Exception) {
-                systemStatus = oldStatus // Rollback neu mat mang
+                withContext(Dispatchers.Main) { systemStatus = oldStatus }
                 android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
             }
         }
