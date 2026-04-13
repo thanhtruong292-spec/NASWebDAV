@@ -181,6 +181,7 @@ fun MainMenuScreen(
     // STATE CHO DANH SÁCH TIẾN TRÌNH
     var showProcessDialog by remember { mutableStateOf(false) }
     var processSortType by remember { mutableStateOf("cpu") }
+    var showSmartDialog by remember { mutableStateOf(false) }
 
     // STATE CHO WAKE-ON-LAN
     var showWolDialog by remember { mutableStateOf(false) }
@@ -261,6 +262,12 @@ fun MainMenuScreen(
             viewModel = viewModel,
             sortBy = processSortType,
             onDismiss = { showProcessDialog = false }
+        )
+    }
+    if (showSmartDialog) {
+        SmartDetailBottomSheet(
+            smartInfo = viewModel.smartInfo,
+            onDismiss = { showSmartDialog = false }
         )
     }
     if (showWolDialog) {
@@ -547,7 +554,8 @@ fun MainMenuScreen(
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
                         modifier = Modifier.weight(1f),
-                        overridePercent = smartPercent
+                        overridePercent = smartPercent,
+                        onClick = { showSmartDialog = true }
                     )
                 }
             }
@@ -2229,3 +2237,109 @@ fun ProcessListBottomSheet(
 }
 
 
+@Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+fun SmartDetailBottomSheet(
+    smartInfo: SmartInfo,
+    onDismiss: () -> Unit
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    
+    // Parse rawLog thành SMART attributes
+    val lines = smartInfo.rawLog.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    val headerLines = lines.takeWhile { !it.startsWith("ID") && !it.startsWith("===") }
+    val attrLines = lines.dropWhile { !it.startsWith("ID") }.drop(1) // Bỏ header row
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF141414),
+        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
+        ) {
+            // Title
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                Text(
+                    "S.M.A.R.T Detail",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                val statusColor = when {
+                    smartInfo.status.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
+                    smartInfo.status.uppercase().contains("FAILED") -> Color(0xFFEF5350)
+                    else -> Color(0xFFFFA726)
+                }
+                Text(
+                    smartInfo.status.uppercase(),
+                    color = statusColor,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+
+            // Device info header
+            for (line in headerLines) {
+                if (line.startsWith("===")) continue
+                val parts = line.split(":", limit = 2)
+                if (parts.size == 2) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Text(parts[0].trim(), color = TextSecondary, fontSize = 11.sp, modifier = Modifier.width(140.dp))
+                        Text(parts[1].trim(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+            Spacer(Modifier.height(8.dp))
+
+            // Table header
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Text("ID", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(28.dp))
+                Text("Attribute", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+                Text("Val", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                Text("Raw", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(80.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
+
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                items(attrLines.size) { index ->
+                    val line = attrLines[index]
+                    val tokens = line.split(Regex("\\s+"), limit = 6)
+                    if (tokens.size >= 5) {
+                        val id = tokens[0]
+                        val attr = tokens[1]
+                        val value = tokens[2]
+                        val raw = if (tokens.size >= 6) tokens[5] else tokens.last()
+                        
+                        // Highlight attributes that may indicate problems
+                        val isCritical = id in listOf("5", "187", "197", "198", "10") && raw != "0"
+                        val rowColor = if (isCritical) Color(0xFFEF5350).copy(alpha = 0.15f) else Color(0xFF1E1E1E)
+                        val textColor = if (isCritical) Color(0xFFEF5350) else Color.White
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .background(rowColor, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(id, color = TextSecondary, fontSize = 10.sp, modifier = Modifier.width(28.dp))
+                            Text(attr.replace("_", " "), color = textColor, fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(value, color = AccentCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                            Text(raw, color = TextSecondary, fontSize = 10.sp, modifier = Modifier.width(80.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
