@@ -427,7 +427,9 @@ fun MainMenuScreen(
                             onClick = { showPowerMenu = false; showShutdownConfirm = true }
                         )
                     }
+                }
             }
+        }
             
             Spacer(Modifier.height(12.dp))
 
