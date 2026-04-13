@@ -54,6 +54,11 @@ object DuplicateProgressState {
 
 object AutoBackupState {
     val isPaused = MutableStateFlow(false)
+    val showResultDialog = MutableStateFlow(false)
+    val resultTotal = MutableStateFlow(0)
+    val resultSuccess = MutableStateFlow(0)
+    val resultSkipped = MutableStateFlow(0)
+    val resultFailed = MutableStateFlow(0)
 }
 class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
 
@@ -897,6 +902,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             }
 
             var backupCount = 0
+            var skippedCount = 0
+            var failedCount = 0
             val urisToQuery = listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
             val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA)
             
@@ -985,6 +992,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         "elapsedTime" to (now - startTime)
                                     ))
                                 }
+                                skippedCount++
                                 continue
                             }
                             
@@ -1032,13 +1040,23 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = localFile.length()))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
-                        } catch (e: Exception) { if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải tệp $fileName: ${e.message}") }
+                        } catch (e: Exception) { 
+                            failedCount++
+                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải tệp $fileName: ${e.message}") 
+                        }
                         // Nhường luồng cho CPU để tránh văng app do tác vụ I/O nặng
                         kotlinx.coroutines.yield()
                     }
                 }
             }
             if (backupCount > 0) SystemLogger.log("SUCCESS", "AutoBackup", "Đã sao lưu tự động $backupCount tệp đa phương tiện.")
+            
+            AutoBackupState.resultTotal.value = totalFilesToProcess
+            AutoBackupState.resultSuccess.value = backupCount
+            AutoBackupState.resultSkipped.value = skippedCount
+            AutoBackupState.resultFailed.value = failedCount
+            AutoBackupState.showResultDialog.value = true
+            
             return@withContext Result.success()
         } catch (e: Exception) {
             SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng AutoBackup: ${e.message}")

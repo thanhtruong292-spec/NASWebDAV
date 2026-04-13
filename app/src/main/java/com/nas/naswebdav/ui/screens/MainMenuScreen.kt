@@ -221,6 +221,32 @@ fun MainMenuScreen(
         viewModel.fetchOmvOverview()
     }
 
+    val showBackupResult by com.nas.naswebdav.AutoBackupState.showResultDialog.collectAsState()
+    if (showBackupResult) {
+        val total = com.nas.naswebdav.AutoBackupState.resultTotal.collectAsState().value
+        val success = com.nas.naswebdav.AutoBackupState.resultSuccess.collectAsState().value
+        val skipped = com.nas.naswebdav.AutoBackupState.resultSkipped.collectAsState().value
+        val failed = com.nas.naswebdav.AutoBackupState.resultFailed.collectAsState().value
+        
+        AlertDialog(
+            onDismissRequest = { com.nas.naswebdav.AutoBackupState.showResultDialog.value = false },
+            title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CloudDone, null, tint = AccentGreen); Spacer(Modifier.width(8.dp)); Text("Báo Cáo Đồng Bộ") } },
+            text = {
+                Column {
+                    Text("Tổng danh sách tệp được quét: $total", fontSize = 15.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Thành công: $success", color = AccentGreen, fontWeight = FontWeight.Bold)
+                    Text("Bỏ qua (đã đồng bộ trước đó): $skipped", color = TextSecondary)
+                    Text("Thất bại: $failed", color = if (failed > 0) AccentRed else TextSecondary)
+                }
+            },
+            confirmButton = { TextButton(onClick = { com.nas.naswebdav.AutoBackupState.showResultDialog.value = false }) { Text("Đóng", color = AccentCyan) } },
+            containerColor = DarkCard,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary
+        )
+    }
+
     // --- DIALOGS (từ ui/dialogs/Dialogs.kt) ---
     if (showRebootConfirm) {
         RebootConfirmDialog(
