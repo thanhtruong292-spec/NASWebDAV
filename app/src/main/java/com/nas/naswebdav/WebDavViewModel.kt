@@ -1966,7 +1966,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
      * Gửi link video tới NAS → NAS chạy yt-dlp ngầm → lưu vào Downloads/social/.
      * Điện thoại KHÔNG tốn 1MB dung lượng.
      */
-    fun requestSocialDownload(url: String) {
+    fun requestSocialDownload(url: String, saveFolder: String = AppConfig.SOCIAL_DOWNLOAD_FOLDER) {
         if (url.isBlank() || isSocialExtracting) return
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
@@ -1978,7 +1978,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val platform = detectSocialPlatform(url)
                 val json = org.json.JSONObject().apply {
                     put("url", url)
-                    put("save_folder", AppConfig.SOCIAL_DOWNLOAD_FOLDER)
+                    put("save_folder", saveFolder)
                     put("quality", "best")
                 }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
@@ -2000,10 +2000,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val isOk = resp.isSuccessful
 
                     withContext(Dispatchers.Main) {
-                        socialExtractStatus = when {
-                            isOk -> "✅ NAS đã nhận lệnh! Video sẽ xuất hiện trong Downloads/social/ sau vài phút."
+                        val statusText = when {
+                            isOk -> "✅ NAS đã nhận lệnh tải video!\nVideo sẽ được tải ngầm và lưu vào $saveFolder."
                             else -> "❌ Lỗi (${resp.code}): ${msg.take(100)}"
                         }
+                        socialExtractStatus = statusText
                         val histItem = SocialDownloadItem(url, platform, isOk)
                         socialDownloadHistory = socialDownloadHistory + histItem
                     }
@@ -2012,6 +2013,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         "SocialExtract",
                         "[$platform] $url → ${if (isOk) "OK" else "Lỗi ${resp.code}"}"
                     )
+
+                    if (isOk) {
+                        val jobId = resJson.optString("job_id", "")
+                        if (jobId.isNotEmpty()) {
+                            monitorYtdlpJob(jobId, url, platform, saveFolder)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -2021,6 +2029,51 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.addSystemLog("ERROR", "SocialExtract", "Lỗi gửi yt-dlp: ${e.message?.take(80)}")
             } finally {
                 withContext(Dispatchers.Main) { isSocialExtracting = false }
+            }
+        }
+    }
+
+    private fun monitorYtdlpJob(jobId: String, url: String, platform: String, saveFolder: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch(e: Exception) { return@launch }
+            val statusUrl = "http://$host:5050/api/ytdlp/status"
+            var isFinished = false
+            while (!isFinished) {
+                delay(5000L) // Poll every 5 seconds
+                try {
+                    val requestBuilder = okhttp3.Request.Builder().url(statusUrl)
+                    val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance)
+                    val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance)
+                    if (user.isNotEmpty() && pass.isNotEmpty()) {
+                        requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    }
+                    val resp = localApiClient.newCall(requestBuilder.build()).execute()
+                    val bodyStr = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(bodyStr)
+                    val jobs = json.optJSONArray("jobs") ?: continue
+
+                    var found = false
+                    for (i in 0 until jobs.length()) {
+                        val job = jobs.getJSONObject(i)
+                        if (job.optString("job_id") == jobId) {
+                            found = true
+                            break
+                        }
+                    }
+
+                    if (!found) {
+                        isFinished = true
+                        // Khi job_id không còn trong list, tác vụ tải đã hoàn thành
+                        withContext(Dispatchers.Main) {
+                            commonDialogMessage = "✅ Bơm Video ($platform) HOÀN TẤT!\nĐã tải xong và lưu vào thư mục $saveFolder"
+                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                            showCommonDialog = true
+                        }
+                        repository.addSystemLog("SUCCESS", "SocialDownload", "Tải video $platform hoàn tất. Lưu tại: $saveFolder ($url)")
+                    }
+                } catch (e: Exception) {
+                    // Ignore transient network errors
+                }
             }
         }
     }

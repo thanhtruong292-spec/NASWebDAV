@@ -1380,6 +1380,7 @@ fun LivestreamRecordDialog(
     onDismiss: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
     LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
     var liveUrl by remember { mutableStateOf("") }
@@ -1388,7 +1389,6 @@ fun LivestreamRecordDialog(
     val message = viewModel.livestreamMessage
 
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
-    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     LaunchedEffect(Unit) {
         val clipText = clipboardManager.getText()?.text ?: ""
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
@@ -1577,7 +1577,19 @@ fun LivestreamRecordDialog(
             } else {
                 Spacer(Modifier.height(16.dp))
                 Button(
-                    onClick = { if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) { viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality) } },
+                    onClick = {
+                        if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) {
+                            val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
+                            if (isVOD) {
+                                // Tự động phát hiện Video On Demand (VOD) thay vì Livestream
+                                // Chuyển hướng sang yt-dlp nhưng lưu vào Livestream/ để user dễ tìm
+                                viewModel.requestSocialDownload(liveUrl.trim(), "Livestream/")
+                                onDismiss()
+                            } else {
+                                viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality)
+                            }
+                        }
+                    },
                     enabled = liveUrl.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
