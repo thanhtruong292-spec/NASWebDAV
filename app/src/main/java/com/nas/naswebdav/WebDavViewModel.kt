@@ -505,7 +505,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         // LOG: Ghi nhật ký mở thư mục
         viewModelScope.launch(Dispatchers.IO) {
-            repository.addSystemLog("INFO", "Browser", "Mở thư mục: ${file.name}")
+            // Removed folder navigation log
         }
 
         loadCurrentUrl()
@@ -568,7 +568,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             // LOG: Ghi nhật ký lùi thư mục
             viewModelScope.launch(Dispatchers.IO) {
-                repository.addSystemLog("INFO", "Browser", "Lùi về thư mục trước")
+                // Removed back navigation log
             }
 
             loadCurrentUrl()
@@ -939,7 +939,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val nasHost = try { java.net.URL(currentUrl).host } catch (_: Exception) { "" }
                 connectionStatus = if (nasHost.isNotEmpty()) "Đã kết nối LAN: $nasHost" else "Đã kết nối LAN"
                 viewModelScope.launch(Dispatchers.IO) {
-                    repository.addSystemLog("INFO", "Browser", "Tải danh sách tệp thành công: $currentUrl")
+                    // Removed redundant fetch log
                 }
             } catch (e: Exception) {
                 connectionStatus = "Lỗi kết nối" // Ép cập nhật trạng thái lỗi ngay lập tức dù có Cache hay không
@@ -2130,6 +2130,9 @@ fun WebDavViewModel.startBackgroundDuplicateScan(context: android.content.Contex
         showCommonDialog = true
 
         isScanningDuplicates = true
+        viewModelScope.launch {
+            repository.addSystemLog("INFO", "DuplicateScan", "Hệ thống: Người dùng đã phân công quét thủ công trùng lặp")
+        }
         if (isWorkerRunning) return
 
         isWorkerRunning = true

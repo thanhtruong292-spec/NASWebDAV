@@ -1062,6 +1062,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         val startTime = System.currentTimeMillis()
         try {
             SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp file trùng lặp định kỳ.")
+            db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
             db.withTransaction { db.fileDao().deleteByParentPath("%") }
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
