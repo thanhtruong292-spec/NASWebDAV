@@ -69,7 +69,7 @@ private val TextSecondary = Color(0xFF8892B0)
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(350, 2350 - (percent * 20)) else 9999
+    val durationMs = if (isRunning) maxOf(3800, (380000 / maxOf(percent, 1))) else 9999
     
     val infiniteTransition = rememberInfiniteTransition(label = "fan")
     val angle by infiniteTransition.animateFloat(
@@ -659,7 +659,7 @@ fun MainMenuScreen(
                                         } else if (onT > offT) {
                                             displayPercent = 20 + ((cpuVal - offT) / (onT - offT) * 80).toInt()
                                         }
-                                        displayStatusStr = "Đang biểu diễn $displayPercent%"
+                                        displayStatusStr = "Đang chạy $displayPercent%"
                                     }
                                     
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
