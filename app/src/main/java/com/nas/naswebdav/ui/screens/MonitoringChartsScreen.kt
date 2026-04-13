@@ -229,9 +229,11 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
             }
 
             // Panel báo cáo mở rộng
-            if (showReport && report != null) {
-                Spacer(Modifier.height(8.dp))
-                NasDailyReportPanel(report)
+            androidx.compose.animation.AnimatedVisibility(visible = showReport && report != null) {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    report?.let { NasDailyReportPanel(it) }
+                }
             }
 
                 } // end Column inside AnimatedVisibility
