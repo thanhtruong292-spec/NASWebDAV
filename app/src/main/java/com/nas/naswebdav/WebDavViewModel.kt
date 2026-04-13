@@ -1489,6 +1489,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             // Lấy lần đầu ngay sau khi URL sẵn sàng
             if (isActive && webDavManager.currentBaseUrl.isNotEmpty()) {
                 fetchMetricsHistory(metricsHours)
+                startRealtimeAlerts()
             }
             // Sau đó poll mỗi 30 giây
             while (isActive) {
@@ -2564,6 +2565,52 @@ fun WebDavViewModel.listenToLocalNasApi() {
     }
 }
 
+fun WebDavViewModel.startRealtimeAlerts() {
+    webSocket?.close(1000, "Restarting")
+    try {
+        val url = webDavManager.currentBaseUrl
+        if (url.isBlank()) return
+        val host = java.net.URL(url).host
+        // nas_api_server.py chạy Tornado WebSocket trên Cổng 5051
+        val wsUrl = "ws://$host:5051/ws/alerts"
+        val wsRequest = okhttp3.Request.Builder().url(wsUrl).build()
+        val client = localApiClient.newBuilder()
+            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        
+        webSocket = client.newWebSocket(wsRequest, object : okhttp3.WebSocketListener() {
+            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                val json = try { org.json.JSONObject(text) } catch (e: Exception) { null }
+                if (json == null) return
+                
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    when (json.optString("type")) {
+                        "SECURITY_BAN" -> {
+                            val msg = json.optString("message")
+                            repository.addSystemLog("ERROR", "Security", msg)
+                            commonDialogMessage = msg
+                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                            showCommonDialog = true
+                        }
+                        "ACCESS_LOG" -> {
+                            val msg = json.optString("message")
+                            repository.addSystemLog("INFO", "AccessLog", msg)
+                        }
+                    }
+                }
+            }
+            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {}
+            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                // Tự động kết nối lại ngầm sau 15 giây nếu rớt mạng
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    kotlinx.coroutines.delay(15000)
+                    if (webDavManager.currentBaseUrl.isNotEmpty()) startRealtimeAlerts()
+                }
+            }
+        })
+    } catch (e: Exception) { }
+}
+
 
 fun WebDavViewModel.fetchWeeklyReport() {
     viewModelScope.launch(Dispatchers.IO) {
@@ -2580,7 +2627,55 @@ fun WebDavViewModel.fetchWeeklyReport() {
     }
 }
 
-fun WebDavViewModel.loadSystemLogs() { viewModelScope.launch(Dispatchers.IO) { val logs = repository.getSystemLogs(); withContext(Dispatchers.Main) { systemLogsList = logs } } }
+fun WebDavViewModel.loadSystemLogs() {
+    viewModelScope.launch(Dispatchers.IO) {
+        val localLogs = repository.getSystemLogs()
+        val allLogs = localLogs.toMutableList()
+        try {
+            if (webDavManager.currentBaseUrl.isNotEmpty()) {
+                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val req = okhttp3.Request.Builder().url("http://$host:5050/api/system_logs").build()
+                val resp = localApiClient.newCall(req).execute()
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string()
+                    if (body != null) {
+                        val json = org.json.JSONObject(body)
+                        if (json.optString("status") == "success") {
+                            val logsArray = json.optJSONArray("logs")
+                            if (logsArray != null) {
+                                val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                                format.timeZone = java.util.TimeZone.getTimeZone("UTC") // Database uses CURRENT_TIMESTAMP (UTC)
+                                for (i in 0 until logsArray.length()) {
+                                    val obj = logsArray.getJSONObject(i)
+                                    val timestampStr = obj.optString("timestamp")
+                                    val timestamp = try { format.parse(timestampStr)?.time ?: System.currentTimeMillis() } catch (e: Exception) { System.currentTimeMillis() }
+                                    val remoteMessage = obj.optString("message")
+                                    val remoteType = obj.optString("type")
+                                    val remoteLog = SystemLog(
+                                        id = -(obj.optInt("id")),
+                                        type = remoteType,
+                                        module = obj.optString("module"),
+                                        message = remoteMessage,
+                                        timestamp = timestamp
+                                    )
+                                    if (allLogs.none { it.message == remoteMessage && it.type == remoteType }) {
+                                        allLogs.add(remoteLog)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("NasAPI", "Fetch remote logs failed: ${e.message}")
+        }
+        allLogs.sortByDescending { it.timestamp }
+        withContext(Dispatchers.Main) { 
+            systemLogsList = allLogs.take(200) 
+        }
+    }
+}
 fun WebDavViewModel.clearSystemLogs() { viewModelScope.launch(Dispatchers.IO) { repository.clearSystemLogs(); withContext(Dispatchers.Main) { systemLogsList = emptyList(); commonDialogMessage = "Đã dọn sạch nhật ký hệ thống."; showCommonDialog = true } } }
 
 fun WebDavViewModel.fetchSmartData() {

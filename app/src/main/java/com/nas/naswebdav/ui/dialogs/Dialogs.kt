@@ -432,6 +432,25 @@ fun AutoBackupDialog(
     }
 }
 
+fun formatLogMessage(raw: String): String {
+    if (raw.trim().startsWith("{")) {
+        try {
+            val j = org.json.JSONObject(raw)
+            when (j.optString("event")) {
+                "WEBDAV_SUCCESS" -> return "${j.optString("device")} (IP: ${j.optString("ip")} - MAC: ${j.optString("mac")}) đã kết nối NAS."
+                "SSH_FAIL" -> return "Cảnh báo: IP ${j.optString("ip")} đang phản hồi sai mật khẩu SSH khi cố đăng nhập user: ${j.optString("user")}!"
+                "SSH_SUCCESS" -> return "Đã đăng nhập SSH thành công từ IP ${j.optString("ip")} (Tài khoản: ${j.optString("user")}, Phương thức: ${j.optString("method")})."
+                "CPU_TEMP_WARN" -> return "Nhiệt độ CPU hiện tại đang vượt ngưỡng an toàn! Vui lòng kiểm tra tản nhiệt."
+                "SMART_WARN" -> return "Phát hiện lỗi phần cứng trên phân vùng ${j.optString("device")}: ${j.optString("error")}. Đề xuất sao lưu dữ liệu ngay lập tức!"
+                else -> return raw
+            }
+        } catch (e: Exception) {
+            return raw
+        }
+    }
+    return raw
+}
+
 // ====================================================================
 // DIALOG NHẬT KÝ HỆ THỐNG
 // ====================================================================
@@ -497,7 +516,7 @@ fun SystemLogDialog(
                                         Text(timeStr, fontSize = 10.sp, color = Color.Gray)
                                     }
                                     Spacer(Modifier.height(4.dp))
-                                    Text(log.message, fontSize = 12.sp, color = Color.White.copy(alpha=0.85f))
+                                    Text(formatLogMessage(log.message), fontSize = 12.sp, color = Color.White.copy(alpha=0.85f))
                                 }
                             }
                         }

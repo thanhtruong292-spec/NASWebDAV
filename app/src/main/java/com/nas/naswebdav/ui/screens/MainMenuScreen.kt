@@ -614,7 +614,7 @@ fun MainMenuScreen(
         Spacer(Modifier.height(4.dp))
         
         SystemStatusCards(viewModel, mContext)
-
+        SystemLogsSummaryCard(viewModel)
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
         if (viewModel.systemStatus.torrents.isNotEmpty()) {
             val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
@@ -1876,6 +1876,81 @@ fun QuickActionSelectorDialog(
                 }
             }
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.loadSystemLogs()
+    }
+    
+    if (viewModel.systemLogsList.isEmpty()) return
+    
+    Spacer(Modifier.height(8.dp))
+    
+    var isExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }) {
+                Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
+                Spacer(Modifier.width(8.dp))
+                Icon(
+                    if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = "Mở rộng/Thu gọn",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = { viewModel.showLogDialog = true },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.height(24.dp)
+                ) {
+                    Text("Xem tất cả", color = AccentCyan, fontSize = 12.sp)
+                }
+            }
+            
+            androidx.compose.animation.AnimatedVisibility(visible = isExpanded) {
+                Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    val recentLogs = viewModel.systemLogsList.take(3)
+                    recentLogs.forEach { log ->
+                        val logColor = when (log.type) {
+                            "SUCCESS" -> Color(0xFF43A047)
+                            "ERROR" -> Color(0xFFEF5350)
+                            "WARNING" -> Color(0xFFFFA726)
+                            else -> Color(0xFF29B6F6)
+                        }
+                        val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
+                        
+                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(logColor).padding(top = 4.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(log.module, color = logColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(timeStr, color = TextSecondary, fontSize = 10.sp)
+                                }
+                                Text(
+                                    com.nas.naswebdav.ui.dialogs.formatLogMessage(log.message),
+                                    color = TextPrimary.copy(alpha=0.85f),
+                                    fontSize = 12.sp,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

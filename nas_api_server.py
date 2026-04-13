@@ -59,6 +59,9 @@ import tornado.ioloop
 import tornado.web
 import tornado.websocket
 
+main_loop = None # Gắn với main thread để các background thread gọi callback
+
+
 
 from flask import Flask, request, jsonify, Response
 
@@ -278,9 +281,11 @@ def handle_auth_failure(ip):
         ban_ip_permanently(ip)
         msg = sanitize_log_input("[{}] [{}] IP {} ({}) ĐÃ BỊ KHÓA TOÀN HỆ THỐNG!".format(now, code, ip, country))
         cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)', ("ERROR", "Security", msg))
-        tornado.ioloop.IOLoop.current().add_callback(lambda: broadcast({"type": "SECURITY_BAN", "message": msg, "country_code": code}))
+        if main_loop: main_loop.add_callback(lambda: broadcast({"type": "SECURITY_BAN", "message": msg, "country_code": code}))
     conn.commit()
     conn.close()
+
+recent_auth_ips = {}
 
 def monitor_scanners():
     if not os.path.exists(WEBDAV_LOG): return
@@ -291,11 +296,157 @@ def monitor_scanners():
             if not line:
                 time.sleep(1)
                 continue
+            
+            # 1. Quét dò mật khẩu (Anti-BruteForce)
             if " 401 " in line:
                 parts = line.split()
                 if len(parts) > 0:
                     ip = parts[0]
-                    tornado.ioloop.IOLoop.current().add_callback(handle_auth_failure, ip)
+                    if main_loop: main_loop.add_callback(handle_auth_failure, ip)
+            
+            # 2. Ghi nhận truy cập hợp lệ (Bất kể thiết bị nào)
+            elif " 200 " in line or " 207 " in line:
+                parts = line.split()
+                if len(parts) > 0:
+                    ip = parts[0]
+                    # Chỉ log 1 lần mỗi 30 phút cho mỗi IP để tránh spam Database
+                    now = time.time()
+                    last_seen = recent_auth_ips.get(ip, 0)
+                    if now - last_seen > 1800:
+                        recent_auth_ips[ip] = now
+                        
+                        # A. Lấy thông tin MAC Address bằng lệnh arp
+                        mac_address = "Không rõ"
+                        try:
+                            arp_out = subprocess.check_output(["arp", "-n", ip], stderr=subprocess.DEVNULL).decode('utf-8')
+                            match = _re_module.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', arp_out)
+                            if match:
+                                mac_address = match.group(0).upper()
+                        except Exception:
+                            pass
+                            
+                        # B. Lọc Tên Thiết Bị từ User Agent String (Dalvik, Windows, WebDAVFS...)
+                        device_info = "Thiết bị ngoại tuyến"
+                        try:
+                            parts_quote = line.split('"')
+                            if len(parts_quote) >= 6:
+                                ua = parts_quote[5]
+                                if "Android" in ua and "Build/" in ua:
+                                    match_model = _re_module.search(r';\s*([^;]+)\s+Build/', ua)
+                                    if match_model:
+                                        device_info = "Android - " + match_model.group(1).strip()
+                                    else:
+                                        device_info = "Android Client"
+                                elif "Macintosh" in ua or "Darwin" in ua:
+                                    device_info = "Apple Mac/iOS"
+                                elif "Windows" in ua or "Microsoft-WebDAV-MiniRedir" in ua:
+                                    device_info = "Máy tính Windows"
+                                elif "okhttp" in ua.lower():
+                                    device_info = "App NAS WebDAV"
+                                else:
+                                    device_info = ua.split(" ")[0][:20]
+                        except Exception:
+                            pass
+                            
+                        # Tổng hợp chuỗi hiển thị
+                        log_msg_json = json.dumps({"event": "WEBDAV_SUCCESS", "ip": ip, "mac": mac_address, "device": device_info}, ensure_ascii=False)
+                        log.info("ACCESS_LOG_WEBDAV: " + log_msg_json)
+                        
+                        def _commit_access_log(m_msg):
+                            # (1) Lưu vào SQL Server cục bộ trên NAS
+                            try:
+                                conn = sqlite3.connect(DB_PATH)
+                                cur = conn.cursor()
+                                cur.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("INFO", "AccessLog", m_msg))
+                                conn.commit()
+                                conn.close()
+                            except Exception:
+                                pass
+                            # (2) Phát sự kiện WebSocket cho Android App
+                            try:
+                                broadcast({"type": "ACCESS_LOG", "message": m_msg})
+                            except Exception:
+                                pass
+                                
+
+def monitor_journalctl():
+    """Lang nghe he thong theo thoi gian thuc tu journalctl (sshd, kernel, smartd)"""
+    cmd = ["journalctl", "-f", "-q", "-n", "0"]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for line_b in iter(proc.stdout.readline, b''):
+            line = line_b.decode('utf-8', errors='ignore')
+            
+            # 1. SSH Failed Password
+            match_fail = _re_module.search(r'sshd\[\d+\]: Failed password for (?:invalid user )?(\S+) from (\S+)', line)
+            if match_fail:
+                user = match_fail.group(1)
+                ip = match_fail.group(2)
+                if main_loop: main_loop.add_callback(handle_auth_failure, ip)
+                
+                log_json = json.dumps({"event": "SSH_FAIL", "ip": ip, "user": user}, ensure_ascii=False)
+                def _commit_ssh_fail(m_msg):
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("ERROR", "Security", m_msg))
+                        conn.commit()
+                        conn.close()
+                        broadcast({"type": "ACCESS_LOG", "message": m_msg})
+                    except: pass
+                if main_loop: main_loop.add_callback(_commit_ssh_fail, log_json)
+                continue
+                
+            # 2. SSH Accepted
+            match_acc = _re_module.search(r'sshd\[\d+\]: Accepted (password|publickey) for (\S+) from (\S+)', line)
+            if match_acc:
+                method = match_acc.group(1)
+                user = match_acc.group(2)
+                ip = match_acc.group(3)
+                log_json = json.dumps({"event": "SSH_SUCCESS", "ip": ip, "user": user, "method": method}, ensure_ascii=False)
+                def _commit_ssh_acc(m_msg):
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("INFO", "AccessLog", m_msg))
+                        conn.commit()
+                        conn.close()
+                        broadcast({"type": "ACCESS_LOG", "message": m_msg})
+                    except: pass
+                if main_loop: main_loop.add_callback(_commit_ssh_acc, log_json)
+                continue
+            
+            # 3. Kernel CPU Nhiệt độ
+            if 'kernel:' in line and 'temperature above threshold' in line:
+                log_json = json.dumps({"event": "CPU_TEMP_WARN"}, ensure_ascii=False)
+                def _commit_cpu_warn(m_msg):
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("WARNING", "Hardware", m_msg))
+                        conn.commit()
+                        conn.close()
+                        broadcast({"type": "ACCESS_LOG", "message": m_msg})
+                    except: pass
+                if main_loop: main_loop.add_callback(_commit_cpu_warn, log_json)
+                continue
+                
+            # 4. Smartd Warning
+            match_smart = _re_module.search(r'smartd\[\d+\]: Device: (\S+), (.+)', line)
+            if match_smart:
+                dev = match_smart.group(1)
+                msg = match_smart.group(2)
+                log_json = json.dumps({"event": "SMART_WARN", "device": dev, "error": msg}, ensure_ascii=False)
+                def _commit_smart_warn(m_msg):
+                    try:
+                        conn = sqlite3.connect(DB_PATH)
+                        conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("WARNING", "Hardware", m_msg))
+                        conn.commit()
+                        conn.close()
+                        broadcast({"type": "ACCESS_LOG", "message": m_msg})
+                    except: pass
+                if main_loop: main_loop.add_callback(_commit_smart_warn, log_json)
+                continue
+
+    except Exception as e:
+        log.error("journalctl monitor stopped: %s", e)
 
 
 # ============ CAU HINH ============
@@ -1014,9 +1165,10 @@ def _push_alert(alert_type, message, severity="INFO"):
         pass
     # Broadcast WebSocket cho client dang ket noi
     try:
-        tornado.ioloop.IOLoop.current().add_callback(
-            lambda: broadcast({"type": alert_type, "message": message, "severity": severity})
-        )
+        if main_loop:
+            main_loop.add_callback(
+                lambda: broadcast({"type": alert_type, "message": message, "severity": severity})
+            )
     except Exception:
         pass
 
@@ -2211,7 +2363,7 @@ def api_temperature_history():
 def api_cron_trash_clean():
     """Kich hoat thu cong don dep Thung rac ngay lap tuc (khong can doi cron)."""
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(force=True)
         max_days = int(data.get("max_age_days", 30))
         deleted = _clean_trash(WEBDAV_FILE_ROOT, max_age_days=max_days)
         msg = "Da xoa %d file Thung rac (qua %d ngay)." % (deleted, max_days)
@@ -2219,6 +2371,19 @@ def api_cron_trash_clean():
         return jsonify({"result": "ok", "deleted": deleted, "message": msg})
     except Exception as e:
         return jsonify({"result": "error", "message": str(e)}), 500
+
+@app.route("/api/system_logs", methods=["GET"])
+def api_system_logs():
+    """Tra ve danh sach nhat ky he thong (AccessLog, DuplicateScan...) tu NAS."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
+        logs = [{"id": r[0], "type": r[1], "module": r[2], "message": r[3], "timestamp": r[4]} for r in cur.fetchall()]
+        conn.close()
+        return jsonify({"status": "success", "logs": logs})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ============ SMART PHOTOS (GALLERY KHAM PHA) ============
@@ -4274,7 +4439,10 @@ def api_ytdlp_status():
 
 # ============ KHOI CHAY ============
 if __name__ == "__main__":
-        # SIGTERM/SIGINT: Graceful shutdown - kill tat ca child processes truoc khi thoat
+    # Initialize main IO loop here so it's bound to the main thread
+    main_loop = tornado.ioloop.IOLoop.current()
+    
+    # SIGTERM/SIGINT: Graceful shutdown - kill tat ca child processes truoc khi thoat
     def _graceful_shutdown(signum, frame):
         """Dung server sach, khong de lai zombie."""
         log.info("[Shutdown] Nhan tin hieu %s, dang don dep...", signum)
@@ -4325,6 +4493,7 @@ if __name__ == "__main__":
     
     # Thread giam sat log WebDAV de phat hien scan password
     threading.Thread(target=monitor_scanners, daemon=True).start()
+    threading.Thread(target=monitor_journalctl, daemon=True).start()
     
     # Thread cache du lieu he thong (cap nhat moi 2 giay) → API phan hoi tuc thi
     threading.Thread(target=_update_status_cache, daemon=True).start()
@@ -4393,4 +4562,4 @@ if __name__ == "__main__":
     ws_server = tornado.httpserver.HTTPServer(ws_app)
     ws_server.add_socket(_ws_sock)
     log.info("Server da khoi dong thanh cong!")
-    tornado.ioloop.IOLoop.current().start()
+    main_loop.start()
