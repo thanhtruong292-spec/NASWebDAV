@@ -86,7 +86,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                             modifier = Modifier.clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
-                            ) { viewModel.fetchMetricsHistory(hourValues[i]) }
+                            ) { chartExpanded = true; viewModel.fetchMetricsHistory(hourValues[i]) }
                         ) {
                             Text(label, fontSize = 10.sp,
                                 color = if (selected) _ChartAccentCyan else _ChartTextSecond,
