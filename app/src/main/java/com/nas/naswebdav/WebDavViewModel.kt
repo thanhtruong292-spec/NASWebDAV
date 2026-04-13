@@ -2123,10 +2123,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // ==========================================
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
         if (isFanModeUpdating) return
+        
+        // Cập nhật Optimistic UI ngay lập tức trên Main Thread để tránh delay 1-5 frames gây chớp (bounce)
+        var optimisticStatus = systemStatus.copy(fanMode = mode)
+        if (mode == "custom" && onTemp != null && offTemp != null) {
+            optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
+        }
+        val oldStatus = systemStatus
+        systemStatus = optimisticStatus
         isFanModeUpdating = true
         
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val oldStatus = systemStatus
             try {
                 val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
                 val jsonBody = org.json.JSONObject().put("mode", mode)
@@ -2141,16 +2148,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .post(requestBody)
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
-
-                // Optimistic UI Update de giao dien phan hoi lap tuc khong bi delay
-                var optimisticStatus = systemStatus.copy(fanMode = mode)
-                if (mode == "custom" && onTemp != null && offTemp != null) {
-                    optimisticStatus = optimisticStatus.copy(fanOnTemp = onTemp, fanOffTemp = offTemp)
-                }
-                
-                withContext(Dispatchers.Main) {
-                    systemStatus = optimisticStatus
-                }
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
