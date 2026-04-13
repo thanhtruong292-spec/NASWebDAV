@@ -4393,6 +4393,27 @@ def api_livestream_status():
             if duration_sec > 0 and file_size > 0:
                 avg_speed = format_bytes(int(file_size / duration_sec)) + "/s"
 
+            error_reason = ""
+            if status == "error":
+                log_file = info.get("log_file", "")
+                if os.path.exists(log_file):
+                    try:
+                        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                            lines = f.readlines()
+                            last_lines = lines[-10:]
+                            for line in last_lines:
+                                line_lo = line.lower()
+                                if "error:" in line_lo or "failed" in line_lo or "http error" in line_lo or "offline" in line_lo:
+                                    error_reason = line.strip()
+                                    break
+                            if not error_reason and last_lines:
+                                error_reason = last_lines[-1].strip()
+                    except Exception:
+                        pass
+                if not error_reason:
+                    error_reason = "Không thể phân tích luồng stream/File hỏng."
+            info["error_reason"] = error_reason
+
             result_jobs.append({
                 "job_id": jid,
                 "url": info.get("url", ""),
@@ -4405,6 +4426,7 @@ def api_livestream_status():
                 "duration_seconds": duration_sec,
                 "duration_display": "%dh%02dm%02ds" % (duration_sec // 3600, (duration_sec % 3600) // 60, duration_sec % 60),
                 "avg_speed": avg_speed,
+                "error_reason": info.get("error_reason", ""),
                 "quality": info.get("quality", "best"),
                 "started_at": info.get("started_at", ""),
                 "finished_at": info.get("finished_at", "")
