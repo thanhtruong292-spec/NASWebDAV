@@ -128,6 +128,16 @@ data class GuestPassInfo(
     val expiresAt: Long    // Unix timestamp milliseconds
 )
 
+// DATA CLASS CHO PROCESS LIST
+data class SystemProcess(
+    val pid: Int,
+    val name: String,
+    val user: String,
+    val status: String,
+    val cpu: Float,
+    val mem: Float
+)
+
 // DATA CLASS CHO SOCIAL DOWNLOAD HISTORY
 data class SocialDownloadItem(
     val url: String,
@@ -222,6 +232,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var metricsError by mutableStateOf<String?>(null)  // Nếu có lỗi, hiển thị thay vì spinner vô hạn
     var dailyReport by mutableStateOf<DailyReportData?>(null)
     var isDailyReportLoading by mutableStateOf(false)
+
+    // STATE CHO TIẾN TRÌNH HỆ THỐNG
+    var systemProcesses by mutableStateOf<List<SystemProcess>>(emptyList())
+    var isLoadingProcesses by mutableStateOf(false)
     private var metricsPollingJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
 
@@ -3198,4 +3212,42 @@ object PerformanceMonitor {
     }
 
 
+}
+
+fun WebDavViewModel.fetchSystemProcesses(sortBy: String = "cpu") {
+    if (isLoadingProcesses) return
+    isLoadingProcesses = true
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val apiBaseUrl = currentUrl.toApiBaseUrl()
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/processes?sort=$sortBy&limit=100").build()
+            localApiClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    if (json.optString("status") == "success") {
+                        val arr = json.optJSONArray("data")
+                        val list = mutableListOf<SystemProcess>()
+                        if (arr != null) {
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                list.add(SystemProcess(
+                                    pid = obj.optInt("pid", 0),
+                                    name = obj.optString("name", "unknown"),
+                                    user = obj.optString("user", "root"),
+                                    status = obj.optString("status", "-"),
+                                    cpu = obj.optDouble("cpu", 0.0).toFloat(),
+                                    mem = obj.optDouble("mem", 0.0).toFloat()
+                                ))
+                            }
+                        }
+                        withContext(Dispatchers.Main) { systemProcesses = list }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            withContext(Dispatchers.Main) { isLoadingProcesses = false }
+        }
+    }
 }

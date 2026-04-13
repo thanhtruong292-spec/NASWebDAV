@@ -177,6 +177,10 @@ fun MainMenuScreen(
     // STATE CHO POPUP TẢI TỪ XA
     var showDownloadDialog by remember { mutableStateOf(false) }
     var downloadLink by remember { mutableStateOf("") }
+    
+    // STATE CHO DANH SÁCH TIẾN TRÌNH
+    var showProcessDialog by remember { mutableStateOf(false) }
+    var processSortType by remember { mutableStateOf("cpu") }
 
     // STATE CHO WAKE-ON-LAN
     var showWolDialog by remember { mutableStateOf(false) }
@@ -249,6 +253,14 @@ fun MainMenuScreen(
                 }
             },
             onDismiss = { showDownloadDialog = false }
+        )
+    }
+    
+    if (showProcessDialog) {
+        ProcessListBottomSheet(
+            viewModel = viewModel,
+            sortBy = processSortType,
+            onDismiss = { showProcessDialog = false }
         )
     }
     if (showWolDialog) {
@@ -476,14 +488,22 @@ fun MainMenuScreen(
                         subValue = viewModel.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
                         gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            processSortType = "cpu"
+                            showProcessDialog = true
+                        }
                     )
                     GaugeCard(
                         title = "RAM", value = viewModel.systemStatus.ram, subValue = "${viewModel.systemStatus.ramPercent}%",
                         icon = Icons.Default.DeveloperBoard,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
                         modifier = Modifier.weight(1f),
-                        overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull()
+                        overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
+                        onClick = {
+                            processSortType = "mem"
+                            showProcessDialog = true
+                        }
                     )
                     
                     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
@@ -1006,7 +1026,8 @@ fun GaugeCard(
     gradientColors: List<Color>,
     modifier: Modifier = Modifier,
     overridePercent: Float? = null,
-    label: String? = null
+    label: String? = null,
+    onClick: (() -> Unit)? = null
 ) {
     val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
     val progress = (numericValue / 100f).coerceIn(0f, 1f)
@@ -1022,7 +1043,7 @@ fun GaugeCard(
     }
 
     Card(
-        modifier = modifier,
+        modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = RoundedCornerShape(20.dp)
     ) {
@@ -2094,4 +2115,118 @@ fun formatElapsedTimeUI(millis: Long): String {
 
     return parts.joinToString(", ")
 }
+
+@Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+fun ProcessListBottomSheet(
+    viewModel: WebDavViewModel,
+    sortBy: String,
+    onDismiss: () -> Unit
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    
+    androidx.compose.runtime.LaunchedEffect(sortBy) {
+        while (true) {
+            viewModel.fetchSystemProcesses(sortBy)
+            kotlinx.coroutines.delay(3000) // Tự động làm mới mỗi 3 giây
+        }
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF141414),
+        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 16.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                Text(
+                    text = "Tiến Trình (Theo ${if (sortBy == "cpu") "CPU" else "RAM"})",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (viewModel.isLoadingProcesses) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = AccentCyan
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            
+            // Header
+            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Text("TIẾN TRÌNH", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.weight(1f))
+                Text("RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                Text("CPU", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            }
+            androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+
+            if (viewModel.systemProcesses.isEmpty() && !viewModel.isLoadingProcesses) {
+                Text(
+                    "Không có dữ liệu tiến trình.",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+            }
+
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(viewModel.systemProcesses.size) { index ->
+                    val proc = viewModel.systemProcesses[index]
+                    val statusColor = when (proc.status) {
+                        "running" -> Color(0xFF66BB6A)
+                        "sleeping" -> Color(0xFF9E9E9E)
+                        "disk-sleep" -> Color(0xFFFFA726)
+                        "zombie", "dead" -> Color(0xFFEF5350)
+                        "idle" -> Color(0xFF29B6F6)
+                        else -> Color(0xFF9E9E9E)
+                    }
+                    val statusChar = when (proc.status) {
+                        "running" -> "R"
+                        "sleeping" -> "S"
+                        "disk-sleep" -> "D"
+                        "zombie" -> "Z"
+                        "idle" -> "I"
+                        else -> "?"
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // S badge
+                        Box(
+                            Modifier.size(20.dp).background(statusColor.copy(alpha=0.2f), androidx.compose.foundation.shape.CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(statusChar, color = statusColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(proc.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
+                        }
+                        Text("${proc.mem}%", color = if (sortBy == "mem") AccentCyan else TextSecondary, fontSize = 12.sp, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = if(sortBy=="mem") FontWeight.Bold else FontWeight.Normal)
+                        Text("${proc.cpu}%", color = if (sortBy == "cpu") AccentCyan else TextSecondary, fontSize = 12.sp, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = if(sortBy=="cpu") FontWeight.Bold else FontWeight.Normal)
+                    }
+                }
+            }
+        }
+    }
+}
+
 

@@ -1965,6 +1965,55 @@ def api_omv_overview():
 
     return jsonify(result)
 
+@app.route("/api/processes", methods=["GET"])
+@requires_auth
+def api_processes():
+    """Lay danh sach 100 tien trinh hang dau, sap xep theo CPU hoac RAM."""
+    try:
+        sort_by = request.args.get("sort", "cpu")
+        limit = int(request.args.get("limit", 100))
+        num_cores = psutil.cpu_count() or 1
+        
+        active_procs = []
+        for p in psutil.process_iter(['pid', 'name', 'username', 'status', 'memory_percent']):
+            try:
+                p.cpu_percent()
+                active_procs.append(p)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+                
+        time.sleep(0.1)
+        
+        procs = []
+        for p in active_procs:
+            try:
+                info = p.info
+                cpu = p.cpu_percent() / num_cores
+                # Handle status string
+                st = str(info.get('status', ''))
+                
+                procs.append({
+                    "pid": info.get('pid', 0),
+                    "name": info.get('name', 'unknown'),
+                    "user": info.get('username', 'root') or "root",
+                    "status": st,
+                    "cpu": round(cpu, 1),
+                    "mem": round(info.get('memory_percent', 0.0) or 0.0, 1)
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                continue
+                
+        if sort_by == "mem":
+            procs.sort(key=lambda x: x["mem"], reverse=True)
+        else:
+            procs.sort(key=lambda x: x["cpu"], reverse=True)
+            
+        return jsonify({"status": "success", "data": procs[:limit]})
+    except Exception as e:
+        log.error("API Processes Error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
 def api_speedtest():
