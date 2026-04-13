@@ -450,7 +450,7 @@ fun MainMenuScreen(
                         modifier = Modifier.weight(1f)
                     )
                     GaugeCard(
-                        title = "RAM", value = viewModel.systemStatus.ram, subValue = null,
+                        title = "RAM", value = viewModel.systemStatus.ram, subValue = viewModel.systemStatus.ramPercent,
                         icon = Icons.Default.Memory,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
                         modifier = Modifier.weight(1f),
