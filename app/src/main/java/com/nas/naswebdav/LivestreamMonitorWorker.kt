@@ -140,6 +140,7 @@ class LivestreamMonitorWorker(
         val statusUrl = "http://$nasHost:5050/api/livestream/status"
         var consecutiveErrors = 0
         var finalStatus = "recording"
+        var finalErrorReason = ""
 
         while (!isStopped) {
             delay(3_000L)
@@ -179,6 +180,10 @@ class LivestreamMonitorWorker(
                     val duration  = job.optString("duration_display", "0h00m00s")
                     val speed     = job.optString("avg_speed", "")
                     val outFile   = job.optString("output_file", "")
+                    val errorReason = job.optString("error_reason", "")
+                    if (errorReason.isNotEmpty()) {
+                        finalErrorReason = errorReason
+                    }
                     consecutiveErrors = 0
 
                     // Cập nhật notification
@@ -205,7 +210,8 @@ class LivestreamMonitorWorker(
                         OUT_FILE_SIZE   to fileSize,
                         OUT_DURATION    to duration,
                         OUT_SPEED       to speed,
-                        OUT_OUTPUT_FILE to outFile
+                        OUT_OUTPUT_FILE to outFile,
+                        "error_reason"  to errorReason
                     ))
 
                     // Nếu stream kết thúc → thoát vòng lặp
@@ -233,8 +239,9 @@ class LivestreamMonitorWorker(
 
         // Hiện thông báo hoàn tất tùy theo kết quả
         if (finalStatus == "error") {
-            showCompletionNotification(notifId, platformLabel, "⚠️", "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp.")
-            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error"))
+            val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp."
+            showCompletionNotification(notifId, platformLabel, "⚠️", msg)
+            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to finalErrorReason))
         } else {
             showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã lưu vào thư mục Livestream/ trên NAS")
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))

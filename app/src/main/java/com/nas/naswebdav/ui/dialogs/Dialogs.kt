@@ -1488,7 +1488,8 @@ fun LivestreamRecordDialog(
                 }
             } else if (message.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
-                Text(message, color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
+                Text(message, color = msgColor, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
             } else {
                 Spacer(Modifier.height(16.dp))
                 Button(

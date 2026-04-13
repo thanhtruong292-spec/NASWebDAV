@@ -861,6 +861,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     "finished" -> "✅ Ghi hình hoàn tất!"
                                     "stopped"  -> "⏹ Đã dừng ghi hình"
                                     "timeout"  -> "⏰ Tự động dừng (quá 12 giờ)"
+                                    "error"    -> {
+                                        val reason = progress.getString("error_reason") ?: ""
+                                        if (reason.isNotEmpty()) "Lỗi: $reason" else "Lỗi: Nguồn Stream bị ngắt / File quá nhỏ!"
+                                    }
                                     else       -> "Trạng thái báo cáo: $status"
                                 }
                             } else {
