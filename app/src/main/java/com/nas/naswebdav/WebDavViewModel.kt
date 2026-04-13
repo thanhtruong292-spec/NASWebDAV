@@ -1456,13 +1456,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
 
-        // Khởi động vòng lặp kiểm tra sức khoẻ NAS 30s / lần
+        // Khởi động vòng lặp kiểm tra sức khoẻ mạng (Ping ICMP siêu nhẹ)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             while (true) {
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
                     networkPingMs = webDavManager.checkPingServer()
+                    // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
+                    kotlinx.coroutines.delay(3000)
+                } else {
+                    // Nếu chưa Login xong thì đợi 1s hỏi lại, tránh việc bắt User đợi tận 30s mới chọc Ping
+                    kotlinx.coroutines.delay(1000)
                 }
-                kotlinx.coroutines.delay(30000)
             }
         }
 
