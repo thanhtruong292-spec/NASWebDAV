@@ -39,9 +39,9 @@ object WebDavManager {
     var currentPass: String = ""
 
     // Kế thừa kết nối (Connection Pooling) & Keep-Alive
-    private val optimizedClient: OkHttpClient by lazy {
+    val optimizedClient: OkHttpClient by lazy {
         val dispatcher = Dispatcher().apply {
-            maxRequests = 16 // FIX BUG #7: Giảm từ 64 xuống 16 — tránh quá tải NAS yếu (Rockchip, Chainedbox)
+            maxRequests = 16 // FIX BUG #7: Giảm từ 64 xuống 16 - tránh quá tải NAS yếu (Rockchip, Chainedbox)
             maxRequestsPerHost = 8
         }
         NasApplication.instance.sharedHttpClient.newBuilder()

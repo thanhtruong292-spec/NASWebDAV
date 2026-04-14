@@ -221,23 +221,27 @@ fun MainMenuScreen(
         viewModel.fetchOmvOverview()
     }
 
+    // FIX D10: Collect tất cả AutoBackupState values cùng lúc ở top-level Composable.
+    // Trước đây: 4 lần collectAsState() được gọi BÊN TRONG `if (showBackupResult)` block →
+    // chỉ subscribe khi dialog mở, nhưng tạo ra race condition và subscription không ổn định.
+    // Bây giờ: collect ở top-level, luôn sẵn có khi cần, không có allocation thêm.
     val showBackupResult by com.nas.naswebdav.AutoBackupState.showResultDialog.collectAsState()
+    val backupResultTotal by com.nas.naswebdav.AutoBackupState.resultTotal.collectAsState()
+    val backupResultSuccess by com.nas.naswebdav.AutoBackupState.resultSuccess.collectAsState()
+    val backupResultSkipped by com.nas.naswebdav.AutoBackupState.resultSkipped.collectAsState()
+    val backupResultFailed by com.nas.naswebdav.AutoBackupState.resultFailed.collectAsState()
+
     if (showBackupResult) {
-        val total = com.nas.naswebdav.AutoBackupState.resultTotal.collectAsState().value
-        val success = com.nas.naswebdav.AutoBackupState.resultSuccess.collectAsState().value
-        val skipped = com.nas.naswebdav.AutoBackupState.resultSkipped.collectAsState().value
-        val failed = com.nas.naswebdav.AutoBackupState.resultFailed.collectAsState().value
-        
         AlertDialog(
             onDismissRequest = { com.nas.naswebdav.AutoBackupState.showResultDialog.value = false },
             title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CloudDone, null, tint = AccentGreen); Spacer(Modifier.width(8.dp)); Text("Báo Cáo Đồng Bộ") } },
             text = {
                 Column {
-                    Text("Tổng danh sách tệp được quét: $total", fontSize = 15.sp)
+                    Text("Tổng danh sách tệp được quét: $backupResultTotal", fontSize = 15.sp)
                     Spacer(Modifier.height(10.dp))
-                    Text("Thành công: $success", color = AccentGreen, fontWeight = FontWeight.Bold)
-                    Text("Bỏ qua (đã đồng bộ trước đó): $skipped", color = TextSecondary)
-                    Text("Thất bại: $failed", color = if (failed > 0) AccentRed else TextSecondary)
+                    Text("Thành công: $backupResultSuccess", color = AccentGreen, fontWeight = FontWeight.Bold)
+                    Text("Bỏ qua (đã đồng bộ trước đó): $backupResultSkipped", color = TextSecondary)
+                    Text("Thất bại: $backupResultFailed", color = if (backupResultFailed > 0) AccentRed else TextSecondary)
                 }
             },
             confirmButton = { TextButton(onClick = { com.nas.naswebdav.AutoBackupState.showResultDialog.value = false }) { Text("Đóng", color = AccentCyan) } },

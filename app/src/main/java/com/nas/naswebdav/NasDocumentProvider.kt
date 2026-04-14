@@ -9,6 +9,8 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.FileNotFoundException
@@ -142,25 +144,31 @@ class NasDocumentProvider : DocumentsProvider() {
         val targetId = documentId ?: ROOT_DOC_ID
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
 
-        // FIX LỖI 3: bọc toàn bộ vào try-catch, không để throw thoát ra ngoài provider
+        // FIX A4: Thêm withTimeout để giới hạn thời gian chờ tối đa 10s.
+        // DocumentsProvider PHẢI trả về Cursor đồng bộ nên không thể loại bỏ runBlocking,
+        // nhưng timeout đảm bảo không bao giờ block Main Thread vô hạn (→ ANR).
         runBlocking {
             try {
-                val baseUrl = initAndGetBaseUrl()
-                if (baseUrl.isEmpty()) return@runBlocking
+                kotlinx.coroutines.withTimeout(10_000L) {
+                    val baseUrl = initAndGetBaseUrl()
+                    if (baseUrl.isEmpty()) return@withTimeout
 
-                if (targetId == ROOT_DOC_ID) {
-                    val rootUrl = resolveDocumentUrl(ROOT_DOC_ID, baseUrl)
-                    includeFile(result, NasFile("/", rootUrl, true, null, 0, System.currentTimeMillis()), baseUrl)
-                } else {
-                    val url = resolveDocumentUrl(targetId, baseUrl)
-                    val headers = webDavManager.headFileHeaders(url)
-                    val isDir = targetId.endsWith("/")
-                    val name = targetId.trimEnd('/').substringAfterLast('/')
-                    val len = headers?.get("Content-Length")?.toLongOrNull() ?: 0L
-                    includeFile(result, NasFile(name, url, isDir, headers?.get("Content-Type"), len), baseUrl)
+                    if (targetId == ROOT_DOC_ID) {
+                        val rootUrl = resolveDocumentUrl(ROOT_DOC_ID, baseUrl)
+                        includeFile(result, NasFile("/", rootUrl, true, null, 0, System.currentTimeMillis()), baseUrl)
+                    } else {
+                        val url = resolveDocumentUrl(targetId, baseUrl)
+                        val headers = webDavManager.headFileHeaders(url)
+                        val isDir = targetId.endsWith("/")
+                        val name = targetId.trimEnd('/').substringAfterLast('/')
+                        val len = headers?.get("Content-Length")?.toLongOrNull() ?: 0L
+                        includeFile(result, NasFile(name, url, isDir, headers?.get("Content-Type"), len), baseUrl)
+                    }
                 }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                android.util.Log.w("NasDocProvider", "queryDocument timeout sau 10s — trả về cursor rỗng")
             } catch (_: Exception) {
-                // Không throw ra ngoài, trả về cursor rỗng thay vì crash
+                // Trả về cursor rỗng khi mất kết nối, không crash
             }
         }
         return result
@@ -173,17 +181,21 @@ class NasDocumentProvider : DocumentsProvider() {
     ): Cursor {
         val result = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION)
 
-        // FIX LỖI 3: bọc toàn bộ kể cả resolveDocumentUrl vào try-catch
+        // FIX A4: Thêm withTimeout 10s để tránh ANR khi NAS phản hồi chậm.
         runBlocking {
             try {
-                val baseUrl = initAndGetBaseUrl()
-                if (baseUrl.isEmpty()) return@runBlocking
+                kotlinx.coroutines.withTimeout(10_000L) {
+                    val baseUrl = initAndGetBaseUrl()
+                    if (baseUrl.isEmpty()) return@withTimeout
 
-                val url = resolveDocumentUrl(parentDocumentId ?: ROOT_DOC_ID, baseUrl)
-                val files = webDavManager.listFiles(url)
-                for (file in files) {
-                    includeFile(result, file, baseUrl)
+                    val url = resolveDocumentUrl(parentDocumentId ?: ROOT_DOC_ID, baseUrl)
+                    val files = webDavManager.listFiles(url)
+                    for (file in files) {
+                        includeFile(result, file, baseUrl)
+                    }
                 }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                android.util.Log.w("NasDocProvider", "queryChildDocuments timeout sau 10s — trả về cursor rỗng")
             } catch (_: Exception) {
                 // Trả về cursor rỗng khi mất kết nối, không crash
             }
@@ -218,40 +230,59 @@ class NasDocumentProvider : DocumentsProvider() {
             val handler = Handler(Looper.getMainLooper())
             return ParcelFileDescriptor.open(tempFile, accessMode, handler) { err ->
                 if (err == null) {
-                    Thread {
-                        runBlocking {
-                            try {
-                                // FIX LỖI 2: MIME lấy từ extension của documentId, không từ temp
-                                val mime = MimeTypeMap.getSingleton()
-                                    .getMimeTypeFromExtension(fileExtension.lowercase())
-                                    ?: "application/octet-stream"
-                                webDavManager.uploadFile(url, tempFile, mime)
-                            } catch (_: Exception) {
-                            } finally {
-                                tempFile.delete()
-                            }
+                    // FIX C3: Thay raw Thread { runBlocking {} }.start() bằng applicationScope.launch(IO).
+                    // Raw Thread không được quản lý lifecycle và lỗi upload bị nuốt hoàn toàn.
+                    // applicationScope đảm bảo upload hoàn thành ngay cả khi user rời app.
+                    NasApplication.applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try {
+                            val mime = android.webkit.MimeTypeMap.getSingleton()
+                                .getMimeTypeFromExtension(fileExtension.lowercase())
+                                ?: "application/octet-stream"
+                            webDavManager.uploadFile(url, tempFile, mime)
+                        } catch (e: Exception) {
+                            android.util.Log.e("NasDocProvider", "Upload thất bại: ${e.message}")
+                        } finally {
+                            tempFile.delete()
                         }
-                    }.start()
+                    }
                 } else {
-                    tempFile.delete() // Dọn rác cả khi lỗi
+                    tempFile.delete() // Dọn rác khi lỗi ghi
                 }
             }
         } else {
-            // Mở để đọc: tải về temp, xoá sau khi đọc xong
-            val tempFile = File(context?.cacheDir, "nas_read_${System.currentTimeMillis()}.$fileExtension")
-            runBlocking {
+            // Mở để đọc: Trả về Pipe stream thay vì block tải toàn bộ tệp vào bộ nhớ
+            val pipe = ParcelFileDescriptor.createReliablePipe()
+            val readFd = pipe[0]
+            val writeFd = pipe[1]
+
+            // FIX: Thay raw Thread {} bằng applicationScope.launch(IO).
+            // applicationScope (SupervisorJob) đảm bảo launch được lifecycle-aware,
+            // exception không bị nuốt silent và thread được quản lý qua dispatcher.
+            // Pipe stream BẮT BUỘC phải là fire-and-forget (caller cần trả readFd ngay),
+            // nên launch (không await) là pattern đúng — không thể dùng withContext.
+            NasApplication.applicationScope.launch(Dispatchers.IO) {
                 try {
-                    webDavManager.downloadFile(url, tempFile)
-                } catch (_: Exception) {
-                    tempFile.delete()
-                    throw FileNotFoundException("Không tải được file: $url")
+                    val request = okhttp3.Request.Builder().url(url).build()
+                    webDavManager.optimizedClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (_: Exception) {}
+                            return@launch
+                        }
+                        val body = response.body
+                        if (body == null) {
+                            try { writeFd.closeWithError("Rỗng body") } catch (_: Exception) {}
+                            return@launch
+                        }
+                        ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { fos ->
+                            body.byteStream().copyTo(fos)
+                        }
+                    }
+                } catch (e: Exception) {
+                    try { writeFd.closeWithError(e.message ?: "Mất kết nối stream") } catch (_: Exception) {}
                 }
             }
 
-            val handler = Handler(Looper.getMainLooper())
-            return ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY, handler) {
-                tempFile.delete()
-            }
+            return readFd
         }
     }
 
@@ -269,13 +300,18 @@ class NasDocumentProvider : DocumentsProvider() {
         val newId = "$baseId/$displayName"
         val url = resolveDocumentUrl(newId, baseUrl)
 
+        // FIX A4: Thêm withTimeout 10s
         runBlocking {
             try {
-                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    webDavManager.createFolder(url)
-                } else {
-                    webDavManager.createEmptyFile(url)
+                kotlinx.coroutines.withTimeout(10_000L) {
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        webDavManager.createFolder(url)
+                    } else {
+                        webDavManager.createEmptyFile(url)
+                    }
                 }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                android.util.Log.w("NasDocProvider", "createDocument timeout")
             } catch (_: Exception) {}
         }
         return newId
@@ -286,8 +322,15 @@ class NasDocumentProvider : DocumentsProvider() {
         val baseUrl = initAndGetBaseUrl()
         if (baseUrl.isEmpty()) return
         val url = resolveDocumentUrl(targetId, baseUrl)
+        // FIX A4: Thêm withTimeout 10s
         runBlocking {
-            try { webDavManager.deleteFile(url) } catch (_: Exception) {}
+            try {
+                kotlinx.coroutines.withTimeout(10_000L) {
+                    webDavManager.deleteFile(url)
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                android.util.Log.w("NasDocProvider", "deleteDocument timeout")
+            } catch (_: Exception) {}
         }
     }
 }

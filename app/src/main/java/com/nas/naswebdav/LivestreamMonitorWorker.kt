@@ -11,10 +11,8 @@ import androidx.work.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
  * LivestreamMonitorWorker — Foreground Worker theo dõi tiến trình ghi livestream trên NAS.
@@ -95,10 +93,10 @@ class LivestreamMonitorWorker(
         }
     }
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    // FIX: Dùng fastApiClient từ NasApplication thay vì tạo OkHttpClient riêng cho mỗi Worker.
+    // Mỗi client riêng có connection pool riêng → tốn RAM không cần thiết khi có nhiều stream cùng lúc.
+    // fastApiClient đã được cấu hình với timeout phù hợp (connectTimeout=15s, readTimeout=30s).
+    private val httpClient get() = NasApplication.instance.fastApiClient
 
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)

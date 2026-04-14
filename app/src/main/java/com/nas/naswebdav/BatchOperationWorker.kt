@@ -65,7 +65,8 @@ class BatchOperationWorker(
         // Kết nối WebDAV — sử dụng SmartNetworkManager để chọn URL đang hoạt động (LAN hoặc Tailscale)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        val savedUrl = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }
+        // FIX D3: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
+        val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
 

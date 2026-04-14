@@ -58,9 +58,16 @@ class StreamPipeWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val sourceUrl = inputData.getString("sourceUrl") ?: return@withContext Result.failure()
         val fileName = inputData.getString("fileName") ?: return@withContext Result.failure()
-        val baseUrl = inputData.getString("baseUrl") ?: return@withContext Result.failure()
-        val user = inputData.getString("user") ?: return@withContext Result.failure()
-        val pass = inputData.getString("pass") ?: return@withContext Result.failure()
+
+        // FIX D6: Đọc credentials từ SecurePrefsHelper (EncryptedSharedPreferences) thay vì inputData.
+        // WorkData được lưu vào SQLite KHÔNG mã hóa của WorkManager → có thể bị đọc bởi root/backup tools.
+        // BaseUrl được chọn thông minh qua SmartNetworkManager (ưu tiên LAN, fallback Tailscale).
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+        val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+
+        if (user.isEmpty() || pass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
 
         createChannel(applicationContext)
 

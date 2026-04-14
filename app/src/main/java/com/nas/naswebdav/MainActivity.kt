@@ -115,9 +115,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         setContent {
             MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme(), typography = com.nas.naswebdav.ui.theme.AppTypography) {
+                // FIX A1b: Loại bỏ LocalRippleTheme deprecated (Material 3 không còn hỗ trợ).
+                // Chỉ giữ LocalIndication để tắt ripple effect.
                 androidx.compose.runtime.CompositionLocalProvider(
-                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication,
-                    androidx.compose.material.ripple.LocalRippleTheme provides com.nas.naswebdav.ui.theme.NoRippleTheme
+                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
                 ) {
                     Surface {
                         NasAppNavigation(viewModel)
@@ -272,8 +273,8 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                 onVideo = { url -> 
                     val intent = android.content.Intent(mContext, VideoPlayerActivity::class.java).apply {
                         putExtra("url", url)
-                        putExtra("user", viewModel.webDavManager.currentUser)
-                        putExtra("pass", viewModel.webDavManager.currentPass)
+                        // FIX B2: Không truyền user/pass qua Intent — VideoPlayerActivity đọc từ SecurePrefsHelper.
+                        // Intent extras có thể bị logcat ghi lại, dump bởi ADB hoặc đọc bởi app thứ ba qua ActivityManager.
                     }
                     mContext.startActivity(intent)
                 },

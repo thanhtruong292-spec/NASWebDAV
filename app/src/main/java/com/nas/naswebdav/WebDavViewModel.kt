@@ -795,6 +795,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                 commonDialogMessage = errMsg
                 showCommonDialog    = true
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isStartingLivestream = false
+                }
             }
         }
     }
@@ -1339,7 +1343,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
                     val host = parsedUrl?.host
                     if (!host.isNullOrEmpty()) {
-                        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                        // FIX: Thay GlobalScope (không có lifecycle, không bao giờ cancel) bằng
+                        // applicationScope. Tác vụ authorize phụ là fire-and-forget — applicationScope
+                        // đảm bảo bị cancel khi app process kết thúc thay vì treo mãi mãi.
+                        NasApplication.applicationScope.launch(Dispatchers.IO) {
                             try {
                                 val authHeader = okhttp3.Credentials.basic(user, pass)
                                 val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
@@ -1347,13 +1354,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                                     .build()
                                 val request = okhttp3.Request.Builder()
-                                    .url("http://$host:5050/api/auth/authorize")
+                                    .url("http://$host:${AppConfig.API_PORT}/api/auth/authorize")
                                     .header("Authorization", authHeader)
                                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                                     .build()
                                 cleanClient.newCall(request).execute().use { }
                             } catch (e: Exception) {
-                                android.util.Log.w("NAS_AUTH", "API Phụ 5050 Warning: ${e.message}")
+                                android.util.Log.w("NAS_AUTH", "API Phụ ${AppConfig.API_PORT} Warning: ${e.message}")
                             }
                         }
                     }
@@ -1449,23 +1456,35 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     
         listenToLocalNasApi()
 
-        // Nền tảng đồng bộ State chung: Kết hợp tiến trình quét trùng lặp từ mọi luồng (Background/UI/AutoWorker)
+        // FIX A2: Thay vòng lặp polling while(true){delay(32)} bằng combine() trên StateFlow.
+        // Cũ: Vòng lặp chạy liên tục @30fps kể cả khi không scan → tiêu hao CPU/pin vô ích.
+        // Mới: Chỉ emit khi một trong các StateFlow thực sự thay đổi → 0% CPU khi idle.
         viewModelScope.launch {
-            while (true) {
+            kotlinx.coroutines.flow.combine(
+                DuplicateProgressState.stage,
+                DuplicateProgressState.currentFolderUrl,
+                DuplicateProgressState.percent,
+                DuplicateProgressState.scannedCount,
+                DuplicateProgressState.elapsedTime
+            ) { stage, folderUrl, percent, scanned, elapsed ->
+                // Trả về tuple để trigger collector khi BẤT KỲ field nào thay đổi
+                arrayOf(stage, folderUrl, percent, scanned, elapsed)
+            }.collect {
+                // Đồng bộ toàn bộ state từ DuplicateProgressState → ViewModel state
                 scanDuplicatesCurrentFolderUrl = DuplicateProgressState.currentFolderUrl.value
-                scanDuplicatesCurrentItemName = DuplicateProgressState.itemName.value
-                scanDuplicatesStage = DuplicateProgressState.stage.value
-                scanDuplicatesIsFolder = DuplicateProgressState.isFolder.value
-                scanDuplicatesTotalScanned = DuplicateProgressState.scannedCount.value
-                scanDuplicatesFound = DuplicateProgressState.foundCount.value
-                scanDuplicatesPercent = DuplicateProgressState.percent.value
+                scanDuplicatesCurrentItemName  = DuplicateProgressState.itemName.value
+                scanDuplicatesStage            = DuplicateProgressState.stage.value
+                scanDuplicatesIsFolder         = DuplicateProgressState.isFolder.value
+                scanDuplicatesTotalScanned     = DuplicateProgressState.scannedCount.value
+                scanDuplicatesFound            = DuplicateProgressState.foundCount.value
+                scanDuplicatesPercent          = DuplicateProgressState.percent.value
                 scanDuplicatesCurrentStagePercent = DuplicateProgressState.currentStagePercent.value
-                scanDuplicatesStageNumber = DuplicateProgressState.stageNumber.value
-                scanDuplicatesTotalStages = DuplicateProgressState.totalStages.value
+                scanDuplicatesStageNumber      = DuplicateProgressState.stageNumber.value
+                scanDuplicatesTotalStages      = DuplicateProgressState.totalStages.value
                 scanDuplicatesStageDescription = DuplicateProgressState.stageDescription.value
-                scanDuplicatesElapsedTime = DuplicateProgressState.elapsedTime.value
+                scanDuplicatesElapsedTime      = DuplicateProgressState.elapsedTime.value
                 scanDuplicatesEstimatedTimeRemaining = DuplicateProgressState.estimatedTimeRemaining.value
-                
+
                 // Tự động bật Panel nếu Worker ngầm đang chạy (AutoScan / MainMenu)
                 val stage = scanDuplicatesStage
                 if (stage != "Hoàn tất" && stage.isNotEmpty() && stage != "Khởi động...") {
@@ -1474,8 +1493,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 } else if (stage == "Hoàn tất") {
                     isWorkerRunning = false
                 }
-                
-                kotlinx.coroutines.delay(32) // ~30FPS mượt mà
             }
         }
 
@@ -2447,7 +2464,11 @@ object VideoDownloadHelper {
      * @param onReady Callback khi file đã sẵn sàng phát
      * @param onError Callback khi có lỗi
      */
+    // FIX A3a: Nhận CoroutineScope từ caller thay vì tự tạo CoroutineScope(IO) riêng.
+    // Scope rời rạc sẽ không bao giờ bị cancel khi ViewModel bị destroy → memory leak.
+    // Caller (thường là ViewModel) phải truyền viewModelScope để lifecycle được quản lý đúng.
     fun downloadAndPlay(
+        scope: CoroutineScope,
         context: Context,
         url: String,
         user: String,
@@ -2456,7 +2477,7 @@ object VideoDownloadHelper {
         onReady: () -> Unit = {},
         onError: (String) -> Unit = {}
     ): Job {
-        return CoroutineScope(Dispatchers.IO).launch {
+        return scope.launch(Dispatchers.IO) {
             try {
                 // 1. Tạo thư mục cache cho video
                 val cacheDir = File(context.cacheDir, VIDEO_CACHE_DIR)
@@ -2479,51 +2500,61 @@ object VideoDownloadHelper {
                     .header("Authorization", okhttp3.Credentials.basic(user, pass))
                     .build()
 
-                val response = NasApplication.instance.videoStreamingClient
+                // FIX A3b: Bọc response trong use {} để đảm bảo body luôn được đóng,
+                // kể cả khi exception xảy ra giữa chừng (tránh connection pool exhaustion).
+                NasApplication.instance.videoStreamingClient
                     .newBuilder()
                     .readTimeout(600, java.util.concurrent.TimeUnit.SECONDS) // 10 phút cho file lớn
                     .build()
                     .newCall(request)
                     .execute()
-
-                if (!response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onError("NAS trả về lỗi: ${response.code}")
-                    }
-                    response.close()
-                    return@launch
-                }
-
-                val totalBytes = response.header("Content-Length")?.toLongOrNull() ?: -1L
-                var downloadedBytes = 0L
-
-                // 4. Ghi file ra cache với progress
-                response.body?.byteStream()?.use { input ->
-                    targetFile.outputStream().use { output ->
-                        val buffer = ByteArray(131072) // 128KB buffer
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            if (!isActive) {
-                                targetFile.delete()
-                                return@launch
-                            }
-                            output.write(buffer, 0, bytesRead)
-                            downloadedBytes += bytesRead
+                    .use { response ->
+                        if (!response.isSuccessful) {
                             withContext(Dispatchers.Main) {
-                                onProgress(downloadedBytes, totalBytes)
+                                onError("NAS trả về lỗi: ${response.code}")
+                            }
+                            return@use
+                        }
+
+                        val totalBytes = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                        var downloadedBytes = 0L
+
+                        // 4. Ghi file ra cache với progress
+                        response.body?.byteStream()?.use { input ->
+                            targetFile.outputStream().use { output ->
+                                val buffer = ByteArray(131072) // 128KB buffer
+                                var bytesRead: Int
+                                var lastProgressTime = 0L
+                                while (input.read(buffer).also { bytesRead = it } != -1) {
+                                    if (!isActive) {
+                                        targetFile.delete()
+                                        return@use
+                                    }
+                                    output.write(buffer, 0, bytesRead)
+                                    downloadedBytes += bytesRead
+
+                                    val currentTime = System.currentTimeMillis()
+                                    if (currentTime - lastProgressTime > 150L) {
+                                        lastProgressTime = currentTime
+                                        withContext(Dispatchers.Main) {
+                                            onProgress(downloadedBytes, totalBytes)
+                                        }
+                                    }
+                                }
+                                withContext(Dispatchers.Main) {
+                                    onProgress(downloadedBytes, totalBytes)
+                                }
                             }
                         }
+
+                        Log.i(TAG, "Download complete: ${downloadedBytes / 1024}KB")
+
+                        // 5. Mở file cục bộ bằng trình phát video
+                        withContext(Dispatchers.Main) {
+                            onReady()
+                            openLocalFile(context, targetFile)
+                        }
                     }
-                }
-                response.close()
-
-                Log.i(TAG, "Download complete: ${downloadedBytes / 1024}KB")
-
-                // 5. Mở file cục bộ bằng trình phát video
-                withContext(Dispatchers.Main) {
-                    onReady()
-                    openLocalFile(context, targetFile)
-                }
 
             } catch (e: CancellationException) {
                 Log.d(TAG, "Download cancelled")
@@ -2535,6 +2566,7 @@ object VideoDownloadHelper {
             }
         }
     }
+
 
     /** Mở file video cục bộ bằng trình phát cài trên máy */
     private fun openLocalFile(context: Context, file: File) {
@@ -2985,7 +3017,11 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
             lanWhitelistStatus = "Đang thêm..."
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val isSubnet = entry.contains("/")
-            val bodyJson = if (isSubnet) """{"subnet":"$entry"}""" else """{"ip":"$entry"}"""
+            // FIX B3: Dùng JSONObject.put() thay vì string interpolation để tránh JSON injection
+            // nếu entry chứa ký tự đặc biệt như dấu ngoặc kép hoặc backslash.
+            val bodyJson = org.json.JSONObject().apply {
+                if (isSubnet) put("subnet", entry) else put("ip", entry)
+            }.toString()
             val request = okhttp3.Request.Builder()
                 .url("$apiBase/api/lan/whitelist")
                 .post(bodyJson.toRequestBody("application/json".toMediaTypeOrNull()))
@@ -3013,7 +3049,10 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
         try {
             lanWhitelistStatus = "Đang xóa..."
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
-            val bodyJson = if (isSubnet) """{"subnet":"$entry"}""" else """{"ip":"$entry"}"""
+            // FIX B3: Dùng JSONObject.put() thay vì string interpolation.
+            val bodyJson = org.json.JSONObject().apply {
+                if (isSubnet) put("subnet", entry) else put("ip", entry)
+            }.toString()
             val request = okhttp3.Request.Builder()
                 .url("$apiBase/api/lan/whitelist")
                 .delete(bodyJson.toRequestBody("application/json".toMediaTypeOrNull()))

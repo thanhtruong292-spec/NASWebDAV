@@ -140,7 +140,9 @@ object ImageFingerprint {
 
     fun hammingDistance(hash1: String, hash2: String): Int {
         if (hash1.length != 16 || hash2.length != 16) return 64
-        return try { java.lang.Long.bitCount(java.math.BigInteger(hash1, 16).toLong() xor java.math.BigInteger(hash2, 16).toLong()) } catch (_: Exception) { 64 }
+        // FIX: Không dùng toLong() vì sẽ overflow âm thầm với hash ≥ 0x8000000000000000
+        // BigInteger.xor().bitCount() đảm bảo đúng với toàn bộ không gian 64-bit
+        return try { java.math.BigInteger(hash1, 16).xor(java.math.BigInteger(hash2, 16)).bitCount() } catch (_: Exception) { 64 }
     }
 
     fun isSimilar(hash1: String, hash2: String, threshold: Int = 5): Boolean = hammingDistance(hash1, hash2) <= threshold

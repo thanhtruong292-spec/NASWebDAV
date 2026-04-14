@@ -131,6 +131,13 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # DỌN DẸP RÁC RAM (TMPFS) LỊCH SỬ KHI KHỞI ĐỘNG CỦA LỖI OOM
+    import shutil
+    try:
+        shutil.rmtree("/tmp/nas_transcode", ignore_errors=True)
+    except Exception:
+        pass
+
 init_db()
 
 # ============ LAN IP WHITELIST ============
@@ -1104,7 +1111,11 @@ def _update_status_cache():
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
             mem = psutil.virtual_memory()
-            ram_used = format_bytes(mem.used)
+            
+            # FIX LOGIC UI: psutil's mem.used does not match mem.percent on Linux because of cache differences. 
+            # We must use (total - available) as the displayed 'used' memory so the math (percent) matches correctly.
+            actual_used = mem.total - getattr(mem, 'available', mem.free)
+            ram_used = format_bytes(actual_used)
             ram_total = format_bytes(mem.total)
             net_rx, net_tx = get_network_speed()
 
@@ -2645,15 +2656,15 @@ def api_stream_transcode():
         return jsonify({"error": "File not found"}), 404
 
     session_id = hashlib.md5(file_path.encode()).hexdigest()[:12]
-    hls_dir = "/tmp/nas_transcode/%s" % session_id
+    hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
 
-    # Tu dong don dep rac HLS cu (>6h)
+    # Tu dong don dep rac HLS cu (>2h)
     try:
-        base = "/tmp/nas_transcode"
+        base = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode")
         if os.path.exists(base):
             for d in os.listdir(base):
                 dp = os.path.join(base, d)
-                if os.path.isdir(dp) and (time.time() - os.path.getmtime(dp)) > 21600:
+                if os.path.isdir(dp) and (time.time() - os.path.getmtime(dp)) > 7200:
                     import shutil
                     shutil.rmtree(dp, ignore_errors=True)
     except Exception:
@@ -2688,7 +2699,7 @@ def api_stream_hls_file(session_id, filename):
         return "", 404
         
     session = _transcode_sessions[session_id]
-    hls_dir = "/tmp/nas_transcode/%s" % session_id
+    hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
 
     if filename == "playlist.m3u8":
         # Tao playlist M3U8 kieu VOD co day du tat ca segments
@@ -4257,8 +4268,8 @@ def api_livestream_record():
             "--downloader-args", "ffmpeg:-loglevel warning",
         ]
 
-        # Them cookies neu co file
-        cookies_path = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "cookies.txt")
+        # Them cookies neu co file (ở thư mục gốc)
+        cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
         if os.path.exists(cookies_path):
             cmd.extend(["--cookies", cookies_path])
 
@@ -4266,6 +4277,39 @@ def api_livestream_record():
             cmd.extend(["--referer", referer])
         if user_agent:
             cmd.extend(["--user-agent", user_agent])
+
+        # --- TIKTOK DIRECT FLV BYPASS ---
+        # yt-dlp hien tai dang bi loi voi TikTok Webcast API tu IP Datacenter,
+        # nen ta se vao thang trang HTML de lay link FLV roi ep yt-dlp tai truc tiep.
+        if "tiktok" in live_url.lower():
+            import re
+            import subprocess
+            curl_cmd = [
+                "curl", "-s", "-L",
+                "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ]
+            if os.path.exists(cookies_path):
+                curl_cmd.extend(["-b", cookies_path])
+            curl_cmd.append(live_url)
+            
+            try:
+                html = subprocess.check_output(curl_cmd, timeout=15).decode("utf-8", errors="ignore")
+                match_origin = re.search(r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)', html)
+                actual_url = ""
+                if match_origin:
+                    actual_url = match_origin.group(1).replace("\\u0026", "&")
+                else:
+                    match_any = re.search(r'\\"flv\\":\\"(https://[^"\\]+)', html)
+                    if match_any:
+                        actual_url = match_any.group(1).replace("\\u0026", "&")
+                        
+                if actual_url:
+                    live_url = actual_url
+                    cmd.extend(["--add-header", "Referer: https://www.tiktok.com/"])
+                    cmd.extend(["--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"])
+            except Exception:
+                pass
+        # --------------------------------
 
         cmd.append(live_url)
 

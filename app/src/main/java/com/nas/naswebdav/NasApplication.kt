@@ -26,12 +26,34 @@ import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.nas.naswebdav.utils.WolUtil
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 
 /**
  * Application class cung cấp singleton Database và OkHttpClient cho toàn bộ ứng dụng.
  * Tránh tạo nhiều Database/OkHttpClient instance trong mỗi Worker/Activity.
  */
-class NasApplication : Application() {
+class NasApplication : Application(), ImageLoaderFactory {
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.15) // Limit Coil Memory to 15% of available heap to prevent RAM spikes
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.02)
+                    .build()
+            }
+            // Mượn chung sharedHttpClient để tránh tạo connection leak
+            .callFactory { request -> fastApiClient.newCall(request) }
+            .build()
+    }
 
     val database: AppDatabase by lazy {
         Room.databaseBuilder(
@@ -138,7 +160,9 @@ class NasApplication : Application() {
             defaultHandler?.uncaughtException(thread, exception)
         }
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
-        Thread {
+        // FIX: Thay Thread {} bằng applicationScope.launch(IO) — lifecycle-aware,
+        // exception được SupervisorJob xử lý thay vì crash silent.
+        applicationScope.launch(Dispatchers.IO) {
             try {
                 val coilCacheDir = java.io.File(cacheDir, "image_cache")
                 val maxAge = 7 * 24 * 60 * 60 * 1000L
@@ -147,7 +171,7 @@ class NasApplication : Application() {
                     if (now - file.lastModified() > maxAge) file.delete()
                 }
             } catch (e: Exception) {}
-        }.start()
+        }
     }
 }
 
@@ -162,6 +186,9 @@ object AppConfig {
     const val FAST_API_CONNECT_TIMEOUT = 15L
     const val FAST_API_READ_TIMEOUT = 30L
     const val SPEED_TEST_READ_TIMEOUT = 60L
+
+    // FIX D11: Port API tập trung vào một constant, tránh hardcode":5050" rải rác
+    const val API_PORT = 5050
 
     const val MAIN_CONNECTION_POOL_SIZE = 15
     const val MAIN_CONNECTION_KEEPALIVE_MINUTES = 5L
@@ -293,7 +320,10 @@ object SecurePrefsHelper {
     }
 
     fun saveCredentialsAsync(context: Context, urlList: List<String>, user: String, pass: String, onComplete: () -> Unit = {}) {
-        Thread {
+        // FIX: Thay Thread {} + Handler(Looper.getMainLooper()) bằng applicationScope.launch(IO)
+        // để đưa callback lên Main thread qua withContext(Main). An toàn hơn vì
+        // applicationScope được quản lý bởi SupervisorJob, không leak sự kiện nếu app bg.
+        NasApplication.applicationScope.launch(Dispatchers.IO) {
             try {
                 val prefs = getSecurePrefs(context)
                 val jsonArray = org.json.JSONArray()
@@ -305,8 +335,8 @@ object SecurePrefsHelper {
                     .putString(KEY_PASS, pass)
                     .apply()
             } catch (e: Exception) {}
-            android.os.Handler(android.os.Looper.getMainLooper()).post { onComplete() }
-        }.start()
+            kotlinx.coroutines.withContext(Dispatchers.Main) { onComplete() }
+        }
     }
 
     fun getUrlList(context: Context): List<String> {
@@ -406,26 +436,36 @@ object SmartNetworkManager {
             try { java.net.URL(getActiveBaseUrl(context)).host } catch (_: Exception) { "" }
         }
 
+    // FIX D7: Cache hai OkHttpClient thay vì tạo mới cho mỗi lần ping.
+    // Mỗi OkHttpClient có connection pool riêng → tạo mới liên tục tốn RAM, không tái dụng connection.
+    // LAN client: timeout 2s. Tailscale client: timeout 5s (relay cần handshake lâu hơn).
+    private val lanPingClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
+        .build()
+
+    private val tailscalePingClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
+        .build()
+
     private fun checkNasReachabilityQuickly(lanUrl: String, user: String, pass: String): Boolean {
         if (lanUrl.isEmpty()) return false
         return try {
             val parsedHost = java.net.URL(lanUrl).host ?: return false
-            val apiUrl = "http://$parsedHost:5050/api/status"
-            
-            // Tailscale relay cần 3-5 giây cho lần handshake đầu tiên → tăng timeout
+            val apiUrl = "http://$parsedHost:${AppConfig.API_PORT}/api/status"
+
+            // Tailscale relay cần 3-5 giây cho lần handshake đầu tiên → dùng tailscalePingClient
             val isTailscale = com.nas.naswebdav.isTailscaleUrl(lanUrl)
-            val timeoutSec = if (isTailscale) 5L else 2L
-            
-            val client = okhttp3.OkHttpClient.Builder()
-                .connectTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-                
+            val client = if (isTailscale) tailscalePingClient else lanPingClient
+
             val request = okhttp3.Request.Builder()
                 .url(apiUrl)
                 .header("Authorization", okhttp3.Credentials.basic(user, pass))
                 .build()
-                
+
             client.newCall(request).execute().use { it.isSuccessful }
         } catch (_: Exception) { false }
     }
@@ -474,7 +514,10 @@ class WolTileService : TileService() {
                 tile.state = Tile.STATE_ACTIVE
                 tile.updateTile()
 
-                CoroutineScope(Dispatchers.IO).launch {
+                // FIX D4: Thay CoroutineScope(IO).launch (bị leak vì không có lifecycle) bằng
+                // applicationScope — tồn tại suốt vòng đời app, được quản lý bởi NasApplication.
+                // WakeOnLan là fire-and-forget nên applicationScope là phù hợp nhất.
+                NasApplication.applicationScope.launch(Dispatchers.IO) {
                     WolUtil.smartWakeOnLan(macStr)
 
                     // Giữ đèn báo sáng 1.5 giây rồi tắt (Mô phỏng như nút khởi động xe hơi)

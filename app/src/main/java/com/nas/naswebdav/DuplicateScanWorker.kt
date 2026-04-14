@@ -88,6 +88,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
         val isUiUpdating = java.util.concurrent.atomic.AtomicBoolean(true)
         var uiUpdaterJob: kotlinx.coroutines.Job? = null
+        // FIX D1: Khai báo uiScope ở ngoài inner try {} để finally có thể gọi .cancel() dọn dẹp bộ nhớ
+        // nếu Worker bị kill trong trường hợp bất ngờ (exception trước khi isUiUpdating.set(false))
+        val uiScope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob()
+        )
         try {
             // --- TÍNH NĂNG TỰ ĐỘNG DỌN RÁC SAU 7 NGÀY ---
             val trashUrl = currentUrl.substringBefore("/webdav/") + "/webdav/.trash/"
@@ -129,9 +134,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             val mediaExtensions = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "mp4", "mkv", "mov", "avi")
             val bufferMutex = Mutex()
 
-            val uiScope = kotlinx.coroutines.CoroutineScope(
-                kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob()
-            )
+            // FIX D9: uiScope được khai báo bên ngoài try để có thể cancel() trong finally
             uiUpdaterJob = uiScope.launch {
                 val startTime = System.currentTimeMillis()
                 var ticks = 0
@@ -354,6 +357,13 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     val foldersScanned = AtomicInteger(0)
                     val totalFoldersDiscovered = AtomicInteger(1) // Bắt đầu = 1 (thư mục gốc)
 
+                    // FIX C2: Biến đếm checkpoint — chỉ ghi DB mỗi 10 thư mục hoặc mỗi 30 giây
+                    // thay vì ghi sau MỖI thư mục (có thể hàng nghìn lần với NAS lớn).
+                    var foldersSinceLastCheckpoint = 0
+                    var lastCheckpointTime = System.currentTimeMillis()
+                    val CHECKPOINT_FOLDER_INTERVAL = 10
+                    val CHECKPOINT_TIME_INTERVAL_MS = 30_000L
+
                     val semaphore = kotlinx.coroutines.sync.Semaphore(3)  // 3 luồng BFS song song (cân bằng NAS ARM)
 
                     // Thuật toán duyệt BFS Đa Luồng (PHASE 8.C)
@@ -405,15 +415,26 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             bufferMutex.withLock {
                                                 batchBuffer.addAll(localBatch)
                                             }
-                                            
+
                                             // Cập nhật progress per-folder (mượt hơn per-BFS-level)
                                             val total = totalFoldersDiscovered.get()
                                             val stage1Prog = if (total > 0) (scanned.toFloat() / total).coerceAtMost(0.99f) else 0f
                                             currentStagePercent.set(stage1Prog)
                                             progressPercent.set(stage1Prog * 0.5f)
-                                            
-                                            // Chốt Checkpoint ngầm để an toàn
-                                            db.checkpointDao().saveCheckpoint(ScanCheckpoint("DuplicateScan", folder, totalFilesIndexed.get(), 0))
+
+                                            // FIX C2: Checkpoint thông minh — chỉ ghi DB mỗi 10 thư mục hoặc 30s
+                                            // Trước đây ghi sau MỖI thư mục → quá nhiều DB write với NAS có hàng nghìn thư mục
+                                            foldersSinceLastCheckpoint++
+                                            val now = System.currentTimeMillis()
+                                            if (foldersSinceLastCheckpoint >= CHECKPOINT_FOLDER_INTERVAL
+                                                || now - lastCheckpointTime >= CHECKPOINT_TIME_INTERVAL_MS
+                                            ) {
+                                                db.checkpointDao().saveCheckpoint(
+                                                    ScanCheckpoint("DuplicateScan", folder, totalFilesIndexed.get(), 0)
+                                                )
+                                                foldersSinceLastCheckpoint = 0
+                                                lastCheckpointTime = now
+                                            }
                                             
                                         } catch (e: Exception) {}
                                     }
@@ -722,9 +743,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             return@withContext Result.failure()
         } finally {
             isUiUpdating.set(false)
+            // Chờ UI updater tự thoát sau khi isUiUpdating = false (vòng lặp kiểm tra flag này)
             uiUpdaterJob?.join()
-            // FIX P4: Huỷ scope để tránh rò rỉ coroutine/memory khi Worker kết thúc
-            // (Job tạo từ CoroutineScope(Default + Job()) sẽ không tự hủy)
+            // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
+            uiScope.cancel()
         }
     }
 
@@ -774,9 +796,12 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
         } else ForegroundInfo(notificationId, notification)
     }
 
-    protected fun loadWebDavManager(): WebDavManager? {
-        // SmartSwitch: Chọn URL đang hoạt động (LAN/Tailscale) thay vì URL tĩnh
-        val url = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }
+    // FIX D2: Convert thành suspend fun để loại bỏ runBlocking không cần thiết.
+    // SmartNetworkManager.getActiveBaseUrl() là suspend fun — khi loadWebDavManager() là suspend,
+    // ta có thể gọi trực tiếp mà không cần runBlocking wrapper.
+    // Tất cả callsite đều nằm trong withContext(IO) nên đã là suspend context.
+    protected suspend fun loadWebDavManager(): WebDavManager? {
+        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
@@ -798,7 +823,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : C
         if (pendingActions.isEmpty()) return@withContext Result.success()
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        val url = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }
+        // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
+        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (user.isEmpty() || pass.isEmpty() || url.isEmpty()) return@withContext Result.failure()
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
@@ -868,7 +894,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
         wakeLock.acquire(180 * 60 * 1000L) // Giữ WakeLock tối đa 3 tiếng nếu lượng file quá mức khổng lồ
-        val baseUrl = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }
+        // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
+        val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
@@ -1083,7 +1110,11 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
             if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không có file nào cần mồi vân tay."); return@withContext Result.success() }
             SystemLogger.log("INFO", "FingerprintWorker", "Bắt đầu tạo vân tay cho ${filesToProcess.size} files...")
             var successCount = 0; var failCount = 0
-            val savedUrl = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }.ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }; val savedUser = SecurePrefsHelper.getUser(applicationContext); val savedPass = SecurePrefsHelper.getPass(applicationContext)
+            // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
+            val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+                .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+            val savedUser = SecurePrefsHelper.getUser(applicationContext)
+            val savedPass = SecurePrefsHelper.getPass(applicationContext)
             if (savedUrl.isEmpty() || savedUser.isEmpty()) return@withContext Result.failure()
             val apiBaseUrl = savedUrl.toApiBaseUrl()
             for (file in filesToProcess) {
@@ -1116,7 +1147,11 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
 class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val db = NasApplication.instance.database
-        val user = SecurePrefsHelper.getUser(applicationContext); val pass = SecurePrefsHelper.getPass(applicationContext); val url = kotlinx.coroutines.runBlocking { SmartNetworkManager.getActiveBaseUrl(applicationContext) }.ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+        // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
+        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         val startTime = System.currentTimeMillis()
         try {

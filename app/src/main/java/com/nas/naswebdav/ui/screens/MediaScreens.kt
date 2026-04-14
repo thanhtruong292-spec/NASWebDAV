@@ -720,8 +720,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
         if (isLegacyFormat) {
             // Xây dựng URL transcode: http://host:5050/api/stream/transcode?path=/đường/dẫn/file
-            val uri = java.net.URI(url)
-            val relativePath = uri.path.substringAfter("/webdav")
+            // FIX: Dùng android.net.Uri thay vì java.net.URI để tránh crash URISyntaxException khi có khoảng trắng
+            val uri = android.net.Uri.parse(url)
+            val relativePath = uri.path?.substringAfter("/webdav") ?: ""
             val apiHost = uri.host
             val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
             val transcodeUrl = "http://$apiHost:5050/api/stream/transcode?path=$encodedPath"
@@ -752,16 +753,18 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
     val exoPlayer = remember {
         val app = NasApplication.instance
 
-        // 1. LOAD CONTROL CỰC ĐOAN — Tối ưu cho MẠNG LAN TỐC ĐỘ CAO (PHÁT NGAY + KHÔNG KHỰNG)
+        // 1. LOAD CONTROL — Chống OOM (Tràn RAM) khi Stream Video dung lượng khủng
+        // Gốc (250s) gây crash Out Of Memory lập tức với video 4K/bluray. Giữ mức tối đa 50s.
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                60_000,   // Nạp sẵn (pre_buffer) 60 giây liên tục để bao trọn mốc tua 30s-60s
-                250_000,  // Nạp thả ga tối đa tới hơn 4 phút (vắt kiệt băng thông LAN)
-                50,       // QUAN TRỌNG NHẤT: Vẫn giữ 50ms để PHÁT NGAY LẬP TỨC khi mới mở hoặc tua
-                500       // Nếu vô tình bị nấc mạng, chỉ chờ 0.5s là phát tiếp luôn
+                30_000,   // Giữ luôn trong đệm 30s
+                50_000,   // Khóa tối đa nạp trước 50s (chống tràn JVM Heap RAM)
+                250,      // Ngưỡng mồi play cực thấp (0.25s) để phát ngay lập tức
+                500       // Ngưỡng re-buffer cực thấp (0.5s)
             )
-            .setBackBuffer(60_000, true)  // Giữ 60s đệm RAM để nhấn lùi lại là ăn ngay không cần load
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(32 * 1024 * 1024) // Khóa cứng max 32MB vào RAM đệm, chống crash mọi cấu hình
+            .setBackBuffer(15_000, true)  // Giữ 15s đệm lui (thay vì 60s gây OOM)
+            .setPrioritizeTimeOverSizeThresholds(false) // TUYỆT ĐỐI bắt buộc false để tôn trọng giới hạn 32MB
             .build()
 
         // 2. RENDERERS
@@ -1190,38 +1193,48 @@ private fun buildPipActions(
 
     return listOf(rewindAction, playPauseAction, forwardAction)
 }
+/** Clamp tỉ lệ PiP để không bị crash IllegalArgumentException */
+private fun getSafePipRatio(width: Int, height: Int): Rational {
+    if (width <= 0 || height <= 0) return Rational(16, 9)
+    val ratio = width.toFloat() / height.toFloat()
+    return when {
+        ratio > 2.38f -> Rational(238, 100) // Tối đa 2.39:1
+        ratio < 0.42f -> Rational(100, 238) // Tối thiểu 1:2.39 (0.4184)
+        else -> Rational(width, height)
+    }
+}
 
 /** Vào chế độ PiP với 3 nút điều khiển và tỉ lệ khung hình tự động */
 private fun enterPipMode(activity: ComponentActivity, exoPlayer: androidx.media3.common.Player) {
-    val videoSize = exoPlayer.videoSize
-    // Tự động phát hiện tỉ lệ khung hình thực tế của video (thay vì hardcode 16:9)
-    val aspectRatio = if (videoSize.width > 0 && videoSize.height > 0) {
-        Rational(videoSize.width, videoSize.height)
-    } else {
-        Rational(16, 9) // Fallback nếu chưa có thông tin video
-    }
+    try {
+        val videoSize = exoPlayer.videoSize
+        // Tự động phát hiện tỉ lệ khung hình thực tế của video (thay vì hardcode 16:9)
+        val aspectRatio = getSafePipRatio(videoSize.width, videoSize.height)
 
-    val params = PictureInPictureParams.Builder()
-        .setAspectRatio(aspectRatio)
-        .setActions(buildPipActions(activity, exoPlayer.isPlaying))
-        .build()
-    activity.enterPictureInPictureMode(params)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(aspectRatio)
+            .setActions(buildPipActions(activity, exoPlayer.isPlaying))
+            .build()
+        activity.enterPictureInPictureMode(params)
+    } catch (e: Exception) {
+        android.util.Log.e("VideoPlayer", "Thiết bị không hỗ trợ PiP: ${e.message}")
+    }
 }
 
 /** Cập nhật các nút PiP (Ví dụ: đổi icon Play → Pause sau khi bấm) */
 private fun updatePipActions(activity: ComponentActivity, exoPlayer: androidx.media3.common.Player) {
-    val videoSize = exoPlayer.videoSize
-    val aspectRatio = if (videoSize.width > 0 && videoSize.height > 0) {
-        Rational(videoSize.width, videoSize.height)
-    } else {
-        Rational(16, 9)
-    }
+    try {
+        val videoSize = exoPlayer.videoSize
+        val aspectRatio = getSafePipRatio(videoSize.width, videoSize.height)
 
-    val params = PictureInPictureParams.Builder()
-        .setAspectRatio(aspectRatio)
-        .setActions(buildPipActions(activity, exoPlayer.isPlaying))
-        .build()
-    activity.setPictureInPictureParams(params)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(aspectRatio)
+            .setActions(buildPipActions(activity, exoPlayer.isPlaying))
+            .build()
+        activity.setPictureInPictureParams(params)
+    } catch (e: Exception) {
+        // Ignored: PiP unsupported or disabled globally
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
