@@ -222,7 +222,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     // Biến lưu trữ trạng thái giám sát hệ thống (Local API)
     var systemStatus by mutableStateOf(NasSystemStatus())
-    var temperatureHistory by mutableStateOf<List<Pair<Float, Float>>>(emptyList())
+    var temperatureHistory by mutableStateOf(kotlin.collections.ArrayDeque<Pair<Float, Float>>())
 
     // ─── BIỂU ĐỒ GIÁM SÁT REAL-TIME ──────────────────────────────────────────────
     var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
@@ -263,6 +263,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var streamPipeEtaStr    by mutableStateOf("--")      // ETA dạng text
     private var streamPipeJob: kotlinx.coroutines.Job? = null
     private var _activeStreamPipeWorkId: java.util.UUID? = null
+    private var livestreamObserverJob: kotlinx.coroutines.Job? = null
 
     // LOẠI BỎ fileList GÂY OOM, THAY BẰNG PAGING DATA FLOW
     var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
@@ -449,12 +450,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/thumb/status")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status")
                     .build()
                 localApiClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val json = org.json.JSONObject(response.body?.string() ?: "{}")
-                        thumbGenerated = json.optInt("generated", 0)
+                        withContext(Dispatchers.Main) {
+
+                            thumbGenerated = json.optInt("generated", 0)
                         thumbTotal = json.optInt("total_media", 0)
                         thumbErrors = json.optInt("errors", 0)
                         thumbRunning = json.optBoolean("running", false)
@@ -464,7 +467,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         thumbEta = json.optInt("eta_seconds", -1)
                         thumbElapsedFmt = json.optString("elapsed_fmt", "00:00")
                         thumbEtaFmt = json.optString("eta_fmt", "--:--")
-                    }
+
+                        }                    }
                 }
             } catch (_: Exception) {}
         }
@@ -482,7 +486,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val body = org.json.JSONObject().put("action", action)
                     .toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/thumb/control")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control")
                     .post(body)
                     .build()
                 localApiClient.newCall(request).execute().use { response ->
@@ -635,10 +639,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 val requestBody = json.toString().toRequestBody(jsonMediaType)
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/torrent/control")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/control")
                     .post(requestBody)
                     .build()
-                localApiClient.newCall(request).execute().close()
+                localApiClient.newCall(request).execute().use { }
             } catch(e: Exception) {}
         }
     }
@@ -661,13 +665,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // → Tắt App vẫn chạy, hiển thị Notification tiến trình
         val inputData = androidx.work.Data.Builder()
             .putString("taskType", "UNZIP")
-            .putString("apiUrl", "http://$host:5050/api/file/unzip")
+            .putString("apiUrl", "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/file/unzip")
             .putString("jsonBody", jsonBody)
             .putString("taskLabel", "Giải nén $fileName")
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
             .setInputData(inputData)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("LONG_RUNNING_API")
             .build()
 
@@ -702,16 +707,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun sendDownloadLink(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
-
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-                val requestBody = "{\"url\":\"$url\"}".toRequestBody(jsonMediaType)
+                val jsonBody = org.json.JSONObject().apply { put("url", url) }.toString()
+                val requestBody = jsonBody.toRequestBody(jsonMediaType)
 
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/download")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/download")
                     .post(requestBody)
                     .build()
-                localApiClient.newCall(request).execute().close()
+                localApiClient.newCall(request).execute().use { }
             } catch(e: Exception) {
                 // Bỏ qua lỗi mạng nếu API chưa kịp phản hồi
             }
@@ -736,6 +740,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var livestreamMessage by mutableStateOf("")
         private set
 
+    /** UI gọi để xóa message lỗi, hiện lại nút "BẮT ĐẦU GHI" */
+    fun clearLivestreamMessage() { livestreamMessage = "" }
+
     var isStartingLivestream by mutableStateOf(false)
         private set
 
@@ -754,7 +761,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }.toString().toRequestBody(jsonMediaType)
 
                 val requestBuilder = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/livestream/record")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/livestream/record")
                     .post(body)
 
                 val user = SecurePrefsHelper.getUser(context)
@@ -770,11 +777,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val platform = json.optString("platform", "")
                         
                         // Thêm vào danh sách active (mặc định trạng thái recording)
-                        if (activeLivestreams.none { it.jobId == jobId }) {
-                            activeLivestreams.add(LivestreamJob(jobId, platform))
+                        withContext(Dispatchers.Main) {
+                            if (activeLivestreams.none { it.jobId == jobId }) {
+                                activeLivestreams.add(LivestreamJob(jobId, platform))
+                            }
+                            livestreamMessage   = json.optString("message", "Đang khởi động ghi hình...")
                         }
-                        
-                        livestreamMessage   = json.optString("message", "Đang khởi động ghi hình...")
 
                         // Khởi động Foreground Worker độc lập với vòng đời app
                         LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
@@ -783,18 +791,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         observeLivestreamWorker(context)
                     } else {
                         val errMsg = json.optString("error", "Lỗi không xác định")
-                        livestreamMessage = errMsg
-                        commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                        commonDialogMessage = errMsg
-                        showCommonDialog    = true
+                        withContext(Dispatchers.Main) {
+                            livestreamMessage = errMsg
+                            commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                            commonDialogMessage = errMsg
+                            showCommonDialog    = true
+                        }
                     }
                 }
             } catch (e: Exception) {
                 val errMsg = "Lỗi kết nối NAS: ${e.message}"
-                livestreamMessage   = errMsg
-                commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                commonDialogMessage = errMsg
-                showCommonDialog    = true
+                withContext(Dispatchers.Main) {
+                    livestreamMessage   = errMsg
+                    commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    commonDialogMessage = errMsg
+                    showCommonDialog    = true
+                }
             } finally {
                 withContext(Dispatchers.Main) {
                     isStartingLivestream = false
@@ -805,43 +817,105 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     /** Gọi 1 lần khi app mở lại — tự đồng bộ lại trạng thái từ các Worker đang chạy ngầm */
     fun restoreLivestreamStateIfRunning(context: Context) {
-        val workInfos = WorkManager.getInstance(context)
-            .getWorkInfosByTag("LIVESTREAM_ALL").get()
-        
-        val activeWorks = workInfos.filter {
-            it.state == androidx.work.WorkInfo.State.RUNNING ||
-            it.state == androidx.work.WorkInfo.State.ENQUEUED
-        }
-        
-        activeLivestreams.clear() // Xóa list cũ, nạp lại từ Worker
-        
-        for (work in activeWorks) {
-            val progress = work.progress
-            val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID) ?: continue
+        viewModelScope.launch(Dispatchers.IO) {
+            val workInfos = androidx.work.WorkManager.getInstance(context)
+                .getWorkInfosByTag("LIVESTREAM_ALL").get()
             
-            // Xây dựng lại data class
-            val job = LivestreamJob(
-                jobId = jobId,
-                platform = "", // Platform worker không trả ra (trừ khi format lại), nhưng UI sẽ có thể hiện placeholder icon
-                status = progress.getString(LivestreamMonitorWorker.OUT_STATUS) ?: "recording",
-                fileSize = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE) ?: "0 B",
-                duration = progress.getString(LivestreamMonitorWorker.OUT_DURATION) ?: "0h00m00s",
-                speed = progress.getString(LivestreamMonitorWorker.OUT_SPEED) ?: "",
-                outputFile = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE) ?: ""
-            )
+            val activeWorks = workInfos.filter {
+                it.state == androidx.work.WorkInfo.State.RUNNING ||
+                it.state == androidx.work.WorkInfo.State.ENQUEUED
+            }
             
-            if (job.status == "recording") {
-                activeLivestreams.add(job)
+            withContext(Dispatchers.Main) {
+                activeLivestreams.clear() // Xóa list cũ, nạp lại từ Worker
+                
+                for (work in activeWorks) {
+                    val progress = work.progress
+                    val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID) ?: continue
+                    
+                    // Xây dựng lại data class
+                    val job = LivestreamJob(
+                        jobId = jobId,
+                        platform = "", // Platform worker không trả ra (trừ khi format lại), nhưng UI sẽ có thể hiện placeholder icon
+                        status = progress.getString(LivestreamMonitorWorker.OUT_STATUS) ?: "recording",
+                        fileSize = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE) ?: "0 B",
+                        duration = progress.getString(LivestreamMonitorWorker.OUT_DURATION) ?: "0h00m00s",
+                        speed = progress.getString(LivestreamMonitorWorker.OUT_SPEED) ?: "",
+                        outputFile = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE) ?: ""
+                    )
+                    
+                    if (job.status == "recording") {
+                        activeLivestreams.add(job)
+                    }
+                }
+                
+                if (activeWorks.isNotEmpty()) {
+                    observeLivestreamWorker(context)
+                }
             }
         }
-        
-        if (activeWorks.isNotEmpty()) {
-            observeLivestreamWorker(context)
+    }
+
+    /** Gọi ngầm để quét các luồng Livestream bị "bỏ quên" (zombie streams) trên NAS */
+    fun syncLivestreamStateWithServer(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Phục hồi từ WorkManager trước (như bình thường)
+                restoreLivestreamStateIfRunning(context)
+                kotlinx.coroutines.delay(1000) // Đợi load local xong
+
+                val apiBaseUrl = currentUrl.toApiBaseUrl()
+                val requestBuilder = okhttp3.Request.Builder().url("$apiBaseUrl/api/livestream/status")
+                
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(context)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(context)
+                if (user.isNotEmpty() && pass.isNotEmpty()) {
+                    requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                }
+                
+                localApiClient.newCall(requestBuilder.build()).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val responseStr = response.body?.string() ?: "{}"
+                        val json = org.json.JSONObject(responseStr)
+                        val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
+                        
+                        var hasNewJobs = false
+                        for (i in 0 until jobsArray.length()) {
+                            val jobObj = jobsArray.getJSONObject(i)
+                            val status = jobObj.optString("status", "")
+                            val jobId = jobObj.optString("job_id", "")
+                            val platform = jobObj.optString("platform", "")
+                            
+                            if (status == "recording" && jobId.isNotEmpty()) {
+                                // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
+                                val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
+                                if (!alreadyTracked) {
+                                    val host = java.net.URL(currentUrl).host
+                                    withContext(Dispatchers.Main) {
+                                        activeLivestreams.add(LivestreamJob(jobId, platform))
+                                    }
+                                    LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
+                                    hasNewJobs = true
+                                }
+                            }
+                        }
+                        
+                        if (hasNewJobs) {
+                            withContext(Dispatchers.Main) { observeLivestreamWorker(context) }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("LivestreamSync", "Failed to sync livestream states: ${e.message}")
+            }
         }
     }
 
     private fun observeLivestreamWorker(context: Context) {
-        viewModelScope.launch {
+        // FIX: Cancel collector cũ trước khi tạo mới, tránh tích lũy N collectors chạy song song
+        // gây thrashing UI khi mỗi collector đều process toàn bộ workInfoList
+        livestreamObserverJob?.cancel()
+        livestreamObserverJob = viewModelScope.launch {
             WorkManager.getInstance(context)
                 .getWorkInfosByTagFlow("LIVESTREAM_ALL")
                 .collect { workInfoList ->
@@ -872,19 +946,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     else       -> "Trạng thái báo cáo: $status"
                                 }
                             } else {
-                                // Cập nhật progress lên UI
-                                val updated = existing.copy()
-                                // mutableStateListOf không tự trigger khi thuộc tính bê trong copy() thay đổi, 
-                                // nên ta replace item ở vị trí đó
+                                // FIX: Tạo copy với tham số mới thay vì mutate var sau copy()
+                                // Mutate var sau copy() không trigger Compose recomposition vì
+                                // mutableStateListOf so sánh object identity, không deep-compare
                                 val fs = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE)
                                 val dur = progress.getString(LivestreamMonitorWorker.OUT_DURATION)
                                 val spd = progress.getString(LivestreamMonitorWorker.OUT_SPEED)
                                 val outF = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE)
                                 
-                                if (!fs.isNullOrEmpty()) updated.fileSize = fs
-                                if (!dur.isNullOrEmpty()) updated.duration = dur
-                                if (!spd.isNullOrEmpty()) updated.speed = spd
-                                if (!outF.isNullOrEmpty()) updated.outputFile = outF
+                                val updated = existing.copy(
+                                    fileSize = if (!fs.isNullOrEmpty()) fs else existing.fileSize,
+                                    duration = if (!dur.isNullOrEmpty()) dur else existing.duration,
+                                    speed = if (!spd.isNullOrEmpty()) spd else existing.speed,
+                                    outputFile = if (!outF.isNullOrEmpty()) outF else existing.outputFile
+                                )
                                 
                                 activeLivestreams[index] = updated
                             }
@@ -908,17 +983,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }.toString().toRequestBody(jsonMediaType)
 
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/livestream/stop")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/livestream/stop")
                     .post(body)
                     .build()
 
-                localApiClient.newCall(request).execute().close()
+                localApiClient.newCall(request).execute().use { }
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
                     livestreamMessage   = "⏹ Đã dừng ghi hình. File đang được xử lý..."
                 }
             } catch (e: Exception) {
-                livestreamMessage = "Lỗi dừng ghi: ${e.message}"
+                withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }
             }
         }
     }
@@ -1007,6 +1082,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 val request = androidx.work.OneTimeWorkRequestBuilder<OfflineSyncWorker>()
                     .setConstraints(constraints)
+                    .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 androidx.work.WorkManager.getInstance(context).enqueue(request)
                 
@@ -1046,7 +1122,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 // TRIỆT TIÊU refresh() VĨNH VIỄN: Tránh tải lại 5000 file chỉ vì xóa 1 thẻ
             } catch (e: Exception) {
                 // Nhồi lại file vào giao diện nếu rớt mạng
-                fileList = oldList
+                withContext(Dispatchers.Main) { fileList = oldList }
                 
                 // TÍNH NĂNG 5.I: Bẫy lỗi và tống vào Hàng Đợi Offline
                 repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào Offline Queue: ${e.message?.take(80)}")
@@ -1116,6 +1192,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<BatchOperationWorker>()
             .setInputData(inputData)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("BATCH_OPERATION")
             .build()
 
@@ -1160,7 +1237,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.addSystemLog("INFO", "File Ops", "Đã khôi phục tệp '${file.name}' từ Thùng rác.")
                 // Bỏ refresh()
             } catch (e: Exception) {
-                fileList = oldList
+                withContext(Dispatchers.Main) { fileList = oldList }
                 repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, Offline Queue: ${e.message?.take(80)}")
                 val targetUrl = webDavManager.currentBaseUrl + file.name
                 enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
@@ -1191,7 +1268,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.addSystemLog("INFO", "File Ops", "Đổi tên tệp '${file.name}' thành '${newName}'.")
                 // Không refresh() để chống khựng giao diện
             } catch (e: Exception) {
-                fileList = oldList // Hoàn nguyên tên cũ
+                withContext(Dispatchers.Main) { fileList = oldList } // Hoàn nguyên tên cũ
                 repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, Offline Queue: ${e.message?.take(80)}")
                 enqueueOfflineAction(context, "RENAME", file.path, newUrl)
             }
@@ -1262,12 +1339,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             if (!host.isNullOrEmpty()) {
                                 val authHeader = okhttp3.Credentials.basic(user, pass)
                                 val authRequest = okhttp3.Request.Builder()
-                                    .url("http://$host:5050/api/auth/authorize")
+                                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
                                     .header("Authorization", authHeader)
                                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                                     .build()
                                 try {
-                                    NasApplication.instance.fastApiClient.newCall(authRequest).execute().close()
+                                    NasApplication.instance.fastApiClient.newCall(authRequest).execute().use { }
                                 } catch (_: Exception) {}
                             }
                         } catch (_: Exception) {}
@@ -1354,7 +1431,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                                     .build()
                                 val request = okhttp3.Request.Builder()
-                                    .url("http://$host:${AppConfig.API_PORT}/api/auth/authorize")
+                                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
                                     .header("Authorization", authHeader)
                                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                                     .build()
@@ -1433,6 +1510,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             workManager.getWorkInfosByTagFlow("STREAM_PIPE_TASK").collect { workInfos ->
                 val active = workInfos.find { it.state == androidx.work.WorkInfo.State.RUNNING || it.state == androidx.work.WorkInfo.State.ENQUEUED }
                 if (active != null) {
+                    isStreamPiping = true
                     streamPipeStatus = "Khôi phục đồng bộ: " + (active.progress.getString("status") ?: "Đang tải ngầm...")
                     streamPipeProgress = active.progress.getInt("progress", 0).toFloat() / 100f
                     streamPipeSpeedStr = active.progress.getString("speedStr") ?: "Đồng bộ..."
@@ -1500,7 +1578,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             while (true) {
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
-                    networkPingMs = webDavManager.checkPingServer()
+                    val ms = webDavManager.checkPingServer()
+                    withContext(Dispatchers.Main) { networkPingMs = ms }
                     // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
                     kotlinx.coroutines.delay(3000)
                 } else {
@@ -1549,21 +1628,26 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             val baseUrl = webDavManager.currentBaseUrl
             if (baseUrl.isEmpty()) return@launch
-            isLoadingMetrics = true
-            metricsError = null
+            withContext(Dispatchers.Main) {
+
+                isLoadingMetrics = true
+
+                metricsError = null
+
+            }
             try {
                 val apiBase = baseUrl.toApiBaseUrl()
                 val url = "$apiBase/api/metrics/history?hours=$hours"
                 val request = okhttp3.Request.Builder().url(url).build()
                 localApiClient.newCall(request).execute().use { resp ->
+                    val bodyStr = resp.body?.string() ?: ""
                     if (!resp.isSuccessful) {
-                        val body = resp.body?.string() ?: ""
                         withContext(Dispatchers.Main) {
-                            metricsError = "Lỗi HTTP ${resp.code}: $body"
+                            metricsError = "Lỗi HTTP ${resp.code}: $bodyStr"
                         }
                         return@launch
                     }
-                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    val json = org.json.JSONObject(if (bodyStr.isEmpty()) "{}" else bodyStr)
                     if (json.has("error")) {
                         withContext(Dispatchers.Main) { metricsError = json.optString("error") }
                         return@launch
@@ -1600,7 +1684,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { metricsError = "Ấn Refresh để thử lại: ${e.message?.take(80)}" }
             } finally {
-                isLoadingMetrics = false
+                withContext(Dispatchers.Main) { isLoadingMetrics = false }
             }
         }
     }
@@ -1609,7 +1693,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             val baseUrl = webDavManager.currentBaseUrl
             if (baseUrl.isEmpty()) return@launch
-            isDailyReportLoading = true
+            withContext(Dispatchers.Main) { isDailyReportLoading = true }
             try {
                 val apiBase = baseUrl.toApiBaseUrl()
                 val dateParam = if (date.isNotEmpty()) "?date=$date" else ""
@@ -1646,7 +1730,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (_: Exception) {}
-            isDailyReportLoading = false
+            withContext(Dispatchers.Main) { isDailyReportLoading = false }
         }
     }
 
@@ -1667,10 +1751,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun fetchAiTags() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                isLoadingAiTags = true
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                withContext(Dispatchers.Main) { isLoadingAiTags = true }
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/ai/tags")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ai/tags")
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     if (resp.isSuccessful) {
@@ -1682,17 +1765,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             val urls = (0 until (arr?.length() ?: 0)).map { arr!!.getString(it) }
                             if (urls.isNotEmpty()) result[key] = urls
                         }
-                        aiCategories = result
-                        aiTotal = json.optInt("total", 0)
-                        aiLastScan = json.optString("last_scan", "")
-                        aiRunning = json.optBoolean("ai_running", false)
-                        aiStatus = json.optString("status", "ok")
+                        withContext(Dispatchers.Main) {
+                            aiCategories = result
+                            aiTotal = json.optInt("total", 0)
+                            aiLastScan = json.optString("last_scan", "")
+                            aiRunning = json.optBoolean("ai_running", false)
+                            aiStatus = json.optString("status", "ok")
+                        }
                     }
                 }
             } catch (e: Exception) {
-                aiStatus = "Lỗi kết nối: ${e.message?.take(60)}"
+                withContext(Dispatchers.Main) { aiStatus = "Lỗi kết nối: ${e.message?.take(60)}" }
             } finally {
-                isLoadingAiTags = false
+                withContext(Dispatchers.Main) { isLoadingAiTags = false }
             }
         }
     }
@@ -1702,15 +1787,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/ai/trigger")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ai/trigger")
                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val json = org.json.JSONObject(resp.body?.string() ?: "{}")
                     val msg = json.optString("message", "Đang quét phân loại ảnh...")
-                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                    commonDialogMessage = msg
-                    showCommonDialog = true
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                        commonDialogMessage = msg
+                        showCommonDialog = true
+                    }
                 }
             } catch (e: Exception) {}
         }
@@ -1724,21 +1811,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val json = org.json.JSONObject().put("max_age_days", maxAgeDays)
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/cron/trash/clean")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/cron/trash/clean")
                     .post(body)
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val res = org.json.JSONObject(resp.body?.string() ?: "{}")
                     val msg = res.optString("message", "Hoàn tất dọn Thùng rác!")
                     repository.addSystemLog("INFO", "File Ops", "Người dùng đã thực hiện XÓA THÙNG RÁC: $msg")
-                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                    commonDialogMessage = msg
-                    showCommonDialog = true
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                        commonDialogMessage = msg
+                        showCommonDialog = true
+                    }
                 }
             } catch (e: Exception) {
-                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                commonDialogMessage = "Lỗi dọn rác: ${e.message}"
-                showCommonDialog = true
+                withContext(Dispatchers.Main) {
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    commonDialogMessage = "Lỗi dọn rác: ${e.message}"
+                    showCommonDialog = true
+                }
             }
         }
     }
@@ -1762,7 +1853,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/guest/create")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/guest/create")
                     .post(body)
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
@@ -1810,7 +1901,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val json = org.json.JSONObject().put("username", pass.username)
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/guest/revoke")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/guest/revoke")
                     .post(body)
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
@@ -1863,7 +1954,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
-                    .url("http://$host:5050/api/ytdlp/download")
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ytdlp/download")
                     .post(body)
                     .build()
 
@@ -1945,12 +2036,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             .putString("sourceUrl", sourceUrl)
             .putString("fileName", fileName)
             .putString("baseUrl", webDavManager.currentBaseUrl)
-            .putString("user", webDavManager.currentUser)
-            .putString("pass", webDavManager.currentPass)
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<StreamPipeWorker>()
             .setInputData(inputData)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("STREAM_PIPE_TASK")
             .build()
 
@@ -2054,13 +2144,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         val inputData = androidx.work.Data.Builder()
             .putString("taskType", "ORGANIZE")
-            .putString("apiUrl", "http://$host:5050/api/tools/organize_legacy_videos")
+            .putString("apiUrl", "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/tools/organize_legacy_videos")
             .putString("jsonBody", "")
             .putString("taskLabel", "Gom video cũ")
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
             .setInputData(inputData)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("LONG_RUNNING_API")
             .build()
 
@@ -2097,18 +2188,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val parsedUrl = java.net.URL(url)
                 val nasHost = parsedUrl.host
                 val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
-                val apiThumbUrl = "http://$nasHost:5050/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+                val apiThumbUrl = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
 
                 val apiRequest = okhttp3.Request.Builder()
                     .url(apiThumbUrl)
                     .header("Authorization", auth)
                     .build()
 
-                NasApplication.instance.sharedHttpClient.newBuilder()
-                    .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                    .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 20; maxRequestsPerHost = 4 })
-                    .build().newCall(apiRequest).execute().use { apiResponse ->
+                NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
                         val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
 
                         if (apiResponse.isSuccessful && apiResponse.body != null) {
@@ -2135,11 +2222,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val workManager = androidx.work.WorkManager.getInstance(context)
         
         // Kích hoạt quét rác song song (tuỳ chọn)
-        val duplicateScanRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.DuplicateScanWorker>().build()
+        val inputData = androidx.work.Data.Builder().putString("currentUrl", currentUrl).build()
+        val duplicateScanRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.DuplicateScanWorker>()
+            .setInputData(inputData)
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
         workManager.enqueueUniqueWork("ManualDuplicateScan", androidx.work.ExistingWorkPolicy.REPLACE, duplicateScanRequest)
 
         // Kích hoạt AutoBackup ngay lập tức
-        val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>().build()
+        val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
         // Cập nhật Toast hoặc Trạng thái UI để User biết
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
@@ -2207,6 +2300,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
     }
+    
+    override fun onCleared() {
+        super.onCleared()
+        try { webSocket?.close(1000, "ViewModel cleared") } catch (_: Exception) {}
+    }
 } // end class WebDavViewModel
 
 // LỚP PHỤ TRỢ: Bộ đếm Rate Limiter (2.C)
@@ -2256,6 +2354,7 @@ fun WebDavViewModel.startBackgroundDuplicateScan(context: android.content.Contex
 
                 val scanWorkRequest = androidx.work.OneTimeWorkRequestBuilder<DuplicateScanWorker>()
                     .setInputData(inputData)
+                    .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
 
                 workManager.enqueueUniqueWork("Unique_Scan_V3", androidx.work.ExistingWorkPolicy.REPLACE, scanWorkRequest)
@@ -2319,7 +2418,8 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                     // 2. Nếu chưa, hãy đảm bảo thư mục thùng rác tồn tại và di chuyển vào đó
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* Đã tồn tại */ }
 
-                    val targetUrl = trashUrl + file.name
+                    val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
+                    val targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
                     webDavManager.renameFile(file.path, targetUrl)
                 }
 
@@ -2620,7 +2720,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                 val baseUrl = webDavManager.currentBaseUrl
                 if (baseUrl.isNotEmpty()) {
                     val host = java.net.URL(baseUrl).host
-                    val request = okhttp3.Request.Builder().url("http://$host:5050/api/status").build()
+                    val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/status").build()
                     localApiClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             currentDelayMs = 3000L
@@ -2669,10 +2769,8 @@ fun WebDavViewModel.listenToLocalNasApi() {
                                 }
                                 
                                 if (hddVal > 0f || cpuVal > 0f) {
-                                    val currentHistory = temperatureHistory.toMutableList()
-                                    currentHistory.add(Pair(cpuVal, hddVal))
-                                    if (currentHistory.size > 40) currentHistory.removeAt(0)
-                                    temperatureHistory = currentHistory
+                                    temperatureHistory.addLast(Pair(cpuVal, hddVal))
+                                    if (temperatureHistory.size > 40) temperatureHistory.removeFirst()
                                 }
                             }
                         } else {
@@ -2701,7 +2799,7 @@ fun WebDavViewModel.startRealtimeAlerts() {
         val host = java.net.URL(url).host
         // nas_api_server.py chạy Tornado WebSocket trên Cổng 5051
         val wsUrl = "ws://$host:5051/ws/alerts"
-        val wsRequest = okhttp3.Request.Builder().url(wsUrl).build()
+        val wsRequest = okhttp3.Request.Builder().url(wsUrl).header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass)).build()
         val client = localApiClient.newBuilder()
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .build()
@@ -2744,14 +2842,14 @@ fun WebDavViewModel.fetchWeeklyReport() {
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val host = java.net.URL(currentUrl).host
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/system/weekly_report").build()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/system/weekly_report").build()
             localApiClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")
                     withContext(Dispatchers.Main) { weeklyReportText = "Tuần qua: Chặn ${json.optInt("banned_count", 0)} IP tấn công. Dọn rác giải phóng ${json.optString("freed_space", "0 MB")}." }
                 }
             }
-        } catch (_: Exception) { weeklyReportText = "Chưa có báo cáo tuần này." }
+        } catch (_: Exception) { withContext(Dispatchers.Main) { weeklyReportText = "Chưa có báo cáo tuần này." } }
     }
 }
 
@@ -2761,11 +2859,10 @@ fun WebDavViewModel.loadSystemLogs() {
         val allLogs = localLogs.toMutableList()
         try {
             if (webDavManager.currentBaseUrl.isNotEmpty()) {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
-                val req = okhttp3.Request.Builder().url("http://$host:5050/api/system_logs").build()
-                val resp = localApiClient.newCall(req).execute()
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string()
+                val req = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs").build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string()
                     if (body != null) {
                         val json = org.json.JSONObject(body)
                         if (json.optString("status") == "success") {
@@ -2793,6 +2890,7 @@ fun WebDavViewModel.loadSystemLogs() {
                             }
                         }
                     }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -2814,10 +2912,12 @@ fun WebDavViewModel.fetchSmartData() {
             localApiClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "")
-                    smartInfo = SmartInfo(status = json.optString("status", "Unknown"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
-                } else smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}")
+                    withContext(Dispatchers.Main) {
+                        smartInfo = SmartInfo(status = json.optString("status", "Unknown"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
+                    }
+                } else withContext(Dispatchers.Main) { smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}") }
             }
-        } catch (e: Exception) { smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "") }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "") } }
     }
 }
 
@@ -2852,14 +2952,16 @@ fun WebDavViewModel.fetchOmvOverview() {
                         val d = diskArr.getJSONObject(i)
                         OmvDiskInfo(d.optString("name"), d.optString("model"), d.optString("serial"), d.optString("size"), d.optBoolean("is_root"))
                     }
-                    omvOverview = OmvOverview(
-                        hostname = sys?.optString("hostname", "") ?: "",
-                        omvVersion = sys?.optString("omv_version", "") ?: "",
-                        kernel = sys?.optString("kernel", "") ?: "",
-                        services = services, network = network,
-                        filesystems = filesystems, disks = disks,
-                        powerBtnAction = pwr?.optString("powerbtn", "") ?: ""
-                    )
+                    withContext(Dispatchers.Main) {
+                        omvOverview = OmvOverview(
+                            hostname = sys?.optString("hostname", "") ?: "",
+                            omvVersion = sys?.optString("omv_version", "") ?: "",
+                            kernel = sys?.optString("kernel", "") ?: "",
+                            services = services, network = network,
+                            filesystems = filesystems, disks = disks,
+                            powerBtnAction = pwr?.optString("powerbtn", "") ?: ""
+                        )
+                    }
                 }
             }
         } catch (_: Exception) { }
@@ -2874,18 +2976,12 @@ fun WebDavViewModel.runSpeedTest() {
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
             val speedTestClient = localApiClient.newBuilder().readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
             speedTestClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: ""); speedTestResult = SpeedTestResult(json.optString("write_speed", "Lỗi"), json.optString("read_speed", "Lỗi")) }
-                else speedTestResult = SpeedTestResult("Thất bại", "Thất bại")
+                if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: ""); withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult(json.optString("write_speed", "Lỗi"), json.optString("read_speed", "Lỗi")) } }
+                else withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Thất bại", "Thất bại") }
             }
-        } catch (e: Exception) { speedTestResult = SpeedTestResult("Lỗi", "Lỗi"); repository.addSystemLog("ERROR", "SpeedTest", "Đo tốc độ thất bại: ${e.message?.take(80)}") }
-        finally { isTestingSpeed = false }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Lỗi", "Lỗi") }; repository.addSystemLog("ERROR", "SpeedTest", "Đo tốc độ thất bại: ${e.message?.take(80)}") }
+        finally { withContext(Dispatchers.Main) { isTestingSpeed = false } }
     }
-}
-
-fun WebDavViewModel.loadLastAutoSpeedTest(context: Context) {
-    val prefs = context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-    val w = prefs.getString("last_speed_write", "--") ?: "--"; val r = prefs.getString("last_speed_read", "--") ?: "--"; val t = prefs.getString("last_speed_time", "") ?: ""
-    if (t.isNotEmpty() && !isTestingSpeed) { speedTestResult = SpeedTestResult(w, r); lastAutoSpeedTime = "Đo tự động ngầm lúc: $t" }
 }
 
 fun WebDavViewModel.sendWakeOnLan(macStr: String) { if (macStr.isNotBlank() && macStr.matches(Regex("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"))) viewModelScope.launch(Dispatchers.IO) { com.nas.naswebdav.utils.WolUtil.sendMagicPacket(macStr); repository.addSystemLog("INFO", "Power", "Người dùng đã gửi gói tin Wake-on-LAN đánh thức NAS tại định danh MAC: $macStr") } }
@@ -2896,8 +2992,8 @@ fun WebDavViewModel.sendCommandToNas(endpoint: String) {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; endpoint.contains("shutdown") -> "Tắt nguồn"; else -> endpoint }
             repository.addSystemLog("WARNING", "Power", "Đã gửi lệnh $cmdName NAS tại $host")
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-            localApiClient.newCall(request).execute().close()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+            localApiClient.newCall(request).execute().use { }
         } catch (_: Exception) {}
     }
 }
@@ -2906,7 +3002,7 @@ fun WebDavViewModel.checkDockerStatus() {
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/docker/power").build()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").build()
             localApiClient.newCall(request).execute().use { response -> if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: "{}"); withContext(Dispatchers.Main) { isDockerRunning = json.optBoolean("running", false) } } }
         } catch (_: Exception) {}
     }
@@ -2918,7 +3014,7 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val body = org.json.JSONObject().put("action", if (turnOn) "start" else "stop").toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/docker/power").post(body).build()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").post(body).build()
             val client = localApiClient.newBuilder().readTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
             client.newCall(request).execute().use { response -> if (response.isSuccessful) withContext(Dispatchers.Main) { isDockerRunning = turnOn } }
         } catch (_: Exception) {}
@@ -2932,8 +3028,8 @@ fun WebDavViewModel.approveDeviceIp(ip: String) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", true) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/auth/approve_ip").post(body).build()
-            localApiClient.newCall(request).execute().close()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
+            localApiClient.newCall(request).execute().use { }
             withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "Đã CẤP QUYỀN cho IP: $ip"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
@@ -2945,8 +3041,8 @@ fun WebDavViewModel.denyDeviceIp(ip: String) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", false) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder().url("http://$host:5050/api/auth/approve_ip").post(body).build()
-            localApiClient.newCall(request).execute().close()
+            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
+            localApiClient.newCall(request).execute().use { }
             withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "Đã CHẶN VĨNH VIỄN IP: $ip bằng iptables"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
@@ -2961,10 +3057,10 @@ fun WebDavViewModel.fetchDockerContainers() {
                 if (response.isSuccessful) {
                     val list = mutableListOf<DockerContainer>()
                     try { val array = org.json.JSONArray(response.body?.string() ?: "[]"); for (i in 0 until array.length()) { val obj = array.getJSONObject(i); list.add(DockerContainer(obj.optString("id"), obj.optString("name"), obj.optString("status"))) } } catch (_: org.json.JSONException) {}
-                    dockerContainers = list
+                    withContext(Dispatchers.Main) { dockerContainers = list }
                 }
             }
-        } catch (_: Exception) {} finally { isFetchingDocker = false }
+        } catch (_: Exception) {} finally { withContext(Dispatchers.Main) { isFetchingDocker = false } }
     }
 }
 
@@ -2973,7 +3069,7 @@ fun WebDavViewModel.controlDockerContainer(action: String, containerName: String
         try {
             val body = org.json.JSONObject().apply { put("action", action); put("container", containerName) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${currentUrl.toApiBaseUrl()}/api/docker/control").post(body).build()
-            localApiClient.newCall(request).execute().use { if (it.isSuccessful) { delay(1500); isFetchingDocker = false; fetchDockerContainers() } }
+            localApiClient.newCall(request).execute().use { if (it.isSuccessful) { delay(1500); withContext(Dispatchers.Main) { isFetchingDocker = false }; fetchDockerContainers() } }
         } catch (_: Exception) {}
     }
 }
@@ -2985,8 +3081,10 @@ fun WebDavViewModel.controlDockerContainer(action: String, containerName: String
 fun WebDavViewModel.loadLanWhitelist() {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            lanWhitelistLoading = true
-            lanWhitelistError = ""
+            withContext(Dispatchers.Main) {
+                lanWhitelistLoading = true
+                lanWhitelistError = ""
+            }
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").build()
             localApiClient.newCall(request).execute().use { response ->
@@ -3013,8 +3111,9 @@ fun WebDavViewModel.loadLanWhitelist() {
 
 fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
     viewModelScope.launch(Dispatchers.IO) {
+        var isSuccessLocally = false
         try {
-            lanWhitelistStatus = "Đang thêm..."
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "Đang thêm..." }
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val isSubnet = entry.contains("/")
             // FIX B3: Dùng JSONObject.put() thay vì string interpolation để tránh JSON injection
@@ -3029,6 +3128,7 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
             localApiClient.newCall(request).execute().use { response ->
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful) {
+                        isSuccessLocally = true
                         lanWhitelistStatus = "✅ Đã thêm $entry"
                         repository.addSystemLog("INFO", "Network", "Người dùng đã THÊM IP/Subnet '$entry' vào danh sách LAN Whitelist.")
                     } else {
@@ -3037,7 +3137,7 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
                     }
                 }
             }
-            if (lanWhitelistStatus.startsWith("✅")) loadLanWhitelist()
+            if (isSuccessLocally) loadLanWhitelist()
         } catch (e: Exception) {
             withContext(Dispatchers.Main) { lanWhitelistStatus = "❌ ${e.message}" }
         }
@@ -3046,8 +3146,9 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
 
 fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
     viewModelScope.launch(Dispatchers.IO) {
+        var isSuccessLocally = false
         try {
-            lanWhitelistStatus = "Đang xóa..."
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "Đang xóa..." }
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             // FIX B3: Dùng JSONObject.put() thay vì string interpolation.
             val bodyJson = org.json.JSONObject().apply {
@@ -3060,6 +3161,7 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
             localApiClient.newCall(request).execute().use { response ->
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful) {
+                        isSuccessLocally = true
                         lanWhitelistStatus = "✅ Đã xóa $entry"
                         repository.addSystemLog("INFO", "Network", "Người dùng đã XÓA IP/Subnet '$entry' khỏi danh sách LAN Whitelist.")
                     } else {
@@ -3068,7 +3170,7 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
                     }
                 }
             }
-            if (lanWhitelistStatus.startsWith("✅")) loadLanWhitelist()
+            if (isSuccessLocally) loadLanWhitelist()
         } catch (e: Exception) {
             withContext(Dispatchers.Main) { lanWhitelistStatus = "❌ ${e.message}" }
         }
@@ -3082,10 +3184,12 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
 fun WebDavViewModel.smartOrganizeScan(filter: OrganizerFilter) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            organizerScanning = true
-            organizerScanResult = null
-            organizerResult = null
-            organizerError = null
+            withContext(Dispatchers.Main) {
+                organizerScanning = true
+                organizerScanResult = null
+                organizerResult = null
+                organizerError = null
+            }
 
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val filterStr = when (filter) {
@@ -3093,7 +3197,7 @@ fun WebDavViewModel.smartOrganizeScan(filter: OrganizerFilter) {
                 OrganizerFilter.VIDEO -> "video"
                 OrganizerFilter.ALL -> "all"
             }
-            val body = """{"filter":"$filterStr"}""".toRequestBody("application/json".toMediaTypeOrNull())
+            val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder()
                 .url("$apiBase/api/tools/smart_organize/scan")
                 .post(body)
@@ -3145,9 +3249,11 @@ fun WebDavViewModel.smartOrganizeScan(filter: OrganizerFilter) {
 fun WebDavViewModel.smartOrganizeExecute(filter: OrganizerFilter) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            organizerExecuting = true
-            organizerResult = null
-            organizerError = null
+            withContext(Dispatchers.Main) {
+                organizerExecuting = true
+                organizerResult = null
+                organizerError = null
+            }
 
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val filterStr = when (filter) {
@@ -3155,7 +3261,7 @@ fun WebDavViewModel.smartOrganizeExecute(filter: OrganizerFilter) {
                 OrganizerFilter.VIDEO -> "video"
                 OrganizerFilter.ALL -> "all"
             }
-            val body = """{"filter":"$filterStr"}""".toRequestBody("application/json".toMediaTypeOrNull())
+            val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder()
                 .url("$apiBase/api/tools/smart_organize/execute")
                 .post(body)

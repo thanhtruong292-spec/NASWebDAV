@@ -54,7 +54,10 @@ class NasDocumentProvider : DocumentsProvider() {
             "$cleanBaseUrl/"
         } else {
             val path = if (documentId.startsWith("/")) documentId else "/$documentId"
-            "$cleanBaseUrl$path"
+            val encodedPath = path.split("/").joinToString("/") { segment -> 
+                if (segment.isEmpty()) "" else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+            }
+            "$cleanBaseUrl$encodedPath"
         }
     }
 
@@ -262,8 +265,14 @@ class NasDocumentProvider : DocumentsProvider() {
             // nên launch (không await) là pattern đúng — không thể dùng withContext.
             NasApplication.applicationScope.launch(Dispatchers.IO) {
                 try {
-                    val request = okhttp3.Request.Builder().url(url).build()
-                    webDavManager.optimizedClient.newCall(request).execute().use { response ->
+                    // FIX: optimizedClient là private — dùng sharedHttpClient với Authorization header thủ công
+                    // (cùng logic với preemptive auth interceptor của optimizedClient)
+                    val credential = okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass)
+                    val request = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("Authorization", credential)
+                        .build()
+                    NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {
                             try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (_: Exception) {}
                             return@launch
@@ -297,7 +306,7 @@ class NasDocumentProvider : DocumentsProvider() {
         var baseId = parentDocumentId.trimEnd('/')
         if (baseId == ROOT_DOC_ID) baseId = ""
 
-        val newId = "$baseId/$displayName"
+        val newId = "$baseId/${java.net.URLEncoder.encode(displayName, "UTF-8").replace("+", "%20")}"
         val url = resolveDocumentUrl(newId, baseUrl)
 
         // FIX A4: Thêm withTimeout 10s

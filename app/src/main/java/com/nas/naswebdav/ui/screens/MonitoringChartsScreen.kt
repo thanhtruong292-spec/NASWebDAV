@@ -30,7 +30,7 @@ import com.nas.naswebdav.WebDavViewModel
 
 private val _ChartDarkCard    = Color(0xFF0A0A0A)
 private val _ChartDarkSurface = Color.Black
-private val _ChartAccentBlue  = Color(0xFF0A0A0A)
+private val _ChartAccentBlue  = Color(0xFF2196F3)
 private val _ChartAccentCyan  = Color(0xFF00D2FF)
 private val _ChartAccentGreen = Color(0xFF00E676)
 private val _ChartAccentOrange= Color(0xFFFF9100)

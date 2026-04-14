@@ -1,5 +1,7 @@
 package com.nas.naswebdav
 
+import com.nas.naswebdav.toApiBaseUrl
+
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -77,6 +79,7 @@ class LivestreamMonitorWorker(
                     KEY_PLATFORM to platform,
                     KEY_NOTIF_ID to notifId
                 ))
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(WORK_NAME_PREFIX + jobId)
                 .addTag("LIVESTREAM_ALL")  // Tag chung để query tất cả
                 .build()
@@ -125,17 +128,27 @@ class LivestreamMonitorWorker(
         val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
 
         createChannel(applicationContext)
-        setForeground(buildForegroundInfo(
-            notifId = notifId,
-            title   = "$platformIcon Đang ghi $platformLabel Live",
-            content = "Đang kết nối..."
-        ))
+        try {
+            setForeground(buildForegroundInfo(
+                notifId = notifId,
+                title   = "$platformIcon Đang ghi $platformLabel Live",
+                content = "Đang kết nối..."
+            ))
+        } catch (e: Exception) {
+            // Android 12+ strict background foreground service restriction. 
+            // Fallback to updating notification normally.
+            try {
+                androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                    .notify(notifId, buildForegroundInfo(notifId, "$platformIcon Đang ghi $platformLabel Live", "Đang kết nối...").notification)
+            } catch (_: Exception) {}
+        }
 
         // Lấy credentials
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
 
-        val statusUrl = "http://$nasHost:5050/api/livestream/status"
+        val activeBaseUrl = com.nas.naswebdav.SmartNetworkManager.getActiveBaseUrl(applicationContext)
+        val statusUrl = (if (activeBaseUrl.isNotEmpty()) activeBaseUrl else "http://$nasHost").toApiBaseUrl() + "/api/livestream/status"
         var consecutiveErrors = 0
         var finalStatus = "recording"
         var finalErrorReason = ""

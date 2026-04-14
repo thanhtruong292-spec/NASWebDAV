@@ -78,6 +78,14 @@ class NasApplication : Application(), ImageLoaderFactory {
             .build()
     }
 
+    val thumbnailApiClient: OkHttpClient by lazy {
+        sharedHttpClient.newBuilder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            
+            .build()
+    }
+
     /** OkHttpClient cho Local API calls nhanh (sync check, hash batch, docker) — timeout ngắn */
     val fastApiClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -85,6 +93,14 @@ class NasApplication : Application(), ImageLoaderFactory {
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.FAST_API_POOL_SIZE, AppConfig.FAST_API_POOL_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
+            .build()
+    }
+
+    val longRunningApiClient: OkHttpClient by lazy {
+        sharedHttpClient.newBuilder()
+            .readTimeout(10, TimeUnit.MINUTES)
+            .writeTimeout(10, TimeUnit.MINUTES)
+            .connectTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 
@@ -150,12 +166,21 @@ class NasApplication : Application(), ImageLoaderFactory {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             try {
-                database.logDao().insertLog(
-                    SystemLog(
-                    type = "CRASH",
-                    module = "CrashHandler",
-                    message = "${exception.javaClass.simpleName}: ${exception.message}"
-                ))
+                // FIX #21: Ghi DB trên main thread trong crash handler có thể gây ANR nếu DB lỗi.
+                // Dùng runBlocking với timeout ngắn để tránh ANR — nếu timeout thì bỏ qua log.
+                val logResult = java.util.concurrent.Executors.newSingleThreadExecutor().submit<Boolean> {
+                      try {
+                        database.logDao().insertLog(
+                            SystemLog(
+                            type = "CRASH",
+                            module = "CrashHandler",
+                            message = "${exception.javaClass.simpleName}: ${exception.message}"
+                        ))
+                        true
+                    } catch (e: Exception) { false }
+                }
+                // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
+                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: Exception) {}
             } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
@@ -235,8 +260,8 @@ object AppConfig {
 }
 
 fun String.toApiBaseUrl(): String {
-    val p = java.net.URL(this)
-    return "${p.protocol}://${p.host}:5050"
+    val p = try { java.net.URL(this) } catch (e: Exception) { return this }
+    return "${p.protocol}://${p.host}:${AppConfig.API_PORT}"
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -256,6 +281,14 @@ object SecurePrefsHelper {
     @Volatile
     private var securePrefs: SharedPreferences? = null
 
+    var isUsingInsecurePrefs = false
+
+    // FIX #16: Flag để UI có thể hiển thị cảnh báo bảo mật khi KeyStore lỗi
+    // và credential bị lưu plaintext trong SharedPreferences không mã hóa
+    @Volatile
+    var isUsingFallbackPrefs: Boolean = false
+        private set
+
     private fun getSecurePrefs(context: Context): SharedPreferences {
         return securePrefs ?: synchronized(this) {
             securePrefs ?: run {
@@ -271,6 +304,8 @@ object SecurePrefsHelper {
                     )
                 } catch (e: Exception) {
                     android.util.Log.e("SecurePrefs", "Lỗi tạo KeyStore, chuyển sang SharedPreferences thường", e)
+                    // FIX #16: Đánh dấu flag để UI có thể hiển thị cảnh báo bảo mật cho user
+                    isUsingFallbackPrefs = true
                     prefs = context.getSharedPreferences("nas_prefs_fallback", Context.MODE_PRIVATE)
                 }
                 migrateOldCredentialsIfNeeded(context, prefs)
@@ -418,14 +453,18 @@ object SmartNetworkManager {
                 val lanResult = reachableUrls.find { !com.nas.naswebdav.isTailscaleUrl(it) }
                 val bestResult = lanResult ?: reachableUrls.first()
                 
-                lastPingResult = true; lastPingTime = now
-                cachedActiveUrl = bestResult
+                synchronized(this) {
+                    lastPingResult = true; lastPingTime = now
+                    cachedActiveUrl = bestResult
+                }
                 
                 android.util.Log.i(TAG, "✅ Chọn mạng tốt nhất: $bestResult")
                 return@withContext bestResult
             }
-            lastPingResult = false
-            cachedActiveUrl = null
+            synchronized(this) {
+                lastPingResult = false
+                cachedActiveUrl = null
+            }
             // Tất cả URL đều không phản hồi → thử dùng URL đầu tiên nhưng log cảnh báo
             android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: ${urlList.first()}")
             urlList.first()
@@ -498,7 +537,7 @@ class WolTileService : TileService() {
         if (tile != null) {
             // Nút chỉ sáng lên cho phép bấm nếu bạn đã từng lưu địa chỉ MAC NAS trong App
             tile.state = if (macStr.isNotBlank()) Tile.STATE_INACTIVE else Tile.STATE_UNAVAILABLE
-            tile.updateTile()
+            android.os.Handler(android.os.Looper.getMainLooper()).post { tile.updateTile() }
         }
     }
 
@@ -512,7 +551,7 @@ class WolTileService : TileService() {
             if (macStr.matches(Regex("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"))) {
                 // Chớp sáng nút lên để tạo phản hồi thị giác
                 tile.state = Tile.STATE_ACTIVE
-                tile.updateTile()
+                android.os.Handler(android.os.Looper.getMainLooper()).post { tile.updateTile() }
 
                 // FIX D4: Thay CoroutineScope(IO).launch (bị leak vì không có lifecycle) bằng
                 // applicationScope — tồn tại suốt vòng đời app, được quản lý bởi NasApplication.
@@ -523,11 +562,11 @@ class WolTileService : TileService() {
                     // Giữ đèn báo sáng 1.5 giây rồi tắt (Mô phỏng như nút khởi động xe hơi)
                     kotlinx.coroutines.delay(1500)
                     tile.state = Tile.STATE_INACTIVE
-                    tile.updateTile()
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { tile.updateTile() }
                 }
             } else {
                 tile.state = Tile.STATE_UNAVAILABLE
-                tile.updateTile()
+                android.os.Handler(android.os.Looper.getMainLooper()).post { tile.updateTile() }
             }
         }
     }

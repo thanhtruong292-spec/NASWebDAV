@@ -29,7 +29,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -730,6 +729,8 @@ enum class DialogType { SUCCESS, ERROR, WARNING, CONFIRM }
 
 @Composable
 fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? = null, onDismiss: () -> Unit) {
+    if (message.isBlank()) return
+
     val (icon, color, title) = when (type) {
         DialogType.SUCCESS -> Triple(Icons.Default.Check, Color(0xFF4CAF50), "Thành công")
         DialogType.ERROR -> Triple(Icons.Default.Close, Color(0xFFE53935), "Thất bại")
@@ -1119,7 +1120,6 @@ fun DuplicateConfigDialog(
 }
 @Composable
 fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
-    var selectedFilter by remember { mutableStateOf("all") }
     AlertDialog(
         onDismissRequest = { onDismiss() },
         title = {
@@ -1143,8 +1143,10 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
             } else {
                 // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                 // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
+                // BỔ SUNG: Nhóm theo Hash/Fingerprint để đảm bảo hiển thị đúng file trùng, 
+                // dùng contentLength làm fallback dự phòng.
                 val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                    viewModel.duplicateFilesList.groupBy { it.contentLength }.values.filter { it.size >= 2 }.toList()
+                    viewModel.duplicateFilesList.groupBy { it.partialHash ?: it.contentLength }.values.filter { it.size >= 2 }.toList()
                 }
 
                 // ═══ BỘ LỌC NHANH ═══
@@ -1379,11 +1381,20 @@ fun LivestreamRecordDialog(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
-    LaunchedEffect(Unit) { viewModel.restoreLivestreamStateIfRunning(context) }
+    LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
     var liveUrl by remember { mutableStateOf("") }
     var selectedQuality by remember { mutableStateOf("best") }
     val activeLivestreams = viewModel.activeLivestreams
     val message = viewModel.livestreamMessage
+
+    // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    LaunchedEffect(Unit) {
+        val clipText = clipboardManager.getText()?.text ?: ""
+        if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
+            liveUrl = clipText.trim()
+        }
+    }
 
     val detectedPlatform = remember(liveUrl) {
         when {
@@ -1394,13 +1405,55 @@ fun LivestreamRecordDialog(
             else -> ""
         }
     }
+
+    // Trích xuất tên/username từ URL để hiện thay vì chỉ "TikTok Live"
+    val detectedTitle = remember(liveUrl) {
+        when {
+            liveUrl.contains("tiktok", true) -> {
+                val username = Regex("@([\\w.]+)").find(liveUrl)?.groupValues?.get(1)
+                if (username != null) "Live của @$username" 
+                else if (liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com")) "TikTok Live (Đang lấy tên...)"
+                else "TikTok Live"
+            }
+            liveUrl.contains("facebook", true) || liveUrl.contains("fb.watch", true) -> {
+                val fbUser = Regex("facebook\\.com/([^/\\?]+)").find(liveUrl)?.groupValues?.get(1)
+                if (!fbUser.isNullOrEmpty() && fbUser != "watch") "Live của $fbUser" else "Facebook Live"
+            }
+            liveUrl.contains("youtube", true) || liveUrl.contains("youtu.be", true) -> {
+                val channel = Regex("@([\\w.-]+)").find(liveUrl)?.groupValues?.get(1)
+                if (channel != null) "Live của @$channel" else "YouTube Live"
+            }
+            liveUrl.contains("shopee", true) -> "Shopee Live"
+            else -> ""
+        }
+    }
+    
+    // Auto-resolve TikTok short links to get the actual username
+    LaunchedEffect(liveUrl) {
+        if ((liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com")) && !liveUrl.contains("@")) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val conn = java.net.URL(liveUrl).openConnection() as java.net.HttpURLConnection
+                    conn.instanceFollowRedirects = false
+                    val location = conn.getHeaderField("Location")
+                    if (!location.isNullOrBlank() && location.contains("@")) {
+                        val newUrl = location.substringBefore("?")
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            liveUrl = newUrl
+                        }
+                    }
+                } catch(e: Exception) {}
+            }
+        }
+    }
+
     val activePlatform = detectedPlatform.ifEmpty { "livestream" }
     val platformIcon = when (activePlatform) { "tiktok" -> "🎵"; "facebook" -> "📘"; "youtube" -> "▶️"; "shopee" -> "🛒"; else -> "📹" }
     val platformName = when (activePlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
     val accentColor = when (activePlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
 
     androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = { if (activeLivestreams.isEmpty()) onDismiss() },
+        onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
@@ -1436,7 +1489,15 @@ fun LivestreamRecordDialog(
                     focusedTextColor = Color(0xFFE8E8E8),
                     unfocusedTextColor = Color(0xFFE8E8E8)
                 ),
-                trailingIcon = { if (detectedPlatform.isNotEmpty()) { Text(platformIcon, fontSize = 18.sp) } }
+                trailingIcon = {
+                    if (liveUrl.isNotEmpty()) {
+                        IconButton(onClick = { liveUrl = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color(0xFF8892B0))
+                        }
+                    } else if (detectedPlatform.isNotEmpty()) {
+                        Text(platformIcon, fontSize = 18.sp)
+                    }
+                }
             )
             
             Spacer(Modifier.height(12.dp))
@@ -1448,7 +1509,7 @@ fun LivestreamRecordDialog(
                 ) {
                     Text(platformIcon, fontSize = 16.sp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Đã nhận diện: $platformName Live", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Đã nhận diện: $detectedTitle", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
                 Spacer(Modifier.height(12.dp))
             }
@@ -1487,9 +1548,18 @@ fun LivestreamRecordDialog(
                     Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else if (message.isNotEmpty()) {
+                // FIX: Auto-clear lỗi sau 5 giây để hiện lại nút "BẮT ĐẦU GHI"
+                LaunchedEffect(message) {
+                    kotlinx.coroutines.delay(5000L)
+                    viewModel.clearLivestreamMessage()
+                }
                 Spacer(Modifier.height(12.dp))
                 val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
-                Text(message, color = msgColor, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                Text(
+                    message, color = msgColor, fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().clickable { viewModel.clearLivestreamMessage() },
+                    textAlign = TextAlign.Center
+                )
             } else {
                 Spacer(Modifier.height(16.dp))
                 Button(

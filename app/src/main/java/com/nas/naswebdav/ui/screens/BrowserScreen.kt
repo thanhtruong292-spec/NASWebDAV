@@ -373,7 +373,7 @@ fun BrowserScreen(
                                     val urlStr = viewModel.webDavManager.currentBaseUrl
                                     
                                     val host = java.net.URL(urlStr).host ?: "127.0.0.1"
-                                    val apiUrl = "http://$host:5050/api/tools/organize_legacy_videos"
+                                    val apiUrl = "${urlStr.toApiBaseUrl()}/api/tools/organize_legacy_videos"
                                     
                                     val request = okhttp3.Request.Builder()
                                         .url(apiUrl)
@@ -385,22 +385,23 @@ fun BrowserScreen(
                                     val client = NasApplication.instance.sharedHttpClient.newBuilder()
                                         .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
                                         .build()
-                                    val response = client.newCall(request).execute()
-                                    val body = response.body?.string()
-                                    
-                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                        isOrganizing = false
-                                        if (response.isSuccessful && body != null) {
-                                            try {
-                                                val json = org.json.JSONObject(body)
-                                                val count = json.optInt("moved_count", 0)
-                                                organizeResult = "Hoàn tất! Đã gom $count video."
-                                                viewModel.refresh()
-                                            } catch (e: Exception) {
-                                                organizeResult = "Lỗi phản hồi: ${e.message}"
+                                    client.newCall(request).execute().use { response ->
+                                        val body = response.body?.string()
+                                        
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            isOrganizing = false
+                                            if (response.isSuccessful && body != null) {
+                                                try {
+                                                    val json = org.json.JSONObject(body)
+                                                    val count = json.optInt("moved_count", 0)
+                                                    organizeResult = "Hoàn tất! Đã gom $count video."
+                                                    viewModel.refresh()
+                                                } catch (e: Exception) {
+                                                    organizeResult = "Lỗi phản hồi: ${e.message}"
+                                                }
+                                            } else {
+                                                organizeResult = "Lỗi NAS: ${response.code}"
                                             }
-                                        } else {
-                                            organizeResult = "Lỗi NAS: ${response.code}"
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -1953,7 +1954,7 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
                             val parsedUrl = java.net.URL(url)
                             val nasHost = parsedUrl.host
                             val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
-                            val apiThumbUrl = "http://$nasHost:5050/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+                            val apiThumbUrl = "${url.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
 
                             val apiRequest = okhttp3.Request.Builder()
                                 .url(apiThumbUrl)

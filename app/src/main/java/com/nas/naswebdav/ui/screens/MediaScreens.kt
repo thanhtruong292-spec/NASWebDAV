@@ -725,7 +725,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             val relativePath = uri.path?.substringAfter("/webdav") ?: ""
             val apiHost = uri.host
             val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
-            val transcodeUrl = "http://$apiHost:5050/api/stream/transcode?path=$encodedPath"
+            val transcodeUrl = "${url.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
             android.util.Log.i("VideoPlayer", "Legacy format → transcode: $transcodeUrl")
             transcodeUrl
         } else {
@@ -2319,8 +2319,14 @@ private fun LinkInputCard(
                 placeholder = { Text("Dán link TikTok / Facebook / YouTube...", color = SeTextSecondary, fontSize = 12.sp) },
                 leadingIcon = { Icon(Icons.Default.Link, null, tint = SeTextSecondary, modifier = Modifier.size(18.dp)) },
                 trailingIcon = {
-                    IconButton(onClick = onPasteClipboard) {
-                        Icon(Icons.Default.ContentPaste, null, tint = SeAccentCyan, modifier = Modifier.size(18.dp))
+                    if (link.isNotEmpty()) {
+                        IconButton(onClick = { onLinkChange("") }) {
+                            Icon(Icons.Default.Clear, null, tint = SeTextSecondary, modifier = Modifier.size(18.dp))
+                        }
+                    } else {
+                        IconButton(onClick = onPasteClipboard) {
+                            Icon(Icons.Default.ContentPaste, null, tint = SeAccentCyan, modifier = Modifier.size(18.dp))
+                        }
                     }
                 },
                 minLines = 2, maxLines = 4,

@@ -219,6 +219,7 @@ fun MainMenuScreen(
         viewModel.checkSmartNetwork(mContext)
         viewModel.fetchSmartData()
         viewModel.fetchOmvOverview()
+        viewModel.syncLivestreamStateWithServer(mContext)
     }
 
     // FIX D10: Collect tất cả AutoBackupState values cùng lúc ở top-level Composable.
@@ -1834,6 +1835,36 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                                     Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 11.sp, color = Color(0xFFFF7043))
                                 }
                             }
+                            
+                            Spacer(Modifier.height(8.dp))
+                            activeStreams.forEach { job ->
+                                androidx.compose.runtime.key(job.jobId) {
+                                    val jobPlatformName = when (job.platform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
+                                    
+                                    var localSeconds by remember(job.jobId) { androidx.compose.runtime.mutableStateOf(job.durationSeconds) }
+                                    LaunchedEffect(job.jobId, job.durationSeconds) {
+                                        localSeconds = job.durationSeconds
+                                        while(true) { kotlinx.coroutines.delay(1000); localSeconds++ }
+                                    }
+                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+
+                                    Column(Modifier.fillMaxWidth().padding(start = 50.dp, top = 8.dp)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("$jobPlatformName • ${job.jobId.takeLast(6)}", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                            Text(displayDur, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF7043))
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text(job.outputFile.substringAfterLast("/").ifEmpty { "Đang lấy link video..." }, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text(job.fileSize.ifEmpty { "0 B" }, fontSize = 10.sp, color = TextPrimary, modifier = Modifier.padding(start = 8.dp))
+                                        }
+                                        if (job.speed.isNotEmpty()) {
+                                            Spacer(Modifier.height(4.dp))
+                                            Text("Tốc độ mạng: ${job.speed}", fontSize = 10.sp, color = AccentGreen)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1874,7 +1905,10 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                 ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     historyIps.forEach { ipOption ->
                         DropdownMenuItem(text = { Text(ipOption) }, onClick = { ipInput = ipOption; expanded = false },
-                            trailingIcon = { IconButton(onClick = { historyIps = historyIps.filter { it != ipOption } }) { Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp)) } })
+                            trailingIcon = { IconButton(onClick = { 
+                                historyIps = historyIps.filter { it != ipOption }
+                                com.nas.naswebdav.SecurePrefsHelper.saveCredentialsAsync(context, historyIps.map { ipToFullUrl(it) }, user, pass)
+                            }) { Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp)) } })
                     }
                 }
             }
@@ -1940,12 +1974,12 @@ fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Thời hạn Guest Pass", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = GpTextPrimary); Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(30 to "30 phút", 60 to "1 giờ?", 180 to "3 giờ?", 1440 to "1 ngày").forEach { (min, label) ->
+                        listOf(30 to "30 phút", 60 to "1 giờ", 180 to "3 giờ", 1440 to "1 ngày").forEach { (min, label) ->
                             FilterChip(selected = durationMinutes == min, onClick = { durationMinutes = min }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f),
                                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = GpAccentCyan.copy(alpha = 0.2f), selectedLabelColor = GpAccentCyan, containerColor = GpDarkSurface, labelColor = GpTextSecondary))
                         }
                     }
-                    Spacer(Modifier.height(8.dp)); Text("Thời hạn đã chọn: $durationMinutes phút (${durationMinutes / 60} giờ? ${durationMinutes % 60} phút)", fontSize = 12.sp, color = GpAccentCyan)
+                    Spacer(Modifier.height(8.dp)); Text("Thời hạn đã chọn: $durationMinutes phút (${durationMinutes / 60} giờ ${durationMinutes % 60} phút)", fontSize = 12.sp, color = GpAccentCyan)
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -1961,7 +1995,7 @@ fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
                             GuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
                             GuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass") { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
                             val expiresMs = gp.expiresAt - System.currentTimeMillis(); val expiresMin = (expiresMs / 60000).coerceAtLeast(0)
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, null, tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️? Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, null, tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️ Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
                             Spacer(Modifier.height(14.dp))
                             Button(onClick = { viewModel.revokeGuestPass() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), enabled = !viewModel.isGuestPassLoading, colors = ButtonDefaults.buttonColors(containerColor = GpAccentRed.copy(alpha = 0.8f))) { Icon(Icons.Default.PersonRemove, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Thu hồi ngay", fontWeight = FontWeight.Bold) }
                         }
@@ -2183,7 +2217,7 @@ fun formatElapsedTimeUI(millis: Long): String {
 
     val parts = mutableListOf<String>()
     if (days > 0) parts.add("$days ngày")
-    if (hours > 0) parts.add("$hours giờ?")
+    if (hours > 0) parts.add("$hours giờ")
     if (minutes > 0) parts.add("$minutes phút")
     if (seconds > 0 || parts.isEmpty()) parts.add("$seconds giây")
 

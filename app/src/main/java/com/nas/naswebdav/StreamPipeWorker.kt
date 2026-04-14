@@ -98,11 +98,14 @@ class StreamPipeWorker(
         try {
             val ua = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
 
+            // FIX #21: Tự động trích xuất Referer từ sourceUrl thay vì hardcode tiktok.com
+            val refererUrl = try { java.net.URL(sourceUrl).let { "${it.protocol}://${it.host}/" } } catch (_: Exception) { "" }
+
             // ── 1. HEAD → kích thước file ──
             val headRequest = okhttp3.Request.Builder()
                 .url(sourceUrl).head()
                 .header("User-Agent", ua)
-                .header("Referer", "https://www.tiktok.com/")
+                .apply { if (refererUrl.isNotEmpty()) header("Referer", refererUrl) }
                 .build()
 
             val totalBytes: Long = try {
@@ -140,8 +143,9 @@ class StreamPipeWorker(
                 try { WebDavManager.createFolder(socialFolder) } catch (_: Exception) {}
 
                 val safeFileName = fileName.replace(Regex("[/\\\\:*?\"<>|]"), "_")
-                val destUrl = if (socialFolder.endsWith("/")) "$socialFolder$safeFileName"
-                              else "$socialFolder/$safeFileName"
+                val safeFileNameEncoded = java.net.URLEncoder.encode(safeFileName, "UTF-8").replace("+", "%20")
+                val destUrl = if (socialFolder.endsWith("/")) "$socialFolder$safeFileNameEncoded"
+                              else "$socialFolder/$safeFileNameEncoded"
 
                 // ── 4. Streaming body CDN→NAS ──
                 var totalBytesRead = 0L

@@ -86,7 +86,12 @@ class LongRunningApiWorker(
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
                 }
             )
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            try {
+                androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                    .notify(NOTIFICATION_ID, notificationBuilder.build())
+            } catch (_: Exception) {}
+        }
 
         // Báo trạng thái cho UI
         setProgress(workDataOf("status" to "processing", "taskType" to taskType))
@@ -105,12 +110,8 @@ class LongRunningApiWorker(
                 .header("Authorization", okhttp3.Credentials.basic(user, pass))
                 .build()
 
-            // Client với timeout cực lớn cho tác vụ NAS nặng
-            val longClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                .readTimeout(10, java.util.concurrent.TimeUnit.MINUTES)
-                .writeTimeout(10, java.util.concurrent.TimeUnit.MINUTES)
-                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
+            // Client với timeout cực lớn cho tác vụ NAS nặng, Fix Bug #41: dùng singleton client
+            val longClient = NasApplication.instance.longRunningApiClient
 
             longClient.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""

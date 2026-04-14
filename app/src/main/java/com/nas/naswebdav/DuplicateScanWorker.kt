@@ -95,7 +95,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         )
         try {
             // --- TÍNH NĂNG TỰ ĐỘNG DỌN RÁC SAU 7 NGÀY ---
-            val trashUrl = currentUrl.substringBefore("/webdav/") + "/webdav/.trash/"
+            // FIX #18: Lấy root WebDAV URL một cách an toàn từ SecurePrefs thay vì hardcode substring("/webdav/")
+            val rootWebDavUrl = SecurePrefsHelper.getUrl(applicationContext).trimEnd('/')
+            val trashUrl = "$rootWebDavUrl/.trash/"
             val now = System.currentTimeMillis()
             val sevenDaysInMillis = 7 * 24 * 60 * 60 * 1000L
 
@@ -195,7 +197,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         } catch (e: Exception) {}
                     }
                     ticks++
-                    delay(50)
+                    // FIX #11: Tăng tử 50ms lên 250ms (giảm từ 20fps xuống 4fps)
+                    // 95% vòng lặp trước đây chỉ cập nhật StateFlow mà không setProgress() → lãng phí CPU
+                    delay(250)
                 }
             }
 
@@ -210,7 +214,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 val apiBaseUrl = currentUrl.toApiBaseUrl()
 
                 try {
-                    val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").build()
+                    // FIX #13: Thêm Authorization header — NAS bật auth sẽ trả 401 nếu không có
+                    val request = okhttp3.Request.Builder()
+                        .url("$apiBaseUrl/api/disk/fast_index")
+                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                        .build()
                     val client = NasApplication.instance.sharedHttpClient
 
                     client.newCall(request).execute().use { response ->
@@ -261,7 +269,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             }
                                             reader.endObject()
 
-                                            val fullUrl = currentUrl.substringBefore("/webdav/") + path
+                                            val fullUrl = currentUrl.trimEnd('/') + (if (path.startsWith("/")) path else "/$path")
                                             val parentUrl = fullUrl.substringBeforeLast("/") + "/"
                                             val parentFolderName = parentUrl.trimEnd('/').substringAfterLast("/")
 
@@ -340,7 +348,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 if (!isFastPathSuccess) {
                     currentStage.set("Quét qua WebDAV")
                     stageDescription.set("API nội bộ không khả dụng, quét từng thư mục bằng giao thức Webdav")
-                    val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>(1000)
+                    val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>()
                     val forceRestart = inputData.getBoolean("forceRestart", false)
                     val checkpoint = db.checkpointDao().getCheckpoint("DuplicateScan")
 
@@ -357,10 +365,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     val foldersScanned = AtomicInteger(0)
                     val totalFoldersDiscovered = AtomicInteger(1) // Bắt đầu = 1 (thư mục gốc)
 
-                    // FIX C2: Biến đếm checkpoint — chỉ ghi DB mỗi 10 thư mục hoặc mỗi 30 giây
-                    // thay vì ghi sau MỖI thư mục (có thể hàng nghìn lần với NAS lớn).
-                    var foldersSinceLastCheckpoint = 0
-                    var lastCheckpointTime = System.currentTimeMillis()
+                    // FIX C2 + FIX #20: Biến đếm checkpoint — chỉ ghi DB mỗi 10 thư mục hoặc mỗi 30 giây
+                    // Dùng Atomic để tránh Data Race từ 3 luồng BFS chạy song song
+                    val foldersSinceLastCheckpoint = java.util.concurrent.atomic.AtomicInteger(0)
+                    val lastCheckpointTime = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
                     val CHECKPOINT_FOLDER_INTERVAL = 10
                     val CHECKPOINT_TIME_INTERVAL_MS = 30_000L
 
@@ -422,18 +430,18 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             currentStagePercent.set(stage1Prog)
                                             progressPercent.set(stage1Prog * 0.5f)
 
-                                            // FIX C2: Checkpoint thông minh — chỉ ghi DB mỗi 10 thư mục hoặc 30s
-                                            // Trước đây ghi sau MỖI thư mục → quá nhiều DB write với NAS có hàng nghìn thư mục
-                                            foldersSinceLastCheckpoint++
+                                            // FIX C2 + FIX #20: Checkpoint thông minh — thread-safe
+                                            val currentFoldersSince = foldersSinceLastCheckpoint.incrementAndGet()
                                             val now = System.currentTimeMillis()
-                                            if (foldersSinceLastCheckpoint >= CHECKPOINT_FOLDER_INTERVAL
-                                                || now - lastCheckpointTime >= CHECKPOINT_TIME_INTERVAL_MS
+                                            val lastTime = lastCheckpointTime.get()
+                                            if (currentFoldersSince >= CHECKPOINT_FOLDER_INTERVAL
+                                                || now - lastTime >= CHECKPOINT_TIME_INTERVAL_MS
                                             ) {
                                                 db.checkpointDao().saveCheckpoint(
                                                     ScanCheckpoint("DuplicateScan", folder, totalFilesIndexed.get(), 0)
                                                 )
-                                                foldersSinceLastCheckpoint = 0
-                                                lastCheckpointTime = now
+                                                foldersSinceLastCheckpoint.set(0)
+                                                lastCheckpointTime.set(now)
                                             }
                                             
                                         } catch (e: Exception) {}
@@ -563,7 +571,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                 try {
                                     val jsonArray = org.json.JSONArray()
                                     filesNeedHash.forEach { file ->
-                                        val relativePath = java.net.URL(file.path).path.substringAfter("/webdav")
+                                        val rootWebDav = currentUrl.trimEnd('/')
+                                        val relativePath = if (file.path.startsWith(rootWebDav)) file.path.substring(rootWebDav.length) else file.path
                                         val fileObj = org.json.JSONObject().apply {
                                             put("path", file.path)
                                             put("local_path", relativePath)
@@ -572,8 +581,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                     }
                                     val jsonString = org.json.JSONObject().put("files", jsonArray).toString()
                                     val requestBody = jsonString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                                    // FIX #14: Thêm Authorization header — hash_batch API yêu cầu auth
                                     val request = okhttp3.Request.Builder()
                                         .url("$apiBaseUrl/api/disk/hash_batch")
+                                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
                                         .post(requestBody)
                                         .build()
                                     client.newCall(request).execute().use { response ->
@@ -834,7 +845,29 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : C
                 when (action.actionType) {
                     "DELETE" -> webDavManager.deleteFile(action.sourcePath)
                     "CREATE_FOLDER" -> webDavManager.createFolder(action.sourcePath)
-                    "RENAME" -> { if (action.destPath != null) webDavManager.renameFile(action.sourcePath, action.destPath) }
+                    "RENAME", "MOVE" -> {
+                        if (action.destPath != null) {
+                            val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
+                                if (segment.isEmpty() || segment.contains(":")) segment
+                                else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                            }
+                            webDavManager.renameFile(action.sourcePath, encodedDest)
+                        }
+                    }
+                    "UPLOAD" -> {
+                        if (action.destPath != null) {
+                            val file = java.io.File(action.sourcePath)
+                            if (file.exists()) {
+                                val ext = file.extension.lowercase()
+                                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                                val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
+                                    if (segment.isEmpty() || segment.contains(":")) segment
+                                    else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                                }
+                                webDavManager.uploadFile(encodedDest, file, mime)
+                            }
+                        }
+                    }
                 }
                 db.syncActionDao().deleteById(action.id)
             } catch (_: Exception) { allSuccess = false }
@@ -893,7 +926,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
-        wakeLock.acquire(180 * 60 * 1000L) // Giữ WakeLock tối đa 3 tiếng nếu lượng file quá mức khổng lồ
+        // FIX #23: Giảm WakeLock từ 3 tiếng xuống 60 phút — backup tối đa 1 giờ là hợp lý
+        // Nếu upload bị trẾ (server không phản hồi), thiết bị ko bị hao pin đến 3 tiếng
+        wakeLock.acquire(60 * 60 * 1000L)
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
         val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
@@ -932,7 +967,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             var skippedCount = 0
             var failedCount = 0
             val urisToQuery = listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-            val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA)
+            val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE)
             
             var totalFilesToProcess = 0
             for (mediaUri in urisToQuery) {
@@ -962,6 +997,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                     val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                     val dataIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                    val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
                     var lastSkipProgressTime = 0L
                     
                     while (cursor.moveToNext() && !isStopped) {
@@ -989,15 +1025,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             backupFolderBase
                         }
                         
-                        val targetFileNasPath = targetFolder + fileName
+                        val encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
+                        val targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + encodedFileName else "$targetFolder/$encodedFileName"
                         
                         // Bỏ qua kiểm tra existingRemoteFiles dạng list toàn bộ vì giờ cấu trúc thành dạng Tree,
                         // thay vào đó chúng ta sẽ rely vào Database / Hash hoặc Head Request để tránh trùng
 
-                        val localFile = File(dataPath)
-                        if (!localFile.exists() || localFile.length() == 0L) continue
+                        val fileSize = cursor.getLong(sizeIndex)
+                        if (fileSize == 0L) continue
+                        val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
                         try {
-                            val fileHash: String? = try { ImageFingerprint.computeFromFile(localFile) } catch (_: Exception) { null }
+                            val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
                             if (fileHash != null) { 
                                 val existingFp = db.fingerprintDao().findByExactHash(fileHash); 
@@ -1025,7 +1063,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             
                             val mimeType = try { applicationContext.contentResolver.getType(ContentUris.withAppendedId(mediaUri, id)) ?: "application/octet-stream" } catch (_: Exception) { "application/octet-stream" }
                             
-                            val fileSize = localFile.length()
+                            // fileSize đã lấy từ cursor ở trên
                             var lastProgressTime = 0L
 
                             applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
@@ -1064,7 +1102,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             }
 
                             val uploadVerified = try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
-                            if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = localFile.length()))
+                            if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
                         } catch (e: Exception) { 
@@ -1120,7 +1158,16 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
             for (file in filesToProcess) {
                 if (isStopped) break
                 try {
-                    val url = "$apiBaseUrl/api/thumb?path=${android.net.Uri.encode(file.path)}"
+                    // FIX #15: Uri.encode(file.path) encode toàn bộ URL thành http%3A%2F%2F...
+                    // API /api/thumb?path= chỉ cần phần path (/webdav/img.jpg), không phải full URL.
+                    // Tách path từ URL đầy đủ, sau đó encode chỉ phần path đó.
+                    val pathOnly = try {
+                        java.net.URL(file.path).path  // "/webdav/photos/img.jpg"
+                    } catch (_: Exception) {
+                        file.path  // fallback nếu đã là path thuần
+                    }
+                    val encodedPath = java.net.URLEncoder.encode(pathOnly, "UTF-8").replace("+", "%20")
+                    val url = "$apiBaseUrl/api/thumb?path=$encodedPath"
                     val request = okhttp3.Request.Builder().url(url).header("Authorization", okhttp3.Credentials.basic(savedUser, savedPass)).build()
                     app.fastApiClient.newCall(request).execute().use { resp ->
                         if (resp.isSuccessful) {
@@ -1157,7 +1204,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         try {
             SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp file trùng lặp định kỳ.")
             db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
-            db.withTransaction { db.fileDao().deleteByParentPath("%") }
+            // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
+            // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.
+            db.withTransaction { db.fileDao().clearAllFiles() }
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
@@ -1165,7 +1214,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful && response.body != null) {
                     val reader = android.util.JsonReader(response.body?.charStream())
-                    reader.isLenient = true; reader.beginObject()
+                    // FIX #8: android.util.JsonReader KHÔNG có isLenient public trên mọi API level
+                    // Comment ở DuplicateScanWorker line 220 đã xác nhận việc này — xóa dòng tránh crash
+                    reader.beginObject()
                     while (reader.hasNext()) {
                         val key = reader.nextName()
                         if (key == "total") { reader.nextInt() }
@@ -1175,7 +1226,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                 reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
                                 while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
                                 reader.endObject()
-                                val rootUrl = url.substringBefore("/webdav/"); val absolutePath = rootUrl + path; val parentUrl = absolutePath.substringBeforeLast("/") + "/"
+                                val rootUrl = url.trimEnd('/'); val absolutePath = rootUrl + (if (path.startsWith("/")) path else "/$path"); val parentUrl = absolutePath.substringBeforeLast("/") + "/"
                                 batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime))
                                 totalFiles++
                                 if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
@@ -1196,9 +1247,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 try {
                     val fastClient = NasApplication.instance.fastApiClient; val jsonArray = JSONArray()
                     val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
-                    paths.forEach { path -> jsonArray.put(JSONObject().apply { put("path", path); put("local_path", java.net.URL(path).path.substringAfter("/webdav")) }) }
+                    val rootWebDav = webDavManager.currentBaseUrl.trimEnd('/')
+                    paths.forEach { path -> jsonArray.put(JSONObject().apply { put("path", path); put("local_path", if (path.startsWith(rootWebDav)) path.substring(rootWebDav.length) else path) }) }
                     val reqBody = JSONObject().put("files", jsonArray).toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                    val req = okhttp3.Request.Builder().url("$apiBase/api/disk/hash_batch").post(reqBody).build()
+                    val req = okhttp3.Request.Builder().url("$apiBase/api/disk/hash_batch").post(reqBody).header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
                     fastClient.newCall(req).execute().use { resp ->
                         if (resp.isSuccessful) { val resultObj = JSONObject(resp.body?.string() ?: "{}"); for (path in paths) { val hash = resultObj.optString(path, ""); if (hash.isNotEmpty()) hashResult[path] = hash } }
                         else throw Exception("Non 2xx")
@@ -1221,10 +1273,15 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
     }
     private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
         return try {
-            val rootUrl = manager.currentBaseUrl.substringBefore("/webdav/") + "/webdav/"; val trashFolderUrl = rootUrl + ".trash/"
+            // FIX #19: Không dùng substringBefore cắt chuỗi cứng, dùng currentBaseUrl của WebDavManager
+            val rootUrl = manager.currentBaseUrl.trimEnd('/')
+            val trashFolderUrl = "$rootUrl/.trash"
             val authHeader = okhttp3.Credentials.basic(user, pass)
             try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
-            val destUrl = trashFolderUrl + sourceUrl.substringAfterLast("/")
+            // FIX #19: URL-encode tên file để không bị 400 Bad Request
+            val fileName = sourceUrl.substringAfterLast("/")
+            val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
+            val destUrl = "$trashFolderUrl/$encodedName"
             NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
         } catch (_: Exception) { false }
     }
@@ -1239,9 +1296,19 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
 class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val currentUrl = inputData.getString("currentUrl") ?: return@withContext Result.failure()
+        // FIX #16: Load credentials từ SecurePrefsHelper
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+        if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
+
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
-            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+            // FIX #16: Thêm Authorization header để không bị server từ chối 401
+            val request = okhttp3.Request.Builder()
+                .url("$apiBaseUrl/api/disk/speedtest")
+                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .post(ByteArray(0).toRequestBody(null, 0, 0))
+                .build()
             NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val json = JSONObject(response.body?.string() ?: "")

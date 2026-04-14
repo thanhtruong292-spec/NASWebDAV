@@ -102,7 +102,12 @@ class BatchOperationWorker(
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
                 }
             )
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            try {
+                androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                    .notify(NOTIFICATION_ID, notificationBuilder.build())
+            } catch (_: Exception) {}
+        }
 
         val total = filePaths.size
         var successCount = 0
@@ -176,8 +181,8 @@ class BatchOperationWorker(
                         successCount++
                     }
                     "RESTORE" -> {
-                        // Khôi phục: Di chuyển file từ Thùng rác về thư mục gốc NAS
-                        val targetUrl = baseUrl + fileName
+                        val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
+                        val targetUrl = baseUrl + encodedName
                         webDavManager.renameFile(filePath, targetUrl)
                         successCount++
                     }
