@@ -1894,6 +1894,26 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
 
+    // Trạng thái ping real-time cho các IP: URL → RTT (ms), -1 = unreachable
+    var ipPingStatus by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var isCheckingPings by remember { mutableStateOf(false) }
+
+    // Khởi động vòng lặp ping thực tế khi LoginScreen hiển thị
+    LaunchedEffect(Unit) {
+        while (true) {
+            isCheckingPings = true
+            try {
+                val fullUrls = historyIps.map { ipToFullUrl(it) }
+                if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                    val results = viewModel.pingUrlsForDisplay(fullUrls, user, pass)
+                    ipPingStatus = results
+                }
+            } catch (_: Exception) {}
+            isCheckingPings = false
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+
     Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(Icons.Default.Storage, contentDescription = "NAS", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(16.dp))
@@ -1904,11 +1924,42 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             if (historyIps.isNotEmpty()) {
                 ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     historyIps.forEach { ipOption ->
-                        DropdownMenuItem(text = { Text(ipOption) }, onClick = { ipInput = ipOption; expanded = false },
-                            trailingIcon = { IconButton(onClick = { 
-                                historyIps = historyIps.filter { it != ipOption }
-                                com.nas.naswebdav.SecurePrefsHelper.saveCredentialsAsync(context, historyIps.map { ipToFullUrl(it) }, user, pass)
-                            }) { Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp)) } })
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    // Hiển thị chỉ báo ping: ● xanh = OK, ● đỏ = fail, ● xám = checking
+                                    val fullUrl = ipToFullUrl(ipOption)
+                                    val rtt = ipPingStatus[fullUrl] ?: -2L
+                                    val indicatorColor = when {
+                                        rtt > 0 -> Color(0xFF00E676)      // Xanh: kết nối được
+                                        rtt == -1L -> Color(0xFFE53935)   // Đỏ: không kết nối được
+                                        else -> if (isCheckingPings) Color(0xFF8892B0) else Color(0xFF8892B0)  // Xám: checking hoặc chưa check
+                                    }
+                                    Box(
+                                        Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(indicatorColor)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(ipOption, modifier = Modifier.weight(1f))
+                                    // Hiển thị ping time (nếu có)
+                                    if (rtt > 0) {
+                                        Text("${rtt}ms", fontSize = 11.sp, color = Color(0xFF8892B0))
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                }
+                            },
+                            onClick = { ipInput = ipOption; expanded = false },
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    historyIps = historyIps.filter { it != ipOption }
+                                    com.nas.naswebdav.SecurePrefsHelper.saveCredentialsAsync(context, historyIps.map { ipToFullUrl(it) }, user, pass)
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        )
                     }
                 }
             }

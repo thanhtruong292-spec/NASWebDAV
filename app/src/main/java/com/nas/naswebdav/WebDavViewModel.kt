@@ -1380,79 +1380,80 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             val oldUser = SecurePrefsHelper.getUser(context)
             val oldPass = SecurePrefsHelper.getPass(context)
 
-            // FIX LỖI ROUTING ANDROID (Split Tunneling Cache):
-            // Tại màn hình Đăng nhập, NGHIÊM CẤM ping song song LAN và VPN cùng lúc.
-            // Nếu ping song song, Android sẽ bị loạn Route cache và vứt nhầm request Tailscale (100.x)
-            // ra đường Wifi (192.x) dẫn đến Timeout!
-            // Giải pháp: Dùng chuẩn URL đầu tiên (do user vừa chọn trong Form).
-            val activeUrl = urlList.first()
-
             withContext(Dispatchers.IO) {
-                SecurePrefsHelper.saveCredentials(context, urlList, user, pass) 
+                SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
             }
 
-            val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
+            // FIX: Thử lần lượt từng URL (LAN → Tailscale) mà không gây race condition
+            // Vòng lặp tuần tự tránh lỗi split-tunneling cache của Android
+            val errorDetails = mutableListOf<String>()
+            var connectedUrl = ""
+            var result = false
 
-            withContext(Dispatchers.Main) {
-                currentUrl = safeUrl
-                connectionStatus = "Đang kết nối: $safeUrl"
-                isOnLan = !isTailscaleUrl(safeUrl)
-            }
+            val result2 = withContext(Dispatchers.IO) {
+                for (activeUrl in urlList) {
+                    if (activeUrl.isBlank()) continue
 
-            // 2. CONNECT + HANDSHAKE
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    webDavManager.connect(safeUrl, user, pass)
+                    val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
 
-                    // BƯỚC 1: XÁC THỰC BẰNG CHÍNH WEBDAV (CỔNG CHÍNH 8822/80) - Không bao giờ sai lệch Routing
-                    val pingResult = webDavManager.checkPingServer()
-                    if (pingResult == null || pingResult < 0) {
-                        lastErrorDetail = "WebDAV không phản hồi hoặc sai thông tin (HTTP 401/403/Timeout)"
-                        return@withContext false
+                    withContext(Dispatchers.Main) {
+                        currentUrl = safeUrl
+                        connectionStatus = "Đang kết nối: $safeUrl"
+                        isOnLan = !isTailscaleUrl(safeUrl)
                     }
 
-                    // Nếu WebDAV thành công, chúng ta lưu Credentials ngay (Bảo vệ luồng chính)
-                    SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
-                    repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $activeUrl")
+                    try {
+                        webDavManager.connect(safeUrl, user, pass)
 
-                    // BƯỚC 2: XÁC THỰC API PHỤ (Port 5050 cho System Stats)
-                    // Ở đây có trạm kiểm soát riêng biệt và KHÔNG THỂ CHẶN đứng luồng đăng nhập chính nếu bị sự cố Android VPN Timeout!
-                    val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
-                    val host = parsedUrl?.host
-                    if (!host.isNullOrEmpty()) {
-                        // FIX: Thay GlobalScope (không có lifecycle, không bao giờ cancel) bằng
-                        // applicationScope. Tác vụ authorize phụ là fire-and-forget — applicationScope
-                        // đảm bảo bị cancel khi app process kết thúc thay vì treo mãi mãi.
-                        NasApplication.applicationScope.launch(Dispatchers.IO) {
-                            try {
-                                val authHeader = okhttp3.Credentials.basic(user, pass)
-                                val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
-                                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                    .build()
-                                val request = okhttp3.Request.Builder()
-                                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
-                                    .header("Authorization", authHeader)
-                                    .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                    .build()
-                                cleanClient.newCall(request).execute().use { }
-                            } catch (e: Exception) {
-                                android.util.Log.w("NAS_AUTH", "API Phụ ${AppConfig.API_PORT} Warning: ${e.message}")
+                        // BƯỚC 1: XÁC THỰC BẰNG CHÍNH WEBDAV (CỔNG CHÍNH 8822/80)
+                        val pingResult = webDavManager.checkPingServer()
+                        if (pingResult == null || pingResult < 0) {
+                            errorDetails.add("$activeUrl: WebDAV timeout/unauthorized")
+                            continue
+                        }
+
+                        // ✅ Kết nối thành công! Ghi nhận và thoát khỏi vòng lặp
+                        SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
+                        repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $activeUrl")
+
+                        connectedUrl = activeUrl
+
+                        // BƯỚC 2: XÁC THỰC API PHỤ (Port 5050 cho System Stats)
+                        val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
+                        val host = parsedUrl?.host
+                        if (!host.isNullOrEmpty()) {
+                            NasApplication.applicationScope.launch(Dispatchers.IO) {
+                                try {
+                                    val authHeader = okhttp3.Credentials.basic(user, pass)
+                                    val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
+                                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                                        .build()
+                                    val request = okhttp3.Request.Builder()
+                                        .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
+                                        .header("Authorization", authHeader)
+                                        .post(ByteArray(0).toRequestBody(null, 0, 0))
+                                        .build()
+                                    cleanClient.newCall(request).execute().use { }
+                                } catch (e: Exception) {
+                                    android.util.Log.w("NAS_AUTH", "API Phụ ${AppConfig.API_PORT} Warning: ${e.message}")
+                                }
                             }
                         }
+                        return@withContext true
+                    } catch (e: Exception) {
+                        android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
+                        errorDetails.add("$activeUrl: ${e.message ?: "Network Timeout"}")
                     }
-                    true
-                } catch (e: Exception) {
-                    android.util.Log.e("NAS_AUTH", "Không thể xác thực: ${e.message}")
-                    lastErrorDetail = e.message ?: "Network Timeout"
-                    repository.addSystemLog("ERROR", "Network", "Lỗi xác thực Handshake: ${e.message}")
-                    false
                 }
+                // Tất cả URL đều thất bại
+                lastErrorDetail = if (errorDetails.isNotEmpty()) errorDetails.joinToString(", ") else "Không kết nối được NAS"
+                false
             }
 
             withContext(Dispatchers.Main) {
                 isLoading = false
-                if (result) {
+                if (result2) {
                     connectionStatus = "Đã xác thực thành công"
                     onSuccess()
                 } else {
@@ -1461,7 +1462,37 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             }
 
-            if (result) { refresh() }
+            if (result2) { refresh() }
+        }
+    }
+
+    suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> {
+        return kotlinx.coroutines.coroutineScope {
+            urlList.associate { url ->
+                url to try {
+                    val isTailscale = isTailscaleUrl(url)
+                    val timeoutSec = if (isTailscale) 5L else 2L
+                    val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
+                        .connectTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    val safeUrl = if (url.endsWith("/")) url else "$url/"
+                    val start = System.currentTimeMillis()
+                    val request = okhttp3.Request.Builder()
+                        .url(safeUrl)
+                        .method("OPTIONS", null)
+                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                        .build()
+
+                    val response = pingClient.newCall(request).execute()
+                    response.use {
+                        if (it.isSuccessful) System.currentTimeMillis() - start else -1L
+                    }
+                } catch (_: Exception) {
+                    -1L
+                }
+            }
         }
     }
 
