@@ -260,35 +260,29 @@ def get_ip_geo(ip):
     except Exception: return "UN", "Unknown"
 
 def ban_ip_permanently(ip):
+    # Co che fail2ban da bi VO HIEU HOA theo yeu cau nguoi dung.
+    # Khong con goi iptables DROP de tranh chan nham IP Tailscale/LAN cua chinh chu.
+    # Chi ghi log de admin biet co request ban (visibility) nhung khong thuc thi.
     try:
-        subprocess.run(['iptables', '-I', 'INPUT', '-s', ip, '-j', 'DROP'], check=True)
         now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
-        safe_msg = sanitize_log_input("[{}] Đã chặn vĩnh viễn IP {} ở tầng nhân Linux.".format(now, ip))
+        safe_msg = sanitize_log_input("[{}] [DISABLED] Yeu cau ban IP {} bi bo qua (fail2ban da tat).".format(now, ip))
         cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
-                   ("ERROR", "Firewall", safe_msg))
+                   ("WARNING", "Firewall", safe_msg))
         conn.commit()
         conn.close()
     except Exception as e:
-        log.error("[Firewall] Ban IP %s failed: %s", ip, e)
+        log.error("[Firewall] Log ban request for %s failed: %s", ip, e)
 
 def handle_auth_failure(ip):
+    # Co che fail2ban da bi VO HIEU HOA theo yeu cau nguoi dung.
+    # Chi ghi nhan so lan that bai vao auth_attempts de admin theo doi,
+    # KHONG con tu dong them banned_ips/iptables DROP nua.
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     cur = conn.cursor()
     cur.execute('INSERT OR IGNORE INTO auth_attempts VALUES (?, 0)', (ip,))
     cur.execute('UPDATE auth_attempts SET count = count + 1 WHERE ip=?', (ip,))
-    cur.execute('SELECT count FROM auth_attempts WHERE ip=?', (ip,))
-    row = cur.fetchone()
-    count = row[0] if row else 0
-    if count >= 3:
-        code, country = get_ip_geo(ip)
-        now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
-        cur.execute('INSERT OR REPLACE INTO banned_ips VALUES (?, ?, ?)', (ip, "Scan pass từ {}".format(country), now))
-        ban_ip_permanently(ip)
-        msg = sanitize_log_input("[{}] [{}] IP {} ({}) ĐÃ BỊ KHÓA TOÀN HỆ THỐNG!".format(now, code, ip, country))
-        cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)', ("ERROR", "Security", msg))
-        if main_loop: main_loop.add_callback(lambda: broadcast({"type": "SECURITY_BAN", "message": msg, "country_code": code}))
     conn.commit()
     conn.close()
 
@@ -508,11 +502,8 @@ def requires_auth(f):
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
         
-        # Kiem tra IP bi cam
-        cur.execute('SELECT 1 FROM banned_ips WHERE ip=?', (ip,))
-        if cur.fetchone():
-            conn.close()
-            return jsonify({"detail": "IP BANNED"}), 403
+        # Co che fail2ban da bi VO HIEU HOA: khong check banned_ips nua.
+        # IP da bi ban truoc do van duoc qua tang nay (van phai xac thuc Basic Auth o duoi).
 
         # Kiem tra IP trong LAN whitelist (bypass auth)
         if _ip_in_whitelist(ip):
