@@ -4614,8 +4614,21 @@ def api_ytdlp_download():
             "-o", output_template,
             "--socket-timeout", "30",
             "--retries", "3",
-            video_url
         ]
+
+        # Inject cookies.txt + browser User-Agent de qua mat bot protection
+        # (chu yeu can cho TikTok, dong thoi vo hai voi cac platform khac)
+        cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+        if os.path.exists(cookies_path):
+            cmd.extend(["--cookies", cookies_path])
+        cmd.extend([
+            "--user-agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ])
+        if "tiktok" in video_url.lower():
+            cmd.extend(["--add-header", "Referer: https://www.tiktok.com/"])
+
+        cmd.append(video_url)
 
         # Ghi log yt-dlp ra file rieng de debug
         log_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "ytdlp_logs")
