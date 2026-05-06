@@ -1466,32 +1466,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> {
-        return kotlinx.coroutines.coroutineScope {
-            urlList.associate { url ->
-                url to try {
-                    val isTailscale = isTailscaleUrl(url)
-                    val timeoutSec = if (isTailscale) 5L else 2L
-                    val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                        .connectTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                        .build()
+    suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        urlList.associate { url ->
+            url to try {
+                val isTailscale = isTailscaleUrl(url)
+                val timeoutSec = if (isTailscale) 5L else 2L
+                val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
+                    .connectTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
 
-                    val safeUrl = if (url.endsWith("/")) url else "$url/"
-                    val start = System.currentTimeMillis()
-                    val request = okhttp3.Request.Builder()
-                        .url(safeUrl)
-                        .method("OPTIONS", null)
-                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
-                        .build()
+                val safeUrl = if (url.endsWith("/")) url else "$url/"
+                val start = System.currentTimeMillis()
+                val request = okhttp3.Request.Builder()
+                    .url(safeUrl)
+                    .method("OPTIONS", null)
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .build()
 
-                    val response = pingClient.newCall(request).execute()
-                    response.use {
-                        if (it.isSuccessful) System.currentTimeMillis() - start else -1L
-                    }
-                } catch (_: Exception) {
-                    -1L
+                val response = pingClient.newCall(request).execute()
+                response.use {
+                    System.currentTimeMillis() - start
                 }
+            } catch (_: Exception) {
+                -1L
             }
         }
     }
