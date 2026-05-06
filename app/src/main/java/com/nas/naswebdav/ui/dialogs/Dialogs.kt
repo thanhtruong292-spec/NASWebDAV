@@ -1428,16 +1428,30 @@ fun LivestreamRecordDialog(
         }
     }
     
-    // Auto-resolve TikTok short links to get the actual username
+    // Auto-resolve TikTok short links to get the actual username.
+    // Bao gom: vt.tiktok.com/<id>, vm.tiktok.com/<id>, va dinh dang share moi tiktok.com/t/<id>
     LaunchedEffect(liveUrl) {
-        if ((liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com")) && !liveUrl.contains("@")) {
+        val isShortLink = liveUrl.contains("vt.tiktok.com") ||
+                          liveUrl.contains("vm.tiktok.com") ||
+                          Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(liveUrl)
+        if (isShortLink && !liveUrl.contains("@")) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    val conn = java.net.URL(liveUrl).openConnection() as java.net.HttpURLConnection
-                    conn.instanceFollowRedirects = false
-                    val location = conn.getHeaderField("Location")
-                    if (!location.isNullOrBlank() && location.contains("@")) {
-                        val newUrl = location.substringBefore("?")
+                    var current = liveUrl
+                    // Theo redirect toi 5 hop de tranh loop, vi tiktok.com/t/ co the redirect 2-3 lan
+                    repeat(5) {
+                        val conn = java.net.URL(current).openConnection() as java.net.HttpURLConnection
+                        conn.instanceFollowRedirects = false
+                        conn.connectTimeout = 5000
+                        conn.readTimeout = 5000
+                        val location = conn.getHeaderField("Location")
+                        conn.disconnect()
+                        if (location.isNullOrBlank()) return@repeat
+                        current = if (location.startsWith("http")) location else java.net.URL(java.net.URL(current), location).toString()
+                        if (current.contains("@")) return@repeat
+                    }
+                    if (current.contains("@") && current != liveUrl) {
+                        val newUrl = current.substringBefore("?")
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             liveUrl = newUrl
                         }
