@@ -310,9 +310,15 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         setContent {
 
-            MaterialTheme {
+            val colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                androidx.compose.material3.darkColorScheme()
+            } else {
+                androidx.compose.material3.lightColorScheme()
+            }
 
-                Surface {
+            MaterialTheme(colorScheme = colorScheme) {
+
+                Surface(color = MaterialTheme.colorScheme.background) {
 
                     NasAppNavigation(viewModel)
 
