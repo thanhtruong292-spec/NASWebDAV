@@ -733,6 +733,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         var speed: String = "",
         var outputFile: String = ""
     )
+
+    data class TikTokLiveWatchUser(
+        val username: String,
+        val status: String = "watching",
+        val lastCheck: String = "",
+        val lastLive: String = "",
+        val lastError: String = "",
+        val jobId: String = ""
+    )
     
     // Danh sách các stream đang ghi
     var activeLivestreams = androidx.compose.runtime.mutableStateListOf<LivestreamJob>()
@@ -743,8 +752,120 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     /** UI gọi để xóa message lỗi, hiện lại nút "BẮT ĐẦU GHI" */
     fun clearLivestreamMessage() { livestreamMessage = "" }
 
+    var tiktokLiveWatchUsers = androidx.compose.runtime.mutableStateListOf<TikTokLiveWatchUser>()
+        private set
+    var tiktokLiveWatchError by mutableStateOf("")
+        private set
+    var tiktokExcludeEnabled by mutableStateOf(false)
+        private set
+    var tiktokExcludeStart by mutableStateOf("23:00")
+        private set
+    var tiktokExcludeEnd by mutableStateOf("07:00")
+        private set
+    var isLoadingTikTokWatch by mutableStateOf(false)
+        private set
+
     var isStartingLivestream by mutableStateOf(false)
         private set
+
+    private fun applyTikTokWatchJson(json: org.json.JSONObject) {
+        tiktokLiveWatchUsers.clear()
+        val arr = json.optJSONArray("users") ?: org.json.JSONArray()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            tiktokLiveWatchUsers.add(
+                TikTokLiveWatchUser(
+                    username = obj.optString("username", ""),
+                    status = obj.optString("status", "watching"),
+                    lastCheck = obj.optString("last_check", ""),
+                    lastLive = obj.optString("last_live", ""),
+                    lastError = obj.optString("last_error", ""),
+                    jobId = obj.optString("job_id", "")
+                )
+            )
+        }
+        tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
+        tiktokExcludeStart = json.optString("exclude_start", "23:00")
+        tiktokExcludeEnd = json.optString("exclude_end", "07:00")
+        tiktokLiveWatchError = ""
+    }
+
+    private fun tiktokWatchRequest(context: Context, path: String, body: org.json.JSONObject? = null): org.json.JSONObject {
+        val requestBuilder = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}$path")
+        if (body != null) {
+            requestBuilder.post(body.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+        }
+        val user = SecurePrefsHelper.getUser(context)
+        val pass = SecurePrefsHelper.getPass(context)
+        if (user.isNotEmpty() && pass.isNotEmpty()) {
+            requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+        }
+        localApiClient.newCall(requestBuilder.build()).execute().use { response ->
+            val text = response.body?.string() ?: "{}"
+            val result = org.json.JSONObject(text)
+            if (!response.isSuccessful) {
+                throw IllegalStateException(result.optString("error", "NAS tu choi (${response.code})"))
+            }
+            return result
+        }
+    }
+
+    fun fetchTikTokLiveWatch(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoadingTikTokWatch = true }
+            try {
+                val json = tiktokWatchRequest(context, "/api/tiktok/live_watch")
+                withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Chưa kết nối NAS"}" }
+            } finally {
+                withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
+            }
+        }
+    }
+
+    fun addTikTokLiveWatchUser(context: Context, username: String) {
+        val clean = username.trim().removePrefix("@")
+        if (clean.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isLoadingTikTokWatch = true }
+            try {
+                val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/add", org.json.JSONObject().put("username", clean))
+                withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được user"}" }
+            } finally {
+                withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
+            }
+        }
+    }
+
+    fun removeTikTokLiveWatchUser(context: Context, username: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/remove", org.json.JSONObject().put("username", username))
+                withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không xóa được user"}" }
+            }
+        }
+    }
+
+    fun updateTikTokLiveWatchSettings(context: Context, enabled: Boolean, start: String = tiktokExcludeStart, end: String = tiktokExcludeEnd) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val body = org.json.JSONObject().apply {
+                    put("exclude_enabled", enabled)
+                    put("exclude_start", start)
+                    put("exclude_end", end)
+                }
+                val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/settings", body)
+                withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không lưu được cấu hình"}" }
+            }
+        }
+    }
 
     fun startLivestreamRecord(context: Context, url: String, quality: String = "best", referer: String = "", userAgent: String = "") {
         isStartingLivestream = true

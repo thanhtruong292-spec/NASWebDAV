@@ -313,6 +313,121 @@ fun SmartDiskDialog(
 // ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
+@Composable
+private fun TikTokLiveWatchSection(
+    viewModel: WebDavViewModel,
+    context: Context,
+    users: List<WebDavViewModel.TikTokLiveWatchUser>,
+    newUsername: String,
+    onUsernameChange: (String) -> Unit
+) {
+    HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
+    Spacer(Modifier.height(14.dp))
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("♪", fontSize = 20.sp, color = Color(0xFFEE1D52))
+        Spacer(Modifier.width(8.dp))
+        Text("THEO DÕI TIKTOK LIVE", color = Color(0xFFEE1D52), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Spacer(Modifier.weight(1f))
+        Text("${users.size} user", color = Color(0xFF9AA3B8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+    Spacer(Modifier.height(12.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = newUsername,
+            onValueChange = onUsernameChange,
+            leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold) },
+            placeholder = { Text("Nhập username TikTok", color = Color(0xFF8892B0), fontSize = 13.sp) },
+            singleLine = true,
+            modifier = Modifier.weight(1f).height(58.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFFEE1D52),
+                unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f),
+                cursorColor = Color(0xFFEE1D52),
+                focusedTextColor = Color(0xFFE8E8E8),
+                unfocusedTextColor = Color(0xFFE8E8E8)
+            )
+        )
+        Button(
+            onClick = { viewModel.addTikTokLiveWatchUser(context, newUsername) },
+            enabled = newUsername.isNotBlank() && !viewModel.isLoadingTikTokWatch,
+            modifier = Modifier.height(58.dp).widthIn(min = 104.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF424242)),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(Icons.Default.Add, null, tint = Color.White)
+            Spacer(Modifier.width(6.dp))
+            Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
+    if (viewModel.tiktokLiveWatchError.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+    if (users.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            users.forEach { user ->
+                Row(
+                    Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("@${user.username}", color = Color(0xFFE8E8E8), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        val sub = when (user.status) {
+                            "recording" -> "Đang live - đã tự ghi"
+                            "excluded" -> "Đang trong giờ loại trừ"
+                            "error" -> user.lastError.ifEmpty { "Lỗi kiểm tra" }
+                            else -> "Đang theo dõi"
+                        }
+                        Text(sub, color = if (user.status == "recording") Color(0xFF43A047) else Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = { viewModel.removeTikTokLiveWatchUser(context, user.username) }) {
+                        Icon(Icons.Default.Close, contentDescription = "Xóa", tint = Color(0xFFFF1744))
+                    }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    Text("Thêm username TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(16.dp))
+    HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
+    Spacer(Modifier.height(14.dp))
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text("☾", fontSize = 18.sp, color = Color(0xFFFFCC80))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Thời gian loại trừ", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Không kiểm tra livestream trong khoảng giờ này", color = Color(0xFF8892B0), fontSize = 11.sp)
+        }
+        Switch(
+            checked = viewModel.tiktokExcludeEnabled,
+            onCheckedChange = { viewModel.updateTikTokLiveWatchSettings(context, it) }
+        )
+    }
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
+        OutlinedTextField(
+            value = viewModel.tiktokExcludeStart,
+            onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
+            singleLine = true,
+            modifier = Modifier.width(96.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+        )
+        Text("→", color = Color(0xFF8892B0), fontSize = 18.sp)
+        Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
+        OutlinedTextField(
+            value = viewModel.tiktokExcludeEnd,
+            onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
+            singleLine = true,
+            modifier = Modifier.width(96.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+        )
+    }
+    Spacer(Modifier.height(18.dp))
+}
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AutoBackupDialog(
@@ -1385,9 +1500,13 @@ fun LivestreamRecordDialog(
     LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
     var liveUrl by remember { mutableStateOf("") }
     var isResolvingTikTokLink by remember { mutableStateOf(false) }
+    var newTikTokWatchUser by remember { mutableStateOf("") }
     var selectedQuality by remember { mutableStateOf("best") }
     val activeLivestreams = viewModel.activeLivestreams
     val message = viewModel.livestreamMessage
+    val tiktokWatchUsers = viewModel.tiktokLiveWatchUsers
+
+    LaunchedEffect(Unit) { viewModel.fetchTikTokLiveWatch(context) }
 
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
     LaunchedEffect(Unit) {
@@ -1505,6 +1624,14 @@ fun LivestreamRecordDialog(
                     }
                 }
             }
+
+            TikTokLiveWatchSection(
+                viewModel = viewModel,
+                context = context,
+                users = tiktokWatchUsers,
+                newUsername = newTikTokWatchUser,
+                onUsernameChange = { newTikTokWatchUser = it.removePrefix("@") }
+            )
 
             // --- PHẦN 1: FORM TẠO JOB MỚI ---
             OutlinedTextField(

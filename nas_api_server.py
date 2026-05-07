@@ -23,6 +23,8 @@ import logging
 import re as _re_module
 from functools import wraps
 import sqlite3
+import base64
+import urllib.request
 
 def sanitize_log_input(text):
     if not text: return str(text)
@@ -4176,6 +4178,220 @@ def _fan_controller_watchdog():
 # Khoi dong watchdog thread
 threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
 threading.Thread(target=_livestream_watchdog, daemon=True).start()
+
+_TIKTOK_WATCH_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tiktok_live_watch.json")
+_tiktok_watch_lock = threading.Lock()
+_tiktok_watch_state = {
+    "users": [],
+    "exclude_enabled": False,
+    "exclude_start": "23:00",
+    "exclude_end": "07:00",
+    "poll_interval": 60
+}
+
+def _load_tiktok_watch_state():
+    global _tiktok_watch_state
+    try:
+        if os.path.exists(_TIKTOK_WATCH_FILE):
+            with open(_TIKTOK_WATCH_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                _tiktok_watch_state.update(data)
+    except Exception as e:
+        log.error("[TikTokWatch] Load state failed: %s", e)
+
+def _save_tiktok_watch_state():
+    try:
+        os.makedirs(os.path.dirname(_TIKTOK_WATCH_FILE), exist_ok=True)
+        tmp = _TIKTOK_WATCH_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_tiktok_watch_state, f, ensure_ascii=False)
+        os.replace(tmp, _TIKTOK_WATCH_FILE)
+    except Exception as e:
+        log.error("[TikTokWatch] Save state failed: %s", e)
+
+def _normalize_tiktok_username(username):
+    username = (username or "").strip()
+    if username.startswith("@"):
+        username = username[1:]
+    username = username.split("/")[0].split("?")[0].strip()
+    return "".join(ch for ch in username if ch.isalnum() or ch in "._-")[:64]
+
+def _is_tiktok_watch_excluded(now_dt=None):
+    now_dt = now_dt or datetime.datetime.now()
+    if not _tiktok_watch_state.get("exclude_enabled", False):
+        return False
+    try:
+        start_h, start_m = [int(x) for x in _tiktok_watch_state.get("exclude_start", "23:00").split(":")[:2]]
+        end_h, end_m = [int(x) for x in _tiktok_watch_state.get("exclude_end", "07:00").split(":")[:2]]
+        now_minutes = now_dt.hour * 60 + now_dt.minute
+        start_minutes = start_h * 60 + start_m
+        end_minutes = end_h * 60 + end_m
+        if start_minutes <= end_minutes:
+            return start_minutes <= now_minutes < end_minutes
+        return now_minutes >= start_minutes or now_minutes < end_minutes
+    except Exception:
+        return False
+
+def _tiktok_watch_user_has_recording(username):
+    target = "@%s/live" % username.lower()
+    with _livestream_lock:
+        for jid, info in _livestream_jobs.items():
+            if info.get("status") == "recording" and target in info.get("url", "").lower():
+                return jid
+    return ""
+
+def _check_tiktok_user_live(username):
+    ytdlp_bin = _find_ytdlp_bin()
+    if not ytdlp_bin:
+        return False, "yt-dlp chua duoc cai dat"
+    live_url = "https://www.tiktok.com/@%s/live" % username
+    cmd = [
+        ytdlp_bin,
+        "--simulate",
+        "--no-playlist",
+        "--no-warnings",
+        "--socket-timeout", "20",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--add-header", "Referer: https://www.tiktok.com/",
+        live_url
+    ]
+    cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+    if os.path.exists(cookies_path):
+        cmd[1:1] = ["--cookies", cookies_path]
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=35)
+        output = (proc.stdout or b"").decode("utf-8", errors="ignore") + "\n" + (proc.stderr or b"").decode("utf-8", errors="ignore")
+        if proc.returncode == 0:
+            return True, ""
+        lowered = output.lower()
+        if "not live" in lowered or "offline" in lowered or "room not found" in lowered:
+            return False, "offline"
+        return False, output.strip()[-160:]
+    except Exception as e:
+        return False, str(e)
+
+def _start_tiktok_watch_record(username):
+    live_url = "https://www.tiktok.com/@%s/live" % username
+    payload = json.dumps({"url": live_url, "quality": "best"}).encode("utf-8")
+    req = urllib.request.Request(
+        "http://127.0.0.1:5050/api/livestream/record",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Basic " + base64.b64encode(("%s:%s" % (WEBDAV_USER, WEBDAV_PASS)).encode()).decode()
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+            return data.get("job_id", ""), data.get("message", "")
+    except Exception as e:
+        return "", str(e)
+
+def _tiktok_live_watchdog():
+    _load_tiktok_watch_state()
+    while True:
+        try:
+            time.sleep(int(_tiktok_watch_state.get("poll_interval", 60)))
+            with _tiktok_watch_lock:
+                users_snapshot = list(_tiktok_watch_state.get("users", []))
+                excluded = _is_tiktok_watch_excluded()
+            changed = False
+            for user in users_snapshot:
+                username = user.get("username", "")
+                if not username:
+                    continue
+                now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                if excluded:
+                    user["status"] = "excluded"
+                    user["last_check"] = now_str
+                    changed = True
+                    continue
+                existing_job = _tiktok_watch_user_has_recording(username)
+                if existing_job:
+                    user["status"] = "recording"
+                    user["job_id"] = existing_job
+                    user["last_check"] = now_str
+                    changed = True
+                    continue
+                is_live, err = _check_tiktok_user_live(username)
+                user["last_check"] = now_str
+                if is_live:
+                    job_id, msg = _start_tiktok_watch_record(username)
+                    user["status"] = "recording" if job_id else "error"
+                    user["job_id"] = job_id
+                    user["last_live"] = now_str
+                    user["last_error"] = "" if job_id else msg
+                else:
+                    user["status"] = "watching"
+                    user["job_id"] = ""
+                    user["last_error"] = "" if err == "offline" else err
+                changed = True
+            if changed:
+                with _tiktok_watch_lock:
+                    _tiktok_watch_state["users"] = users_snapshot
+                    _save_tiktok_watch_state()
+        except Exception as e:
+            log.error("[TikTokWatch] Watchdog error: %s", e)
+
+threading.Thread(target=_tiktok_live_watchdog, daemon=True).start()
+
+@app.route("/api/tiktok/live_watch", methods=["GET"])
+@requires_auth
+def api_tiktok_live_watch_get():
+    with _tiktok_watch_lock:
+        _load_tiktok_watch_state()
+        return jsonify(_tiktok_watch_state)
+
+@app.route("/api/tiktok/live_watch/add", methods=["POST"])
+@requires_auth
+def api_tiktok_live_watch_add():
+    body = request.get_json(force=True) or {}
+    username = _normalize_tiktok_username(body.get("username", ""))
+    if not username:
+        return jsonify({"error": "Username TikTok khong hop le"}), 400
+    with _tiktok_watch_lock:
+        users = _tiktok_watch_state.setdefault("users", [])
+        if not any(u.get("username", "").lower() == username.lower() for u in users):
+            users.append({
+                "username": username,
+                "status": "watching",
+                "last_check": "",
+                "last_live": "",
+                "last_error": "",
+                "job_id": ""
+            })
+        _save_tiktok_watch_state()
+        return jsonify(_tiktok_watch_state)
+
+@app.route("/api/tiktok/live_watch/remove", methods=["POST"])
+@requires_auth
+def api_tiktok_live_watch_remove():
+    body = request.get_json(force=True) or {}
+    username = _normalize_tiktok_username(body.get("username", ""))
+    with _tiktok_watch_lock:
+        _tiktok_watch_state["users"] = [
+            u for u in _tiktok_watch_state.get("users", [])
+            if u.get("username", "").lower() != username.lower()
+        ]
+        _save_tiktok_watch_state()
+        return jsonify(_tiktok_watch_state)
+
+@app.route("/api/tiktok/live_watch/settings", methods=["POST"])
+@requires_auth
+def api_tiktok_live_watch_settings():
+    body = request.get_json(force=True) or {}
+    with _tiktok_watch_lock:
+        if "exclude_enabled" in body:
+            _tiktok_watch_state["exclude_enabled"] = bool(body.get("exclude_enabled"))
+        if body.get("exclude_start"):
+            _tiktok_watch_state["exclude_start"] = str(body.get("exclude_start"))[:5]
+        if body.get("exclude_end"):
+            _tiktok_watch_state["exclude_end"] = str(body.get("exclude_end"))[:5]
+        _save_tiktok_watch_state()
+        return jsonify(_tiktok_watch_state)
 
 
 @app.route("/api/livestream/record", methods=["POST"])
