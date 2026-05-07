@@ -1384,6 +1384,7 @@ fun LivestreamRecordDialog(
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
     LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
     var liveUrl by remember { mutableStateOf("") }
+    var isResolvingTikTokLink by remember { mutableStateOf(false) }
     var selectedQuality by remember { mutableStateOf("best") }
     val activeLivestreams = viewModel.activeLivestreams
     val message = viewModel.livestreamMessage
@@ -1393,6 +1394,7 @@ fun LivestreamRecordDialog(
         val clipText = clipboardManager.getText()?.text ?: ""
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
             liveUrl = clipText.trim()
+            viewModel.clearLivestreamMessage()
         }
     }
 
@@ -1412,7 +1414,7 @@ fun LivestreamRecordDialog(
             liveUrl.contains("tiktok", true) -> {
                 val username = Regex("@([\\w.]+)").find(liveUrl)?.groupValues?.get(1)
                 if (username != null) "Live của @$username" 
-                else if (liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com")) "TikTok Live (Đang lấy tên...)"
+                else if (isResolvingTikTokLink || liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com") || Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(liveUrl)) "TikTok Live (Đang lấy tên...)"
                 else "TikTok Live"
             }
             liveUrl.contains("facebook", true) || liveUrl.contains("fb.watch", true) -> {
@@ -1431,33 +1433,49 @@ fun LivestreamRecordDialog(
     // Auto-resolve TikTok short links to get the actual username.
     // Bao gom: vt.tiktok.com/<id>, vm.tiktok.com/<id>, va dinh dang share moi tiktok.com/t/<id>
     LaunchedEffect(liveUrl) {
-        val isShortLink = liveUrl.contains("vt.tiktok.com") ||
-                          liveUrl.contains("vm.tiktok.com") ||
-                          Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(liveUrl)
-        if (isShortLink && !liveUrl.contains("@")) {
+        val originalUrl = liveUrl.trim()
+        val isShortLink = originalUrl.contains("vt.tiktok.com") ||
+                          originalUrl.contains("vm.tiktok.com") ||
+                          Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(originalUrl)
+        if (isShortLink && !originalUrl.contains("@")) {
+            isResolvingTikTokLink = true
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    var current = liveUrl
+                    var current = originalUrl
                     // Theo redirect toi 5 hop de tranh loop, vi tiktok.com/t/ co the redirect 2-3 lan
-                    repeat(5) {
+                    for (hop in 0 until 5) {
                         val conn = java.net.URL(current).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = false
                         conn.connectTimeout = 5000
                         conn.readTimeout = 5000
+                        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
+                        conn.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                        conn.setRequestProperty("Referer", "https://www.tiktok.com/")
+                        conn.responseCode
                         val location = conn.getHeaderField("Location")
                         conn.disconnect()
-                        if (location.isNullOrBlank()) return@repeat
+                        if (location.isNullOrBlank()) break
                         current = if (location.startsWith("http")) location else java.net.URL(java.net.URL(current), location).toString()
-                        if (current.contains("@")) return@repeat
+                        if (current.contains("@")) break
                     }
-                    if (current.contains("@") && current != liveUrl) {
+                    if (current.contains("@") && current != originalUrl) {
                         val newUrl = current.substringBefore("?")
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            liveUrl = newUrl
+                            if (liveUrl == originalUrl) {
+                                liveUrl = newUrl
+                                viewModel.clearLivestreamMessage()
+                            }
                         }
                     }
                 } catch(e: Exception) {}
+                finally {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        isResolvingTikTokLink = false
+                    }
+                }
             }
+        } else {
+            isResolvingTikTokLink = false
         }
     }
 
@@ -1491,7 +1509,10 @@ fun LivestreamRecordDialog(
             // --- PHẦN 1: FORM TẠO JOB MỚI ---
             OutlinedTextField(
                 value = liveUrl,
-                onValueChange = { liveUrl = it },
+                onValueChange = {
+                    liveUrl = it
+                    viewModel.clearLivestreamMessage()
+                },
                 label = { Text("Dán link livestream", color = Color(0xFF8892B0)) },
                 placeholder = { Text("https://www.tiktok.com/@user/live", color = Color(0xFF8892B0).copy(alpha = 0.5f), fontSize = 12.sp) },
                 modifier = Modifier.fillMaxWidth(),
@@ -1590,14 +1611,14 @@ fun LivestreamRecordDialog(
                             }
                         }
                     },
-                    enabled = liveUrl.isNotBlank(),
+                    enabled = liveUrl.isNotBlank() && !isResolvingTikTokLink,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
 
