@@ -1501,6 +1501,7 @@ fun LivestreamRecordDialog(
     var liveUrl by remember { mutableStateOf("") }
     var isResolvingTikTokLink by remember { mutableStateOf(false) }
     var newTikTokWatchUser by remember { mutableStateOf("") }
+    var livePanelMode by remember { mutableStateOf("record") }
     var selectedQuality by remember { mutableStateOf("best") }
     val activeLivestreams = viewModel.activeLivestreams
     val message = viewModel.livestreamMessage
@@ -1513,6 +1514,7 @@ fun LivestreamRecordDialog(
         val clipText = clipboardManager.getText()?.text ?: ""
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
             liveUrl = clipText.trim()
+            livePanelMode = "record"
             viewModel.clearLivestreamMessage()
         }
     }
@@ -1625,13 +1627,35 @@ fun LivestreamRecordDialog(
                 }
             }
 
-            TikTokLiveWatchSection(
-                viewModel = viewModel,
-                context = context,
-                users = tiktokWatchUsers,
-                newUsername = newTikTokWatchUser,
-                onUsernameChange = { newTikTokWatchUser = it.removePrefix("@") }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = livePanelMode == "watch",
+                    onClick = { livePanelMode = "watch" },
+                    label = { Text("Theo dõi user", fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFFEE1D52).copy(alpha = 0.2f), selectedLabelColor = Color(0xFFEE1D52), containerColor = Color.Transparent, labelColor = Color(0xFF8892B0)),
+                    border = FilterChipDefaults.filterChipBorder(borderColor = Color(0xFF8892B0).copy(alpha = 0.2f), selectedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.5f), enabled = true, selected = livePanelMode == "watch"),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                )
+                FilterChip(
+                    selected = livePanelMode == "record",
+                    onClick = { livePanelMode = "record" },
+                    label = { Text("Ghi link live", fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accentColor.copy(alpha = 0.2f), selectedLabelColor = accentColor, containerColor = Color.Transparent, labelColor = Color(0xFF8892B0)),
+                    border = FilterChipDefaults.filterChipBorder(borderColor = Color(0xFF8892B0).copy(alpha = 0.2f), selectedBorderColor = accentColor.copy(alpha = 0.5f), enabled = true, selected = livePanelMode == "record"),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+
+            if (livePanelMode == "watch") {
+                TikTokLiveWatchSection(
+                    viewModel = viewModel,
+                    context = context,
+                    users = tiktokWatchUsers,
+                    newUsername = newTikTokWatchUser,
+                    onUsernameChange = { newTikTokWatchUser = it.removePrefix("@") }
+                )
+            } else {
 
             // --- PHẦN 1: FORM TẠO JOB MỚI ---
             OutlinedTextField(
@@ -1747,6 +1771,7 @@ fun LivestreamRecordDialog(
                     Spacer(Modifier.width(8.dp))
                     Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
+            }
             }
 
             Spacer(Modifier.height(20.dp))
