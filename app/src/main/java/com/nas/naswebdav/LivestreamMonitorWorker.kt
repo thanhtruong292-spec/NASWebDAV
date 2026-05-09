@@ -83,7 +83,6 @@ class LivestreamMonitorWorker(
                     KEY_PLATFORM to platform,
                     KEY_NOTIF_ID to notifId
                 ))
-                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .addTag(WORK_NAME_PREFIX + jobId)
                 .addTag("LIVESTREAM_ALL")  // Tag chung để query tất cả
                 .build()
@@ -125,6 +124,18 @@ class LivestreamMonitorWorker(
     // fastApiClient đã được cấu hình với timeout phù hợp (connectTimeout=15s, readTimeout=30s).
     private val httpClient get() = NasApplication.instance.fastApiClient
 
+    private fun safeDataText(value: String, maxChars: Int = 512): String {
+        return if (value.length <= maxChars) value else value.take(maxChars) + "..."
+    }
+
+    private fun notificationsEnabled(): Boolean {
+        return try {
+            androidx.core.app.NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
         return buildForegroundInfo(notifId, "Đang ghi hình...", "Đang khởi động...")
@@ -152,12 +163,13 @@ class LivestreamMonitorWorker(
         val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
 
         createChannel(applicationContext)
+        if (notificationsEnabled()) {
         try {
-            setForeground(buildForegroundInfo(
+            androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(notifId, buildForegroundInfo(
                 notifId = notifId,
                 title   = "$platformIcon Đang ghi $platformLabel Live",
                 content = "Đang kết nối..."
-            ))
+            ).notification)
         } catch (e: Exception) {
             // Android 12+ strict background foreground service restriction. 
             // Fallback to updating notification normally.
@@ -168,6 +180,8 @@ class LivestreamMonitorWorker(
         }
 
         // Lấy credentials
+        }
+
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
 
@@ -214,8 +228,8 @@ class LivestreamMonitorWorker(
                     val fileSize  = job.optString("file_size", "0 B")
                     val duration  = job.optString("duration_display", "0h00m00s")
                     val speed     = job.optString("avg_speed", "")
-                    val outFile   = job.optString("output_file", "")
-                    val errorReason = job.optString("error_reason", "")
+                    val outFile   = safeDataText(job.optString("output_file", ""), 180)
+                    val errorReason = safeDataText(job.optString("error_reason", ""), 512)
                     if (errorReason.isNotEmpty()) {
                         finalErrorReason = errorReason
                     }
@@ -233,10 +247,12 @@ class LivestreamMonitorWorker(
                         content = contentLine,
                         subText = if (outFile.isNotEmpty()) outFile else null
                     )
+                    if (notificationsEnabled()) {
                     try {
                         androidx.core.app.NotificationManagerCompat.from(applicationContext)
                             .notify(notifId, foregroundInfo.notification)
                     } catch (_: SecurityException) {}
+                    }
 
                     // Cập nhật output data để ViewModel observe được
                     setProgress(workDataOf(
@@ -278,7 +294,7 @@ class LivestreamMonitorWorker(
         if (finalStatus == "error") {
             val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp."
             showCompletionNotification(notifId, platformLabel, "⚠️", msg)
-            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to finalErrorReason))
+            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to safeDataText(finalErrorReason, 512)))
         } else {
             showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã lưu vào thư mục Livestream/ trên NAS")
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
@@ -312,14 +328,7 @@ class LivestreamMonitorWorker(
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(
-                notifId, notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-        } else {
-            ForegroundInfo(notifId, notification)
-        }
+        return ForegroundInfo(notifId, notification)
     }
 
     private fun showCompletionNotification(baseNotifId: Int, platformLabel: String, icon: String, contentText: String) {
@@ -337,15 +346,17 @@ class LivestreamMonitorWorker(
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(if (icon == "⚠️") android.R.drawable.stat_notify_error else android.R.drawable.stat_sys_download_done)
             .setContentTitle(titleText)
-            .setContentText(contentText)
+            .setContentText(safeDataText(contentText, 180))
             .setAutoCancel(true)
             .setContentIntent(openPending)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
         try {
-            applicationContext.getSystemService(NotificationManager::class.java)
-                ?.notify(baseNotifId + 1000, notification)
+            if (notificationsEnabled()) {
+                applicationContext.getSystemService(NotificationManager::class.java)
+                    ?.notify(baseNotifId + 1000, notification)
+            }
         } catch (_: Exception) {}
     }
 }
