@@ -13,6 +13,8 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import org.json.JSONObject
+import java.io.File
 
 /**
  * StreamPipeWorker — Foreground Worker bơm video từ CDN → NAS WebDAV.
@@ -55,9 +57,29 @@ class StreamPipeWorker(
         }
     }
 
+    private fun safeDataText(value: String, maxChars: Int = 512): String {
+        return if (value.length <= maxChars) value else value.take(maxChars) + "..."
+    }
+
+    private fun loadPipePayload(): Pair<String, String> {
+        val payloadFile = inputData.getString("payloadFile") ?: ""
+        if (payloadFile.isNotEmpty()) {
+            try {
+                val file = File(payloadFile)
+                if (file.exists()) {
+                    val json = JSONObject(file.readText())
+                    return json.optString("sourceUrl", "") to json.optString("fileName", "")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Cannot read stream payload", e)
+            }
+        }
+        return (inputData.getString("sourceUrl") ?: "") to (inputData.getString("fileName") ?: "")
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val sourceUrl = inputData.getString("sourceUrl") ?: return@withContext Result.failure()
-        val fileName = inputData.getString("fileName") ?: return@withContext Result.failure()
+        val (sourceUrl, fileName) = loadPipePayload()
+        if (sourceUrl.isEmpty() || fileName.isEmpty()) return@withContext Result.failure()
 
         // FIX D6: Đọc credentials từ SecurePrefsHelper (EncryptedSharedPreferences) thay vì inputData.
         // WorkData được lưu vào SQLite KHÔNG mã hóa của WorkManager → có thể bị đọc bởi root/backup tools.
@@ -82,14 +104,7 @@ class StreamPipeWorker(
 
         try {
             setForeground(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ForegroundInfo(
-                        NOTIFICATION_ID, notificationBuilder.build(),
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
-                }
+                ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
             )
         } catch (_: Exception) {}
 
@@ -233,8 +248,7 @@ class StreamPipeWorker(
                     "progress" to 100,
                     "message" to resultMsg,
                     "bytesRead" to totalBytesRead,
-                    "fileName" to safeFileName,
-                    "sourceUrl" to sourceUrl
+                    "fileName" to safeDataText(safeFileName, 180)
                 ))
 
                 // Log
@@ -266,8 +280,7 @@ class StreamPipeWorker(
 
             setProgress(workDataOf(
                 "status" to "error",
-                "message" to errMsg,
-                "sourceUrl" to sourceUrl
+                "message" to safeDataText(errMsg)
             ))
 
             // Notification lỗi
@@ -290,6 +303,10 @@ class StreamPipeWorker(
             } catch (_: Exception) {}
 
             return@withContext Result.failure()
+        } finally {
+            try {
+                inputData.getString("payloadFile")?.let { File(it).delete() }
+            } catch (_: Exception) {}
         }
     }
 

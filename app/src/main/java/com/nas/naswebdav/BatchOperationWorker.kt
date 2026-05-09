@@ -127,14 +127,7 @@ class BatchOperationWorker(
 
         try {
             setForeground(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ForegroundInfo(
-                        NOTIFICATION_ID, notificationBuilder.build(),
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
-                }
+                ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
             )
         } catch (e: Exception) {
             try {

@@ -672,7 +672,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
             .setInputData(inputData)
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("LONG_RUNNING_API")
             .build()
 
@@ -1213,7 +1212,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 val request = androidx.work.OneTimeWorkRequestBuilder<OfflineSyncWorker>()
                     .setConstraints(constraints)
-                    .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 androidx.work.WorkManager.getInstance(context).enqueue(request)
                 
@@ -1310,19 +1308,26 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         batchProcessType = operation
         batchProcessProgress = 0f
 
-        val payloadDir = File(context.cacheDir, "batch_payloads").apply { mkdirs() }
-        val payloadFile = File(payloadDir, "batch_${operation}_${System.currentTimeMillis()}.json")
-        val payloadItems = org.json.JSONArray()
-        files.forEach { file ->
-            payloadItems.put(org.json.JSONObject().apply {
-                put("path", file.path)
-                put("name", file.name)
-            })
+        val payloadFile = try {
+            val payloadDir = File(context.cacheDir, "batch_payloads").apply { mkdirs() }
+            val file = File(payloadDir, "batch_${operation}_${System.currentTimeMillis()}.json")
+            val payloadItems = org.json.JSONArray()
+            files.forEach { item ->
+                payloadItems.put(org.json.JSONObject().apply {
+                    put("path", item.path)
+                    put("name", item.name)
+                })
+            }
+            file.writeText(
+                org.json.JSONObject().put("files", payloadItems).toString(),
+                Charsets.UTF_8
+            )
+            file
+        } catch (e: Exception) {
+            isBatchProcessing = false
+            errorMessage = "Không thể chuẩn bị tác vụ hàng loạt: ${e.message}"
+            return
         }
-        payloadFile.writeText(
-            org.json.JSONObject().put("files", payloadItems).toString(),
-            Charsets.UTF_8
-        )
 
         val inputData = androidx.work.Data.Builder()
             .putString("operation", operation)
@@ -1333,7 +1338,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<BatchOperationWorker>()
             .setInputData(inputData)
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("BATCH_OPERATION")
             .build()
 
@@ -2255,15 +2259,29 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         // KIẾN TRÚC MỚI: Đẩy sang StreamPipeWorker (Foreground Service)
         // → Tắt App vẫn bơm video liên tục, Notification hiển thị % tiến trình
+        val payloadFile = try {
+            val payloadDir = File(NasApplication.instance.cacheDir, "stream_pipe_payloads").apply { mkdirs() }
+            val file = File(payloadDir, "stream_${System.currentTimeMillis()}.json")
+            file.writeText(
+                org.json.JSONObject()
+                    .put("sourceUrl", sourceUrl)
+                    .put("fileName", fileName)
+                    .toString(),
+                Charsets.UTF_8
+            )
+            file
+        } catch (e: Exception) {
+            isStreamPiping = false
+            streamPipeStatus = "Không thể chuẩn bị tải video: ${e.message}"
+            return
+        }
         val inputData = androidx.work.Data.Builder()
-            .putString("sourceUrl", sourceUrl)
-            .putString("fileName", fileName)
+            .putString("payloadFile", payloadFile.absolutePath)
             .putString("baseUrl", webDavManager.currentBaseUrl)
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<StreamPipeWorker>()
             .setInputData(inputData)
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("STREAM_PIPE_TASK")
             .build()
 
@@ -2374,7 +2392,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
             .setInputData(inputData)
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("LONG_RUNNING_API")
             .build()
 
@@ -2448,13 +2465,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val inputData = androidx.work.Data.Builder().putString("currentUrl", currentUrl).build()
         val duplicateScanRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.DuplicateScanWorker>()
             .setInputData(inputData)
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         workManager.enqueueUniqueWork("ManualDuplicateScan", androidx.work.ExistingWorkPolicy.REPLACE, duplicateScanRequest)
 
         // Kích hoạt AutoBackup ngay lập tức
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
-            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
         // Cập nhật Toast hoặc Trạng thái UI để User biết
@@ -2577,7 +2592,6 @@ fun WebDavViewModel.startBackgroundDuplicateScan(context: android.content.Contex
 
                 val scanWorkRequest = androidx.work.OneTimeWorkRequestBuilder<DuplicateScanWorker>()
                     .setInputData(inputData)
-                    .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
 
                 workManager.enqueueUniqueWork("Unique_Scan_V3", androidx.work.ExistingWorkPolicy.REPLACE, scanWorkRequest)
@@ -2660,6 +2674,8 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
     }
 
 fun WebDavViewModel.deleteSelectedDuplicates() {
+        val filesToDelete = selectedDuplicates.toList()
+        if (filesToDelete.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
@@ -2667,7 +2683,7 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
                 try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
 
                 var processed = 0
-                for (file in selectedDuplicates) {
+                for (file in filesToDelete) {
                     if (file.path.contains(TRASH_FOLDER_NAME)) {
                         webDavManager.deleteFile(file.path)
                     } else {
@@ -2678,7 +2694,7 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
                     if (processed % 5 == 0) kotlinx.coroutines.delay(10)
                 }
 
-                val deletedPaths = selectedDuplicates.map { it.path }.toSet()
+                val deletedPaths = filesToDelete.map { it.path }.toSet()
                 for (path in deletedPaths) { repository.removeDuplicateFromDb(path) }
 
                 withContext(Dispatchers.Main) {

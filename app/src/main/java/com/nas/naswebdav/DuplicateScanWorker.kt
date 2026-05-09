@@ -169,9 +169,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     if (ticks % 20 == 0) {
                         try {
                             setProgress(workDataOf(
-                                "stage" to currentStage.get(),
-                                "currentFolder" to currentFolder.get(),
-                                "itemName" to currentFileName.get(),
+                                "stage" to safeWorkerText(currentStage.get()),
+                                "currentFolder" to safeWorkerText(currentFolder.get(), 220),
+                                "itemName" to safeWorkerText(currentFileName.get(), 180),
                                 "isFolder" to false,
                                 "scannedCount" to totalFilesIndexed.get(),
                                 "foundCount" to duplicateGroupsFound.get(),
@@ -179,10 +179,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                 "totalHashes" to totalHashesNeeded.get(),
                                 "percent" to progressPercent.get(),
                                 "currentStagePercent" to currentStagePercent.get(),
-                                "currentFolderUrl" to currentFolder.get(),
+                                "currentFolderUrl" to safeWorkerText(currentFolder.get(), 220),
                                 "stageNumber" to stageNumber.get(),
                                 "totalStages" to totalStages,
-                                "stageDescription" to stageDescription.get(),
+                                "stageDescription" to safeWorkerText(stageDescription.get()),
                                 "elapsedTime" to DuplicateProgressState.elapsedTime.value,
                                 "estimatedTimeRemaining" to DuplicateProgressState.estimatedTimeRemaining.value
                             ))
@@ -802,9 +802,11 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle(title).setSmallIcon(android.R.drawable.ic_popup_sync).setOngoing(true).build()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ForegroundInfo(notificationId, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else ForegroundInfo(notificationId, notification)
+        return ForegroundInfo(notificationId, notification)
+    }
+
+    protected fun safeWorkerText(value: String, maxChars: Int = 512): String {
+        return if (value.length <= maxChars) value else value.take(maxChars) + "..."
     }
 
     // FIX D2: Convert thành suspend fun để loại bỏ runBlocking không cần thiết.
@@ -984,7 +986,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             setProgressAsync(workDataOf(
                 "fileName" to "Đang chuẩn bị danh sách...",
                 "sourcePath" to "Thiết bị máy trạm",
-                "destPath" to backupFolderBase,
+                "destPath" to safeWorkerText(backupFolderBase, 220),
                 "progress" to 0f,
                 "processedCount" to 0,
                 "totalCount" to totalFilesToProcess,
@@ -1048,9 +1050,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     lastSkipProgressTime = now
                                     val percent = if (totalFilesToProcess > 0) processedFilesCount.toFloat() / totalFilesToProcess else 0f
                                     setProgressAsync(workDataOf(
-                                        "fileName" to "Bỏ qua (đã đồng bộ): $fileName",
-                                        "sourcePath" to dataPath,
-                                        "destPath" to targetFileNasPath,
+                                        "fileName" to safeWorkerText("Bỏ qua (đã đồng bộ): $fileName", 180),
+                                        "sourcePath" to safeWorkerText(dataPath, 220),
+                                        "destPath" to safeWorkerText(targetFileNasPath, 220),
                                         "progress" to 1f,
                                         "processedCount" to processedFilesCount,
                                         "totalCount" to totalFilesToProcess,
@@ -1074,9 +1076,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         lastProgressTime = now
                                         val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
                                         setProgressAsync(workDataOf(
-                                            "fileName" to fileName,
-                                            "sourcePath" to dataPath,
-                                            "destPath" to targetFileNasPath,
+                                            "fileName" to safeWorkerText(fileName, 180),
+                                            "sourcePath" to safeWorkerText(dataPath, 220),
+                                            "destPath" to safeWorkerText(targetFileNasPath, 220),
                                             "progress" to percent,
                                             "processedCount" to processedFilesCount,
                                             "totalCount" to totalFilesToProcess,
@@ -1088,7 +1090,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
                                                 .setSmallIcon(android.R.drawable.ic_menu_upload)
                                                 .setContentTitle("Đang sao lưu lên NAS: $progressInt%")
-                                                .setContentText("$fileName\n$parentRelativePath")
+                                                .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
                                                 .setProgress(100, progressInt, false)
                                                 .setOnlyAlertOnce(true)
                                                 .setSilent(true)

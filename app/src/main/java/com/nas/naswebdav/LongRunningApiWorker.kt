@@ -53,6 +53,10 @@ class LongRunningApiWorker(
         }
     }
 
+    private fun safeDataText(value: String, maxChars: Int = 512): String {
+        return if (value.length <= maxChars) value else value.take(maxChars) + "..."
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val taskType = inputData.getString("taskType") ?: return@withContext Result.failure()
         val apiUrl = inputData.getString("apiUrl") ?: return@withContext Result.failure()
@@ -77,14 +81,7 @@ class LongRunningApiWorker(
 
         try {
             setForeground(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    ForegroundInfo(
-                        NOTIFICATION_ID, notificationBuilder.build(),
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
-                }
+                ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
             )
         } catch (e: Exception) {
             try {
@@ -140,8 +137,8 @@ class LongRunningApiWorker(
                 setProgress(workDataOf(
                     "status" to if (isSuccess) "success" else "error",
                     "taskType" to taskType,
-                    "message" to resultMessage,
-                    "responseBody" to body,
+                    "message" to safeDataText(resultMessage),
+                    "responseBody" to safeDataText(body),
                     "responseCode" to response.code
                 ))
 
@@ -177,7 +174,7 @@ class LongRunningApiWorker(
             setProgress(workDataOf(
                 "status" to "error",
                 "taskType" to taskType,
-                "message" to "Lỗi kết nối: ${e.message}"
+                "message" to safeDataText("Lỗi kết nối: ${e.message}")
             ))
 
             // Notification lỗi
