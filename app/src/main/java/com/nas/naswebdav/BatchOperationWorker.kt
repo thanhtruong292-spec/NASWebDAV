@@ -12,6 +12,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
 
 /**
  * BatchOperationWorker — Foreground Worker chạy ngầm cho các tác vụ Copy/Move/Delete/Restore hàng loạt.
@@ -53,10 +55,42 @@ class BatchOperationWorker(
         }
     }
 
+    private fun safeDataText(value: String, maxChars: Int = 180): String {
+        return if (value.length <= maxChars) value else value.take(maxChars) + "..."
+    }
+
+    private fun loadBatchFiles(): Pair<Array<String>, Array<String>> {
+        val payloadFile = inputData.getString("payloadFile") ?: ""
+        if (payloadFile.isNotEmpty()) {
+            try {
+                val file = File(payloadFile)
+                if (file.exists()) {
+                    val items = JSONObject(file.readText()).optJSONArray("files")
+                    if (items != null) {
+                        val paths = ArrayList<String>(items.length())
+                        val names = ArrayList<String>(items.length())
+                        for (i in 0 until items.length()) {
+                            val item = items.optJSONObject(i) ?: continue
+                            val path = item.optString("path", "")
+                            if (path.isEmpty()) continue
+                            paths.add(path)
+                            names.add(item.optString("name", path.substringAfterLast("/")))
+                        }
+                        return paths.toTypedArray() to names.toTypedArray()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(TAG, "Cannot read batch payload", e)
+            }
+        }
+        val filePaths = inputData.getStringArray("filePaths") ?: emptyArray()
+        val fileNames = inputData.getStringArray("fileNames") ?: emptyArray()
+        return filePaths to fileNames
+    }
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val operation = inputData.getString("operation") ?: return@withContext Result.failure()
-        val filePaths = inputData.getStringArray("filePaths") ?: return@withContext Result.failure()
-        val fileNames = inputData.getStringArray("fileNames") ?: return@withContext Result.failure()
+        val (filePaths, fileNames) = loadBatchFiles()
         val destUrl = inputData.getString("destUrl") ?: ""
         val baseUrl = inputData.getString("baseUrl") ?: ""
 
@@ -128,6 +162,7 @@ class BatchOperationWorker(
             if (isStopped) break
 
             val fileName = fileNames.getOrElse(index) { filePath.substringAfterLast("/") }
+            val displayName = safeDataText(fileName)
             val percentDone = ((index.toFloat() / total) * 100).toInt()
 
             val now = System.currentTimeMillis()
@@ -137,7 +172,7 @@ class BatchOperationWorker(
                 // Cập nhật Notification Bar
                 notificationBuilder
                     .setContentTitle("$operationLabel (${ index + 1 }/$total)")
-                    .setContentText(fileName)
+                    .setContentText(displayName)
                     .setProgress(100, percentDone, false)
                 try {
                     NotificationManagerCompat.from(applicationContext)
@@ -148,7 +183,7 @@ class BatchOperationWorker(
                 setProgress(workDataOf(
                     "completed" to index,
                     "total" to total,
-                    "currentFile" to fileName,
+                    "currentFile" to displayName,
                     "operation" to operation,
                     "percent" to percentDone
                 ))
@@ -232,6 +267,10 @@ class BatchOperationWorker(
             NotificationManagerCompat.from(applicationContext)
                 .notify(NOTIFICATION_ID, doneNotification.build())
         } catch (_: SecurityException) {}
+
+        try {
+            inputData.getString("payloadFile")?.let { File(it).delete() }
+        } catch (_: Exception) {}
 
         return@withContext Result.success()
     }

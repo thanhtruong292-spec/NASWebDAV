@@ -1310,13 +1310,23 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         batchProcessType = operation
         batchProcessProgress = 0f
 
-        val filePaths = files.map { it.path }.toTypedArray()
-        val fileNames = files.map { it.name }.toTypedArray()
+        val payloadDir = File(context.cacheDir, "batch_payloads").apply { mkdirs() }
+        val payloadFile = File(payloadDir, "batch_${operation}_${System.currentTimeMillis()}.json")
+        val payloadItems = org.json.JSONArray()
+        files.forEach { file ->
+            payloadItems.put(org.json.JSONObject().apply {
+                put("path", file.path)
+                put("name", file.name)
+            })
+        }
+        payloadFile.writeText(
+            org.json.JSONObject().put("files", payloadItems).toString(),
+            Charsets.UTF_8
+        )
 
         val inputData = androidx.work.Data.Builder()
             .putString("operation", operation)
-            .putStringArray("filePaths", filePaths)
-            .putStringArray("fileNames", fileNames)
+            .putString("payloadFile", payloadFile.absolutePath)
             .putString("destUrl", destUrl)
             .putString("baseUrl", webDavManager.currentBaseUrl)
             .build()
