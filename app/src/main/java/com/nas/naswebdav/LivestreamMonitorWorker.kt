@@ -68,10 +68,14 @@ class LivestreamMonitorWorker(
             }
         }
 
+        private fun notificationIdForJob(jobId: String): Int {
+            return NOTIFICATION_BASE_ID + (Math.abs(jobId.hashCode()) % 100)
+        }
+
         fun enqueue(context: Context, jobId: String, nasHost: String, platform: String): androidx.work.Operation {
             createChannel(context)
             // Mỗi job có notifId riêng (9020, 9021, 9022...)
-            val notifId = NOTIFICATION_BASE_ID + (Math.abs(jobId.hashCode()) % 100)
+            val notifId = notificationIdForJob(jobId)
             val request = OneTimeWorkRequestBuilder<LivestreamMonitorWorker>()
                 .setInputData(workDataOf(
                     KEY_JOB_ID   to jobId,
@@ -89,10 +93,30 @@ class LivestreamMonitorWorker(
 
         fun cancelJob(context: Context, jobId: String) {
             WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME_PREFIX + jobId)
+            clearJobNotifications(context, jobId)
         }
 
         fun cancelAll(context: Context) {
             WorkManager.getInstance(context).cancelAllWorkByTag("LIVESTREAM_ALL")
+            clearAllNotifications(context)
+        }
+
+        fun clearJobNotifications(context: Context, jobId: String) {
+            val notifId = notificationIdForJob(jobId)
+            try {
+                androidx.core.app.NotificationManagerCompat.from(context).cancel(notifId)
+                androidx.core.app.NotificationManagerCompat.from(context).cancel(notifId + 1000)
+            } catch (_: Exception) {}
+        }
+
+        fun clearAllNotifications(context: Context) {
+            val nm = androidx.core.app.NotificationManagerCompat.from(context)
+            for (notifId in NOTIFICATION_BASE_ID until NOTIFICATION_BASE_ID + 100) {
+                try {
+                    nm.cancel(notifId)
+                    nm.cancel(notifId + 1000)
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -249,6 +273,8 @@ class LivestreamMonitorWorker(
         }
 
         // Hiện thông báo hoàn tất tùy theo kết quả
+        clearJobNotifications(applicationContext, jobId)
+
         if (finalStatus == "error") {
             val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp."
             showCompletionNotification(notifId, platformLabel, "⚠️", msg)

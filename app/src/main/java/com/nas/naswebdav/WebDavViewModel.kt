@@ -1001,6 +1001,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
                         
                         var hasNewJobs = false
+                        var hasRecordingJobs = false
                         for (i in 0 until jobsArray.length()) {
                             val jobObj = jobsArray.getJSONObject(i)
                             val status = jobObj.optString("status", "")
@@ -1008,6 +1009,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             val platform = jobObj.optString("platform", "")
                             
                             if (status == "recording" && jobId.isNotEmpty()) {
+                                hasRecordingJobs = true
                                 // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
                                 val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
                                 if (!alreadyTracked) {
@@ -1018,9 +1020,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
                                     hasNewJobs = true
                                 }
+                            } else if (jobId.isNotEmpty()) {
+                                LivestreamMonitorWorker.cancelJob(context, jobId)
                             }
                         }
-                        
+                        if (!hasRecordingJobs) {
+                            LivestreamMonitorWorker.cancelAll(context)
+                            withContext(Dispatchers.Main) {
+                                activeLivestreams.clear()
+                            }
+                        }
+
                         if (hasNewJobs) {
                             withContext(Dispatchers.Main) { observeLivestreamWorker(context) }
                         }
