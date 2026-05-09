@@ -4451,6 +4451,9 @@ def api_livestream_record():
             _LIVESTREAM_DIR,
             "%s_%s_%%(title).60s.%%(ext)s" % (platform, timestamp_str)
         )
+        direct_tiktok_flv = False
+        direct_output_file = ""
+        tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         # Xay dung lenh yt-dlp cho livestream
         format_str = "best"
@@ -4493,7 +4496,7 @@ def api_livestream_record():
             import subprocess
             curl_cmd = [
                 "curl", "-s", "-L",
-                "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "-A", tiktok_user_agent
             ]
             if os.path.exists(cookies_path):
                 curl_cmd.extend(["-b", cookies_path])
@@ -4512,13 +4515,64 @@ def api_livestream_record():
                         
                 if actual_url:
                     live_url = actual_url
-                    cmd.extend(["--add-header", "Referer: https://www.tiktok.com/"])
-                    cmd.extend(["--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"])
+                    direct_tiktok_flv = True
+                    direct_output_file = os.path.join(
+                        _LIVESTREAM_DIR,
+                        "%s_%s_direct.flv" % (platform, timestamp_str)
+                    )
             except Exception:
                 pass
         # --------------------------------
 
-        cmd.append(live_url)
+        if direct_tiktok_flv:
+            # NAS ffmpeg 3.2 khong nhan dung codec trong TikTok FLV moi.
+            # Ghi byte stream truc tiep de tranh remux/parse qua ffmpeg.
+            probe_file = os.path.join("/tmp", "tiktok_live_probe_%s.flv" % timestamp_str)
+            probe_cmd = [
+                "curl", "-L", "--fail", "--http1.1",
+                "--max-time", "12",
+                "--connect-timeout", "8",
+                "-A", tiktok_user_agent,
+                "-H", "Referer: https://www.tiktok.com/",
+                "-o", probe_file,
+            ]
+            if os.path.exists(cookies_path):
+                probe_cmd.extend(["-b", cookies_path])
+            probe_cmd.append(live_url)
+            probe_size = 0
+            try:
+                subprocess.call(probe_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if os.path.exists(probe_file):
+                    probe_size = os.path.getsize(probe_file)
+            except Exception:
+                probe_size = 0
+            try:
+                if os.path.exists(probe_file):
+                    os.remove(probe_file)
+            except Exception:
+                pass
+            if probe_size < 1024:
+                return jsonify({
+                    "error": "Khong nhan duoc du lieu video tu TikTok live. User co the chua live hoac CDN TikTok dang chan NAS.",
+                    "detail": "Da resolve duoc link FLV nhung stream tra 0 byte trong 12 giay."
+                }), 502
+
+            cmd = [
+                "curl", "-L", "--fail", "--http1.1",
+                "--retry", "999",
+                "--retry-delay", "2",
+                "--connect-timeout", "15",
+                "--speed-time", "60",
+                "--speed-limit", "256",
+                "-A", tiktok_user_agent,
+                "-H", "Referer: https://www.tiktok.com/",
+                "-o", direct_output_file,
+            ]
+            if os.path.exists(cookies_path):
+                cmd.extend(["-b", cookies_path])
+            cmd.append(live_url)
+        else:
+            cmd.append(live_url)
 
         # Log file rieng cho debug
         log_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "livestream_logs")
@@ -4546,7 +4600,7 @@ def api_livestream_record():
                 "pid": proc.pid,
                 "status": "recording",
                 "output_dir": _LIVESTREAM_DIR,
-                "output_file": "",
+                "output_file": os.path.basename(direct_output_file) if direct_output_file else "",
                 "file_size": 0,
                 "started_at": now_str,
                 "started_ts": time.time(),
