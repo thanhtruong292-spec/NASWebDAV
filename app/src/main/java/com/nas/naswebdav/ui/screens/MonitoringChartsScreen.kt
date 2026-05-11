@@ -40,6 +40,30 @@ private val _ChartAccentPink  = Color(0xFFFF6EC7)
 private val _ChartTextPrimary = Color(0xFFE8E8E8)
 private val _ChartTextSecond  = Color(0xFF8892B0)
 
+// Ke thua nguong tu GaugeCard (MainMenuScreen.kt) de bieu do duong dong bo voi GaugeCard tron.
+// Mau: Do 0xFFEF5350 / Vang 0xFFFFA726 / Xanh 0xFF66BB6A
+private val _StatusRed    = Color(0xFFEF5350)
+private val _StatusYellow = Color(0xFFFFA726)
+private val _StatusGreen  = Color(0xFF66BB6A)
+
+private fun percentStatusColor(latest: Float): Color = when {
+    latest >= 90f -> _StatusRed
+    latest >= 70f -> _StatusYellow
+    else -> _StatusGreen
+}
+
+private fun cpuTempStatusColor(latest: Float): Color = when {
+    latest >= 80f -> _StatusRed
+    latest >= 60f -> _StatusYellow
+    else -> _StatusGreen
+}
+
+private fun hddTempStatusColor(latest: Float): Color = when {
+    latest >= 55f -> _StatusRed
+    latest >= 45f -> _StatusYellow
+    else -> _StatusGreen
+}
+
 @Composable
 fun MonitoringChartCard(viewModel: WebDavViewModel) {
     val tabLabels  = listOf("🌡️ Nhiệt độ", "📊 Tài nguyên", "📶 Mạng")
@@ -260,14 +284,21 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         val unit: String,
         val icon: androidx.compose.ui.graphics.vector.ImageVector
     )
+    // Lay gia tri moi nhat (cuoi danh sach) de quyet dinh mau theo trang thai —
+    // dong bo voi GaugeCard tron tren MainMenuScreen.
+    val cpuTempVals = history.map { it.cpuTemp }
+    val hddTempVals = history.map { it.hddTemp }
+    val cpuPctVals  = history.map { it.cpuPercent }
+    val ramPctVals  = history.map { it.ramPercent }
+
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(history.map { it.cpuTemp  }, Color(0xFFFF9100), "CPU",    "°C",   Icons.Default.Memory),
-            Series(history.map { it.hddTemp  }, Color(0xFFFF1744),    "HDD",    "°C",   Icons.Default.Storage)
+            Series(cpuTempVals, cpuTempStatusColor(cpuTempVals.lastOrNull() ?: 0f), "CPU",    "°C",   Icons.Default.Memory),
+            Series(hddTempVals, hddTempStatusColor(hddTempVals.lastOrNull() ?: 0f), "HDD",    "°C",   Icons.Default.Storage)
         )
         1 -> listOf(
-            Series(history.map { it.cpuPercent }, Color(0xFF00D2FF),   "CPU",  "%",    Icons.Default.Speed),
-            Series(history.map { it.ramPercent }, Color(0xFFBB86FC), "RAM",  "%",    Icons.Default.DeveloperBoard)
+            Series(cpuPctVals, percentStatusColor(cpuPctVals.lastOrNull() ?: 0f), "CPU",  "%",    Icons.Default.Speed),
+            Series(ramPctVals, percentStatusColor(ramPctVals.lastOrNull() ?: 0f), "RAM",  "%",    Icons.Default.DeveloperBoard)
         )
         else -> listOf(
             Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về",  " MB/s", Icons.Default.ArrowDownward),
