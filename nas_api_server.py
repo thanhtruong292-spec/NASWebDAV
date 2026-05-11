@@ -4069,8 +4069,55 @@ def _find_ytdlp_bin():
             continue
     return None
 
+def _remux_flv_to_mp4(flv_path):
+    """Remux file FLV thanh MP4 bang ffmpeg -c copy (khong re-encode, ~0% CPU).
+    Tra ve duong dan file MP4 neu thanh cong, hoac chuoi rong neu that bai."""
+    if not flv_path or not os.path.exists(flv_path):
+        return ""
+    mp4_path = os.path.splitext(flv_path)[0] + ".mp4"
+    try:
+        # -c copy: chi doi container, khong giai ma -> CPU cuc thap.
+        # -movflags +faststart: dat moov atom o dau file, cho phep stream/seek nhanh.
+        # -fflags +genpts: regen PTS de tranh loi "non-monotonic DTS".
+        proc = subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-fflags", "+genpts",
+            "-i", flv_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            "-bsf:a", "aac_adtstoasc",
+            mp4_path,
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+        if proc.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+            try:
+                os.remove(flv_path)
+            except Exception:
+                pass
+            return mp4_path
+        # Fallback: thu lai khong dung aac_adtstoasc (mot so FLV co audio non-AAC)
+        proc2 = subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-fflags", "+genpts",
+            "-i", flv_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            mp4_path,
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+        if proc2.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+            try:
+                os.remove(flv_path)
+            except Exception:
+                pass
+            return mp4_path
+        log.warning("[Livestream] Remux FLV->MP4 fail (rc=%d): %s", proc2.returncode, (proc2.stderr or b"")[-160:])
+        return ""
+    except Exception as e:
+        log.error("[Livestream] Remux FLV->MP4 loi: %s", e)
+        return ""
+
 def _livestream_watchdog():
-    """Thread nen tu dong kill cac livestream job qua 12 gio hoac da chet."""
+    """Thread nen tu dong kill cac livestream job qua 12 gio hoac da chet.
+    Cung resume thumbnail generator khi khong con luong nao dang ghi."""
     while True:
         try:
             time.sleep(60)  # Kiem tra moi phut
@@ -4101,7 +4148,21 @@ def _livestream_watchdog():
                                     info["file_size"] = os.path.getsize(files[0])
                         except Exception:
                             pass
-                            
+
+                        # Neu la TikTok direct FLV thi remux sang MP4 cho user de xem.
+                        # Thuc hien sau khi process ket thuc de tranh tranh chap I/O.
+                        try:
+                            flv_path = info.get("direct_output_path", "")
+                            if info.get("direct_tiktok_flv") and flv_path and os.path.exists(flv_path) and os.path.getsize(flv_path) > 1024:
+                                mp4_path = _remux_flv_to_mp4(flv_path)
+                                if mp4_path:
+                                    info["output_file"] = os.path.basename(mp4_path)
+                                    info["file_size"] = os.path.getsize(mp4_path)
+                                    info["direct_output_path"] = mp4_path
+                                    log.info("[Livestream] Job %s: remux FLV -> MP4 OK (%s)", jid, os.path.basename(mp4_path))
+                        except Exception as e:
+                            log.warning("[Livestream] Job %s: remux fail: %s", jid, e)
+
                         # Kiem tra dung luong file de xac dinh thanh cong hay that bai
                         if info.get("file_size", 0) < 1000:
                             info["status"] = "error"
@@ -4109,9 +4170,9 @@ def _livestream_watchdog():
                         else:
                             info["status"] = "finished"
                             log.info("[Livestream] Job %s (PID %d) da ket thuc tu nhien.", jid, pid)
-                            
+
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                        
+
                         # Ghi log
                         try:
                             conn = sqlite3.connect(DB_PATH, timeout=20.0)
@@ -4139,6 +4200,17 @@ def _livestream_watchdog():
                         except Exception:
                             pass
                         info["status"] = "timeout"
+
+                # Neu khong con luong nao dang ghi thi cho phep thumbnail generator
+                # chay tiep (no da bi clear() khi co live record bat dau).
+                active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
+            if not active:
+                try:
+                    if not _thumb_paused.is_set():
+                        _thumb_paused.set()
+                        log.info("[Livestream] Khong con luong ghi -> resume thumbnail generator.")
+                except Exception:
+                    pass
         except Exception as e:
             log.error("[Livestream] Watchdog error: %s", e)
 
@@ -4565,14 +4637,52 @@ def api_livestream_record():
                 "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
             }), 503
 
-        # Kiem tra dung luong HDD con lai (gioi han 3 luong dong thoi)
+        # Khong gioi han so luong ghi cung; thay vao do check phan cung de
+        # bao ve NAS khoi tinh trang treo. Chap nhan luong moi neu:
+        #   - CPU dang dung < 85%
+        #   - RAM con trong > 200MB
+        #   - Load average 1-phut < so core * 1.5
+        # Neu vuot bat ky nguong nao -> tu choi voi 429 + chi tiet so do.
         with _livestream_lock:
             active_count = sum(1 for j in _livestream_jobs.values() if j.get("status") == "recording")
-            if active_count >= 3:
-                return jsonify({
-                    "error": "NAS dang ghi toi da 3 livestream dong thoi. Dung bot truoc khi ghi moi.",
-                    "active_count": active_count
-                }), 429
+        try:
+            cpu_pct = psutil.cpu_percent(interval=0.4)
+        except Exception:
+            cpu_pct = 0.0
+        try:
+            mem = psutil.virtual_memory()
+            mem_free_mb = mem.available / (1024 * 1024)
+            mem_pct = mem.percent
+        except Exception:
+            mem_free_mb = 9999
+            mem_pct = 0.0
+        try:
+            cores = max(1, psutil.cpu_count(logical=True) or 1)
+            load1 = os.getloadavg()[0]
+        except Exception:
+            cores = 1
+            load1 = 0.0
+        hw_reason = ""
+        if cpu_pct > 85:
+            hw_reason = "CPU %.0f%% qua cao" % cpu_pct
+        elif mem_free_mb < 200:
+            hw_reason = "RAM trong chi con %.0f MB" % mem_free_mb
+        elif mem_pct > 90:
+            hw_reason = "RAM dung %.0f%%" % mem_pct
+        elif load1 > cores * 1.5:
+            hw_reason = "Load average %.2f vuot %.1f (cores x 1.5)" % (load1, cores * 1.5)
+        # Cap an toan tuyet doi: 16 luong song song, tranh truong hop psutil tra
+        # so do sai khien NAS bi tham lam vo han.
+        if active_count >= 16:
+            hw_reason = "Da co %d luong ghi dong thoi (cap an toan)" % active_count
+        if hw_reason:
+            return jsonify({
+                "error": "Khong the bat dau luong moi: %s" % hw_reason,
+                "active_count": active_count,
+                "cpu_pct": round(cpu_pct, 1),
+                "mem_free_mb": int(mem_free_mb),
+                "load_avg_1min": round(load1, 2),
+            }), 429
 
         # Kiem tra dung luong HDD con lai
         try:
@@ -4755,8 +4865,17 @@ def api_livestream_record():
                 "started_ts": time.time(),
                 "quality": quality,
                 "log_file": log_file,
-                "timestamp_str": timestamp_str
+                "timestamp_str": timestamp_str,
+                "direct_tiktok_flv": direct_tiktok_flv,
+                "direct_output_path": direct_output_file,
             }
+
+        # Tam dung thumbnail generator de nhuong CPU/IO cho viec ghi livestream.
+        # Watchdog se tu dong resume khi khong con luong nao dang ghi.
+        try:
+            _thumb_paused.clear()
+        except Exception:
+            pass
 
         # Ghi log he thong
         try:
