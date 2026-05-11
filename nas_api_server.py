@@ -4149,7 +4149,9 @@ def _fan_controller_watchdog():
             if settings.get("mode") == "custom":
                 on_temp = float(settings.get("on_temp", 65))
                 off_temp = float(settings.get("off_temp", 55))
-                current_temp = float(get_cpu_temp())
+                # get_cpu_temp() tra ve chuoi co hau to °C (vd "57°C") nen phai strip truoc khi convert.
+                raw_temp = str(get_cpu_temp()).strip()
+                current_temp = float(_re_module.sub(r"[^0-9.\-]", "", raw_temp) or "0")
                 
                 # Dam bao OS daemon da duoc tat
                 out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
