@@ -4489,22 +4489,29 @@ def _start_tiktok_watch_record(username):
         method="POST"
     )
     try:
-        # /api/livestream/record itself runs a curl scrape (up to 15s) + spawns
-        # yt-dlp before returning, so a short 8s timeout here would race it and
-        # the call would always look "timed out" even though the record kicked
-        # off. 35s gives the scrape headroom and matches the upstream timeout.
-        with urllib.request.urlopen(req, timeout=35) as resp:
+        # /api/livestream/record bay gio chi lam HEAD check (~3s) roi tra ve nhanh,
+        # nen 45s la qua du va chiu duoc neu re-scrape FLV URL them mot lan.
+        with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
             return data.get("job_id", ""), data.get("message", "")
     except urllib.error.HTTPError as e:
-        # Doc body de biet ly do that su thay vi chi "HTTP Error 502: BAD GATEWAY"
+        # Parse JSON body de lay message ngan gon thay vi log nguyen JSON tho.
         try:
-            body = e.read().decode("utf-8", errors="ignore")[:200]
+            raw = e.read().decode("utf-8", errors="ignore")
+            body_json = json.loads(raw) if raw else {}
+            msg = body_json.get("error") or body_json.get("detail") or e.reason or "HTTP %d" % e.code
         except Exception:
-            body = ""
-        return "", "HTTP %d: %s" % (e.code, body or e.reason)
+            msg = e.reason or "HTTP %d" % e.code
+        # Cap chieu dai de tranh tran UI; full text van xem duoc qua dialog chi tiet.
+        return "", str(msg)[:200]
     except Exception as e:
-        return "", str(e)
+        # urllib socket timeout / connection error -> message ngan, de hieu.
+        text = str(e).lower()
+        if "timed out" in text or "timeout" in text:
+            return "", "Kết nối NAS bị quá hạn (>45s)"
+        if "refused" in text:
+            return "", "API NAS từ chối kết nối"
+        return "", str(e)[:160]
 
 def _tiktok_live_watchdog():
     _load_tiktok_watch_state()
@@ -4787,100 +4794,64 @@ def api_livestream_record():
             # NAS ffmpeg 3.2 khong nhan dung codec trong TikTok FLV moi.
             # Ghi byte stream truc tiep de tranh remux/parse qua ffmpeg.
             #
-            # Probe duoc noi long de tranh false-negative (502) khi:
-            #   - TikTok CDN khoi dau cham (>12s) nhung sau do stream binh thuong
-            #   - FLV URL het han ngan: re-scrape lai HTML va lay URL moi
-            #   - Threshold giam tu 1024 byte xuong 256 byte de chap nhan partial
-            probe_file = os.path.join("/tmp", "tiktok_live_probe_%s.flv" % timestamp_str)
-            probe_http_code = ""
+            # Pre-check NHANH bang HEAD request (khong tai body) de tu choi som
+            # neu URL FLV da 404/403/expired. HEAD chi ton ~1-3s nen khong gay
+            # timeout 35s o local urlopen ben watcher. Neu HEAD OK (2xx) thi tin
+            # tuong recording curl voi --retry 999 + --speed-limit.
+            head_cmd = [
+                "curl", "-s", "-I", "-L", "--http1.1",
+                "--max-time", "6",
+                "--connect-timeout", "4",
+                "-A", tiktok_user_agent,
+                "-H", "Referer: https://www.tiktok.com/",
+                "-o", "/dev/null",
+                "-w", "%{http_code}",
+            ]
+            if os.path.exists(cookies_path):
+                head_cmd.extend(["-b", cookies_path])
+            head_cmd.append(live_url)
+            try:
+                head_proc = subprocess.run(head_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                http_code = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0"
+            except Exception:
+                http_code = "0"
 
-            def _probe_url(target):
-                code_sentinel = "\n__HTTP__:"
-                cmd_local = [
-                    "curl", "-L", "--http1.1",
-                    "--max-time", "25",
-                    "--connect-timeout", "10",
-                    "--retry", "2",
-                    "--retry-delay", "1",
-                    "-A", tiktok_user_agent,
-                    "-H", "Referer: https://www.tiktok.com/",
-                    "-o", probe_file,
-                    "-w", "%s%%{http_code}" % code_sentinel,
-                ]
-                if os.path.exists(cookies_path):
-                    cmd_local.extend(["-b", cookies_path])
-                cmd_local.append(target)
-                try:
-                    proc_local = subprocess.run(cmd_local, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-                    out = (proc_local.stdout or b"").decode("utf-8", errors="ignore")
-                    idx_local = out.rfind(code_sentinel)
-                    code = out[idx_local + len(code_sentinel):].strip() if idx_local >= 0 else "?"
-                except Exception:
-                    code = "?"
-                size_local = 0
-                try:
-                    if os.path.exists(probe_file):
-                        size_local = os.path.getsize(probe_file)
-                except Exception:
-                    pass
-                return size_local, code
-
-            probe_size, probe_http_code = _probe_url(live_url)
-
-            # FLV URL het han nhanh tren TikTok — neu probe < threshold, thu re-scrape 1 lan.
-            if probe_size < 256:
-                try:
-                    if os.path.exists(probe_file):
-                        os.remove(probe_file)
-                except Exception:
-                    pass
-                rescrape_cmd = [
-                    "curl", "-s", "-L",
-                    "--max-time", "10",
-                    "-A", tiktok_user_agent,
-                    "-H", "Referer: https://www.tiktok.com/",
-                ]
-                if os.path.exists(cookies_path):
-                    rescrape_cmd.extend(["-b", cookies_path])
-                # Re-scrape lay URL goc cua user (live page) thay vi link FLV cu.
-                # body.get("url") la URL goc nguoi dung gui (vd https://www.tiktok.com/@user/live)
+            # Neu HEAD that bai voi 4xx/5xx -> thu re-scrape 1 lan (FLV URL co the vua het han).
+            if http_code.startswith(("4", "5")):
                 original_user_url = body.get("url", "").strip()
-                if original_user_url:
+                if original_user_url and "tiktok.com" in original_user_url and not original_user_url.startswith(live_url[:30]):
+                    rescrape_cmd = [
+                        "curl", "-s", "-L", "--max-time", "8",
+                        "-A", tiktok_user_agent,
+                        "-H", "Referer: https://www.tiktok.com/",
+                    ]
+                    if os.path.exists(cookies_path):
+                        rescrape_cmd.extend(["-b", cookies_path])
                     rescrape_cmd.append(original_user_url)
                     try:
-                        html2 = subprocess.check_output(rescrape_cmd, timeout=15).decode("utf-8", errors="ignore")
+                        html2 = subprocess.check_output(rescrape_cmd, timeout=10).decode("utf-8", errors="ignore")
                         m2 = re.search(r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)', html2) or re.search(r'\\"flv\\":\\"(https://[^"\\]+)', html2)
                         if m2:
                             new_flv = m2.group(1).replace("\\u0026", "&")
                             if new_flv != live_url:
                                 live_url = new_flv
-                                probe_size, probe_http_code = _probe_url(live_url)
+                                head_cmd[-1] = live_url
+                                head_proc = subprocess.run(head_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+                                http_code = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0"
                     except Exception:
                         pass
 
-            try:
-                if os.path.exists(probe_file):
-                    os.remove(probe_file)
-            except Exception:
-                pass
-
-            if probe_size < 256:
-                # Phan tich ly do cu the de bao cho user thay vi message chung.
-                if probe_http_code in ("403", "401"):
-                    reason = "TikTok CDN tu choi (HTTP %s) — cookies co the het han hoac user chan vung." % probe_http_code
-                elif probe_http_code == "404":
-                    reason = "Link FLV 404 — user da ket thuc live hoac TikTok rotate URL."
-                elif probe_http_code in ("429",):
-                    reason = "TikTok rate-limit (HTTP 429) — thu lai sau vai phut."
-                elif probe_http_code == "?":
-                    reason = "Khong ket noi duoc den CDN TikTok (DNS/network loi)."
-                else:
-                    reason = "FLV URL phan hoi %s nhung 0 byte trong 25s — co the user vua tat live." % probe_http_code
+            if http_code.startswith(("4", "5")):
+                # Message ngan gon, chuyen nghiep, ko log JSON tho.
+                short_msg = {
+                    "401": "Cookies TikTok không hợp lệ",
+                    "403": "TikTok chặn vùng / cookies bị thu hồi",
+                    "404": "User đã kết thúc live",
+                    "429": "TikTok giới hạn tốc độ — thử lại sau ít phút",
+                }.get(http_code, "TikTok CDN từ chối (HTTP %s)" % http_code)
                 return jsonify({
-                    "error": "Khong nhan duoc du lieu video tu TikTok live.",
-                    "detail": reason,
-                    "http_code": probe_http_code,
-                    "probe_size": probe_size,
+                    "error": short_msg,
+                    "http_code": http_code,
                 }), 502
 
             cmd = [
