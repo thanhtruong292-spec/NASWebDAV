@@ -1072,13 +1072,33 @@ fun GaugeCard(
     val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
     val progress = (numericValue / 100f).coerceIn(0f, 1f)
     
+    // Status tu phan tram (CPU%/RAM%/Disk%)
+    val pctRank = when {
+        progress >= 0.90f -> 2
+        progress >= 0.70f -> 1
+        else -> 0
+    }
+    // Status tu nhiet do (neu subValue co °C) — dung cung nguong nhu line chart va text subValue:
+    //   CPU temp: >=80 do, >=60 vang. HDD/SMART temp: >=55 do, >=45 vang.
+    val tempRank: Int = if (!subValue.isNullOrBlank() && (subValue.contains("°C") || subValue.contains("°C") || subValue.contains("°"))) {
+        val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
+        val isDisk = title == "S.M.A.R.T" || title == "HDD"
+        when {
+            isDisk && tempVal >= 55f -> 2
+            isDisk && tempVal >= 45f -> 1
+            !isDisk && tempVal >= 80f -> 2
+            !isDisk && tempVal >= 60f -> 1
+            else -> 0
+        }
+    } else -1
     val accentColor = if (title == "S.M.A.R.T") {
         gradientColors.first()
     } else {
-        when {
-            progress >= 0.90f -> Color(0xFFEF5350) // Gần đầy / Quá tải -> Đỏ
-            progress >= 0.70f -> Color(0xFFFFA726) // Cảnh báo -> Vàng
-            else -> Color(0xFF66BB6A) // Bình thường -> Xanh
+        // Lay trang thai NANG HON giua phan tram va nhiet do de vong tron dong bo voi line chart.
+        when (maxOf(pctRank, tempRank)) {
+            2 -> Color(0xFFEF5350) // Đỏ
+            1 -> Color(0xFFFFA726) // Vàng
+            else -> Color(0xFF66BB6A) // Xanh
         }
     }
 
