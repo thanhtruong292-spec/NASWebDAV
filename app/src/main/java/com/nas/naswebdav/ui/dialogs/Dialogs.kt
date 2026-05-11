@@ -1781,6 +1781,11 @@ fun LivestreamRecordDialog(
                     onClick = {
                         if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) {
                             val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
+                            // Bóc tách username TikTok tu URL (sau khi resolver da chay xong)
+                            // de tu dong them vao danh sach theo doi — lan sau watchdog tu phat hien live.
+                            val tiktokUsername: String? = if (liveUrl.contains("tiktok", true)) {
+                                Regex("tiktok\\.com/@([\\w.]+)").find(liveUrl)?.groupValues?.get(1)
+                            } else null
                             if (isVOD) {
                                 // Tự động phát hiện Video On Demand (VOD) thay vì Livestream
                                 // Chuyển hướng sang yt-dlp nhưng lưu vào Livestream/ để user dễ tìm
@@ -1788,6 +1793,13 @@ fun LivestreamRecordDialog(
                                 onDismiss()
                             } else {
                                 viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality)
+                                // Sau khi bat dau ghi mot user TikTok bang URL truc tiep, them luon vao
+                                // danh sach theo doi (NAS deduplicate theo username). Khong lam neu user
+                                // da co san trong list de tranh log spam.
+                                if (!tiktokUsername.isNullOrBlank() &&
+                                    viewModel.tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
+                                    viewModel.addTikTokLiveWatchUser(context, tiktokUsername)
+                                }
                             }
                         }
                     },
