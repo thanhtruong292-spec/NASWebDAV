@@ -25,6 +25,7 @@ from functools import wraps
 import sqlite3
 import base64
 import urllib.request
+import urllib.error
 
 def sanitize_log_input(text):
     if not text: return str(text)
@@ -4250,21 +4251,36 @@ def _check_tiktok_user_live(username):
     # pattern FLV trong embedded JSON — neu co thi user dang live.
     live_url = "https://www.tiktok.com/@%s/live" % username
     cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+    # In HTTP status code o cuoi response qua --write-out de phan biet bi block (403/429)
+    # voi "page tra ve nhung khong co stream" (200 nhung empty / not-live).
+    sentinel = "\n__HTTP_STATUS__:"
     curl_cmd = [
         "curl", "-s", "-L",
         "--max-time", "20",
+        "--retry", "2",
+        "--retry-delay", "1",
         "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "-H", "Referer: https://www.tiktok.com/",
         "-H", "Accept-Language: en-US,en;q=0.9,vi;q=0.8",
+        "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "-w", "%s%%{http_code}" % sentinel,
     ]
     if os.path.exists(cookies_path):
         curl_cmd.extend(["-b", cookies_path])
     curl_cmd.append(live_url)
     try:
-        proc = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
-        html = (proc.stdout or b"").decode("utf-8", errors="ignore")
-        if not html:
-            return False, "empty response from tiktok"
+        proc = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        raw = (proc.stdout or b"").decode("utf-8", errors="ignore")
+        # Tach body va http_code
+        idx = raw.rfind(sentinel)
+        if idx >= 0:
+            html = raw[:idx]
+            http_code = raw[idx + len(sentinel):].strip()
+        else:
+            html = raw
+            http_code = "?"
+        if not html.strip():
+            return False, "tiktok empty (HTTP %s)" % http_code
         # FLV URL chi xuat hien khi user dang live va co stream the chay.
         if _re_module.search(r'\\"flv\\":\\"https://[^"\\\\]+', html):
             return True, ""
@@ -4309,6 +4325,13 @@ def _start_tiktok_watch_record(username):
         with urllib.request.urlopen(req, timeout=35) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
             return data.get("job_id", ""), data.get("message", "")
+    except urllib.error.HTTPError as e:
+        # Doc body de biet ly do that su thay vi chi "HTTP Error 502: BAD GATEWAY"
+        try:
+            body = e.read().decode("utf-8", errors="ignore")[:200]
+        except Exception:
+            body = ""
+        return "", "HTTP %d: %s" % (e.code, body or e.reason)
     except Exception as e:
         return "", str(e)
 
