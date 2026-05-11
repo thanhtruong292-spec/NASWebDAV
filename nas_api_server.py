@@ -4786,34 +4786,101 @@ def api_livestream_record():
         if direct_tiktok_flv:
             # NAS ffmpeg 3.2 khong nhan dung codec trong TikTok FLV moi.
             # Ghi byte stream truc tiep de tranh remux/parse qua ffmpeg.
+            #
+            # Probe duoc noi long de tranh false-negative (502) khi:
+            #   - TikTok CDN khoi dau cham (>12s) nhung sau do stream binh thuong
+            #   - FLV URL het han ngan: re-scrape lai HTML va lay URL moi
+            #   - Threshold giam tu 1024 byte xuong 256 byte de chap nhan partial
             probe_file = os.path.join("/tmp", "tiktok_live_probe_%s.flv" % timestamp_str)
-            probe_cmd = [
-                "curl", "-L", "--fail", "--http1.1",
-                "--max-time", "12",
-                "--connect-timeout", "8",
-                "-A", tiktok_user_agent,
-                "-H", "Referer: https://www.tiktok.com/",
-                "-o", probe_file,
-            ]
-            if os.path.exists(cookies_path):
-                probe_cmd.extend(["-b", cookies_path])
-            probe_cmd.append(live_url)
-            probe_size = 0
-            try:
-                subprocess.call(probe_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(probe_file):
-                    probe_size = os.path.getsize(probe_file)
-            except Exception:
-                probe_size = 0
+            probe_http_code = ""
+
+            def _probe_url(target):
+                code_sentinel = "\n__HTTP__:"
+                cmd_local = [
+                    "curl", "-L", "--http1.1",
+                    "--max-time", "25",
+                    "--connect-timeout", "10",
+                    "--retry", "2",
+                    "--retry-delay", "1",
+                    "-A", tiktok_user_agent,
+                    "-H", "Referer: https://www.tiktok.com/",
+                    "-o", probe_file,
+                    "-w", "%s%%{http_code}" % code_sentinel,
+                ]
+                if os.path.exists(cookies_path):
+                    cmd_local.extend(["-b", cookies_path])
+                cmd_local.append(target)
+                try:
+                    proc_local = subprocess.run(cmd_local, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                    out = (proc_local.stdout or b"").decode("utf-8", errors="ignore")
+                    idx_local = out.rfind(code_sentinel)
+                    code = out[idx_local + len(code_sentinel):].strip() if idx_local >= 0 else "?"
+                except Exception:
+                    code = "?"
+                size_local = 0
+                try:
+                    if os.path.exists(probe_file):
+                        size_local = os.path.getsize(probe_file)
+                except Exception:
+                    pass
+                return size_local, code
+
+            probe_size, probe_http_code = _probe_url(live_url)
+
+            # FLV URL het han nhanh tren TikTok — neu probe < threshold, thu re-scrape 1 lan.
+            if probe_size < 256:
+                try:
+                    if os.path.exists(probe_file):
+                        os.remove(probe_file)
+                except Exception:
+                    pass
+                rescrape_cmd = [
+                    "curl", "-s", "-L",
+                    "--max-time", "10",
+                    "-A", tiktok_user_agent,
+                    "-H", "Referer: https://www.tiktok.com/",
+                ]
+                if os.path.exists(cookies_path):
+                    rescrape_cmd.extend(["-b", cookies_path])
+                # Re-scrape lay URL goc cua user (live page) thay vi link FLV cu.
+                # body.get("url") la URL goc nguoi dung gui (vd https://www.tiktok.com/@user/live)
+                original_user_url = body.get("url", "").strip()
+                if original_user_url:
+                    rescrape_cmd.append(original_user_url)
+                    try:
+                        html2 = subprocess.check_output(rescrape_cmd, timeout=15).decode("utf-8", errors="ignore")
+                        m2 = re.search(r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)', html2) or re.search(r'\\"flv\\":\\"(https://[^"\\]+)', html2)
+                        if m2:
+                            new_flv = m2.group(1).replace("\\u0026", "&")
+                            if new_flv != live_url:
+                                live_url = new_flv
+                                probe_size, probe_http_code = _probe_url(live_url)
+                    except Exception:
+                        pass
+
             try:
                 if os.path.exists(probe_file):
                     os.remove(probe_file)
             except Exception:
                 pass
-            if probe_size < 1024:
+
+            if probe_size < 256:
+                # Phan tich ly do cu the de bao cho user thay vi message chung.
+                if probe_http_code in ("403", "401"):
+                    reason = "TikTok CDN tu choi (HTTP %s) — cookies co the het han hoac user chan vung." % probe_http_code
+                elif probe_http_code == "404":
+                    reason = "Link FLV 404 — user da ket thuc live hoac TikTok rotate URL."
+                elif probe_http_code in ("429",):
+                    reason = "TikTok rate-limit (HTTP 429) — thu lai sau vai phut."
+                elif probe_http_code == "?":
+                    reason = "Khong ket noi duoc den CDN TikTok (DNS/network loi)."
+                else:
+                    reason = "FLV URL phan hoi %s nhung 0 byte trong 25s — co the user vua tat live." % probe_http_code
                 return jsonify({
-                    "error": "Khong nhan duoc du lieu video tu TikTok live. User co the chua live hoac CDN TikTok dang chan NAS.",
-                    "detail": "Da resolve duoc link FLV nhung stream tra 0 byte trong 12 giay."
+                    "error": "Khong nhan duoc du lieu video tu TikTok live.",
+                    "detail": reason,
+                    "http_code": probe_http_code,
+                    "probe_size": probe_size,
                 }), 502
 
             cmd = [

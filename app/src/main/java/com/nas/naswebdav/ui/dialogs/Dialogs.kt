@@ -321,6 +321,74 @@ private fun TikTokLiveWatchSection(
     newUsername: String,
     onUsernameChange: (String) -> Unit
 ) {
+    // User dang xem chi tiet loi (null = an dialog)
+    var detailUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
+
+    val openDetail = detailUser
+    if (openDetail != null) {
+        AlertDialog(
+            onDismissRequest = { detailUser = null },
+            containerColor = Color(0xFF0F0F0F),
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("♪ @${openDetail.username}", color = Color(0xFFEE1D52), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val statusLabel = when (openDetail.status) {
+                        "recording" -> "🟢 Đang ghi live (job ${openDetail.jobId})"
+                        "excluded" -> "💤 Trong giờ loại trừ"
+                        "error" -> "🔴 Lỗi"
+                        else -> "⏳ Đang theo dõi"
+                    }
+                    Text(statusLabel, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    if (openDetail.lastCheck.isNotEmpty()) {
+                        Text("Kiểm tra lần cuối: ${openDetail.lastCheck}", color = Color(0xFF8892B0), fontSize = 12.sp)
+                    }
+                    if (openDetail.lastLive.isNotEmpty()) {
+                        Text("Phát hiện live cuối: ${openDetail.lastLive}", color = Color(0xFF8892B0), fontSize = 12.sp)
+                    }
+                    if (openDetail.lastError.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("CHI TIẾT LỖI", color = Color(0xFFFFA726), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        // Cho phep scroll khi message dai, hien toan bo chu khong ellipsis.
+                        androidx.compose.foundation.layout.Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState())
+                                .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                                .padding(10.dp)
+                        ) {
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                Text(
+                                    openDetail.lastError,
+                                    color = Color(0xFFFF8A65),
+                                    fontSize = 12.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { detailUser = null }) {
+                    Text("Đóng", color = Color(0xFFEE1D52), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.removeTikTokLiveWatchUser(context, openDetail.username)
+                    detailUser = null
+                }) {
+                    Text("Xoá user này", color = Color(0xFF8892B0))
+                }
+            },
+        )
+    }
+
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
     Spacer(Modifier.height(14.dp))
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -397,7 +465,13 @@ private fun TikTokLiveWatchSection(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             users.forEach { user ->
                 Row(
-                    Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF15151D), RoundedCornerShape(10.dp))
+                        // Tap vao row -> mo dialog xem chi tiet trang thai/loi (rat huu ich khi
+                        // last_error qua dai bi truncate boi ellipsis o dong duoi).
+                        .clickable { detailUser = user }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -409,6 +483,9 @@ private fun TikTokLiveWatchSection(
                             else -> "Đang theo dõi"
                         }
                         Text(sub, color = if (user.status == "recording") Color(0xFF43A047) else Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (user.status == "error" && user.lastError.length > 60) {
+                            Text("Chạm để xem chi tiết →", color = Color(0xFFFFA726), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     IconButton(onClick = { viewModel.removeTikTokLiveWatchUser(context, user.username) }) {
                         Icon(Icons.Default.Close, contentDescription = "Xóa", tint = Color(0xFFFF1744))
