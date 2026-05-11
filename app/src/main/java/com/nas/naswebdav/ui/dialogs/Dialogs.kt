@@ -363,6 +363,35 @@ private fun TikTokLiveWatchSection(
         Spacer(Modifier.height(8.dp))
         Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
+    // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
+    val cookiesStatus = viewModel.tiktokCookiesStatus
+    if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
+        Spacer(Modifier.height(8.dp))
+        val (bannerBg, bannerFg, label) = when (cookiesStatus) {
+            "missing" -> Triple(Color(0x33FFA726), Color(0xFFFFA726), "Chưa có cookies.txt")
+            "expired" -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok hết hạn")
+            else -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok bị thu hồi")
+        }
+        Row(
+            Modifier.fillMaxWidth().background(bannerBg, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Warning, contentDescription = null, tint = bannerFg, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, color = bannerFg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                val detail = viewModel.tiktokCookiesMessage
+                if (detail.isNotEmpty()) {
+                    Text(detail, color = bannerFg.copy(alpha = 0.85f), fontSize = 11.sp)
+                }
+                Text(
+                    "Hãy đăng nhập TikTok trên trình duyệt, export cookies.txt mới rồi đặt vào WebDAV root (cookies.txt) để watcher hoạt động trở lại.",
+                    color = bannerFg.copy(alpha = 0.85f),
+                    fontSize = 11.sp,
+                )
+            }
+        }
+    }
     if (users.isNotEmpty()) {
         Spacer(Modifier.height(10.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

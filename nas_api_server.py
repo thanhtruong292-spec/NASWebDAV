@@ -4220,6 +4220,105 @@ def _normalize_tiktok_username(username):
     username = username.split("/")[0].split("?")[0].strip()
     return "".join(ch for ch in username if ch.isalnum() or ch in "._-")[:64]
 
+# Cache trang thai cookies TikTok de tranh hit TikTok moi chu ky watchdog.
+_tiktok_cookies_cache = {
+    "status": "unknown",   # missing / expired / revoked / valid / unknown
+    "message": "",         # mo ta nguoi dung doc
+    "checked_at": 0.0,     # epoch lan check gan nhat
+    "file_mtime": 0.0,     # mtime cua cookies.txt luc check de phat hien file moi
+}
+_TIKTOK_COOKIES_CHECK_INTERVAL = 600  # 10 phut moi lan goi mang den TikTok
+
+def _tiktok_cookies_path():
+    return os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+
+def _parse_cookies_sessionid_expiry(path):
+    """Doc cookies.txt (Netscape format), tra ve (epoch_expiry, sessionid_value) cho sessionid TikTok."""
+    expiry = 0
+    sessionid = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 7:
+                    continue
+                domain, _flag, _p, _secure, exp, name, value = parts[:7]
+                if "tiktok.com" not in domain:
+                    continue
+                if name in ("sessionid", "sid_guard", "sid_tt"):
+                    try:
+                        e = int(exp)
+                    except Exception:
+                        e = 0
+                    if e > expiry:
+                        expiry = e
+                    if name == "sessionid" and value:
+                        sessionid = value
+    except Exception:
+        pass
+    return expiry, sessionid
+
+def _ping_tiktok_cookies(path):
+    """Goi 1 endpoint can dang nhap; tra ve (is_valid, detail)."""
+    curl_cmd = [
+        "curl", "-s", "-L",
+        "--max-time", "12",
+        "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-H", "Referer: https://www.tiktok.com/",
+        "-H", "Accept: application/json, text/plain, */*",
+        "-b", path,
+        "-w", "\n__HTTP__:%{http_code}",
+        # passport_logged_out endpoint tra ve cau truc { user: { uid, sec_uid }, ... } khi co session
+        "https://www.tiktok.com/passport/web/account/info/?aid=1988",
+    ]
+    try:
+        proc = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        raw = (proc.stdout or b"").decode("utf-8", errors="ignore")
+        idx = raw.rfind("\n__HTTP__:")
+        body = raw[:idx] if idx >= 0 else raw
+        http_code = raw[idx + len("\n__HTTP__:") :].strip() if idx >= 0 else "?"
+        if "\"uid\"" in body or "\"sec_uid\"" in body or "\"user_id\"" in body:
+            return True, "HTTP %s OK" % http_code
+        if "\"status_code\":8" in body or "not login" in body.lower() or "please log in" in body.lower():
+            return False, "TikTok tra ve 'chua dang nhap' — cookies da het han"
+        if http_code in ("401", "403"):
+            return False, "TikTok tu choi (HTTP %s) — cookies da bi thu hoi" % http_code
+        # Khong xac dinh duoc — coi nhu valid de khong false-alarm
+        return True, "HTTP %s (ko ro)" % http_code
+    except Exception as e:
+        return True, "ko check duoc (%s)" % str(e)[:80]
+
+def _check_cookies_status(force=False):
+    """Tra ve dict { status, message, checked_at } cua cookies TikTok.
+    Su dung cache 10 phut tru khi force=True hoac file vua thay doi."""
+    path = _tiktok_cookies_path()
+    now = time.time()
+    if not os.path.exists(path):
+        _tiktok_cookies_cache.update({"status": "missing", "message": "Chua co cookies.txt o WebDAV root", "checked_at": now, "file_mtime": 0})
+        return dict(_tiktok_cookies_cache)
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        mtime = 0
+    file_changed = mtime != _tiktok_cookies_cache.get("file_mtime", 0)
+    if (not force) and (not file_changed) and (now - _tiktok_cookies_cache.get("checked_at", 0) < _TIKTOK_COOKIES_CHECK_INTERVAL):
+        return dict(_tiktok_cookies_cache)
+    expiry, sessionid = _parse_cookies_sessionid_expiry(path)
+    if not sessionid:
+        _tiktok_cookies_cache.update({"status": "missing", "message": "cookies.txt thieu sessionid TikTok", "checked_at": now, "file_mtime": mtime})
+        return dict(_tiktok_cookies_cache)
+    if expiry and expiry < now:
+        _tiktok_cookies_cache.update({"status": "expired", "message": "Cookie sessionid het han luc %s — vui long xuat lai cookies.txt" % datetime.datetime.fromtimestamp(expiry).strftime("%d/%m/%Y %H:%M"), "checked_at": now, "file_mtime": mtime})
+        return dict(_tiktok_cookies_cache)
+    ok, detail = _ping_tiktok_cookies(path)
+    if ok:
+        _tiktok_cookies_cache.update({"status": "valid", "message": detail, "checked_at": now, "file_mtime": mtime})
+    else:
+        _tiktok_cookies_cache.update({"status": "revoked", "message": detail, "checked_at": now, "file_mtime": mtime})
+    return dict(_tiktok_cookies_cache)
+
 def _is_tiktok_watch_excluded(now_dt=None):
     now_dt = now_dt or datetime.datetime.now()
     if not _tiktok_watch_state.get("exclude_enabled", False):
@@ -4388,7 +4487,12 @@ threading.Thread(target=_tiktok_live_watchdog, daemon=True).start()
 def api_tiktok_live_watch_get():
     with _tiktok_watch_lock:
         _load_tiktok_watch_state()
-        return jsonify(_tiktok_watch_state)
+        resp = dict(_tiktok_watch_state)
+    # Them trang thai cookies de UI hien banner khi het han / bi thu hoi.
+    cookies = _check_cookies_status()
+    resp["cookies_status"] = cookies.get("status", "unknown")
+    resp["cookies_message"] = cookies.get("message", "")
+    return jsonify(resp)
 
 @app.route("/api/tiktok/live_watch/add", methods=["POST"])
 @requires_auth

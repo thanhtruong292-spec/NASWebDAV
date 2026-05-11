@@ -764,6 +764,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var isLoadingTikTokWatch by mutableStateOf(false)
         private set
 
+    // Trang thai cookies.txt TikTok do NAS bao cao:
+    // "valid" / "missing" / "expired" / "revoked" / "unknown"
+    var tiktokCookiesStatus by mutableStateOf("unknown")
+        private set
+    var tiktokCookiesMessage by mutableStateOf("")
+        private set
+
     var isStartingLivestream by mutableStateOf(false)
         private set
 
@@ -786,6 +793,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
         tiktokExcludeStart = json.optString("exclude_start", "23:00")
         tiktokExcludeEnd = json.optString("exclude_end", "07:00")
+        tiktokCookiesStatus = json.optString("cookies_status", "unknown")
+        tiktokCookiesMessage = json.optString("cookies_message", "")
         tiktokLiveWatchError = ""
     }
 
