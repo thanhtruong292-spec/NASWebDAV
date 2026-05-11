@@ -4244,32 +4244,48 @@ def _tiktok_watch_user_has_recording(username):
     return ""
 
 def _check_tiktok_user_live(username):
-    ytdlp_bin = _find_ytdlp_bin()
-    if not ytdlp_bin:
-        return False, "yt-dlp chua duoc cai dat"
+    # yt-dlp --simulate hay bi TikTok bot-block tu IP datacenter/NAS nen tin hieu
+    # khong dang tin cay. Dung cung phuong phap nhu /api/livestream/record:
+    # curl trang HTML live cua user (vi browser UA + cookies neu co) roi tim
+    # pattern FLV trong embedded JSON — neu co thi user dang live.
     live_url = "https://www.tiktok.com/@%s/live" % username
-    cmd = [
-        ytdlp_bin,
-        "--simulate",
-        "--no-playlist",
-        "--no-warnings",
-        "--socket-timeout", "20",
-        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "--add-header", "Referer: https://www.tiktok.com/",
-        live_url
-    ]
     cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+    curl_cmd = [
+        "curl", "-s", "-L",
+        "--max-time", "20",
+        "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-H", "Referer: https://www.tiktok.com/",
+        "-H", "Accept-Language: en-US,en;q=0.9,vi;q=0.8",
+    ]
     if os.path.exists(cookies_path):
-        cmd[1:1] = ["--cookies", cookies_path]
+        curl_cmd.extend(["-b", cookies_path])
+    curl_cmd.append(live_url)
     try:
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=35)
-        output = (proc.stdout or b"").decode("utf-8", errors="ignore") + "\n" + (proc.stderr or b"").decode("utf-8", errors="ignore")
-        if proc.returncode == 0:
+        proc = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+        html = (proc.stdout or b"").decode("utf-8", errors="ignore")
+        if not html:
+            return False, "empty response from tiktok"
+        # FLV URL chi xuat hien khi user dang live va co stream the chay.
+        if _re_module.search(r'\\"flv\\":\\"https://[^"\\\\]+', html):
             return True, ""
-        lowered = output.lower()
-        if "not live" in lowered or "offline" in lowered or "room not found" in lowered:
-            return False, "offline"
-        return False, output.strip()[-160:]
+        if "\"liveRoom\"" in html and "\"streamUrl\"" in html:
+            return True, ""
+        lowered = html.lower()
+        offline_signals = (
+            "live has ended",
+            "this live has ended",
+            "phòng trực tiếp đã kết thúc",
+            "user does not exist",
+            "page not available",
+            "couldn\\'t find this account",
+            "\"liveroomstatus\":4",  # 4 = ended
+            "\"liveroomstatus\":2",  # 2 = preparing
+            "\"liveroom\":null",
+        )
+        for sig in offline_signals:
+            if sig in lowered:
+                return False, "offline"
+        return False, "no live stream detected"
     except Exception as e:
         return False, str(e)
 
