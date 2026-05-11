@@ -4302,7 +4302,11 @@ def _start_tiktok_watch_record(username):
         method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        # /api/livestream/record itself runs a curl scrape (up to 15s) + spawns
+        # yt-dlp before returning, so a short 8s timeout here would race it and
+        # the call would always look "timed out" even though the record kicked
+        # off. 35s gives the scrape headroom and matches the upstream timeout.
+        with urllib.request.urlopen(req, timeout=35) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
             return data.get("job_id", ""), data.get("message", "")
     except Exception as e:
