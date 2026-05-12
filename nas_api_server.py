@@ -17,6 +17,7 @@ import sys
 os.environ["MALLOC_ARENA_MAX"] = "2"
 import json
 import time
+import uuid
 import subprocess
 import threading
 import logging
@@ -34,6 +35,7 @@ import datetime
 import hashlib
 import signal
 import atexit
+import shutil
 
 # ============ LOGGING TIEU CHUAN ============
 # Ghi log ra file /var/log/nas_api.log + console, co rotation
@@ -98,6 +100,92 @@ PID_FILE = "/var/run/nas_api_server.pid"
 LAN_WHITELIST_PATH = "/etc/nas/lan_whitelist.conf"
 WEBDAV_LOG = "/var/log/nginx/openmediavault-webgui_access.log"
 AI_TAGS_PATH = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "ai_tags.json")
+NAS_TMP_ROOT = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tmp")
+
+def _make_hdd_tmp_dir(prefix):
+    """Tao thu muc tmp rieng tren HDD de tranh lam day /tmp tmpfs."""
+    safe_prefix = _re_module.sub(r"[^A-Za-z0-9_.-]+", "_", str(prefix or "job")).strip("_") or "job"
+    try:
+        os.makedirs(NAS_TMP_ROOT, exist_ok=True)
+        tmp_dir = os.path.join(
+            NAS_TMP_ROOT,
+            "%s_%d_%s" % (safe_prefix, int(time.time() * 1000), uuid.uuid4().hex[:8])
+        )
+        os.makedirs(tmp_dir, exist_ok=True)
+        return tmp_dir
+    except Exception as e:
+        log.warning("[TMP] Khong tao duoc tmp tren HDD: %s", e)
+        return ""
+
+def _job_env_with_tmp(tmp_dir):
+    env = os.environ.copy()
+    if tmp_dir:
+        env["TMPDIR"] = tmp_dir
+        env["TMP"] = tmp_dir
+        env["TEMP"] = tmp_dir
+    return env
+
+def _cleanup_job_tmp(tmp_dir):
+    if not tmp_dir:
+        return
+    try:
+        root_real = os.path.realpath(NAS_TMP_ROOT)
+        tmp_real = os.path.realpath(tmp_dir)
+        if tmp_real.startswith(root_real + os.sep) and os.path.isdir(tmp_real):
+            shutil.rmtree(tmp_real, ignore_errors=True)
+            log.info("[TMP] Da don tmp job: %s", tmp_real)
+    except Exception as e:
+        log.warning("[TMP] Don tmp job loi: %s", e)
+
+def _cleanup_stale_job_tmp(max_age_hours=24):
+    try:
+        if not os.path.isdir(NAS_TMP_ROOT):
+            return 0
+        now = time.time()
+        max_age = max_age_hours * 3600
+        deleted = 0
+        for name in os.listdir(NAS_TMP_ROOT):
+            path = os.path.join(NAS_TMP_ROOT, name)
+            try:
+                if os.path.isdir(path) and (now - os.path.getmtime(path)) > max_age:
+                    shutil.rmtree(path, ignore_errors=True)
+                    deleted += 1
+            except Exception:
+                continue
+        return deleted
+    except Exception:
+        return 0
+
+def _cleanup_runtime_tmp_artifacts(max_age_minutes=30):
+    """Don rac tmp do PyInstaller/ffmpeg de lai, khong dung vao socket he thong."""
+    deleted = 0
+    now = time.time()
+    max_age = max_age_minutes * 60
+    scan_roots = ["/tmp", "/var/tmp/yt-dlp-tmp"]
+    for root in scan_roots:
+        try:
+            if not os.path.isdir(root):
+                continue
+            for name in os.listdir(root):
+                if not (name.startswith("_MEI") or name.startswith("ffmpeg") or name.startswith("flv_repair")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    if (now - os.path.getmtime(path)) < max_age:
+                        continue
+                    if os.path.isdir(path):
+                        shutil.rmtree(path, ignore_errors=True)
+                        deleted += 1
+                    elif os.path.isfile(path):
+                        os.remove(path)
+                        deleted += 1
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    if deleted:
+        log.info("[TMP] Da don %d artifact tam trong /tmp va /var/tmp.", deleted)
+    return deleted
 
 def init_db():
     try:
@@ -1174,6 +1262,7 @@ _alert_states = {
     "ai_scan_running": False,        # Dang quet anh hay khong
     "ai_last_scan": 0,               # Thoi gian lan quet AI cuoi cung (epoch)
     "trash_last_clean": 0,           # Thoi gian lan don rac cuoi cung (epoch)
+    "empty_last_clean": 0,           # Thoi gian lan don file/folder rong cuoi cung (epoch)
 }
 
 def _push_alert(alert_type, message, severity="INFO"):
@@ -1334,6 +1423,56 @@ def _scan_photos_lightweight():
         return False
 
 
+def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None):
+    """Don dep tu dong file rong (0-byte), FLV hong cu va thu muc rong duoi root_dir.
+    Bo qua cac thu muc he thong: .trash, .nas_meta, .thumbnails, .git, .recycle.
+
+    Tra ve tuple (so file rong da xoa, so thu muc da xoa, so FLV hong da xoa).
+    """
+    if exclude_dirs is None:
+        exclude_dirs = {".trash", ".nas_meta", ".thumbnails", ".git", ".recycle", "@eaDir"}
+    if not os.path.isdir(root_dir):
+        return (0, 0, 0)
+    deleted_files = 0
+    deleted_dirs = 0
+    deleted_broken_flv = 0
+    # Walk bottom-up de xoa thu muc tu trong ra ngoai
+    for dirpath, dirnames, filenames in os.walk(root_dir, topdown=False):
+        # Bo qua cac thu muc system
+        rel = os.path.relpath(dirpath, root_dir)
+        parts = rel.split(os.sep)
+        if any(p in exclude_dirs for p in parts):
+            continue
+        # 1) Xoa file 0-byte
+        for fname in filenames:
+            if fname.startswith("."):
+                continue  # bo qua dotfile (.DS_Store, .gitkeep, etc.)
+            fpath = os.path.join(dirpath, fname)
+            try:
+                if not os.path.isfile(fpath):
+                    continue
+                lower_name = fname.lower()
+                is_broken_flv = lower_name.endswith(".broken.flv") or ".flv.broken" in lower_name
+                if is_broken_flv:
+                    os.remove(fpath)
+                    deleted_broken_flv += 1
+                elif os.path.getsize(fpath) == 0:
+                    os.remove(fpath)
+                    deleted_files += 1
+            except Exception:
+                pass
+        # 2) Xoa thu muc rong (sau khi xoa file ben trong o vong tren)
+        try:
+            if dirpath == root_dir:
+                continue  # khong xoa root
+            if not os.listdir(dirpath):
+                os.rmdir(dirpath)
+                deleted_dirs += 1
+        except Exception:
+            pass
+    return (deleted_files, deleted_dirs, deleted_broken_flv)
+
+
 def _check_torrent_completion():
     """Phat hien torrent vua hoan thanh (progress 1.0) so voi lan poll truoc."""
     new_completed = []
@@ -1458,6 +1597,25 @@ def _cron_worker():
                     _push_alert("TRASH_CLEANED", msg, "INFO")
                 with _alert_state_lock:
                     _alert_states["trash_last_clean"] = now_ts
+
+            # --- 4b. Don dep file rong (0-byte), FLV hong cu + thu muc rong (moi 24h) ---
+            # Quet WEBDAV_FILE_ROOT, bo qua .trash/.nas_meta/.thumbnails va dotfile.
+            # File 0-byte thuong la rac tu download fail / FLV stream rong, thu muc
+            # rong sau khi xoa file lai cung khong dung gi -> don sach.
+            with _alert_state_lock:
+                last_empty = _alert_states["empty_last_clean"]
+            if (now_ts - last_empty) > 86400:  # 24h
+                try:
+                    df, dd, db = _clean_empty_files_and_dirs(WEBDAV_FILE_ROOT)
+                    if df + dd + db > 0:
+                        msg = "Tự động: Đã xóa %d file rỗng + %d thư mục rỗng." % (df, dd)
+                        if db > 0:
+                            msg = msg + " FLV hong cu: %d." % db
+                        _push_alert("EMPTY_CLEANED", msg, "INFO")
+                except Exception as e:
+                    log.warning("[Cron] Empty cleanup loi: %s", e)
+                with _alert_state_lock:
+                    _alert_states["empty_last_clean"] = now_ts
 
             # --- 5. Quet phan loai anh nhe luc 3h sang ---
             with _alert_state_lock:
@@ -1708,6 +1866,84 @@ def api_status():
         pass
         
     return jsonify(data)
+
+
+@app.route("/api/ping", methods=["GET", "HEAD"])
+@requires_auth
+def api_ping():
+    """Lightweight authenticated ping endpoint for LAN/Tailscale latency checks."""
+    if request.method == "HEAD":
+        return ("", 204)
+    return jsonify({"ok": True, "ts": time.time()})
+
+
+@app.route("/api/system/idle")
+@requires_auth
+def api_system_idle():
+    """Tra ve trang thai 'ranh' cua NAS de quyet dinh co nen chay tac vu nang
+    (vi du quet trung lap) hay khong.
+
+    Idle = TRUE khi:
+      - CPU usage < 50%
+      - Load average 1 phut < cores * 0.7
+      - RAM free > 150 MB
+      - Khong co livestream nao dang recording
+      - Khong co backup/restore/torrent dang chay nang
+    """
+    try:
+        cpu_pct = psutil.cpu_percent(interval=0.4)
+    except Exception:
+        cpu_pct = 0.0
+    try:
+        mem = psutil.virtual_memory()
+        mem_free_mb = mem.available / (1024 * 1024)
+        mem_pct = mem.percent
+    except Exception:
+        mem_free_mb = 9999
+        mem_pct = 0.0
+    try:
+        cores = max(1, psutil.cpu_count(logical=True) or 1)
+        load1 = os.getloadavg()[0]
+    except Exception:
+        cores = 1
+        load1 = 0.0
+    try:
+        with _livestream_lock:
+            recording_streams = sum(1 for j in _livestream_jobs.values() if j.get("status") == "recording")
+    except Exception:
+        recording_streams = 0
+    try:
+        with _ytdlp_lock:
+            ytdlp_jobs = len(_ytdlp_jobs)
+    except Exception:
+        ytdlp_jobs = 0
+    try:
+        with _thumb_gate_lock:
+            sync_jobs = 1 if "sync" in _thumb_auto_block_reasons else 0
+    except Exception:
+        sync_jobs = 0
+
+    reasons = []
+    if cpu_pct > 50: reasons.append("CPU %.0f%% > 50%%" % cpu_pct)
+    if load1 > cores * 0.7: reasons.append("Load %.2f > %.2f" % (load1, cores * 0.7))
+    if mem_free_mb < 150: reasons.append("RAM trong %.0f MB < 150 MB" % mem_free_mb)
+    if recording_streams > 0: reasons.append("Co %d livestream dang ghi" % recording_streams)
+    if ytdlp_jobs > 0: reasons.append("Co %d ytdlp dang tai" % ytdlp_jobs)
+    if sync_jobs > 0: reasons.append("Dang dong bo tu dien thoai")
+
+    is_idle = len(reasons) == 0
+    return jsonify({
+        "idle": is_idle,
+        "reason": ", ".join(reasons) if reasons else "",
+        "cpu_pct": round(cpu_pct, 1),
+        "load_avg_1min": round(load1, 2),
+        "cores": cores,
+        "mem_free_mb": int(mem_free_mb),
+        "mem_pct": round(mem_pct, 1),
+        "recording_streams": recording_streams,
+        "ytdlp_jobs": ytdlp_jobs,
+        "sync_jobs": sync_jobs
+    })
 
 
 @app.route("/api/disk/smart")
@@ -2206,44 +2442,48 @@ def api_fan_control():
         settings = _load_fan_settings()
         mode = data.get('mode', settings.get('mode', 'auto'))
         
+        # FIX: STATUS_CACHE -> _status_cache (ten dung cua bien global).
+        # Truoc day moi POST /api/fan/control ne ra "name 'STATUS_CACHE' is not defined"
+        # khien API tra HTTP 500 du hardware da chuyen mode dung. /api/status van
+        # tra mode cu vi cache khong duoc cap nhat ngay.
         if mode == 'auto':
             settings['mode'] = 'auto'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "start", "fan.service"])
-            if STATUS_CACHE:
-                STATUS_CACHE['fan_mode'] = 'auto'
+            with _cache_lock:
+                _status_cache['fan_mode'] = 'auto'
             return jsonify({"status": "success", "mode": "auto"})
-            
+
         elif mode == 'custom':
             settings['mode'] = 'custom'
             settings['on_temp'] = data.get('on_temp', settings.get('on_temp', 65))
             settings['off_temp'] = data.get('off_temp', settings.get('off_temp', 55))
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            if STATUS_CACHE:
-                STATUS_CACHE['fan_mode'] = 'custom'
-                STATUS_CACHE['fan_on_temp'] = settings['on_temp']
-                STATUS_CACHE['fan_off_temp'] = settings['off_temp']
+            with _cache_lock:
+                _status_cache['fan_mode'] = 'custom'
+                _status_cache['fan_on_temp'] = settings['on_temp']
+                _status_cache['fan_off_temp'] = settings['off_temp']
             return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp']})
-            
+
         elif mode == 'off':
             settings['mode'] = 'off'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
-            if STATUS_CACHE:
-                STATUS_CACHE['fan_mode'] = 'off'
-                STATUS_CACHE['fan_status'] = 'Dừng'
+            with _cache_lock:
+                _status_cache['fan_mode'] = 'off'
+                _status_cache['fan_status'] = 'Dừng'
             return jsonify({"status": "success", "mode": "off"})
-            
+
         elif mode == 'on':
             settings['mode'] = 'on'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             run_cmd(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
-            if STATUS_CACHE:
-                STATUS_CACHE['fan_mode'] = 'on'
-                STATUS_CACHE['fan_status'] = 'Đang chạy 100%'
+            with _cache_lock:
+                _status_cache['fan_mode'] = 'on'
+                _status_cache['fan_status'] = 'Đang chạy 100%'
             return jsonify({"status": "success", "mode": "on"})
             
         return jsonify({"error": "Invalid mode"}), 400
@@ -3162,10 +3402,45 @@ MEDIA_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", 
 MEDIA_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v"}
 MEDIA_ALL_EXTS = MEDIA_IMAGE_EXTS | MEDIA_VIDEO_EXTS
 
-_thumb_stats = {"generated": 0, "total_media": 0, "running": False, "last_file": "", "errors": 0, "paused": False}
+_thumb_stats = {"generated": 0, "total_media": 0, "running": False, "last_file": "", "errors": 0, "paused": False, "block_reasons": []}
 _thumb_stats_lock = threading.Lock()
 _thumb_paused = threading.Event()  # Set = dang chay, Clear = tam dung
 _thumb_paused.set()  # Mac dinh: CHAY
+_thumb_gate_lock = threading.Lock()
+_thumb_manual_paused = False
+_thumb_auto_block_reasons = set()
+
+def _apply_thumbnail_gate_locked():
+    """Ap dung trang thai pause/resume tu manual pause + cac tac vu nen nang."""
+    should_pause = _thumb_manual_paused or bool(_thumb_auto_block_reasons)
+    if should_pause:
+        _thumb_paused.clear()
+    else:
+        _thumb_paused.set()
+    with _thumb_stats_lock:
+        _thumb_stats["paused"] = should_pause
+        _thumb_stats["block_reasons"] = sorted(_thumb_auto_block_reasons)
+        if should_pause:
+            _thumb_stats["running"] = False
+            if _thumb_auto_block_reasons:
+                _thumb_stats["last_file"] = "Tam dung: " + ", ".join(sorted(_thumb_auto_block_reasons))
+
+def _set_thumbnail_auto_block(reason, active):
+    """Chan thumbnail khi livestream/ytdlp/sync dang chay; bo chan khi da xong."""
+    reason = str(reason or "").strip()
+    if not reason:
+        return
+    with _thumb_gate_lock:
+        changed = False
+        if active and reason not in _thumb_auto_block_reasons:
+            _thumb_auto_block_reasons.add(reason)
+            changed = True
+        elif (not active) and reason in _thumb_auto_block_reasons:
+            _thumb_auto_block_reasons.discard(reason)
+            changed = True
+        _apply_thumbnail_gate_locked()
+    if changed:
+        log.info("[Thumbnail] Gate %s: %s", "BLOCK" if active else "UNBLOCK", reason)
 
 def _get_thumb_path(base_dir, file_path):
     rel = os.path.relpath(file_path, base_dir)
@@ -3284,6 +3559,11 @@ def _thumbnail_generator():
     
     while True:
         try:
+            if not _thumb_paused.is_set():
+                with _thumb_stats_lock:
+                    _thumb_stats["running"] = False
+                    _thumb_stats["paused"] = True
+                _thumb_paused.wait()
             base_dir = get_webdav_root()
             thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
             os.makedirs(thumb_dir, exist_ok=True)
@@ -3328,6 +3608,8 @@ def _thumbnail_generator():
                     
                 while True:
                     time.sleep(60)
+                    if not _thumb_paused.is_set():
+                        _thumb_paused.wait()
                     now = datetime.datetime.now()
                     
                     # 1. Hẹn giờ ban đêm: Bắt buộc quét toàn bộ rác định kỳ lúc 3:00 - 3:05 Sáng
@@ -3574,18 +3856,37 @@ def api_thumb_control():
     data = request.get_json(force=True) or {}
     action = data.get("action", "").strip().lower()
 
+    global _thumb_manual_paused
     if action == "pause":
-        _thumb_paused.clear()  # Block generator thread
-        with _thumb_stats_lock:
-            _thumb_stats["paused"] = True
-        return jsonify({"result": "ok", "paused": True})
+        with _thumb_gate_lock:
+            _thumb_manual_paused = True
+            _apply_thumbnail_gate_locked()
+        return jsonify({"result": "ok", "paused": True, "block_reasons": sorted(_thumb_auto_block_reasons)})
     elif action == "resume":
-        with _thumb_stats_lock:
-            _thumb_stats["paused"] = False
-        _thumb_paused.set()  # Unblock generator thread
-        return jsonify({"result": "ok", "paused": False})
+        with _thumb_gate_lock:
+            _thumb_manual_paused = False
+            _apply_thumbnail_gate_locked()
+            paused = not _thumb_paused.is_set()
+        return jsonify({"result": "ok", "paused": paused, "block_reasons": sorted(_thumb_auto_block_reasons)})
     else:
         return jsonify({"error": "action phai la 'pause' hoac 'resume'"}), 400
+
+@app.route("/api/thumb/activity", methods=["POST"])
+@requires_auth
+def api_thumb_activity():
+    """App/worker bao cho NAS biet tac vu nang dang chay de tam dung thumbnail.
+    Body: {"source": "sync", "active": true|false}"""
+    body = request.get_json(force=True, silent=True) or {}
+    source = _re_module.sub(r"[^a-zA-Z0-9_.-]+", "_", str(body.get("source", "sync"))).strip("_") or "sync"
+    active = bool(body.get("active", False))
+    if len(source) > 48:
+        source = source[:48]
+    _set_thumbnail_auto_block(source, active)
+    return jsonify({
+        "result": "ok",
+        "paused": not _thumb_paused.is_set(),
+        "block_reasons": sorted(_thumb_auto_block_reasons)
+    })
 
 # ============ DOCKER POWER CONTROL ============
 
@@ -4069,6 +4370,56 @@ def _find_ytdlp_bin():
             continue
     return None
 
+def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
+    """Kiem tra nhanh ffmpeg tren NAS co nhan duoc codec video cua FLV CDN khong."""
+    flv_url_lower = (flv_url or "").lower()
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-analyzeduration", "3000000",
+        "-probesize", "1048576",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+    ]
+    if user_agent:
+        cmd.extend(["-user_agent", user_agent])
+    # TikTok CDN URLs da co token xac thuc trong query string. Gui lai cookie
+    # web TikTok vao CDN co the lam probe tra ket qua sai, roi fallback ve
+    # yt-dlp va bao nham "not currently live".
+    if "tiktokcdn" in flv_url_lower:
+        cmd.extend(["-headers", "Referer: https://www.tiktok.com/\r\n"])
+    elif cookies_path and os.path.exists(cookies_path):
+        try:
+            cookie_header = ""
+            with open(cookies_path, "r") as f:
+                pairs = []
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    cols = line.split("\t")
+                    if len(cols) >= 7:
+                        pairs.append("%s=%s" % (cols[5], cols[6]))
+                cookie_header = "; ".join(pairs)
+            if cookie_header:
+                cmd.extend(["-headers", "Cookie: %s\r\nReferer: https://www.tiktok.com/\r\n" % cookie_header])
+        except Exception:
+            pass
+    else:
+        cmd.extend(["-headers", "Referer: https://www.tiktok.com/\r\n"])
+    cmd.append(flv_url)
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+        codec = (proc.stdout or b"").decode("utf-8", errors="ignore").strip().lower()
+        if proc.returncode == 0 and codec and codec not in ("unknown", "none"):
+            log.info("[Livestream] Direct FLV probe OK: codec=%s url=%s", codec, flv_url[:120])
+            return True
+        log.warning("[Livestream] Direct FLV codec khong remux duoc qua ffprobe: codec=%s err=%s",
+                    codec or "-", (proc.stderr or b"")[-160:])
+    except Exception as e:
+        log.warning("[Livestream] Direct FLV codec probe loi: %s", e)
+    return False
+
 def _remux_flv_to_mp4(flv_path):
     """Remux file FLV thanh MP4 bang ffmpeg -c copy (khong re-encode, ~0% CPU).
     Tra ve duong dan file MP4 neu thanh cong, hoac chuoi rong neu that bai."""
@@ -4109,18 +4460,74 @@ def _remux_flv_to_mp4(flv_path):
             except Exception:
                 pass
             return mp4_path
-        log.warning("[Livestream] Remux FLV->MP4 fail (rc=%d): %s", proc2.returncode, (proc2.stderr or b"")[-160:])
+        # FIX: Pass 3 — them h264_mp4toannexb video BSF. Mot so FLV/H264 thieu
+        # NAL annexB delimiter -> mp4 muxer reject. BSF nay them lai delimiter.
+        proc3 = subprocess.run([
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-fflags", "+genpts",
+            "-i", flv_path,
+            "-c", "copy",
+            "-bsf:v", "h264_mp4toannexb",
+            "-movflags", "+faststart",
+            mp4_path,
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+        if proc3.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+            try:
+                os.remove(flv_path)
+            except Exception:
+                pass
+            return mp4_path
+        # Het cach: log day du stderr + rename file .flv -> .broken.flv de user
+        # biet file da bi hong/khong play duoc, KHONG xoa (de debug hoac thu
+        # mo bang VLC tay).
+        err_tail = (proc3.stderr or proc2.stderr or b"")[-240:]
+        log.warning("[Livestream] Remux FLV->MP4 fail het ca 3 pass (rc=%d|%d|%d): %s",
+                    proc.returncode, proc2.returncode, proc3.returncode, err_tail)
+        try:
+            broken_path = flv_path + ".broken"  # vd: foo.flv.broken
+            if os.path.exists(broken_path):
+                broken_path = broken_path + "." + str(int(time.time()))
+            os.rename(flv_path, broken_path)
+            log.info("[Livestream] FLV khong play duoc -> doi ten thanh: %s", os.path.basename(broken_path))
+        except Exception:
+            pass
         return ""
     except Exception as e:
         log.error("[Livestream] Remux FLV->MP4 loi: %s", e)
         return ""
 
+def _livestream_error_from_log(info):
+    log_file = info.get("log_file", "")
+    if not log_file or not os.path.exists(log_file):
+        return ""
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        last_lines = lines[-30:]
+        for line in reversed(last_lines):
+            line_clean = line.strip()
+            line_lo = line_clean.lower()
+            if "not currently live" in line_lo:
+                return "Kenh hien khong con live."
+            if "this live has ended" in line_lo or "live has ended" in line_lo:
+                return "Livestream da ket thuc."
+            if "error:" in line_lo or "failed" in line_lo or "http error" in line_lo or "offline" in line_lo:
+                return line_clean
+        if last_lines:
+            return last_lines[-1].strip()
+    except Exception:
+        pass
+    return ""
+
 def _livestream_watchdog():
     """Thread nen tu dong kill cac livestream job qua 12 gio hoac da chet.
-    Cung resume thumbnail generator khi khong con luong nao dang ghi."""
+    Cung cap nhat thumbnail gate khi livestream/ytdlp khong con chay."""
     while True:
         try:
             time.sleep(60)  # Kiem tra moi phut
+            ytdlp_active = False
+            _cleanup_stale_job_tmp(max_age_hours=24)
+            _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
             with _livestream_lock:
                 for jid, info in list(_livestream_jobs.items()):
                     pid = info.get("pid")
@@ -4136,42 +4543,62 @@ def _livestream_watchdog():
                         # Process da ket thuc tu nhien (stream het hoac loi)
                         try:
                             out_pattern = info.get("output_dir", "")
-                            # Tim file moi nhat trong thu muc output
+                            timestamp_str = info.get("timestamp_str", "")
+                            # Tim dung file cua job nay. Khong lay file moi nhat toan thu muc,
+                            # vi job fail/offline se bi gan nham MP4 cu va bao sai trang thai.
                             if os.path.isdir(out_pattern):
                                 files = sorted(
                                     [os.path.join(out_pattern, f) for f in os.listdir(out_pattern)
-                                     if os.path.isfile(os.path.join(out_pattern, f))],
+                                     if os.path.isfile(os.path.join(out_pattern, f))
+                                     and (not timestamp_str or timestamp_str in f)],
                                     key=os.path.getmtime, reverse=True
                                 )
                                 if files:
                                     info["output_file"] = os.path.basename(files[0])
                                     info["file_size"] = os.path.getsize(files[0])
+                                    info["_latest_output_path"] = files[0]
                         except Exception:
                             pass
 
-                        # Neu la TikTok direct FLV thi remux sang MP4 cho user de xem.
-                        # Thuc hien sau khi process ket thuc de tranh tranh chap I/O.
+                        # Bat buoc output livestream la MP4. Neu yt-dlp/downloader
+                        # con de lai FLV thi remux ngay; fail thi job fail, khong
+                        # bao thanh cong voi file .flv khong mo duoc.
+                        flv_path = ""
                         try:
-                            flv_path = info.get("direct_output_path", "")
-                            if info.get("direct_tiktok_flv") and flv_path and os.path.exists(flv_path) and os.path.getsize(flv_path) > 1024:
+                            latest_path = info.get("_latest_output_path", "")
+                            direct_path = info.get("direct_output_path", "")
+                            if direct_path and direct_path.lower().endswith(".flv") and os.path.exists(direct_path):
+                                flv_path = direct_path
+                            elif latest_path and latest_path.lower().endswith(".flv") and os.path.exists(latest_path):
+                                flv_path = latest_path
+                            if flv_path and os.path.getsize(flv_path) > 1024:
                                 mp4_path = _remux_flv_to_mp4(flv_path)
                                 if mp4_path:
                                     info["output_file"] = os.path.basename(mp4_path)
                                     info["file_size"] = os.path.getsize(mp4_path)
                                     info["direct_output_path"] = mp4_path
                                     log.info("[Livestream] Job %s: remux FLV -> MP4 OK (%s)", jid, os.path.basename(mp4_path))
+                                else:
+                                    info["output_file"] = os.path.basename(flv_path) + ".broken"
+                                    info["file_size"] = 0
                         except Exception as e:
+                            if flv_path:
+                                info["output_file"] = os.path.basename(flv_path) + ".broken"
+                                info["file_size"] = 0
                             log.warning("[Livestream] Job %s: remux fail: %s", jid, e)
 
                         # Kiem tra dung luong file de xac dinh thanh cong hay that bai
                         if info.get("file_size", 0) < 1000:
                             info["status"] = "error"
+                            info["error_reason"] = _livestream_error_from_log(info) or "Khong tao duoc file video hop le."
                             log.error("[Livestream] Job %s (PID %d) da ket thuc voi loi (File < 1KB).", jid, pid)
                         else:
                             info["status"] = "finished"
                             log.info("[Livestream] Job %s (PID %d) da ket thuc tu nhien.", jid, pid)
 
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        _cleanup_job_tmp(info.get("tmp_dir", ""))
+                        _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
 
                         # Ghi log
                         try:
@@ -4201,16 +4628,26 @@ def _livestream_watchdog():
                             pass
                         info["status"] = "timeout"
 
-                # Neu khong con luong nao dang ghi thi cho phep thumbnail generator
-                # chay tiep (no da bi clear() khi co live record bat dau).
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
-            if not active:
-                try:
-                    if not _thumb_paused.is_set():
-                        _thumb_paused.set()
-                        log.info("[Livestream] Khong con luong ghi -> resume thumbnail generator.")
-                except Exception:
-                    pass
+            try:
+                with _ytdlp_lock:
+                    for jid, info in list(_ytdlp_jobs.items()):
+                        pid = info.get("pid")
+                        is_running = False
+                        try:
+                            os.kill(pid, 0)
+                            is_running = True
+                        except Exception:
+                            pass
+                        if not is_running:
+                            _cleanup_job_tmp(info.get("tmp_dir", ""))
+                            del _ytdlp_jobs[jid]
+                        else:
+                            ytdlp_active = True
+            except NameError:
+                ytdlp_active = False
+            _set_thumbnail_auto_block("livestream", active)
+            _set_thumbnail_auto_block("ytdlp", ytdlp_active)
         except Exception as e:
             log.error("[Livestream] Watchdog error: %s", e)
 
@@ -4408,12 +4845,54 @@ def _is_tiktok_watch_excluded(now_dt=None):
         return False
 
 def _tiktok_watch_user_has_recording(username):
-    target = "@%s/live" % username.lower()
+    # Match qua watch_username gan vao job luc tao (chinh xac 100%).
+    # Fallback match qua URL "@user/live" cho job cu chua co watch_username -
+    # luu y URL co the bi ghi de thanh FLV CDN URL trong nhanh TikTok direct,
+    # nen primary key la watch_username.
+    uname = username.lower()
+    target_url = "@%s/live" % uname
     with _livestream_lock:
         for jid, info in _livestream_jobs.items():
-            if info.get("status") == "recording" and target in info.get("url", "").lower():
+            if info.get("status") != "recording":
+                continue
+            try:
+                os.kill(info.get("pid"), 0)
+            except Exception:
+                continue
+            if info.get("watch_username", "").lower() == uname:
+                return jid
+            if target_url in info.get("url", "").lower():
                 return jid
     return ""
+
+# Cooldown chong race khi watchdog tick lai trong khi start request cu (30-45s)
+# chua tra ve - tranh dispatch them 1 record thu 2 cho cung user.
+_tiktok_watch_recent_starts = {}
+
+def _extract_tiktok_live_flv_urls(html):
+    flv_urls = []
+    for pat in (
+        r'\\"flv\\":\\"(https://[^"\\]+)',
+        r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)',
+        r'"flv":"(https://[^"\\]+)',
+        r'"origin":\{[^}]*"flv":"(https://[^"\\]+)',
+        r'https:\\/\\/[^"\\]+?\.flv[^"\\]*',
+    ):
+        for u in _re_module.findall(pat, html or ""):
+            u = u.replace("\\u0026", "&").replace("\\/", "/")
+            if "only_audio=1" in u:
+                continue
+            if u not in flv_urls:
+                flv_urls.append(u)
+    def _flv_rank(u):
+        if "_hd.flv" in u:
+            return 0
+        if "_ld.flv" in u:
+            return 1
+        if "_sd.flv" in u:
+            return 2
+        return 9
+    return sorted(flv_urls, key=_flv_rank)
 
 def _check_tiktok_user_live(username):
     # yt-dlp --simulate hay bi TikTok bot-block tu IP datacenter/NAS nen tin hieu
@@ -4452,11 +4931,14 @@ def _check_tiktok_user_live(username):
             http_code = "?"
         if not html.strip():
             return False, "tiktok empty (HTTP %s)" % http_code
-        # FLV URL chi xuat hien khi user dang live va co stream the chay.
-        if _re_module.search(r'\\"flv\\":\\"https://[^"\\\\]+', html):
-            return True, ""
-        if "\"liveRoom\"" in html and "\"streamUrl\"" in html:
-            return True, ""
+        # Chi coi la live khi stream URL probe duoc video codec that. HTML TikTok
+        # co the chua FLV cu/stale, neu chi regex se false-positive hang loat.
+        flv_urls = _extract_tiktok_live_flv_urls(html)
+        for candidate in flv_urls[:3]:
+            if _direct_flv_has_remuxable_video(candidate, cookies_path, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"):
+                return True, ""
+        if flv_urls:
+            return False, "stream URL stale/khong probe duoc"
         lowered = html.lower()
         offline_signals = (
             "live has ended",
@@ -4478,7 +4960,7 @@ def _check_tiktok_user_live(username):
 
 def _start_tiktok_watch_record(username):
     live_url = "https://www.tiktok.com/@%s/live" % username
-    payload = json.dumps({"url": live_url, "quality": "best"}).encode("utf-8")
+    payload = json.dumps({"url": live_url, "quality": "best", "watch_username": username}).encode("utf-8")
     req = urllib.request.Request(
         "http://127.0.0.1:5050/api/livestream/record",
         data=payload,
@@ -4542,11 +5024,26 @@ def _tiktok_live_watchdog():
                 is_live, err = _check_tiktok_user_live(username)
                 user["last_check"] = now_str
                 if is_live:
+                    # Cooldown 90s: chan dispatch record lan 2 khi lan 1 chua xong
+                    # (record API co the ton 30-45s vi HEAD check + re-scrape).
+                    uname_lc = username.lower()
+                    last_started = _tiktok_watch_recent_starts.get(uname_lc, 0)
+                    if time.time() - last_started < 90:
+                        user["status"] = "starting"
+                        user["last_error"] = "Dang khoi tao luong ghi..."
+                        changed = True
+                        continue
+                    _tiktok_watch_recent_starts[uname_lc] = time.time()
                     job_id, msg = _start_tiktok_watch_record(username)
                     user["status"] = "recording" if job_id else "error"
                     user["job_id"] = job_id
-                    user["last_live"] = now_str
                     user["last_error"] = "" if job_id else msg
+                    if job_id:
+                        user["last_live"] = now_str
+                        user["last_live_verified"] = True
+                    else:
+                        # Start that bai -> reset cooldown de retry o tick sau
+                        _tiktok_watch_recent_starts.pop(uname_lc, None)
                 else:
                     user["status"] = "watching"
                     user["job_id"] = ""
@@ -4566,6 +5063,29 @@ threading.Thread(target=_tiktok_live_watchdog, daemon=True).start()
 def api_tiktok_live_watch_get():
     with _tiktok_watch_lock:
         _load_tiktok_watch_state()
+        changed = False
+        for user in _tiktok_watch_state.get("users", []):
+            if user.get("status") == "recording":
+                jid = user.get("job_id", "")
+                active = False
+                if jid:
+                    with _livestream_lock:
+                        info = _livestream_jobs.get(jid)
+                        if info and info.get("status") == "recording":
+                            try:
+                                os.kill(info.get("pid"), 0)
+                                active = True
+                            except Exception:
+                                active = False
+                if not active:
+                    user["status"] = "watching"
+                    user["job_id"] = ""
+                    changed = True
+            if user.get("last_live") and not user.get("last_live_verified", False):
+                user["last_live"] = ""
+                changed = True
+        if changed:
+            _save_tiktok_watch_state()
         resp = dict(_tiktok_watch_state)
     # Them trang thai cookies de UI hien banner khi het han / bi thu hoi.
     cookies = _check_cookies_status()
@@ -4588,6 +5108,7 @@ def api_tiktok_live_watch_add():
                 "status": "watching",
                 "last_check": "",
                 "last_live": "",
+                "last_live_verified": False,
                 "last_error": "",
                 "job_id": ""
             })
@@ -4632,6 +5153,9 @@ def api_livestream_record():
         quality = body.get("quality", "best").strip()
         referer = body.get("referer", "").strip()
         user_agent = body.get("user_agent", "").strip()
+        # Watch_username: gan boi _start_tiktok_watch_record de dedup chinh xac
+        # khi URL bi ghi de thanh FLV CDN URL trong nhanh TikTok direct.
+        watch_username = body.get("watch_username", "").strip()
 
         if not live_url:
             return jsonify({"error": "Thieu URL livestream"}), 400
@@ -4742,6 +5266,15 @@ def api_livestream_record():
             "--hls-use-mpegts",         # Ghi tung doan .ts -> khong bi corrupt khi ngat
             "--downloader", "ffmpeg",   # Dung ffmpeg downloader -> on dinh hon voi live stream
             "--downloader-args", "ffmpeg:-loglevel warning",
+            # FIX: ep yt-dlp remux fragment HLS thanh MP4 container chuan, khong
+            # con luu raw .ts mislabel ext .mp4 (player tu choi parse vi magic
+            # bytes khong khop). --remux-video chi remux container, KHONG
+            # re-encode -> nhanh, khong giam chat luong.
+            "--remux-video", "mp4",
+            # FIX: moov atom de o dau file de player play duoc khi file con dang
+            # ghi (progressive streaming). Khong co flag nay, moov nam o cuoi
+            # va player phai download het roi moi seek duoc.
+            "--postprocessor-args", "ffmpeg:-movflags +faststart",
         ]
 
         # Them cookies neu co file (ở thư mục gốc)
@@ -4754,50 +5287,71 @@ def api_livestream_record():
         if user_agent:
             cmd.extend(["--user-agent", user_agent])
 
-        # --- TIKTOK DIRECT FLV BYPASS ---
-        # yt-dlp hien tai dang bi loi voi TikTok Webcast API tu IP Datacenter,
-        # nen ta se vao thang trang HTML de lay link FLV roi ep yt-dlp tai truc tiep.
+        # --- TIKTOK HTML FLV FALLBACK -> MP4 ---
+        # TikTok API metadata cua yt-dlp co the bao sai "not currently live",
+        # trong khi trang HTML van co FLV stream dang chay. Lay cac FLV URL
+        # tu HTML, chon bien the H264 ffmpeg 3.2 doc duoc (_hd/_ld), roi ghi
+        # truc tiep thanh MP4. Khong luu FLV ra NAS.
         if "tiktok" in live_url.lower():
-            import re
-            import subprocess
             curl_cmd = [
                 "curl", "-s", "-L",
-                "-A", tiktok_user_agent
+                "--max-time", "20",
+                "-A", tiktok_user_agent,
+                "-H", "Referer: https://www.tiktok.com/",
+                "-H", "Accept-Language: en-US,en;q=0.9,vi;q=0.8",
             ]
             if os.path.exists(cookies_path):
                 curl_cmd.extend(["-b", cookies_path])
             curl_cmd.append(live_url)
             
             try:
-                html = subprocess.check_output(curl_cmd, timeout=15).decode("utf-8", errors="ignore")
-                match_origin = re.search(r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)', html)
-                actual_url = ""
-                if match_origin:
-                    actual_url = match_origin.group(1).replace("\\u0026", "&")
-                else:
-                    match_any = re.search(r'\\"flv\\":\\"(https://[^"\\]+)', html)
-                    if match_any:
-                        actual_url = match_any.group(1).replace("\\u0026", "&")
-                        
-                if actual_url:
-                    live_url = actual_url
-                    direct_tiktok_flv = True
-                    direct_output_file = os.path.join(
-                        _LIVESTREAM_DIR,
-                        "%s_%s_direct.flv" % (platform, timestamp_str)
-                    )
-            except Exception:
-                pass
+                html = subprocess.check_output(curl_cmd, timeout=25).decode("utf-8", errors="ignore")
+                flv_urls = []
+                for pat in (
+                    r'\\"flv\\":\\"(https://[^"\\]+)',
+                    r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)',
+                    r'"flv":"(https://[^"\\]+)',
+                    r'"origin":\{[^}]*"flv":"(https://[^"\\]+)',
+                    r'https:\\/\\/[^"\\]+?\.flv[^"\\]*',
+                ):
+                    for u in _re_module.findall(pat, html):
+                        u = u.replace("\\u0026", "&").replace("\\/", "/")
+                        if "only_audio=1" in u:
+                            continue
+                        if u not in flv_urls:
+                            flv_urls.append(u)
+                def _flv_rank(u):
+                    if "_hd.flv" in u:
+                        return 0
+                    if "_ld.flv" in u:
+                        return 1
+                    if "_sd.flv" in u:
+                        return 2
+                    return 9
+                log.info("[Livestream] TikTok HTML fallback: bat duoc %d FLV candidate", len(flv_urls))
+                for candidate in sorted(flv_urls, key=_flv_rank):
+                    log.info("[Livestream] TikTok HTML fallback: probe candidate %s", candidate[:180])
+                    if _direct_flv_has_remuxable_video(candidate, cookies_path, tiktok_user_agent):
+                        live_url = candidate
+                        direct_tiktok_flv = True
+                        direct_output_file = os.path.join(
+                            _LIVESTREAM_DIR,
+                            "%s_%s_tiktok.mp4" % (platform, timestamp_str)
+                        )
+                        log.info("[Livestream] TikTok HTML fallback: dung FLV H264 remuxable -> MP4")
+                        break
+                if not direct_tiktok_flv and flv_urls:
+                    log.warning("[Livestream] TikTok HTML fallback: co FLV URL nhung khong probe duoc codec remuxable")
+            except Exception as e:
+                log.warning("[Livestream] TikTok HTML fallback loi: %s", e)
         # --------------------------------
 
         if direct_tiktok_flv:
-            # NAS ffmpeg 3.2 khong nhan dung codec trong TikTok FLV moi.
-            # Ghi byte stream truc tiep de tranh remux/parse qua ffmpeg.
-            #
+            # FLV URL da duoc chon la H264 remuxable. Ghi thang MP4 bang
+            # ffmpeg, khong de lai file .flv.
             # Pre-check NHANH bang HEAD request (khong tai body) de tu choi som
             # neu URL FLV da 404/403/expired. HEAD chi ton ~1-3s nen khong gay
-            # timeout 35s o local urlopen ben watcher. Neu HEAD OK (2xx) thi tin
-            # tuong recording curl voi --retry 999 + --speed-limit.
+            # timeout 35s o local urlopen ben watcher.
             head_cmd = [
                 "curl", "-s", "-I", "-L", "--http1.1",
                 "--max-time", "6",
@@ -4805,16 +5359,24 @@ def api_livestream_record():
                 "-A", tiktok_user_agent,
                 "-H", "Referer: https://www.tiktok.com/",
                 "-o", "/dev/null",
-                "-w", "%{http_code}",
+                # FIX: log them content_type de validate FLV that su (tranh
+                # truong hop CDN tra ve text/html, application/json hay
+                # application/vnd.apple.mpegurl ma curl van ghi vao .flv).
+                "-w", "%{http_code}|%{content_type}",
             ]
-            if os.path.exists(cookies_path):
+            if os.path.exists(cookies_path) and "tiktokcdn" not in live_url.lower():
                 head_cmd.extend(["-b", cookies_path])
             head_cmd.append(live_url)
+            content_type = ""
             try:
                 head_proc = subprocess.run(head_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-                http_code = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0"
+                head_out = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0|"
+                parts = head_out.split("|", 1)
+                http_code = parts[0] or "0"
+                content_type = (parts[1] if len(parts) > 1 else "").lower().strip()
             except Exception:
                 http_code = "0"
+                content_type = ""
 
             # Neu HEAD that bai voi 4xx/5xx -> thu re-scrape 1 lan (FLV URL co the vua het han).
             if http_code.startswith(("4", "5")):
@@ -4837,7 +5399,10 @@ def api_livestream_record():
                                 live_url = new_flv
                                 head_cmd[-1] = live_url
                                 head_proc = subprocess.run(head_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-                                http_code = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0"
+                                head_out = (head_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0|"
+                                parts = head_out.split("|", 1)
+                                http_code = parts[0] or "0"
+                                content_type = (parts[1] if len(parts) > 1 else "").lower().strip()
                     except Exception:
                         pass
 
@@ -4854,21 +5419,42 @@ def api_livestream_record():
                     "http_code": http_code,
                 }), 502
 
+            # FIX: Validate Content-Type — neu CDN tra ve text/html, JSON,
+            # hay m3u8 manifest (cac dau hieu URL het han hoac sai) thi fallback
+            # ve yt-dlp path (yt-dlp se tu re-scrape, demux HLS, remux thanh
+            # mp4 chuan), thay vi luu rac vao file .flv khong play duoc.
+            is_flv_serve = any(s in content_type for s in ("video/x-flv", "video/flv", "flv-application", "application/octet-stream", "video/mp4"))
+            if content_type and not is_flv_serve:
+                # CDN khong serve FLV thuan — bo direct path, dung yt-dlp fallback
+                direct_tiktok_flv = False
+                direct_output_file = ""
+            elif not _direct_flv_has_remuxable_video(live_url, cookies_path, tiktok_user_agent):
+                # TikTok FLV moi co the dung enhanced FLV/HEVC tag ma ffmpeg 3.2
+                # tren NAS doc thanh codec unknown. Neu cu curl raw se tao file
+                # lon nhung khong remux/mo duoc, nen fallback ve yt-dlp.
+                direct_tiktok_flv = False
+                direct_output_file = ""
+
+        if direct_tiktok_flv:
             cmd = [
-                "curl", "-L", "--fail", "--http1.1",
-                "--retry", "999",
-                "--retry-delay", "2",
-                "--connect-timeout", "15",
-                "--speed-time", "60",
-                "--speed-limit", "256",
-                "-A", tiktok_user_agent,
-                "-H", "Referer: https://www.tiktok.com/",
-                "-o", direct_output_file,
+                "/usr/bin/ffmpeg", "-y",
+                "-loglevel", "warning",
+                "-rw_timeout", "60000000",
+                "-user_agent", tiktok_user_agent,
+                "-headers", "Referer: https://www.tiktok.com/\r\n",
+                "-i", live_url,
+                "-c", "copy",
+                "-bsf:a", "aac_adtstoasc",
+                "-movflags", "+faststart",
+                direct_output_file,
             ]
-            if os.path.exists(cookies_path):
-                cmd.extend(["-b", cookies_path])
-            cmd.append(live_url)
         else:
+            # Truong hop fallback: live_url co the la URL FLV CDN da scrape ra,
+            # nhung CDN tra Content-Type khong phai FLV. Reset ve URL goc cua
+            # user de yt-dlp scrape lai theo cach cua no.
+            original_user_url = body.get("url", "").strip()
+            if original_user_url and "tiktok.com" in original_user_url:
+                live_url = original_user_url
             cmd.append(live_url)
 
         # Log file rieng cho debug
@@ -4878,16 +5464,24 @@ def api_livestream_record():
         except Exception:
             pass
         log_file = os.path.join(log_dir, "live_%s.log" % timestamp_str)
+        tmp_dir = _make_hdd_tmp_dir("livestream_%s" % timestamp_str)
+        if tmp_dir and cmd and cmd[0] == ytdlp_bin:
+            cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
 
         with open(log_file, "w") as lf:
             lf.write("CMD: %s\n\n" % " ".join(cmd))
+            if tmp_dir:
+                lf.write("TMPDIR: %s\n\n" % tmp_dir)
             proc = subprocess.Popen(
                 cmd,
                 stdout=lf, stderr=lf,
-                close_fds=True
+                close_fds=True,
+                env=_job_env_with_tmp(tmp_dir)
             )
 
-        job_id = "live_%s" % int(time.time())
+        # job_id voi millisecond + random suffix de tranh trung khoa khi 2 job
+        # khoi cung giay (truong hop nhieu user TikTok cung len live gan nhau).
+        job_id = "live_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
         now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
         with _livestream_lock:
@@ -4906,14 +5500,13 @@ def api_livestream_record():
                 "timestamp_str": timestamp_str,
                 "direct_tiktok_flv": direct_tiktok_flv,
                 "direct_output_path": direct_output_file,
+                "watch_username": watch_username,
+                "tmp_dir": tmp_dir,
             }
 
         # Tam dung thumbnail generator de nhuong CPU/IO cho viec ghi livestream.
-        # Watchdog se tu dong resume khi khong con luong nao dang ghi.
-        try:
-            _thumb_paused.clear()
-        except Exception:
-            pass
+        # Watchdog se tu dong bo chan khi khong con luong nao dang ghi.
+        _set_thumbnail_auto_block("livestream", True)
 
         # Ghi log he thong
         try:
@@ -5006,21 +5599,7 @@ def api_livestream_status():
 
             error_reason = ""
             if status == "error":
-                log_file = info.get("log_file", "")
-                if os.path.exists(log_file):
-                    try:
-                        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                            lines = f.readlines()
-                            last_lines = lines[-10:]
-                            for line in last_lines:
-                                line_lo = line.lower()
-                                if "error:" in line_lo or "failed" in line_lo or "http error" in line_lo or "offline" in line_lo:
-                                    error_reason = line.strip()
-                                    break
-                            if not error_reason and last_lines:
-                                error_reason = last_lines[-1].strip()
-                    except Exception:
-                        pass
+                error_reason = _livestream_error_from_log(info)
                 if not error_reason:
                     error_reason = "Không thể phân tích luồng stream/File hỏng."
             info["error_reason"] = error_reason
@@ -5036,11 +5615,14 @@ def api_livestream_status():
                 "file_size_bytes": file_size,
                 "duration_seconds": duration_sec,
                 "duration_display": "%dh%02dm%02ds" % (duration_sec // 3600, (duration_sec % 3600) // 60, duration_sec % 60),
+                "started_ts": started_ts,
                 "avg_speed": avg_speed,
                 "error_reason": info.get("error_reason", ""),
                 "quality": info.get("quality", "best"),
                 "started_at": info.get("started_at", ""),
-                "finished_at": info.get("finished_at", "")
+                "finished_at": info.get("finished_at", ""),
+                # FIX: expose watch_username de UI hien "@user" thay vi jobid/filename
+                "watch_username": info.get("watch_username", "")
             })
 
     # Don dep job cu qua 24 gio
@@ -5213,12 +5795,18 @@ def api_ytdlp_download():
         except Exception:
             pass
         log_file = os.path.join(log_dir, "ytdlp_%s.log" % int(time.time()))
+        tmp_dir = _make_hdd_tmp_dir("ytdlp_%s" % int(time.time()))
+        if tmp_dir and cmd:
+            cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
 
         with open(log_file, "w") as lf:
+            if tmp_dir:
+                lf.write("TMPDIR: %s\n\n" % tmp_dir)
             proc = subprocess.Popen(
                 cmd,
                 stdout=lf, stderr=lf,
-                close_fds=True
+                close_fds=True,
+                env=_job_env_with_tmp(tmp_dir)
             )
 
         job_id = str(int(time.time()))
@@ -5227,8 +5815,10 @@ def api_ytdlp_download():
                 "url": video_url,
                 "folder": dest_dir,
                 "pid": proc.pid,
-                "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "tmp_dir": tmp_dir
             }
+        _set_thumbnail_auto_block("ytdlp", True)
 
         # Ghi log he thong
         try:
@@ -5268,9 +5858,12 @@ def api_ytdlp_status():
             except Exception:
                 pass
             if not is_running:
+                _cleanup_job_tmp(info.get("tmp_dir", ""))
+                _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
                 del _ytdlp_jobs[jid]
             else:
                 active[jid] = info
+        _set_thumbnail_auto_block("ytdlp", len(active) > 0)
     return jsonify({"active_jobs": len(active), "jobs": list(active.values())})
 
 
@@ -5278,6 +5871,8 @@ def api_ytdlp_status():
 if __name__ == "__main__":
     # Initialize main IO loop here so it's bound to the main thread
     main_loop = tornado.ioloop.IOLoop.current()
+    _cleanup_stale_job_tmp(max_age_hours=1)
+    _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
     
     # SIGTERM/SIGINT: Graceful shutdown - kill tat ca child processes truoc khi thoat
     def _graceful_shutdown(signum, frame):
@@ -5293,6 +5888,12 @@ if __name__ == "__main__":
         # Xoa PID file
         try:
             os.remove(PID_FILE)
+        except Exception:
+            pass
+        try:
+            for info in list(_livestream_jobs.values()) + list(_ytdlp_jobs.values()):
+                _cleanup_job_tmp(info.get("tmp_dir", ""))
+            _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
         except Exception:
             pass
         sys.exit(0)

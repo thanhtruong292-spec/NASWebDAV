@@ -11,6 +11,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -106,6 +107,12 @@ fun BrowserScreen(
     // TÍNH NĂNG 7.L: Trạng thái của chế độ Multi-Selection
     var selectionMode by remember { mutableStateOf(false) }
     val selectedFiles = remember { androidx.compose.runtime.mutableStateListOf<NasFile>() }
+
+    // SORT — luu trong SharedPreferences de nho cua user qua cac lan vao app.
+    // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
+    val sortPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    var sortMode by remember { mutableStateOf(sortPrefs.getString("file_sort", "name_asc") ?: "name_asc") }
+    var showSortMenu by remember { mutableStateOf(false) }
 
     // TÍNH NĂNG 7.M: Trạng thái Text Preview
     var showTextPreviewDialog by remember { mutableStateOf(false) }
@@ -426,16 +433,30 @@ fun BrowserScreen(
     }
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (viewModel.isScanningDuplicates) {
-        AlertDialog(
-            onDismissRequest = { },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        androidx.compose.material3.ModalBottomSheet(
+            // Onclick scrim KHONG dong sheet — user phai bam nut "Thu nho" / "Huy" explicit.
+            // Cach lam: onDismissRequest -> mac dinh ban dau dong sheet -> ta set
+            // isScanningDuplicates = false neu user thu nho thu cong.
+            // Voi behavior "khong dong khi click ngoai", dismissRequest cua sheet phai
+            // skip-action: chi log + thu nho (= behavior cua nut Thu nho).
+            onDismissRequest = { viewModel.isScanningDuplicates = false },
+            sheetState = scanSheetState,
+            containerColor = Color(0xFF0F0F0F),
+            scrimColor = Color.Black.copy(alpha = 0.6f)
+        ) {
+            Column(modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .heightIn(max = 720.dp)
+                .verticalScroll(rememberScrollState())
+            ) {
+                // Header
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
                     Icon(Icons.Default.FindReplace, contentDescription = null, tint = Color(0xFF1E88E5), modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Phát hiện tệp trùng lặp", style = MaterialTheme.typography.titleMedium)
+                    Text("Phát hiện tệp trùng lặp", color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 }
-            },
-            text = {
                 Column(Modifier.fillMaxWidth()) {
                     // ═══ GIAI ĐOẠN HIỆN TẠI ═══
                     val stage = viewModel.scanDuplicatesStage
@@ -614,33 +635,49 @@ fun BrowserScreen(
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.isScanningDuplicates = false
-                }) {
-                    Text(if (viewModel.isWorkerRunning) "Thu nhỏ" else "Đóng")
-                }
-            },
-            dismissButton = {
+                // ── ACTION ROW: Tam dung / Huy / Thu nho ──
+                Spacer(Modifier.height(12.dp))
                 if (viewModel.isWorkerRunning) {
                     val isPaused by DuplicateProgressState.isPaused.collectAsState()
-                    Row {
-                        TextButton(onClick = { viewModel.cancelDuplicateScan(context) }) {
-                            Text("Huỷ tác vụ", color = Color(0xFFE57373))
-                        }
-                        TextButton(onClick = { viewModel.togglePauseDuplicateScan() }) {
-                            Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6))
-                        }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { viewModel.cancelDuplicateScan(context) },
+                            modifier = Modifier.weight(1f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE57373))
+                        ) { Text("Huỷ", color = Color(0xFFE57373), fontWeight = FontWeight.SemiBold) }
+                        OutlinedButton(
+                            onClick = { viewModel.togglePauseDuplicateScan() },
+                            modifier = Modifier.weight(1f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6))
+                        ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontWeight = FontWeight.SemiBold) }
+                        Button(
+                            onClick = { viewModel.isScanningDuplicates = false },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
+                        ) { Text("Thu nhỏ", color = Color.White, fontWeight = FontWeight.Bold) }
                     }
+                } else {
+                    Button(
+                        onClick = { viewModel.isScanningDuplicates = false },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                    ) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold) }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-        )
+        }
     }
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
     if (viewModel.isShowingDuplicates) {
         AlertDialog(
-            onDismissRequest = { viewModel.isShowingDuplicates = false },
+            // FIX YEU CAU NGUOI DUNG: Dialog ket qua KHONG DONG khi click ngoai hoac
+            // an app — chi cho dong khi user da xu ly het toan bo file trung lap
+            // (duplicateFilesList.isEmpty()). Tranh user vo tinh dong roi phai quet lai.
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            ),
+            onDismissRequest = { /* khong dong */ },
             title = {
                 Column {
                     Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
@@ -829,10 +866,22 @@ fun BrowserScreen(
                             Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                         }
                     }
-                    TextButton(onClick = {
-                        viewModel.isShowingDuplicates = false
-                        viewModel.selectedDuplicates.clear() // Xóa danh sách tick chọn tạm thời khi đóng hộp thoại
-                    }) { Text("Đóng") }
+                    // FIX YEU CAU: chi cho dong khi user da xu ly het file trung lap.
+                    // Khi list trong: hien "Hoan tat" mau xanh va dong dialog.
+                    if (viewModel.duplicateFilesList.isEmpty()) {
+                        TextButton(onClick = {
+                            viewModel.isShowingDuplicates = false
+                            viewModel.selectedDuplicates.clear()
+                        }) { Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) }
+                    } else {
+                        // Hint cho user biet phai xu ly het truoc khi dong duoc
+                        Text(
+                            "Còn ${viewModel.duplicateFilesList.size} tệp — tick chọn & xóa để đóng",
+                            fontSize = 11.sp,
+                            color = Color(0xFFFFA726),
+                            modifier = Modifier.padding(horizontal = 8.dp).align(Alignment.CenterVertically)
+                        )
+                    }
                 }
             }
         )
@@ -843,11 +892,26 @@ fun BrowserScreen(
     // NOTE: Khai báo ở đây (trước Scaffold) để TopAppBar có thể truy cập displayedFiles
     val displayedFiles by remember {
         derivedStateOf {
-            if (searchQuery.isBlank()) {
+            val filtered = if (searchQuery.isBlank()) {
                 viewModel.fileList
             } else {
                 viewModel.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
             }
+            // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
+            val folders = filtered.filter { it.isDirectory }
+            val files = filtered.filter { !it.isDirectory }
+            val sortFn: (NasFile) -> Comparable<*> = when (sortMode) {
+                "name_desc", "name_asc" -> { f -> f.name.lowercase() }
+                "date_desc", "date_asc" -> { f -> f.lastModified }
+                "size_desc", "size_asc" -> { f -> f.contentLength }
+                else -> { f -> f.name.lowercase() }
+            }
+            val descending = sortMode.endsWith("_desc")
+            @Suppress("UNCHECKED_CAST")
+            val cmp = compareBy<NasFile> { sortFn(it) as Comparable<Any> }
+            val orderedFolders = if (descending) folders.sortedWith(cmp.reversed()) else folders.sortedWith(cmp)
+            val orderedFiles = if (descending) files.sortedWith(cmp.reversed()) else files.sortedWith(cmp)
+            orderedFolders + orderedFiles
         }
     }
 
@@ -1358,6 +1422,66 @@ fun BrowserScreen(
                         modifier = Modifier.padding(start = 8.dp)
                     )
 
+                    // Nút Sắp xếp file — hien ben canh nut "Chon file" de user de tim
+                    if (!selectionMode && viewModel.fileList.isNotEmpty()) {
+                        Box {
+                            IconButton(
+                                onClick = { showSortMenu = true },
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Sort,
+                                    contentDescription = "Sắp xếp",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false }
+                            ) {
+                                data class SortOpt(val key: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+                                val opts = listOf(
+                                    SortOpt("name_asc",  "Tên: A → Z",          Icons.Default.SortByAlpha),
+                                    SortOpt("name_desc", "Tên: Z → A",          Icons.Default.SortByAlpha),
+                                    SortOpt("date_desc", "Mới nhất trước",      Icons.Default.Schedule),
+                                    SortOpt("date_asc",  "Cũ nhất trước",       Icons.Default.Schedule),
+                                    SortOpt("size_desc", "Kích thước: Lớn → Nhỏ", Icons.Default.DataUsage),
+                                    SortOpt("size_asc",  "Kích thước: Nhỏ → Lớn", Icons.Default.DataUsage),
+                                )
+                                opts.forEach { opt ->
+                                    val isActive = sortMode == opt.key
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                opt.label,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                opt.icon, null,
+                                                tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        },
+                                        trailingIcon = if (isActive) {
+                                            { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                                        } else null,
+                                        onClick = {
+                                            sortMode = opt.key
+                                            sortPrefs.edit().putString("file_sort", opt.key).apply()
+                                            showSortMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Nút kích hoạt chế độ chọn nhiều file
                     if (!selectionMode && viewModel.fileList.isNotEmpty()) {
                         IconButton(
@@ -1586,7 +1710,15 @@ fun FileItemGridCell(
 
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showPropertiesDialog by remember { mutableStateOf(false) }
     var newFileName by remember { mutableStateOf(file.name) }
+
+    // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
+    // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
+    val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    var isNewFile by remember(file.path) {
+        mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
+    }
 
     val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
 
@@ -1600,6 +1732,13 @@ fun FileItemGridCell(
             type = commonDialogType,
             message = commonDialogMessage,
             onDismiss = { showCommonDialog = false }
+        )
+    }
+
+    if (showPropertiesDialog) {
+        com.nas.naswebdav.ui.dialogs.FilePropertiesDialog(
+            file = file,
+            onDismiss = { showPropertiesDialog = false }
         )
     }
 
@@ -1641,12 +1780,24 @@ fun FileItemGridCell(
         Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = onClick,
+                onClick = {
+                    // Mark file da xem -> red dot bien mat. Folder khong tracking.
+                    if (!selectionMode && !file.isDirectory && isNewFile) {
+                        val current = viewedPrefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
+                        current.add(file.path)
+                        viewedPrefs.edit().putStringSet("viewed_files", current).apply()
+                        isNewFile = false
+                    }
+                    onClick()
+                },
                 onLongClick = {
-                    if (!selectionMode && file.isDirectory) {
-                        showMenu = true
-                    } else {
+                    // Long-press LUON mo menu cho ca file va folder. Selection mode
+                    // entry duoc thuc hien qua nut "Chon file" o toolbar.
+                    if (selectionMode) {
+                        // Trong selection mode -> long-press toggle select (giu logic cu).
                         onLongClick()
+                    } else {
+                        showMenu = true
                     }
                 }
             )
@@ -1719,6 +1870,7 @@ fun FileItemGridCell(
             }
 
             DropdownMenuItem(text = { Text("Đổi tên") }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
+            DropdownMenuItem(text = { Text("Thuộc tính") }, onClick = { showMenu = false; showPropertiesDialog = true })
             DropdownMenuItem(text = { Text("Xóa tệp", color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
@@ -1811,17 +1963,17 @@ fun FileItemGridCell(
                 )
             }
 
-            // NÚT "⋮" GÓC PHẢI TRÊN — không nền, chỉ icon
-            if (!selectionMode && !file.isDirectory) {
-                Icon(
-                    imageVector = Icons.Default.MoreVert,
-                    contentDescription = "Tùy chọn",
-                    tint = Color.White,
+            // RED DOT (file moi chua xem) — thay cho icon "..." truoc day.
+            // Menu da chuyen sang dung long-press, nen vi tri goc phai tren dung
+            // hoan toan de hien chi bao "moi".
+            if (!selectionMode && !file.isDirectory && isNewFile) {
+                Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(2.dp)
-                        .size(20.dp)
-                        .clickable { showMenu = true }
+                        .padding(6.dp)
+                        .size(10.dp)
+                        .background(Color(0xFFFF1744), CircleShape)
+                        .border(1.dp, Color.White, CircleShape)
                 )
             }
 
@@ -2023,7 +2175,9 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
         Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
             if (isError) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(if (isVideo) Icons.Default.PlayCircle else Icons.Default.Image, null, tint = Color.LightGray, modifier = Modifier.size(32.dp))
+                    if (!isVideo) {
+                        Icon(Icons.Default.Image, null, tint = Color.LightGray, modifier = Modifier.size(32.dp))
+                    }
                     val ext = url.substringAfterLast(".", "").substringBefore("?").uppercase()
                     if (ext.isNotEmpty() && ext.length <= 5) {
                         Text(text = ".$ext", color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)

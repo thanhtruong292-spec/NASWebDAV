@@ -48,9 +48,12 @@ class LivestreamMonitorWorker(
         const val OUT_STATUS      = "status"
         const val OUT_FILE_SIZE   = "file_size"
         const val OUT_DURATION    = "duration"
+        const val OUT_DURATION_SECONDS = "duration_seconds"
+        const val OUT_STARTED_TS   = "started_ts"
         const val OUT_SPEED       = "speed"
         const val OUT_OUTPUT_FILE = "output_file"
         const val OUT_JOB_ID      = "job_id_out"
+        const val OUT_WATCH_USER  = "watch_username"
 
         fun createChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -227,9 +230,12 @@ class LivestreamMonitorWorker(
 
                     val fileSize  = job.optString("file_size", "0 B")
                     val duration  = job.optString("duration_display", "0h00m00s")
+                    val durationSeconds = job.optLong("duration_seconds", 0L)
+                    val startedTs = job.optLong("started_ts", 0L)
                     val speed     = job.optString("avg_speed", "")
                     val outFile   = safeDataText(job.optString("output_file", ""), 180)
                     val errorReason = safeDataText(job.optString("error_reason", ""), 512)
+                    val watchUser = safeDataText(job.optString("watch_username", ""), 64)
                     if (errorReason.isNotEmpty()) {
                         finalErrorReason = errorReason
                     }
@@ -260,8 +266,11 @@ class LivestreamMonitorWorker(
                         OUT_STATUS      to finalStatus,
                         OUT_FILE_SIZE   to fileSize,
                         OUT_DURATION    to duration,
+                        OUT_DURATION_SECONDS to durationSeconds,
+                        OUT_STARTED_TS   to startedTs,
                         OUT_SPEED       to speed,
                         OUT_OUTPUT_FILE to outFile,
+                        OUT_WATCH_USER  to watchUser,
                         "error_reason"  to errorReason
                     ))
 
@@ -328,7 +337,17 @@ class LivestreamMonitorWorker(
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
-        return ForegroundInfo(notifId, notification)
+        // Tu Android 10 (Q) tro len bat buoc khai bao foregroundServiceType khop
+        // manifest, neu khong se nem MissingForegroundServiceTypeException -> crash
+        // worker khi NAS chua ghi xong livestream.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                notifId, notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(notifId, notification)
+        }
     }
 
     private fun showCompletionNotification(baseNotifId: Int, platformLabel: String, icon: String, contentText: String) {

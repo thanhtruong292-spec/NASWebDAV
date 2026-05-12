@@ -77,6 +77,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
         val webDavManager = WebDavManager
         webDavManager.connect(currentUrl, user, pass)
+        setThumbnailActivity("sync", true)
         val db = NasApplication.instance.database
 
         // KHỞI TẠO HỆ THỐNG THÔNG BÁO ĐỘNG (DYNAMIC NOTIFICATION)
@@ -802,7 +803,18 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
         }
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle(title).setSmallIcon(android.R.drawable.ic_popup_sync).setOngoing(true).build()
-        return ForegroundInfo(notificationId, notification)
+        // Tu Android 10 (Q) tro len, neu manifest da khai bao foregroundServiceType
+        // thi ForegroundInfo BAT BUOC phai truyen service type tuong ung - thieu
+        // se nem MissingForegroundServiceTypeException khi setForeground() chay,
+        // crash sync worker giua chung.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                notificationId, notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            ForegroundInfo(notificationId, notification)
+        }
     }
 
     protected fun safeWorkerText(value: String, maxChars: Int = 512): String {
@@ -823,13 +835,35 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
         manager.connect(url, user, pass)
         return manager
     }
+
+    protected suspend fun setThumbnailActivity(source: String, active: Boolean) = withContext(Dispatchers.IO) {
+        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+        if (url.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext
+        try {
+            val body = JSONObject()
+                .put("source", source)
+                .put("active", active)
+                .toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val request = okhttp3.Request.Builder()
+                .url("${url.toApiBaseUrl()}/api/thumb/activity")
+                .post(body)
+                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .build()
+            NasApplication.instance.sharedHttpClient.newCall(request).execute().use { }
+        } catch (_: Exception) {
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // OfflineSyncWorker — Xử lý thao tác offline đã xếp hàng
 // ════════════════════════════════════════════════════════════════════════════
 
-class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
+class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val db = (applicationContext as NasApplication).database
         val pendingActions = db.syncActionDao().getAllPendingActions()
@@ -841,40 +875,47 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : C
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (user.isEmpty() || pass.isEmpty() || url.isEmpty()) return@withContext Result.failure()
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
-        var allSuccess = true
-        for (action in pendingActions) {
-            try {
-                when (action.actionType) {
-                    "DELETE" -> webDavManager.deleteFile(action.sourcePath)
-                    "CREATE_FOLDER" -> webDavManager.createFolder(action.sourcePath)
-                    "RENAME", "MOVE" -> {
-                        if (action.destPath != null) {
-                            val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
-                                if (segment.isEmpty() || segment.contains(":")) segment
-                                else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
-                            }
-                            webDavManager.renameFile(action.sourcePath, encodedDest)
-                        }
-                    }
-                    "UPLOAD" -> {
-                        if (action.destPath != null) {
-                            val file = java.io.File(action.sourcePath)
-                            if (file.exists()) {
-                                val ext = file.extension.lowercase()
-                                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+        setThumbnailActivity("sync", true)
+        try {
+            var allSuccess = true
+            for (action in pendingActions) {
+                try {
+                    when (action.actionType) {
+                        "DELETE" -> webDavManager.deleteFile(action.sourcePath)
+                        "CREATE_FOLDER" -> webDavManager.createFolder(action.sourcePath)
+                        "RENAME", "MOVE" -> {
+                            if (action.destPath != null) {
                                 val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
                                     if (segment.isEmpty() || segment.contains(":")) segment
                                     else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
                                 }
-                                webDavManager.uploadFile(encodedDest, file, mime)
+                                webDavManager.renameFile(action.sourcePath, encodedDest)
+                            }
+                        }
+                        "UPLOAD" -> {
+                            if (action.destPath != null) {
+                                val file = java.io.File(action.sourcePath)
+                                if (file.exists()) {
+                                    val ext = file.extension.lowercase()
+                                    val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                                    val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
+                                        if (segment.isEmpty() || segment.contains(":")) segment
+                                        else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                                    }
+                                    webDavManager.uploadFile(encodedDest, file, mime)
+                                }
                             }
                         }
                     }
+                    db.syncActionDao().deleteById(action.id)
+                } catch (_: Exception) {
+                    allSuccess = false
                 }
-                db.syncActionDao().deleteById(action.id)
-            } catch (_: Exception) { allSuccess = false }
+            }
+            if (allSuccess) Result.success() else Result.retry()
+        } finally {
+            setThumbnailActivity("sync", false)
         }
-        if (allSuccess) Result.success() else Result.retry()
     }
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -936,8 +977,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
-        val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
-        if (runAttemptCount >= 3) { SystemLogger.log("ERROR", "AutoBackup", "Đã thử $runAttemptCount lần thất bại."); return@withContext Result.failure() }
+        val webDavManager = loadWebDavManager() ?: run {
+            // FIX leak: tra wakelock truoc khi return som -> tranh giu pin 60' khi NAS offline.
+            if (wakeLock.isHeld) wakeLock.release()
+            return@withContext Result.failure()
+        }
+        if (runAttemptCount >= 3) {
+            SystemLogger.log("ERROR", "AutoBackup", "Đã thử $runAttemptCount lần thất bại.")
+            // FIX leak: tra wakelock truoc khi return som khi het quota retry.
+            if (wakeLock.isHeld) wakeLock.release()
+            return@withContext Result.failure()
+        }
         val db = NasApplication.instance.database
         try {
             val backupFolderBase = if (baseUrl.endsWith("/")) "${baseUrl}AutoBackup/" else "$baseUrl/AutoBackup/"
@@ -1034,7 +1084,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         // thay vào đó chúng ta sẽ rely vào Database / Hash hoặc Head Request để tránh trùng
 
                         val fileSize = cursor.getLong(sizeIndex)
-                        if (fileSize == 0L) continue
+                        if (fileSize == 0L) {
+                            // FIX counter sum: file rong duoc bo qua phai duoc cong vao skipped
+                            // de tong (success + skipped + failed) khop voi totalFilesToProcess
+                            // trong dialog ket qua cuoi.
+                            skippedCount++
+                            continue
+                        }
                         val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
@@ -1135,6 +1191,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
+            setThumbnailActivity("sync", false)
             if (wakeLock.isHeld) wakeLock.release()
             try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
         }
@@ -1201,8 +1258,85 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
         val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+
+        // ── GATE 1: KHUNG GIO ──
+        // Chi cho phep auto-scan trong khung 2h-5h sang (sat 3 AM). Ngoai khung
+        // -> retry sau ~1h. NAS user dang ngu, network/CPU thuong ranh.
+        val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        if (nowHour !in 2..5) {
+            SystemLogger.log("INFO", "AutoClean", "Bỏ qua: ngoài khung 2h-5h sáng (hiện ${nowHour}h). Sẽ thử lại sau.")
+            return@withContext Result.retry()
+        }
+
+        // ── GATE 2: NAS RANH ──
+        // Goi /api/system/idle de check CPU+load+RAM+livestream. Neu khong ranh ->
+        // poll tiep moi 5 phut, max 25 phut. Sau do retry.
+        val apiBaseForIdle = url.toApiBaseUrl()
+        var idleOk = false
+        var attempts = 0
+        while (attempts < 5 && !isStopped) {
+            attempts++
+            try {
+                val idleReq = okhttp3.Request.Builder()
+                    .url("$apiBaseForIdle/api/system/idle")
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .build()
+                val idleResp = NasApplication.instance.fastApiClient.newCall(idleReq).execute().use { resp ->
+                    if (resp.isSuccessful) resp.body?.string() else null
+                } ?: break
+                val idleJson = org.json.JSONObject(idleResp)
+                if (idleJson.optBoolean("idle", false)) {
+                    idleOk = true; break
+                }
+                val reason = idleJson.optString("reason", "không rõ")
+                SystemLogger.log("INFO", "AutoClean", "NAS đang bận (${reason}) — chờ 5 phút rồi check lại (attempt $attempts/5)")
+                kotlinx.coroutines.delay(5 * 60 * 1000L)
+            } catch (e: Exception) {
+                SystemLogger.log("WARNING", "AutoClean", "Không check được /api/system/idle: ${e.message}")
+                break
+            }
+        }
+        if (!idleOk) {
+            SystemLogger.log("INFO", "AutoClean", "NAS không rảnh sau 25 phút chờ — bỏ qua lần này, retry lần sau.")
+            return@withContext Result.retry()
+        }
+
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         val startTime = System.currentTimeMillis()
+
+        // ── LIVE THROTTLE ──
+        // Background job kiem tra /api/system/idle moi 60s. Neu NAS tro nen ban
+        // (vd user mo Plex stream, livestream khoi, etc.) -> auto-pause quet de
+        // tranh tranh CPU/IO. Khi NAS ranh lai -> auto-resume.
+        // Co ghi nho `wasAutoPaused` de KHONG resume khi user manually paused.
+        var wasAutoPaused = false
+        val throttleJob = launch(Dispatchers.IO) {
+            while (isActive && !isStopped) {
+                try {
+                    val idleReq = okhttp3.Request.Builder()
+                        .url("$apiBaseForIdle/api/system/idle")
+                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                        .build()
+                    val body = NasApplication.instance.fastApiClient.newCall(idleReq).execute().use { resp ->
+                        if (resp.isSuccessful) resp.body?.string() else null
+                    }
+                    if (body != null) {
+                        val isIdle = org.json.JSONObject(body).optBoolean("idle", false)
+                        if (!isIdle && !DuplicateProgressState.isPaused.value) {
+                            DuplicateProgressState.isPaused.value = true
+                            wasAutoPaused = true
+                            SystemLogger.log("INFO", "AutoClean", "NAS đang bận — tạm dừng quét tự động")
+                        } else if (isIdle && DuplicateProgressState.isPaused.value && wasAutoPaused) {
+                            DuplicateProgressState.isPaused.value = false
+                            wasAutoPaused = false
+                            SystemLogger.log("INFO", "AutoClean", "NAS đã rảnh — tiếp tục quét")
+                        }
+                    }
+                } catch (_: Exception) {}
+                kotlinx.coroutines.delay(60 * 1000L)
+            }
+        }
+
         try {
             SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp file trùng lặp định kỳ.")
             db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
@@ -1270,8 +1404,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             }
             val durationMin = (System.currentTimeMillis() - startTime) / 60000
             SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất Dọn Rác: $totalDuplicatesFound trùng, $movedCount xử lý, ${com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes)} giải phóng, $durationMin phút.")
+            throttleJob.cancel()
             Result.success()
-        } catch (e: Exception) { SystemLogger.log("ERROR", "AutoClean", "Lỗi dọn rác: ${e.message}"); Result.retry() }
+        } catch (e: Exception) {
+            throttleJob.cancel()
+            SystemLogger.log("ERROR", "AutoClean", "Lỗi dọn rác: ${e.message}"); Result.retry()
+        }
     }
     private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
         return try {

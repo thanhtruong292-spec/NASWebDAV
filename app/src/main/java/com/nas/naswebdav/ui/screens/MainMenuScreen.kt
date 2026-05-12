@@ -153,6 +153,22 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     }
 }
 
+// ============================================================================
+// EXCLUSIVE PANEL STATE — chi cho phep 1 panel inline mo cung luc trong
+// MainMenuScreen (OMV, Tasks, Chart). Mo panel nay -> tu cup panel kia.
+// Singleton object de cac panel rai rac qua nhieu Composable van chia chung
+// 1 state khong can pass qua 2 hop param.
+// Reset ve null khi user logout (xu ly trong MainMenuScreen.onLogout neu can).
+// ============================================================================
+object ExclusivePanelState {
+    val current: androidx.compose.runtime.MutableState<String?> =
+        androidx.compose.runtime.mutableStateOf(null)
+
+    fun toggle(panelId: String) {
+        current.value = if (current.value == panelId) null else panelId
+    }
+}
+
 // --- MAIN MENU / DASHBOARD ---
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -415,9 +431,9 @@ fun MainMenuScreen(
                 .fillMaxSize()
                 .background(DarkSurface)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 10.dp)
         ) {
-        Spacer(Modifier.height(48.dp))
+        Spacer(Modifier.height(24.dp))
 
         // ═══ HEADER ═══
         Row(
@@ -509,15 +525,15 @@ fun MainMenuScreen(
             }
         }
             
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(20.dp)
+            shape = RoundedCornerShape(12.dp)
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
                 Text("HỆ THỐNG", fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold,
                     letterSpacing = 1.5.sp)
                 Spacer(Modifier.height(6.dp))
@@ -595,20 +611,22 @@ fun MainMenuScreen(
 
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
         if (viewModel.omvOverview.services.isNotEmpty() || viewModel.omvOverview.disks.isNotEmpty()) {
-            var omvExpanded by remember { mutableStateOf(false) }
+            // Mo doc quyen: panel mo dong bo voi ExclusivePanelState — khi mo
+            // panel khac (Tasks, Chart) thi panel nay tu cup.
+            val omvExpanded = ExclusivePanelState.current.value == "omv"
             Spacer(Modifier.height(8.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(10.dp)
             ) {
-                Column(Modifier.padding(12.dp)) {
+                Column(Modifier.padding(8.dp)) {
                     // Header — nhấn để mở/đóng
                     Row(
                         Modifier.fillMaxWidth().clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { omvExpanded = !omvExpanded },
+                        ) { ExclusivePanelState.toggle("omv") },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
@@ -645,7 +663,7 @@ fun MainMenuScreen(
                     // Nội dung mở rộng
                     androidx.compose.animation.AnimatedVisibility(visible = omvExpanded) {
                         Column {
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(6.dp))
 
                             // Services Row
                             if (viewModel.omvOverview.services.isNotEmpty()) {
@@ -669,7 +687,7 @@ fun MainMenuScreen(
                                         }
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
+                                Spacer(Modifier.height(6.dp))
                             }
 
                             // Network + Hardware info
@@ -697,8 +715,8 @@ fun MainMenuScreen(
                             }
                             
                             // Fan Control
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val fanStatusStr = viewModel.systemStatus.fanStatus
                                     val isFanRunning = fanStatusStr != "Dừng" && fanStatusStr != "--"
@@ -745,7 +763,7 @@ fun MainMenuScreen(
                                             }
                                                 .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
                                                 .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
-                                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                                .padding(horizontal = 6.dp, vertical = 4.dp)
                                         ) {
                                             Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
                                         }
@@ -814,9 +832,9 @@ fun MainMenuScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(10.dp)
             ) {
-                Column(Modifier.padding(12.dp)) {
+                Column(Modifier.padding(8.dp)) {
                     if (downloadingTorrents.isNotEmpty()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.CloudDownload, null, tint = AccentGreen, modifier = Modifier.size(18.dp))
@@ -927,7 +945,7 @@ fun MainMenuScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
 
@@ -936,13 +954,13 @@ fun MainMenuScreen(
         Text("Truy cập nhanh", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 6.dp))
 
         // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
             BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s2.id) }, onLongClick = { editingSlot = 2 })
         }
-        Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val s3 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot3Id } ?: AVAILABLE_QUICK_ACTIONS[1]
             BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s3.id) }, onLongClick = { editingSlot = 3 })
             val s4 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot4Id } ?: AVAILABLE_QUICK_ACTIONS[2]
@@ -978,14 +996,14 @@ fun MainMenuScreen(
             )
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
         
         // Nút mở Toolbox mở rộng
         Button(
             onClick = { showToolboxDialog = true },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(42.dp),
             colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.BuildCircle, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
@@ -993,8 +1011,7 @@ fun MainMenuScreen(
                 Text("Công cụ & Cài đặt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
             }
         }
-        Spacer(Modifier.height(8.dp))
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
         // THÔNG BÁO DIALOG
         if (showCommonDialog) {
@@ -1013,7 +1030,7 @@ fun MainMenuScreen(
             )
         }
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(16.dp))
     }
     
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -1105,10 +1122,10 @@ fun GaugeCard(
     Card(
         modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(20.dp)
+        shape = RoundedCornerShape(12.dp)
     ) {
         Box(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1172,12 +1189,12 @@ fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, 
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 12.dp),
+                .padding(horizontal = 6.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -1222,11 +1239,11 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
         modifier = modifier
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         border = BorderStroke(1.dp, color.copy(alpha = 0.3f))
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -1249,18 +1266,18 @@ fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColo
                     onLongPress = { if (onLongClick != null) onLongClick() else onClick() }
                 )
             },
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .background(Brush.linearGradient(gradientColors))
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
-                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.height(6.dp))
+                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(4.dp))
                 Column {
                     Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     Text(subtitle, fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
@@ -1285,23 +1302,23 @@ fun SettingsMenuCard(
             .fillMaxWidth()
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 Modifier
-                    .size(38.dp)
+                    .size(30.dp)
                     .background(color.copy(alpha = 0.15f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                 Text(subtitle, fontSize = 11.sp, color = TextSecondary)
@@ -1548,17 +1565,17 @@ fun ToolboxDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(10.dp)
                 .verticalScroll(androidx.compose.foundation.rememberScrollState())
         ) {
             Text("🔧 CÔNG CỤ HỆ THỐNG", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
             
             // Nhóm Media
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BigMenuTile("Ảnh mới", "Bộ sưu tập", Icons.Default.Collections, listOf(Color(0xFF42A5F5), Color(0xFF1565C0)), Modifier.weight(1f), { onDismiss(); onOpenLatestPhotos() })
                 BigMenuTile("Video", "Phim gần đây", Icons.Default.VideoLibrary, listOf(Color(0xFF66BB6A), Color(0xFF2E7D32)), Modifier.weight(1f), { onDismiss(); onOpenRecentVideos() })
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             // Nhóm SettingsCard
             SettingsMenuCard(
@@ -1639,7 +1656,7 @@ fun ToolboxDialog(
                 color = Color(0xFFEF5350),
                 onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
             )
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -1681,27 +1698,31 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
     // 4. Livestream
     val activeStreams = viewModel.activeLivestreams
 
-    val hasAnyTasks = thumbIsActive || dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty()
+    // Thumbnail generator is an internal maintenance job. Keep it out of the
+    // user-facing background task panel so livestream/sync progress stays clean.
+    val showThumbTask = false
+    val hasAnyTasks = dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty()
 
     if (!hasAnyTasks) return
 
     Column(Modifier.fillMaxWidth()) {
-        var tasksExpanded by remember { mutableStateOf(false) }
-        val activeCount = listOf(thumbIsActive, dupIsActive, autoBackupIsActive, activeStreams.isNotEmpty()).count { it }
-        Spacer(Modifier.height(14.dp))
+        // Mo doc quyen: panel mo dong bo voi ExclusivePanelState
+        val tasksExpanded = ExclusivePanelState.current.value == "tasks"
+        val activeCount = listOf(dupIsActive, autoBackupIsActive, activeStreams.isNotEmpty()).count { it }
+        Spacer(Modifier.height(8.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth().animateContentSize(),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(10.dp)
         ) {
-            Column(Modifier.padding(14.dp)) {
+            Column(Modifier.padding(8.dp)) {
                 // Header — nhấn để mở/đóng
                 Row(
                     Modifier.fillMaxWidth().clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) { tasksExpanded = !tasksExpanded },
+                    ) { ExclusivePanelState.toggle("tasks") },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -1712,7 +1733,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                            Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text("$activeCount đang chạy", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
@@ -1728,7 +1749,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                 androidx.compose.animation.AnimatedVisibility(visible = tasksExpanded) {
                     Column {
                         // --- THUMBNAIL ---
-                        if (thumbIsActive) {
+                        if (showThumbTask && thumbIsActive) {
                             Spacer(Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
@@ -1753,8 +1774,8 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                             }
                         }
 
-                        if (thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                        if (showThumbTask && thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- DUPLICATE QUÉT ---
@@ -1787,7 +1808,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                         }
 
                         if (dupIsActive && (autoBackupIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- AUTO BACKUP ---
@@ -1840,46 +1861,66 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                         }
 
                         if (autoBackupIsActive && activeStreams.isNotEmpty()) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 12.dp))
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- LIVESTREAM ---
                         if (activeStreams.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(18.dp))
+                                Box(Modifier.size(30.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(16.dp))
                                 }
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Livestream Recording", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 11.sp, color = Color(0xFFFF7043))
+                                    Text("Livestream Recording", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 10.sp, color = Color(0xFFFF7043))
                                 }
                             }
                             
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(4.dp))
                             activeStreams.forEach { job ->
                                 androidx.compose.runtime.key(job.jobId) {
                                     val jobPlatformName = when (job.platform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
                                     
                                     var localSeconds by remember(job.jobId) { androidx.compose.runtime.mutableStateOf(job.durationSeconds) }
-                                    LaunchedEffect(job.jobId, job.durationSeconds) {
-                                        localSeconds = job.durationSeconds
-                                        while(true) { kotlinx.coroutines.delay(1000); localSeconds++ }
+                                    LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
+                                        while (true) {
+                                            localSeconds = if (job.startedTs > 0L) {
+                                                ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
+                                            } else {
+                                                localSeconds.coerceAtLeast(job.durationSeconds)
+                                            }
+                                            kotlinx.coroutines.delay(1000)
+                                            if (job.startedTs <= 0L) localSeconds++
+                                        }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
 
-                                    Column(Modifier.fillMaxWidth().padding(start = 50.dp, top = 8.dp)) {
+                                    Column(Modifier.fillMaxWidth().padding(start = 38.dp, top = 4.dp)) {
+                                        // Hien "@user" neu co watchUsername (tu /api/livestream/status hoac local extract),
+                                        // fallback ve "${platform} • ${jobId.takeLast(6)}" cho cac job khong gan voi user (vd FB/YT).
+                                        val primaryLabel = if (job.watchUsername.isNotBlank())
+                                            "$jobPlatformName • @${job.watchUsername}"
+                                        else
+                                            "$jobPlatformName • ${job.jobId.takeLast(6)}"
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text("$jobPlatformName • ${job.jobId.takeLast(6)}", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                            Text(primaryLabel, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
                                             Text(displayDur, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF7043))
                                         }
-                                        Spacer(Modifier.height(4.dp))
+                                        Spacer(Modifier.height(2.dp))
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text(job.outputFile.substringAfterLast("/").ifEmpty { "Đang lấy link video..." }, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            val secondaryLabel = when {
+                                                job.outputFile.isNotEmpty() -> {
+                                                    val fileName = job.outputFile.substringAfterLast("/")
+                                                    if (job.outputFile.startsWith("Livestream/")) job.outputFile else "Livestream/$fileName"
+                                                }
+                                                else -> "Livestream/đang tạo file..."
+                                            }
+                                            Text(secondaryLabel, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                             Text(job.fileSize.ifEmpty { "0 B" }, fontSize = 10.sp, color = TextPrimary, modifier = Modifier.padding(start = 8.dp))
                                         }
                                         if (job.speed.isNotEmpty()) {
-                                            Spacer(Modifier.height(4.dp))
+                                            Spacer(Modifier.height(2.dp))
                                             Text("Tốc độ mạng: ${job.speed}", fontSize = 10.sp, color = AccentGreen)
                                         }
                                     }
@@ -1914,6 +1955,15 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
 
+    // State cho 2 nut khan cap (WoL + Restart) hien tren login screen — dung khi
+    // NAS bi loi khong dang nhap duoc.
+    val sharedPrefs = remember { context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
+    var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
+    var showWolDialog by remember { mutableStateOf(false) }
+    var showRebootConfirm by remember { mutableStateOf(false) }
+    var emergencyMsg by remember { mutableStateOf("") }
+    var emergencyIsError by remember { mutableStateOf(false) }
+
     // Trạng thái ping real-time cho các IP: URL → RTT (ms), -1 = unreachable
     var ipPingStatus by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var isCheckingPings by remember { mutableStateOf(false) }
@@ -1923,7 +1973,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         while (true) {
             isCheckingPings = true
             try {
-                val fullUrls = historyIps.map { ipToFullUrl(it) }
+                val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
                 if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
                     val results = viewModel.pingUrlsForDisplay(fullUrls, user, pass)
                     ipPingStatus = results
@@ -1931,6 +1981,16 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             } catch (_: Exception) {}
             isCheckingPings = false
             kotlinx.coroutines.delay(2000)
+        }
+    }
+
+    LaunchedEffect(ipPingStatus) {
+        val bestUrl = ipPingStatus
+            .filterValues { it > 0L }
+            .minByOrNull { it.value }
+            ?.key
+        if (!bestUrl.isNullOrBlank()) {
+            ipInput = fullUrlToIp(bestUrl)
         }
     }
 
@@ -1991,19 +2051,105 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         val interactionSource = remember { MutableInteractionSource() }
         Button(onClick = {
-            val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
-            val newHistoryIps = mutableListOf(currentIp); newHistoryIps.addAll(historyIps.filter { it != currentIp && it.isNotEmpty() }); historyIps = newHistoryIps
-            val fullUrlList = newHistoryIps.map { ipToFullUrl(it) }
-            viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
-                viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
-            }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
-        }, enabled = !viewModel.isLoading && ipInput.isNotEmpty(), interactionSource = interactionSource,
+            if (viewModel.isLoading) {
+                viewModel.cancelLogin()
+            } else {
+                val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
+                val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
+                val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
+                val fullUrlList = (reachableUrls + allUrls).distinct()
+                historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
+                viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
+                    viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
+                }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
+            }
+        }, enabled = viewModel.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
             modifier = Modifier.fillMaxWidth().height(50.dp).background(brush = Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), shape = RoundedCornerShape(24.dp))
         ) {
-            if (viewModel.isLoading) { CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.5.dp); Spacer(Modifier.width(8.dp)); Text("Đang kết nối...", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-            else Text("Đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            if (viewModel.isLoading) { Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Dừng đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            else Text("Kết nối NAS", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
+
+        // ── KHU VUC NUT KHAN CAP: Bat nguon (WoL) + Khoi dong lai NAS ────────────
+        // Cho phep dieu khien NAS khi khong dang nhap duoc (vd NAS treo, mat ket noi).
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "Điều khiển từ xa (không cần đăng nhập)",
+            fontSize = 11.sp,
+            color = Color(0xFF8892B0),
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // NUT 1: WoL — bat nguon NAS qua magic packet, chi can MAC address
+            OutlinedButton(
+                onClick = { showWolDialog = true },
+                modifier = Modifier.weight(1f).height(46.dp),
+                shape = RoundedCornerShape(22.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26A69A))
+            ) {
+                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFF26A69A), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Bật nguồn", color = Color(0xFF26A69A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            // NUT 2: Restart NAS — POST /api/power/reboot truc tiep voi IP + auth tu form
+            OutlinedButton(
+                onClick = { showRebootConfirm = true },
+                modifier = Modifier.weight(1f).height(46.dp),
+                shape = RoundedCornerShape(22.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFB8C00))
+            ) {
+                Icon(Icons.Default.RestartAlt, null, tint = Color(0xFFFB8C00), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Khởi động lại", color = Color(0xFFFB8C00), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (emergencyMsg.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                emergencyMsg,
+                fontSize = 12.sp,
+                color = if (emergencyIsError) Color(0xFFE53935) else Color(0xFF00E676),
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+
+    // ── DIALOGS cho khu vuc khan cap ────────────────────────────────────────
+    if (showWolDialog) {
+        com.nas.naswebdav.ui.dialogs.WolDialog(
+            macAddress = macAddress,
+            onMacChange = { macAddress = it },
+            onConfirm = {
+                if (macAddress.isNotBlank()) {
+                    sharedPrefs.edit().putString("mac_address", macAddress).apply()
+                    viewModel.sendWakeOnLan(macAddress)
+                    showWolDialog = false
+                    emergencyIsError = false
+                    emergencyMsg = "Đã bắn Wake-on-LAN tới $macAddress"
+                }
+            },
+            onDismiss = { showWolDialog = false }
+        )
+    }
+    if (showRebootConfirm) {
+        com.nas.naswebdav.ui.dialogs.RebootConfirmDialog(
+            onConfirm = {
+                showRebootConfirm = false
+                viewModel.sendPowerCommandFromLogin(
+                    ipInput = ipInput,
+                    user = user.trim(),
+                    pass = pass.trim(),
+                    endpoint = "power/reboot",
+                    onResult = { ok, msg ->
+                        emergencyIsError = !ok
+                        emergencyMsg = msg
+                    }
+                )
+            },
+            onDismiss = { showRebootConfirm = false }
+        )
     }
 }
 
@@ -2218,9 +2364,9 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
     Card(
         modifier = Modifier.fillMaxWidth().animateContentSize(),
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }) {
                 Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))

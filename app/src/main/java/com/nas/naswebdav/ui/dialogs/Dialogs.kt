@@ -146,7 +146,7 @@ fun DownloadDialog(
         text = {
             Column {
                 Text("Nhập Magnet Link hoặc HTTP URL để NAS tự động tải ngầm qua qBittorrent.", fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = downloadLink,
                     onValueChange = onLinkChange,
@@ -311,6 +311,20 @@ fun SmartDiskDialog(
 }
 
 // ====================================================================
+// EXCLUSIVE PANEL STATE cho 3 section trong LivestreamRecordDialog:
+// "watchlist" (THEO DOI TIKTOK LIVE) | "exclude" (Thoi gian loai tru) | "active" (Dang ghi hinh)
+// Chi 1 section mo cung luc -> toi uu dien tich man hinh.
+// ====================================================================
+object LivestreamPanelState {
+    val current: androidx.compose.runtime.MutableState<String?> =
+        androidx.compose.runtime.mutableStateOf(null)
+
+    fun toggle(panelId: String) {
+        current.value = if (current.value == panelId) null else panelId
+    }
+}
+
+// ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
 @Composable
@@ -323,6 +337,10 @@ private fun TikTokLiveWatchSection(
 ) {
     // User dang xem chi tiet loi (null = an dialog)
     var detailUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
+    // Cac panel theo doi tiktok / thoi gian loai tru / dang ghi hinh — chi 1 panel mo
+    // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).
+    val listExpanded = LivestreamPanelState.current.value == "watchlist"
+    val excludeExpanded = LivestreamPanelState.current.value == "exclude"
 
     val openDetail = detailUser
     if (openDetail != null) {
@@ -390,15 +408,35 @@ private fun TikTokLiveWatchSection(
     }
 
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
-    Spacer(Modifier.height(14.dp))
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Spacer(Modifier.height(8.dp))
+    // Header clickable -> toggle list user. Hien icon expand/collapse + count.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (users.isNotEmpty()) Modifier.clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null
+                ) { LivestreamPanelState.toggle("watchlist") } else Modifier
+            )
+    ) {
         Text("♪", fontSize = 20.sp, color = Color(0xFFEE1D52))
         Spacer(Modifier.width(8.dp))
         Text("THEO DÕI TIKTOK LIVE", color = Color(0xFFEE1D52), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Spacer(Modifier.weight(1f))
         Text("${users.size} user", color = Color(0xFF9AA3B8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        if (users.isNotEmpty()) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                if (listExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = if (listExpanded) "Ẩn danh sách" else "Mở danh sách",
+                tint = Color(0xFF9AA3B8),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
-    Spacer(Modifier.height(12.dp))
+    Spacer(Modifier.height(8.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = newUsername,
@@ -460,9 +498,10 @@ private fun TikTokLiveWatchSection(
             }
         }
     }
-    if (users.isNotEmpty()) {
-        Spacer(Modifier.height(10.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // List user theo doi — chi hien khi listExpanded == true. Mac dinh an de tiet kiem
+    // khong gian man hinh khi co nhieu user; user bam header de mo.
+    androidx.compose.animation.AnimatedVisibility(visible = users.isNotEmpty() && listExpanded) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
             users.forEach { user ->
                 Row(
                     Modifier
@@ -483,6 +522,16 @@ private fun TikTokLiveWatchSection(
                             else -> "Đang theo dõi"
                         }
                         Text(sub, color = if (user.status == "recording") Color(0xFF43A047) else Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        val checkLiveLine = buildString {
+                            if (user.lastCheck.isNotEmpty()) append("Check: ${user.lastCheck}")
+                            if (user.lastLive.isNotEmpty()) {
+                                if (isNotEmpty()) append("  •  ")
+                                append("Live cuối: ${user.lastLive}")
+                            }
+                        }
+                        if (checkLiveLine.isNotEmpty()) {
+                            Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         if (user.status == "error" && user.lastError.length > 60) {
                             Text("Chạm để xem chi tiết →", color = Color(0xFFFFA726), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                         }
@@ -494,12 +543,22 @@ private fun TikTokLiveWatchSection(
             }
         }
     }
-    Spacer(Modifier.height(12.dp))
-    Text("Thêm username TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(16.dp))
+    Spacer(Modifier.height(6.dp))
+    Text("Thêm username TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
-    Spacer(Modifier.height(14.dp))
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Spacer(Modifier.height(8.dp))
+    // Header "Thoi gian loai tru" — clickable, hien icon expand/collapse.
+    // Switch tat/bat de o header de user co the bat/tat khong can mo panel.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) { LivestreamPanelState.toggle("exclude") }
+    ) {
         Text("☾", fontSize = 18.sp, color = Color(0xFFFFCC80))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
@@ -510,28 +569,38 @@ private fun TikTokLiveWatchSection(
             checked = viewModel.tiktokExcludeEnabled,
             onCheckedChange = { viewModel.updateTikTokLiveWatchSettings(context, it) }
         )
-    }
-    Spacer(Modifier.height(10.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
-        OutlinedTextField(
-            value = viewModel.tiktokExcludeStart,
-            onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
-            singleLine = true,
-            modifier = Modifier.width(96.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
-        )
-        Text("→", color = Color(0xFF8892B0), fontSize = 18.sp)
-        Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
-        OutlinedTextField(
-            value = viewModel.tiktokExcludeEnd,
-            onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
-            singleLine = true,
-            modifier = Modifier.width(96.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            if (excludeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = if (excludeExpanded) "Ẩn" else "Mở",
+            tint = Color(0xFF9AA3B8),
+            modifier = Modifier.size(20.dp)
         )
     }
-    Spacer(Modifier.height(18.dp))
+    androidx.compose.animation.AnimatedVisibility(visible = excludeExpanded) {
+        Column(modifier = Modifier.padding(top = 6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
+                OutlinedTextField(
+                    value = viewModel.tiktokExcludeStart,
+                    onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
+                    singleLine = true,
+                    modifier = Modifier.width(96.dp),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+                )
+                Text("→", color = Color(0xFF8892B0), fontSize = 18.sp)
+                Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
+                OutlinedTextField(
+                    value = viewModel.tiktokExcludeEnd,
+                    onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
+                    singleLine = true,
+                    modifier = Modifier.width(96.dp),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+                )
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -1604,6 +1673,12 @@ fun LivestreamRecordDialog(
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
     LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
+    // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
+    // giao dien gon, user chu dong bam header de xem section can xem.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        LivestreamPanelState.current.value = null
+        onDispose { }
+    }
     var liveUrl by remember { mutableStateOf("") }
     var isResolvingTikTokLink by remember { mutableStateOf(false) }
     var newTikTokWatchUser by remember { mutableStateOf("") }
@@ -1711,17 +1786,44 @@ fun LivestreamRecordDialog(
     val platformName = when (activePlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
     val accentColor = when (activePlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
 
+    // ScrollState chia se cho toan dialog — khi user mo 1 panel thi tu dong scroll
+    // de panel content lo ra ngoai cua so visible (khong bi an duoi day man hinh).
+    val dialogScrollState = rememberScrollState()
+    // SheetState voi skipPartiallyExpanded = true — sheet luon o full height, khong
+    // bao gio dung lai o half. Khi user mo panel thi sheet con auto expand() de
+    // dam bao co du khong gian hien thi content.
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val expandedPanel = LivestreamPanelState.current.value
+    androidx.compose.runtime.LaunchedEffect(expandedPanel) {
+        if (expandedPanel != null) {
+            // 1) Day sheet len max height (truong hop user mo dialog xong it phat
+            //    moi bam panel, sheet co the dang o trang thai chua full)
+            try { sheetState.expand() } catch (_: Exception) {}
+            // 2) Cho animation expand cua panel ~200ms
+            kotlinx.coroutines.delay(220)
+            // 3) Scroll dialog content xuong day -> content panel vua mo lo ra het
+            dialogScrollState.animateScrollTo(dialogScrollState.maxValue)
+        }
+    }
+
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).heightIn(max = 600.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+                // Cho phep content cao den 1000dp -> du cho ca khi expand "Dang ghi hinh"
+                // voi nhieu job. Vuot qua se duoc scroll boi verticalScroll.
+                .heightIn(max = 1000.dp)
+                .verticalScroll(dialogScrollState)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Text(platformIcon, fontSize = 24.sp)
-                Spacer(Modifier.width(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Text(platformIcon, fontSize = 22.sp)
+                Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Ghi hình Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("Ghi trực tiếp vào NAS HDD", color = Color(0xFF8892B0), fontSize = 12.sp)
@@ -1733,25 +1835,62 @@ fun LivestreamRecordDialog(
                 }
             }
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Tab buttons: tang do tuong phan de text tab khong bi chim vao nen.
+            // Selected: container 50% alpha + chu TRANG BOLD + border solid.
+            // Unselected: container den nhe + chu sang xam, doc duoc.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val watchSelected = livePanelMode == "watch"
                 FilterChip(
-                    selected = livePanelMode == "watch",
+                    selected = watchSelected,
                     onClick = { livePanelMode = "watch" },
-                    label = { Text("Theo dõi user", fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFFEE1D52).copy(alpha = 0.2f), selectedLabelColor = Color(0xFFEE1D52), containerColor = Color.Transparent, labelColor = Color(0xFF8892B0)),
-                    border = FilterChipDefaults.filterChipBorder(borderColor = Color(0xFF8892B0).copy(alpha = 0.2f), selectedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.5f), enabled = true, selected = livePanelMode == "watch"),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    label = {
+                        Text(
+                            "Theo dõi user",
+                            fontSize = 13.sp,
+                            fontWeight = if (watchSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (watchSelected) Color.White else Color(0xFFE0E0E0)
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFFEE1D52).copy(alpha = 0.55f),
+                        containerColor = Color(0xFF1A1A1A)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
+                        selectedBorderColor = Color(0xFFEE1D52),
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.5.dp,
+                        enabled = true, selected = watchSelected
+                    ),
+                    modifier = Modifier.weight(1f).height(36.dp)
                 )
+                val recordSelected = livePanelMode == "record"
                 FilterChip(
-                    selected = livePanelMode == "record",
+                    selected = recordSelected,
                     onClick = { livePanelMode = "record" },
-                    label = { Text("Ghi link live", fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accentColor.copy(alpha = 0.2f), selectedLabelColor = accentColor, containerColor = Color.Transparent, labelColor = Color(0xFF8892B0)),
-                    border = FilterChipDefaults.filterChipBorder(borderColor = Color(0xFF8892B0).copy(alpha = 0.2f), selectedBorderColor = accentColor.copy(alpha = 0.5f), enabled = true, selected = livePanelMode == "record"),
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    label = {
+                        Text(
+                            "Ghi link live",
+                            fontSize = 13.sp,
+                            fontWeight = if (recordSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (recordSelected) Color.White else Color(0xFFE0E0E0)
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = accentColor.copy(alpha = 0.55f),
+                        containerColor = Color(0xFF1A1A1A)
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
+                        selectedBorderColor = accentColor,
+                        borderWidth = 1.dp,
+                        selectedBorderWidth = 1.5.dp,
+                        enabled = true, selected = recordSelected
+                    ),
+                    modifier = Modifier.weight(1f).height(36.dp)
                 )
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(6.dp))
 
             if (livePanelMode == "watch") {
                 TikTokLiveWatchSection(
@@ -1791,24 +1930,24 @@ fun LivestreamRecordDialog(
                     }
                 }
             )
-            
-            Spacer(Modifier.height(12.dp))
-            
+
+            Spacer(Modifier.height(6.dp))
+
             if (detectedPlatform.isNotEmpty()) {
                 Row(
-                    Modifier.fillMaxWidth().background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(10.dp)).padding(10.dp),
+                    Modifier.fillMaxWidth().background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(platformIcon, fontSize = 16.sp)
                     Spacer(Modifier.width(8.dp))
                     Text("Đã nhận diện: $detectedTitle", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(6.dp))
             }
             
             Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
                     val selected = selectedQuality == value
                     FilterChip(
@@ -1827,13 +1966,13 @@ fun LivestreamRecordDialog(
                             enabled = true,
                             selected = selected
                         ),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(32.dp)
                     )
                 }
             }
             
             if (viewModel.isStartingLivestream) {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
@@ -1845,7 +1984,7 @@ fun LivestreamRecordDialog(
                     kotlinx.coroutines.delay(5000L)
                     viewModel.clearLivestreamMessage()
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(6.dp))
                 val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
                 Text(
                     message, color = msgColor, fontSize = 13.sp,
@@ -1853,7 +1992,7 @@ fun LivestreamRecordDialog(
                     textAlign = TextAlign.Center
                 )
             } else {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
                         if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) {
@@ -1881,9 +2020,9 @@ fun LivestreamRecordDialog(
                         }
                     },
                     enabled = liveUrl.isNotBlank() && !isResolvingTikTokLink,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1892,30 +2031,60 @@ fun LivestreamRecordDialog(
             }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(6.dp))
 
             // --- PHẦN 2: DANH SÁCH CÁC JOB ĐANG GHI ---
+            // An mac dinh, bam header de mo (toggle "active" panel). Khi mo se tu
+            // dong dong cac panel khac (watchlist + exclude) thong qua LivestreamPanelState.
+            val activeExpanded = LivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
                 HorizontalDivider(color = Color.DarkGray)
-                Spacer(Modifier.height(12.dp))
-                Text("ĐANG GHI HÌNH (${activeLivestreams.size})", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                Spacer(Modifier.height(12.dp))
-                
-                androidx.compose.foundation.lazy.LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f, fill = false)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { LivestreamPanelState.toggle("active") }
                 ) {
-                    items(activeLivestreams.size) { index ->
-                        val job = activeLivestreams[index]
+                    val pulse = rememberInfiniteTransition(label = "rec_pulse")
+                    val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.4f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "rec_alpha")
+                    Box(Modifier.size(8.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "ĐANG GHI HÌNH (${activeLivestreams.size})",
+                        color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        if (activeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (activeExpanded) "Ẩn" else "Mở",
+                        tint = Color(0xFF9AA3B8),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+            androidx.compose.animation.AnimatedVisibility(visible = activeLivestreams.isNotEmpty() && activeExpanded) {
+                // CHANGED: LazyColumn -> Column de tranh loi "Vertically scrolling parent
+                // doesn't have a maximum height" khi nam trong outer verticalScroll Column.
+                // List active luong it (max ~16) nen Column khong gay perf issue.
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    activeLivestreams.forEach { job ->
                         val jobPlatform = job.platform.ifEmpty { "livestream" }
                         val jobPlatformName = when (jobPlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
                         val jobAccentColor = when (jobPlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
 
                         Column(
                             Modifier.fillMaxWidth()
-                                .background(Brush.verticalGradient(listOf(jobAccentColor.copy(alpha = 0.12f), Color.Transparent)), RoundedCornerShape(14.dp))
-                                .border(1.dp, jobAccentColor.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-                                .padding(16.dp)
+                                .background(Brush.verticalGradient(listOf(jobAccentColor.copy(alpha = 0.12f), Color.Transparent)), RoundedCornerShape(10.dp))
+                                .border(1.dp, jobAccentColor.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                                .padding(8.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val pulse = rememberInfiniteTransition(label = "pulse")
@@ -1926,29 +2095,36 @@ fun LivestreamRecordDialog(
                                 Spacer(Modifier.weight(1f))
                                 Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(Modifier.height(6.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Column {
                                     Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
-                                    LaunchedEffect(job.jobId, job.durationSeconds) {
-                                        localSeconds = job.durationSeconds
-                                        while(true) { delay(1000); localSeconds++ }
+                                    LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
+                                        while (true) {
+                                            localSeconds = if (job.startedTs > 0L) {
+                                                ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
+                                            } else {
+                                                localSeconds.coerceAtLeast(job.durationSeconds)
+                                            }
+                                            delay(1000)
+                                            if (job.startedTs <= 0L) localSeconds++
+                                        }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
-                                    Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                    Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
-                                    Text("Dung lượng (tạm tính)", color = Color(0xFF8892B0), fontSize = 10.sp)
-                                    Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                    Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            if (job.speed.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text("Tốc độ: ${job.speed}", color = Color(0xFF8892B0), fontSize = 12.sp) }
-                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            Spacer(Modifier.height(16.dp))
+                            if (job.speed.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text("Tốc độ: ${job.speed}", color = Color(0xFF8892B0), fontSize = 12.sp) }
+                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            Spacer(Modifier.height(6.dp))
                             Button(
                                 onClick = { viewModel.stopLivestreamRecord(context, job.jobId) },
-                                modifier = Modifier.fillMaxWidth().height(42.dp),
+                                modifier = Modifier.fillMaxWidth().height(38.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
@@ -1959,9 +2135,182 @@ fun LivestreamRecordDialog(
                         }
                     }
                 }
-            } else {
-                Spacer(Modifier.height(24.dp))
             }
+            if (activeLivestreams.isEmpty()) {
+                // Khi khong co luong nao dang ghi -> them spacer cho UI khong bi sat day.
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+// ====================================================================
+// DIALOG THUOC TINH FILE — Tuong tu cua so Properties cua Windows
+// Hien khi user long-press 1 file/folder trong BrowserScreen va chon "Thuoc tinh"
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FilePropertiesDialog(
+    file: com.nas.naswebdav.NasFile,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Tinh toan cac field hien thi
+    val ext = file.name.substringAfterLast('.', "").lowercase()
+    val mime = remember(file.name, file.isDirectory) {
+        if (file.isDirectory) "Thư mục" else {
+            android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                ?: file.contentType ?: "application/octet-stream"
+        }
+    }
+    val sizeFormatted = remember(file.contentLength) {
+        if (file.isDirectory) "—" else com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
+    }
+    val sizeRaw = if (file.isDirectory) "" else " (${"%,d".format(file.contentLength)} bytes)"
+    val modifiedStr = remember(file.lastModified) {
+        if (file.lastModified <= 0L) "—" else {
+            try {
+                java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault())
+                    .format(java.util.Date(file.lastModified))
+            } catch (_: Exception) { "—" }
+        }
+    }
+
+    // Hash MD5/aHash tu DB fingerprint (neu da scan duplicate truoc do).
+    // Dung LaunchedEffect tra cuu o background, KHONG block UI.
+    var fingerprintHash by remember(file.path) { mutableStateOf<String?>(null) }
+    var fingerprintLoading by remember(file.path) { mutableStateOf(true) }
+    LaunchedEffect(file.path) {
+        if (file.isDirectory) {
+            fingerprintLoading = false
+            return@LaunchedEffect
+        }
+        try {
+            val db = com.nas.naswebdav.NasApplication.instance.database
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // FingerprintDao chi co findByExactHash(hash) — query full table de tim filePath khong toi uu.
+                // Thay vao do dung FileDao.partialHash / fullHash (CachedFile co san).
+                db.fileDao().getFileByPath(file.path)
+            }
+            fingerprintHash = result?.fullHash ?: result?.partialHash ?: result?.imageFingerprint
+        } catch (_: Exception) {
+            fingerprintHash = null
+        } finally {
+            fingerprintLoading = false
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF101012)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (file.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
+                    contentDescription = null,
+                    tint = if (file.isDirectory) Color(0xFFFFB74D) else Color(0xFF80CBC4),
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Thuộc tính",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = Color(0xFFE8E8E8)
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+
+            // Cac dong field — label trai, value phai, value selectable de copy
+            PropertyRow("Tên", file.name, selectable = true)
+            PropertyRow("Đường dẫn", file.path, selectable = true, monospace = true)
+            PropertyRow("Loại", mime)
+            if (!file.isDirectory) {
+                PropertyRow("Phần mở rộng", if (ext.isEmpty()) "—" else ".$ext")
+                PropertyRow("Kích thước", "$sizeFormatted$sizeRaw")
+            }
+            PropertyRow("Sửa lần cuối", modifiedStr)
+            val hashDisplay = when {
+                file.isDirectory -> "—"
+                fingerprintLoading -> "Đang tra cứu..."
+                fingerprintHash.isNullOrEmpty() -> "— (chưa quét fingerprint)"
+                else -> fingerprintHash!!
+            }
+            PropertyRow("Hash", hashDisplay, selectable = true, monospace = true)
+
+            Spacer(Modifier.height(16.dp))
+
+            // Nut dong
+            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            Button(
+                onClick = onDismiss,
+                interactionSource = interactionSource,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                contentPadding = PaddingValues(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+                    .background(
+                        brush = Brush.linearGradient(
+                            listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
+                        ),
+                        shape = RoundedCornerShape(23.dp)
+                    )
+            ) {
+                Text("Đóng", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun PropertyRow(
+    label: String,
+    value: String,
+    selectable: Boolean = false,
+    monospace: Boolean = false
+) {
+    Column(modifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 6.dp)
+    ) {
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = Color(0xFF8892B0),
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(2.dp))
+        val style = if (monospace) {
+            androidx.compose.ui.text.TextStyle(
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = Color(0xFFE8E8E8)
+            )
+        } else {
+            androidx.compose.ui.text.TextStyle(
+                fontSize = 13.sp,
+                color = Color(0xFFE8E8E8),
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (selectable) {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(value, style = style, softWrap = true)
+            }
+        } else {
+            Text(value, style = style, softWrap = true)
         }
     }
 }

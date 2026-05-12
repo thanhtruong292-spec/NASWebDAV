@@ -50,6 +50,10 @@ interface FileDao {
     @Query("SELECT EXISTS(SELECT 1 FROM files_cache WHERE path = :path LIMIT 1)")
     fun exists(path: String): Boolean
 
+    // Dialog Thuoc tinh file dung de tra cuu hash da scan
+    @Query("SELECT * FROM files_cache WHERE path = :path LIMIT 1")
+    fun getFileByPath(path: String): CachedFile?
+
     // TỐI ƯU SQL: Loại trừ thư mục .trash để ảnh/video đã xóa không xuất hiện
     @Query("""
     SELECT * FROM files_cache 

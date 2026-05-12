@@ -212,6 +212,11 @@ object WebDavManager {
 
     }
 
+    fun cancelActiveCalls() {
+        optimizedClient.dispatcher.cancelAll()
+        sardineClient.dispatcher.cancelAll()
+    }
+
 
 
     // TÍNH NĂNG 4.H: Đo lường Sức Khoẻ Mạng bằng HTTP OPTIONS cực nhẹ
@@ -222,19 +227,31 @@ object WebDavManager {
 
         try {
 
-            val start = System.currentTimeMillis()
-
-            val request = Request.Builder()
-
-                .url(currentBaseUrl)
-
-                .method("OPTIONS", null)
-
+            val isTailscale = isTailscaleUrl(currentBaseUrl)
+            val timeoutMs = if (isTailscale) 2500L else 800L
+            val pingClient = optimizedClient.newBuilder()
+                .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                 .build()
 
-            optimizedClient.newCall(request).execute().use { }
+            var best = Long.MAX_VALUE
+            repeat(if (isTailscale) 1 else 3) {
+                val requestBuilder = Request.Builder()
+                    .url("${currentBaseUrl.toApiBaseUrl()}/api/ping")
+                    .head()
+                if (currentUser.isNotEmpty() || currentPass.isNotEmpty()) {
+                    requestBuilder.header("Authorization", okhttp3.Credentials.basic(currentUser, currentPass))
+                }
+                val start = android.os.SystemClock.elapsedRealtime()
+                pingClient.newCall(requestBuilder.build()).execute().use { response ->
+                    if (response.isSuccessful) {
+                        best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
+                    }
+                }
+            }
 
-            return@withContext System.currentTimeMillis() - start
+            return@withContext if (best == Long.MAX_VALUE) -1L else best
 
         } catch (e: Exception) {
 

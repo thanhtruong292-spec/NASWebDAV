@@ -197,6 +197,11 @@ class NasApplication : Application(), ImageLoaderFactory {
                 }
             } catch (e: Exception) {}
         }
+
+        // Dang ky Discovery Worker dinh ky de bat cac job livestream do NAS tu
+        // khoi (TikTok watcher auto-record). Khong co worker nay thi khi user
+        // dong app, may dien thoai khong bao gio biet co job ngam dang chay.
+        LivestreamDiscoveryWorker.schedule(this)
     }
 }
 
@@ -494,7 +499,7 @@ object SmartNetworkManager {
         if (lanUrl.isEmpty()) return false
         return try {
             val parsedHost = java.net.URL(lanUrl).host ?: return false
-            val apiUrl = "http://$parsedHost:${AppConfig.API_PORT}/api/status"
+            val apiUrl = "http://$parsedHost:${AppConfig.API_PORT}/api/ping"
 
             // Tailscale relay cần 3-5 giây cho lần handshake đầu tiên → dùng tailscalePingClient
             val isTailscale = com.nas.naswebdav.isTailscaleUrl(lanUrl)
@@ -502,6 +507,7 @@ object SmartNetworkManager {
 
             val request = okhttp3.Request.Builder()
                 .url(apiUrl)
+                .head()
                 .header("Authorization", okhttp3.Credentials.basic(user, pass))
                 .build()
 

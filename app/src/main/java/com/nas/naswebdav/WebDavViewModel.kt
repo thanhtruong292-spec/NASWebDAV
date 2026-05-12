@@ -7,6 +7,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Stack
@@ -729,8 +731,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         var fileSize: String = "0 B",
         var duration: String = "0h00m00s",
         var durationSeconds: Long = 0,
+        var startedTs: Long = 0,
         var speed: String = "",
-        var outputFile: String = ""
+        var outputFile: String = "",
+        // TikTok username (de UI hien "@user" thay vi job_id/filename rac roi).
+        // Rong khi job khong gan voi user nao (vd ghi facebook/youtube).
+        var watchUsername: String = ""
     )
 
     data class TikTokLiveWatchUser(
@@ -840,6 +846,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/add", org.json.JSONObject().put("username", clean))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+                // Bat job ngay neu user vua them dang live - khong cho 15p chu ky Discovery.
+                syncLivestreamStateWithServer(context)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được user"}" }
             } finally {
@@ -881,12 +889,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
+                // Boc tach TikTok username tu URL de:
+                // (1) gan vao body de NAS luu vao job dict -> /api/livestream/status tra "watch_username"
+                // (2) sau khi POST OK, tu dong them user vao danh sach theo doi
+                // Regex cho phep dau cham + dau gach (TikTok username "cao-xinh.005").
+                val tiktokUsername: String = if (url.contains("tiktok", ignoreCase = true)) {
+                    Regex("tiktok\\.com/@([\\w.\\-]+)").find(url)?.groupValues?.get(1) ?: ""
+                } else ""
+
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                 val body = org.json.JSONObject().apply {
                     put("url", url)
                     put("quality", quality)
                     put("referer", referer)
                     put("user_agent", userAgent)
+                    if (tiktokUsername.isNotBlank()) put("watch_username", tiktokUsername)
                 }.toString().toRequestBody(jsonMediaType)
 
                 val requestBuilder = okhttp3.Request.Builder()
@@ -904,11 +921,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
                         val platform = json.optString("platform", "")
-                        
+
                         // Thêm vào danh sách active (mặc định trạng thái recording)
                         withContext(Dispatchers.Main) {
                             if (activeLivestreams.none { it.jobId == jobId }) {
-                                activeLivestreams.add(LivestreamJob(jobId, platform))
+                                activeLivestreams.add(LivestreamJob(jobId, platform, watchUsername = tiktokUsername))
                             }
                             livestreamMessage   = json.optString("message", "Đang khởi động ghi hình...")
                         }
@@ -918,6 +935,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                         // Observe tiến trình từ Worker để cập nhật UI
                         observeLivestreamWorker(context)
+
+                        // FIX: Tu dong them username vao watcher list neu chua co —
+                        // dam bao moi luc user ghi 1 live moi qua link, lan sau watcher
+                        // se tu phat hien va auto-record. Khong dua vao logic o Dialog
+                        // (de robust trong moi flow goi startLivestreamRecord).
+                        if (tiktokUsername.isNotBlank() &&
+                            tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
+                            addTikTokLiveWatchUser(context, tiktokUsername)
+                        }
                     } else {
                         val errMsg = json.optString("error", "Lỗi không xác định")
                         withContext(Dispatchers.Main) {
@@ -960,7 +986,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 
                 for (work in activeWorks) {
                     val progress = work.progress
-                    val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID) ?: continue
+                    // Worker vua enqueue chua kip setProgress -> progress rong.
+                    // Fallback parse jobId tu tag "LIVESTREAM_MONITOR_<jobId>" de
+                    // khong miss job vua khoi (vd: do Discovery Worker hoac sync).
+                    val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID)
+                        ?: work.tags.firstOrNull { it.startsWith(LivestreamMonitorWorker.WORK_NAME_PREFIX) }
+                            ?.removePrefix(LivestreamMonitorWorker.WORK_NAME_PREFIX)
+                        ?: continue
                     
                     // Xây dựng lại data class
                     val job = LivestreamJob(
@@ -969,8 +1001,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         status = progress.getString(LivestreamMonitorWorker.OUT_STATUS) ?: "recording",
                         fileSize = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE) ?: "0 B",
                         duration = progress.getString(LivestreamMonitorWorker.OUT_DURATION) ?: "0h00m00s",
+                        durationSeconds = progress.getLong(LivestreamMonitorWorker.OUT_DURATION_SECONDS, 0L),
+                        startedTs = progress.getLong(LivestreamMonitorWorker.OUT_STARTED_TS, 0L),
                         speed = progress.getString(LivestreamMonitorWorker.OUT_SPEED) ?: "",
-                        outputFile = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE) ?: ""
+                        outputFile = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE) ?: "",
+                        watchUsername = progress.getString(LivestreamMonitorWorker.OUT_WATCH_USER) ?: ""
                     )
                     
                     if (job.status == "recording") {
@@ -1018,15 +1053,39 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             
                             if (status == "recording" && jobId.isNotEmpty()) {
                                 hasRecordingJobs = true
+                                val watchUser = jobObj.optString("watch_username", "")
+                                val durationSeconds = jobObj.optLong("duration_seconds", 0L)
+                                val startedTs = jobObj.optLong("started_ts", 0L)
                                 // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
                                 val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
                                 if (!alreadyTracked) {
                                     val host = java.net.URL(currentUrl).host
                                     withContext(Dispatchers.Main) {
-                                        activeLivestreams.add(LivestreamJob(jobId, platform))
+                                        activeLivestreams.add(
+                                            LivestreamJob(
+                                                jobId = jobId,
+                                                platform = platform,
+                                                durationSeconds = durationSeconds,
+                                                startedTs = startedTs,
+                                                watchUsername = watchUser
+                                            )
+                                        )
                                     }
                                     LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
                                     hasNewJobs = true
+                                } else if (watchUser.isNotEmpty() || durationSeconds > 0 || startedTs > 0) {
+                                    // Cap nhat watchUsername cho job da co
+                                    withContext(Dispatchers.Main) {
+                                        val idx = activeLivestreams.indexOfFirst { it.jobId == jobId }
+                                        if (idx >= 0) {
+                                            val existing = activeLivestreams[idx]
+                                            activeLivestreams[idx] = existing.copy(
+                                                watchUsername = if (watchUser.isNotEmpty()) watchUser else existing.watchUsername,
+                                                durationSeconds = if (durationSeconds > 0) durationSeconds else existing.durationSeconds,
+                                                startedTs = if (startedTs > 0) startedTs else existing.startedTs
+                                            )
+                                        }
+                                    }
                                 }
                             } else if (jobId.isNotEmpty()) {
                                 LivestreamMonitorWorker.cancelJob(context, jobId)
@@ -1079,7 +1138,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     "stopped"  -> "⏹ Đã dừng ghi hình"
                                     "timeout"  -> "⏰ Tự động dừng (quá 12 giờ)"
                                     "error"    -> {
-                                        val reason = progress.getString("error_reason") ?: ""
+                                        val reason = progress.getString("error_reason")
+                                            ?: info.outputData.getString("error_reason")
+                                            ?: ""
                                         if (reason.isNotEmpty()) "Lỗi: $reason" else "Lỗi: Nguồn Stream bị ngắt / File quá nhỏ!"
                                     }
                                     else       -> "Trạng thái báo cáo: $status"
@@ -1090,14 +1151,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 // mutableStateListOf so sánh object identity, không deep-compare
                                 val fs = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE)
                                 val dur = progress.getString(LivestreamMonitorWorker.OUT_DURATION)
+                                val durSec = progress.getLong(LivestreamMonitorWorker.OUT_DURATION_SECONDS, -1L)
+                                val startedTs = progress.getLong(LivestreamMonitorWorker.OUT_STARTED_TS, -1L)
                                 val spd = progress.getString(LivestreamMonitorWorker.OUT_SPEED)
                                 val outF = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE)
-                                
+                                val wu  = progress.getString(LivestreamMonitorWorker.OUT_WATCH_USER)
+
                                 val updated = existing.copy(
                                     fileSize = if (!fs.isNullOrEmpty()) fs else existing.fileSize,
                                     duration = if (!dur.isNullOrEmpty()) dur else existing.duration,
+                                    durationSeconds = if (durSec >= 0L) durSec else existing.durationSeconds,
+                                    startedTs = if (startedTs > 0L) startedTs else existing.startedTs,
                                     speed = if (!spd.isNullOrEmpty()) spd else existing.speed,
-                                    outputFile = if (!outF.isNullOrEmpty()) outF else existing.outputFile
+                                    outputFile = if (!outF.isNullOrEmpty()) outF else existing.outputFile,
+                                    watchUsername = if (!wu.isNullOrEmpty()) wu else existing.watchUsername
                                 )
                                 
                                 activeLivestreams[index] = updated
@@ -1518,8 +1585,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
+    private var loginJob: Job? = null
+
+    fun cancelLogin() {
+        loginJob?.cancel()
+        webDavManager.cancelActiveCalls()
+        loginJob = null
+        isLoading = false
+        connectionStatus = "Đã dừng đăng nhập"
+    }
+
     fun connect(urlList: List<String>, user: String, pass: String, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
-        viewModelScope.launch {
+        loginJob?.cancel()
+        loginJob = viewModelScope.launch {
             var lastErrorDetail = "Unknown"
 
             withContext(Dispatchers.Main) {
@@ -1617,34 +1695,45 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
 
             if (result2) { refresh() }
+            loginJob = null
         }
     }
 
     suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        urlList.associate { url ->
-            url to try {
-                val isTailscale = isTailscaleUrl(url)
-                val timeoutSec = if (isTailscale) 5L else 2L
-                val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                    .connectTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
+        coroutineScope {
+            urlList.distinct().map { url ->
+                async(Dispatchers.IO) {
+                    url to try {
+                        val isTailscale = isTailscaleUrl(url)
+                        val timeoutMs = if (isTailscale) 2500L else 800L
+                        val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
+                            .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .build()
 
-                val safeUrl = if (url.endsWith("/")) url else "$url/"
-                val start = System.currentTimeMillis()
-                val request = okhttp3.Request.Builder()
-                    .url(safeUrl)
-                    .method("OPTIONS", null)
-                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
-                    .build()
+                        val safeUrl = if (url.endsWith("/")) url else "$url/"
+                        var best = Long.MAX_VALUE
+                        repeat(if (isTailscale) 1 else 3) {
+                            val start = android.os.SystemClock.elapsedRealtime()
+                            val request = okhttp3.Request.Builder()
+                                .url("${safeUrl.toApiBaseUrl()}/api/ping")
+                                .head()
+                                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                                .build()
 
-                val response = pingClient.newCall(request).execute()
-                response.use {
-                    System.currentTimeMillis() - start
+                            pingClient.newCall(request).execute().use { response ->
+                                if (response.isSuccessful) {
+                                    best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
+                                }
+                            }
+                        }
+                        if (best == Long.MAX_VALUE) -1L else best
+                    } catch (_: Exception) {
+                        -1L
+                    }
                 }
-            } catch (_: Exception) {
-                -1L
-            }
+            }.associate { it.await() }
         }
     }
 
@@ -1746,10 +1835,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 scanDuplicatesElapsedTime      = DuplicateProgressState.elapsedTime.value
                 scanDuplicatesEstimatedTimeRemaining = DuplicateProgressState.estimatedTimeRemaining.value
 
-                // Tự động bật Panel nếu Worker ngầm đang chạy (AutoScan / MainMenu)
+                // FIX (BUG: dialog tu pop-up lai khi user bam Thu nho):
+                // Chi cap nhat isWorkerRunning — KHONG tu dong set isScanningDuplicates = true.
+                // Dialog hien thi do user chu dong mo (qua nut Quet hoac chip "Thu nho").
+                // Truoc day, moi tick progress collector dat isScanningDuplicates=true ->
+                // user khong the Thu nho/Huy/Tam dung duoc vi dialog tu bat lai 30ms sau.
                 val stage = scanDuplicatesStage
                 if (stage != "Hoàn tất" && stage.isNotEmpty() && stage != "Khởi động...") {
-                    isScanningDuplicates = true
                     isWorkerRunning = true
                 } else if (stage == "Hoàn tất") {
                     isWorkerRunning = false
@@ -2467,23 +2559,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
     // TÍNH NĂNG: Cập nhật thủ công (Manual Sync)
+    // BO QUÉT RÁC khoi flow nay theo yeu cau user — Sync Anh chi nen chay AutoBackup
+    // (upload anh moi). Quet trung lap la tac vu nang ca cho phone va NAS, chi chay
+    // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.
     fun triggerManualBackup(context: android.content.Context) {
         val workManager = androidx.work.WorkManager.getInstance(context)
-        
-        // Kích hoạt quét rác song song (tuỳ chọn)
-        val inputData = androidx.work.Data.Builder().putString("currentUrl", currentUrl).build()
-        val duplicateScanRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.DuplicateScanWorker>()
-            .setInputData(inputData)
-            .build()
-        workManager.enqueueUniqueWork("ManualDuplicateScan", androidx.work.ExistingWorkPolicy.REPLACE, duplicateScanRequest)
 
-        // Kích hoạt AutoBackup ngay lập tức
+        // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
         // Cập nhật Toast hoặc Trạng thái UI để User biết
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-        commonDialogMessage = "Đã ra lệnh Đồng bộ + Quét rác ngay lập tức!"
+        commonDialogMessage = "Đã ra lệnh đồng bộ ảnh lên NAS!"
         showCommonDialog = true
     }
 
@@ -3243,6 +3331,66 @@ fun WebDavViewModel.sendCommandToNas(endpoint: String) {
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
             localApiClient.newCall(request).execute().use { }
         } catch (_: Exception) {}
+    }
+}
+
+/**
+ * Gui lenh power (reboot/shutdown) tu man LoginScreen — KHONG yeu cau da connect.
+ * Dung khi NAS bi loi khong dang nhap duoc nhung van phai khoi dong lai duoc tu xa.
+ * Truyen truc tiep IP + user + pass tu form, tu build URL va header auth, khong dua
+ * vao webDavManager.currentBaseUrl (luc nay co the rong vi chua connect).
+ */
+fun WebDavViewModel.sendPowerCommandFromLogin(
+    ipInput: String,
+    user: String,
+    pass: String,
+    endpoint: String,
+    onResult: (Boolean, String) -> Unit
+) {
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val trimmed = ipInput.trim()
+            if (trimmed.isEmpty()) {
+                withContext(Dispatchers.Main) { onResult(false, "Vui lòng nhập IP của NAS") }
+                return@launch
+            }
+            // Tu IP -> http://<ip>:<API_PORT>
+            val host = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                java.net.URL(trimmed).host
+            } else trimmed.substringBefore(":")
+            val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
+            val cmdName = when {
+                endpoint.contains("reboot") -> "Khởi động lại"
+                endpoint.contains("shutdown") -> "Tắt nguồn"
+                else -> endpoint
+            }
+            val reqBuilder = okhttp3.Request.Builder()
+                .url(apiUrl)
+                .post(ByteArray(0).toRequestBody(null, 0, 0))
+            if (user.isNotBlank() && pass.isNotBlank()) {
+                reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+            }
+            // Dung fastApiClient cua NasApplication (KHONG dung localApiClient
+            // vi localApiClient co interceptor doc webDavManager.currentUser/pass
+            // — luc nay con rong vi chua connect)
+            val client = NasApplication.instance.fastApiClient.newBuilder()
+                .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            client.newCall(reqBuilder.build()).execute().use { resp ->
+                val ok = resp.isSuccessful
+                val code = resp.code
+                withContext(Dispatchers.Main) {
+                    if (ok) onResult(true, "Đã gửi lệnh $cmdName NAS!")
+                    else onResult(false, "NAS từ chối (HTTP $code) — kiểm tra IP/tài khoản/mật khẩu")
+                }
+                try { repository.addSystemLog("WARNING", "Power", "LoginScreen: gửi $cmdName NAS tại $host (HTTP $code)") } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult(false, "Không kết nối được NAS: ${e.message?.take(80) ?: "lỗi mạng"}")
+            }
+        }
     }
 }
 

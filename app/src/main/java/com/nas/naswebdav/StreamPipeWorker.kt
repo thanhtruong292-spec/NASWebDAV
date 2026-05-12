@@ -103,8 +103,17 @@ class StreamPipeWorker(
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         try {
+            // Tu Android 10 (Q) tro len bat buoc khai bao foregroundServiceType
+            // khop manifest, neu khong se nem MissingForegroundServiceTypeException.
             setForeground(
-                ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    ForegroundInfo(
+                        NOTIFICATION_ID, notificationBuilder.build(),
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    )
+                } else {
+                    ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
+                }
             )
         } catch (_: Exception) {}
 
