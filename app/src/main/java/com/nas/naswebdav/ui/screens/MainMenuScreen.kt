@@ -322,13 +322,15 @@ fun MainMenuScreen(
             macAddress = macAddress,
             onMacChange = { macAddress = it },
             onConfirm = {
-                if (macAddress.isNotBlank()) {
-                    sharedPrefs.edit().putString("mac_address", macAddress).apply()
-                    viewModel.sendWakeOnLan(macAddress)
+                val wolMac = macAddress.trim()
+                if (wolMac.isNotBlank()) {
+                    sharedPrefs.edit().putString("mac_address", wolMac).apply()
                     showWolDialog = false
-                    commonDialogType = DialogType.SUCCESS
-                    commonDialogMessage = "Đã bắn tín hiệu Wake-on-LAN!"
-                    showCommonDialog = true
+                    viewModel.sendWakeOnLan(wolMac) { result ->
+                        commonDialogType = if (result.success) DialogType.SUCCESS else DialogType.ERROR
+                        commonDialogMessage = result.message
+                        showCommonDialog = true
+                    }
                 }
             },
             onDismiss = { showWolDialog = false }
@@ -2122,12 +2124,16 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             macAddress = macAddress,
             onMacChange = { macAddress = it },
             onConfirm = {
-                if (macAddress.isNotBlank()) {
-                    sharedPrefs.edit().putString("mac_address", macAddress).apply()
-                    viewModel.sendWakeOnLan(macAddress)
+                val wolMac = macAddress.trim()
+                if (wolMac.isNotBlank()) {
+                    sharedPrefs.edit().putString("mac_address", wolMac).apply()
                     showWolDialog = false
                     emergencyIsError = false
-                    emergencyMsg = "Đã bắn Wake-on-LAN tới $macAddress"
+                    emergencyMsg = "Đang gửi Wake-on-LAN..."
+                    viewModel.sendWakeOnLan(wolMac) { result ->
+                        emergencyIsError = !result.success
+                        emergencyMsg = result.message
+                    }
                 }
             },
             onDismiss = { showWolDialog = false }

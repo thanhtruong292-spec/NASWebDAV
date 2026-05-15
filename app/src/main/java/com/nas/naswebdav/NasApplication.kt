@@ -563,11 +563,11 @@ class WolTileService : TileService() {
                 // applicationScope — tồn tại suốt vòng đời app, được quản lý bởi NasApplication.
                 // WakeOnLan là fire-and-forget nên applicationScope là phù hợp nhất.
                 NasApplication.applicationScope.launch(Dispatchers.IO) {
-                    WolUtil.smartWakeOnLan(macStr)
+                    val result = WolUtil.smartWakeOnLan(macStr)
 
                     // Giữ đèn báo sáng 1.5 giây rồi tắt (Mô phỏng như nút khởi động xe hơi)
                     kotlinx.coroutines.delay(1500)
-                    tile.state = Tile.STATE_INACTIVE
+                    tile.state = if (result.success) Tile.STATE_INACTIVE else Tile.STATE_UNAVAILABLE
                     android.os.Handler(android.os.Looper.getMainLooper()).post { tile.updateTile() }
                 }
             } else {

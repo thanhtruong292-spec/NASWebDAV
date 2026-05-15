@@ -3335,7 +3335,22 @@ fun WebDavViewModel.runSpeedTest() {
     }
 }
 
-fun WebDavViewModel.sendWakeOnLan(macStr: String) { if (macStr.isNotBlank() && macStr.matches(Regex("([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"))) viewModelScope.launch(Dispatchers.IO) { com.nas.naswebdav.utils.WolUtil.sendMagicPacket(macStr); repository.addSystemLog("INFO", "Power", "Người dùng đã gửi gói tin Wake-on-LAN đánh thức NAS tại định danh MAC: $macStr") } }
+fun WebDavViewModel.sendWakeOnLan(
+    macStr: String,
+    onResult: ((com.nas.naswebdav.utils.WolUtil.WolResult) -> Unit)? = null
+) {
+    viewModelScope.launch(Dispatchers.IO) {
+        val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr)
+        val logType = if (result.success) "INFO" else "ERROR"
+        val logMessage = if (result.success) {
+            "Người dùng đã gửi Wake-on-LAN đánh thức NAS tại MAC ${macStr.trim()}: ${result.message}"
+        } else {
+            "Gửi Wake-on-LAN tới MAC ${macStr.trim()} thất bại: ${result.message}"
+        }
+        repository.addSystemLog(logType, "Power", logMessage)
+        withContext(Dispatchers.Main) { onResult?.invoke(result) }
+    }
+}
 
 fun WebDavViewModel.sendCommandToNas(endpoint: String) {
     viewModelScope.launch(Dispatchers.IO) {

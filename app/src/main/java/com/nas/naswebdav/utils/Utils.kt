@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.net.wifi.WifiManager
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.SystemLog
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +12,10 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InterfaceAddress
+import java.net.NetworkInterface
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,29 +95,136 @@ object SystemLogger {
 object WolUtil {
     data class WolResult(val success: Boolean, val method: String, val message: String)
 
-    fun sendMagicPacket(macAddress: String): Boolean {
+    private val wolPorts = intArrayOf(9, 7)
+
+    fun sendMagicPacket(macAddress: String): Boolean = smartWakeOnLan(macAddress).success
+
+    fun smartWakeOnLan(macAddress: String): WolResult {
+        val macBytes = parseMacAddress(macAddress)
+            ?: return WolResult(false, "NONE", "Địa chỉ MAC không hợp lệ. Ví dụ đúng: AA:BB:CC:DD:EE:FF")
+        val magicPacket = buildMagicPacket(macBytes)
+        val targets = discoverBroadcastAddresses()
+        val errors = mutableListOf<String>()
+        var sentCount = 0
+
         return try {
-            val cleanMac = macAddress.replace(":", "").replace("-", "")
-            if (cleanMac.length != 12) return false
-
-            val macBytes = ByteArray(6) { i -> cleanMac.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-            val magicPacket = ByteArray(6 + 16 * 6).also { pkt ->
-                for (i in 0..5) pkt[i] = 0xFF.toByte()
-                var offset = 6
-                repeat(16) { System.arraycopy(macBytes, 0, pkt, offset, 6); offset += 6 }
+            withWifiMulticastLock {
+                DatagramSocket().use { socket ->
+                    socket.broadcast = true
+                    socket.reuseAddress = true
+                    repeat(3) { round ->
+                        targets.forEach { address ->
+                            wolPorts.forEach { port ->
+                                try {
+                                    socket.send(DatagramPacket(magicPacket, magicPacket.size, address, port))
+                                    sentCount++
+                                } catch (e: Exception) {
+                                    if (errors.size < 3) errors += "${address.hostAddress}:$port - ${e.message ?: e.javaClass.simpleName}"
+                                }
+                            }
+                        }
+                        if (round < 2) Thread.sleep(80)
+                    }
+                }
             }
 
-            DatagramSocket().use { socket ->
-                socket.broadcast = true
-                socket.send(DatagramPacket(magicPacket, magicPacket.size, InetAddress.getByName("255.255.255.255"), 9))
+            if (sentCount > 0) {
+                val targetText = targets.joinToString(", ") { it.hostAddress ?: it.hostName }
+                WolResult(true, "LAN", "Đã gửi Wake-on-LAN qua LAN tới $targetText ($sentCount gói).")
+            } else {
+                val detail = errors.firstOrNull()?.let { ": $it" } ?: "."
+                WolResult(false, "NONE", "Không thể gửi Wake-on-LAN qua mạng LAN$detail")
             }
-            true
-        } catch (_: Exception) { false }
+        } catch (e: Exception) {
+            WolResult(false, "NONE", "Không thể gửi Wake-on-LAN: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
-    fun smartWakeOnLan(macAddress: String): WolResult =
-        if (sendMagicPacket(macAddress)) WolResult(true, "LAN", "Đã gửi Magic Packet qua LAN")
-        else WolResult(false, "NONE", "Không thể gửi WoL — kiểm tra kết nối mạng")
+    private fun parseMacAddress(macAddress: String): ByteArray? {
+        val cleanMac = macAddress.filter { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+        if (cleanMac.length != 12) return null
+        return try {
+            ByteArray(6) { index -> cleanMac.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun buildMagicPacket(macBytes: ByteArray): ByteArray =
+        ByteArray(6 + 16 * 6).also { packet ->
+            for (index in 0 until 6) packet[index] = 0xFF.toByte()
+            var offset = 6
+            repeat(16) {
+                System.arraycopy(macBytes, 0, packet, offset, macBytes.size)
+                offset += macBytes.size
+            }
+        }
+
+    private fun discoverBroadcastAddresses(): List<InetAddress> {
+        val addresses = linkedSetOf<InetAddress>()
+        runCatching { addresses += InetAddress.getByName("255.255.255.255") }
+
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                if (!networkInterface.isUp || networkInterface.isLoopback) continue
+
+                networkInterface.interfaceAddresses.forEach { interfaceAddress ->
+                    val broadcast = interfaceAddress.broadcast
+                    if (broadcast != null && broadcast.address.size == 4) {
+                        addresses += broadcast
+                    } else {
+                        derivedBroadcastAddress(interfaceAddress)?.let { addresses += it }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("WolUtil", "Không thể đọc broadcast LAN: ${e.message}")
+        }
+
+        return addresses.toList()
+    }
+
+    private fun derivedBroadcastAddress(interfaceAddress: InterfaceAddress): InetAddress? {
+        val address = interfaceAddress.address as? Inet4Address ?: return null
+        val prefixLength = interfaceAddress.networkPrefixLength.toInt()
+        if (prefixLength !in 0..31) return null
+
+        val ip = address.address.fold(0L) { acc, byte -> (acc shl 8) or (byte.toInt() and 0xFF).toLong() }
+        val mask = if (prefixLength == 0) 0L else (0xFFFFFFFFL shl (32 - prefixLength)) and 0xFFFFFFFFL
+        val broadcast = (ip and mask) or (mask xor 0xFFFFFFFFL)
+        val bytes = byteArrayOf(
+            ((broadcast ushr 24) and 0xFF).toByte(),
+            ((broadcast ushr 16) and 0xFF).toByte(),
+            ((broadcast ushr 8) and 0xFF).toByte(),
+            (broadcast and 0xFF).toByte()
+        )
+        return runCatching { InetAddress.getByAddress(bytes) }.getOrNull()
+    }
+
+    private inline fun <T> withWifiMulticastLock(block: () -> T): T {
+        var lock: WifiManager.MulticastLock? = null
+        try {
+            val wifiManager = NasApplication.instance.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            lock = wifiManager?.createMulticastLock("NASWebDAV:WakeOnLan")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("WolUtil", "Không thể giữ khóa multicast Wi-Fi: ${e.message}")
+        }
+
+        return try {
+            block()
+        } finally {
+            try {
+                if (lock?.isHeld == true) lock.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
