@@ -22,6 +22,7 @@ import subprocess
 import threading
 import logging
 import re as _re_module
+import shutil
 from functools import wraps
 import sqlite3
 import base64
@@ -2431,6 +2432,7 @@ def api_speedtest():
 
 def _enable_wake_on_lan_before_poweroff():
     """Best-effort: keep NIC armed for the next Wake-on-LAN boot."""
+    ethtool_bin = shutil.which("ethtool") or "/sbin/ethtool"
     try:
         net_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Network", "enumerateDevices", "{}"], timeout=5)
         interfaces = json.loads(net_out) if net_out else []
@@ -2449,8 +2451,8 @@ def _enable_wake_on_lan_before_poweroff():
     enabled = []
     for name in candidates:
         try:
-            subprocess.run(["ethtool", "-s", name, "wol", "g"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
-            wakeup_path = f"/sys/class/net/{name}/device/power/wakeup"
+            subprocess.run([ethtool_bin, "-s", name, "wol", "g"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            wakeup_path = "/sys/class/net/{}/device/power/wakeup".format(name)
             if os.path.exists(wakeup_path):
                 with open(wakeup_path, "w", encoding="utf-8") as fh:
                     fh.write("enabled\n")
