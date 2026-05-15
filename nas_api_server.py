@@ -2429,6 +2429,36 @@ def api_speedtest():
         
 # ============ QUAN LY NGUON ============
 
+def _enable_wake_on_lan_before_poweroff():
+    """Best-effort: keep NIC armed for the next Wake-on-LAN boot."""
+    try:
+        net_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Network", "enumerateDevices", "{}"], timeout=5)
+        interfaces = json.loads(net_out) if net_out else []
+    except Exception:
+        interfaces = []
+
+    candidates = []
+    for iface in interfaces:
+        name = iface.get("devicename", "")
+        mac = iface.get("ether", "")
+        if name and name != "lo" and mac and mac != "00:00:00:00:00:00":
+            candidates.append(name)
+    if not candidates:
+        candidates = [name for name in os.listdir("/sys/class/net") if name != "lo"]
+
+    enabled = []
+    for name in candidates:
+        try:
+            subprocess.run(["ethtool", "-s", name, "wol", "g"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            wakeup_path = f"/sys/class/net/{name}/device/power/wakeup"
+            if os.path.exists(wakeup_path):
+                with open(wakeup_path, "w", encoding="utf-8") as fh:
+                    fh.write("enabled\n")
+            enabled.append(name)
+        except Exception:
+            continue
+    return enabled
+
 @app.route("/api/power/reboot", methods=["POST"])
 @requires_auth
 def api_reboot():
@@ -2439,8 +2469,9 @@ def api_reboot():
 @app.route("/api/power/shutdown", methods=["POST"])
 @requires_auth
 def api_shutdown():
+    wol_interfaces = _enable_wake_on_lan_before_poweroff()
     threading.Timer(2.0, lambda: subprocess.run(["shutdown", "-h", "now"])).start()
-    return jsonify({"result": "ok"})
+    return jsonify({"result": "ok", "wol_interfaces": wol_interfaces})
 
 
 @app.route("/api/auth/authorize", methods=["POST"])

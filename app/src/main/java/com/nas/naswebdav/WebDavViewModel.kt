@@ -49,6 +49,19 @@ private fun friendlyError(e: Exception): String = when (e) {
     else -> e.message ?: "Lỗi không xác định"
 }
 
+private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
+    val preferredUrl = urlList.firstOrNull { !isTailscaleUrl(it) } ?: urlList.firstOrNull()
+    val preferredHost = preferredUrl?.let { runCatching { java.net.URL(it).host }.getOrNull() } ?: "NAS"
+    val detail = errorDetails.firstOrNull()?.substringAfter(": ")?.take(90)
+    val reason = when {
+        detail.isNullOrBlank() -> "kiểm tra tài khoản, mật khẩu hoặc dịch vụ WebDAV."
+        detail.contains("WebDAV", ignoreCase = true) -> "WebDAV quá hạn hoặc chưa xác thực."
+        detail.contains("timeout", ignoreCase = true) || detail.contains("quá hạn", ignoreCase = true) -> "NAS phản hồi quá chậm."
+        else -> detail.trim().trimEnd('.') + "."
+    }
+    return "Không đăng nhập được NAS qua $preferredHost: $reason"
+}
+
 // THÊM DATA CLASS CHO TORRENT
 data class TorrentInfo(
     val name: String,
@@ -76,6 +89,41 @@ data class OmvOverview(
     val disks: List<OmvDiskInfo> = emptyList(),
     val powerBtnAction: String = ""
 )
+
+private fun normalizeWakeOnLanMac(raw: String): String? {
+    val hex = raw.filter { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }.uppercase()
+    if (hex.length != 12) return null
+    return hex.chunked(2).joinToString(":")
+}
+
+private fun parseOmvNetwork(netArr: org.json.JSONArray): List<OmvNetworkInfo> =
+    (0 until netArr.length()).map { i ->
+        val n = netArr.getJSONObject(i)
+        OmvNetworkInfo(
+            n.optString("name"),
+            n.optString("address"),
+            n.optString("mac"),
+            n.optInt("speed", -1),
+            n.optString("state"),
+            n.optString("gateway"),
+            n.optBoolean("wol")
+        )
+    }
+
+private fun persistDetectedWakeOnLanMac(network: List<OmvNetworkInfo>): String? {
+    val adapter = network.firstOrNull {
+        it.name != "lo" && it.wol && normalizeWakeOnLanMac(it.mac) != null
+    } ?: network.firstOrNull {
+        it.name != "lo" && normalizeWakeOnLanMac(it.mac) != null
+    } ?: return null
+    val detectedMac = normalizeWakeOnLanMac(adapter.mac) ?: return null
+    val prefs = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+    val currentMac = normalizeWakeOnLanMac(prefs.getString("mac_address", "") ?: "")
+    if (currentMac != detectedMac) {
+        prefs.edit().putString("mac_address", detectedMac).apply()
+    }
+    return detectedMac
+}
 
 // DATA CLASS CHO DOCKER
 data class DockerContainer(val id: String, val name: String, val status: String)
@@ -1694,7 +1742,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
                 // Tất cả URL đều thất bại
-                lastErrorDetail = if (errorDetails.isNotEmpty()) errorDetails.joinToString(", ") else "Không kết nối được NAS"
+                lastErrorDetail = buildLoginFailureMessage(urlList, errorDetails)
                 false
             }
 
@@ -1705,7 +1753,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     onSuccess()
                 } else {
                     connectionStatus = "Lỗi xác thực"
-                    onError("Thất bại. Vui lòng kiểm tra lại. \\nMã lỗi: $lastErrorDetail")
+                    onError(lastErrorDetail)
                 }
             }
 
@@ -3291,10 +3339,8 @@ fun WebDavViewModel.fetchOmvOverview() {
                         val s = svcArr.getJSONObject(i)
                         OmvServiceInfo(s.optString("name"), s.optString("title"), s.optBoolean("enabled"), s.optBoolean("running"))
                     }
-                    val network = (0 until netArr.length()).map { i ->
-                        val n = netArr.getJSONObject(i)
-                        OmvNetworkInfo(n.optString("name"), n.optString("address"), n.optString("mac"), n.optInt("speed", -1), n.optString("state"), n.optString("gateway"), n.optBoolean("wol"))
-                    }
+                    val network = parseOmvNetwork(netArr)
+                    persistDetectedWakeOnLanMac(network)
                     val filesystems = (0 until fsArr.length()).map { i ->
                         val f = fsArr.getJSONObject(i)
                         OmvFilesystem(f.optString("device"), f.optString("label"), f.optString("mountpoint"), f.optString("used"), f.optLong("size_bytes"), f.optInt("percentage"), f.optString("description"))
@@ -3356,15 +3402,48 @@ fun WebDavViewModel.sendWakeOnLan(
     }
 }
 
-fun WebDavViewModel.sendCommandToNas(endpoint: String) {
+private suspend fun WebDavViewModel.refreshWakeOnLanMacFromNas(): String? {
+    return try {
+        val apiBaseUrl = webDavManager.currentBaseUrl.toApiBaseUrl()
+        val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/omv/overview").build()
+        localApiClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val json = org.json.JSONObject(response.body?.string() ?: "{}")
+            val network = parseOmvNetwork(json.optJSONArray("network") ?: org.json.JSONArray())
+            persistDetectedWakeOnLanMac(network)
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("WOL", "Không thể lấy MAC Wake-on-LAN trước khi tắt nguồn: ${e.message}")
+        null
+    }
+}
+
+fun WebDavViewModel.sendCommandToNas(
+    endpoint: String,
+    onResult: ((Boolean, String) -> Unit)? = null
+) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; endpoint.contains("shutdown") -> "Tắt nguồn"; else -> endpoint }
+            val savedMac = if (endpoint.contains("shutdown")) refreshWakeOnLanMacFromNas() else null
+            if (savedMac != null) {
+                repository.addSystemLog("INFO", "Power", "Đã lưu MAC Wake-on-LAN $savedMac trước khi tắt nguồn NAS")
+            }
             repository.addSystemLog("WARNING", "Power", "Đã gửi lệnh $cmdName NAS tại $host")
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-            localApiClient.newCall(request).execute().use { }
-        } catch (_: Exception) {}
+            localApiClient.newCall(request).execute().use { response ->
+                val ok = response.isSuccessful
+                val suffix = if (endpoint.contains("shutdown") && savedMac != null) " MAC WOL: $savedMac." else ""
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(ok, if (ok) "Đã gửi lệnh $cmdName NAS.$suffix" else "NAS từ chối lệnh $cmdName (HTTP ${response.code}).")
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult?.invoke(false, "Không gửi được lệnh nguồn: ${e.message ?: "lỗi mạng"}")
+            }
+        }
     }
 }
 

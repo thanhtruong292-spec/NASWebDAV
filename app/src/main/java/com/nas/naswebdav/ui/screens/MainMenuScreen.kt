@@ -272,8 +272,11 @@ fun MainMenuScreen(
     if (showRebootConfirm) {
         RebootConfirmDialog(
             onConfirm = {
-                viewModel.sendCommandToNas("power/reboot")
-                commonDialogType = DialogType.WARNING; commonDialogMessage = "Đã gửi lệnh khởi động lại NAS!"; showCommonDialog = true
+                viewModel.sendCommandToNas("power/reboot") { ok, message ->
+                    commonDialogType = if (ok) DialogType.WARNING else DialogType.ERROR
+                    commonDialogMessage = message
+                    showCommonDialog = true
+                }
                 showRebootConfirm = false
             },
             onDismiss = { showRebootConfirm = false }
@@ -282,8 +285,11 @@ fun MainMenuScreen(
     if (showShutdownConfirm) {
         ShutdownConfirmDialog(
             onConfirm = {
-                viewModel.sendCommandToNas("power/shutdown")
-                commonDialogType = DialogType.WARNING; commonDialogMessage = "Đã gửi lệnh tắt nguồn NAS!"; showCommonDialog = true
+                viewModel.sendCommandToNas("power/shutdown") { ok, message ->
+                    commonDialogType = if (ok) DialogType.WARNING else DialogType.ERROR
+                    commonDialogMessage = message
+                    showCommonDialog = true
+                }
                 showShutdownConfirm = false
             },
             onDismiss = { showShutdownConfirm = false }
@@ -2059,7 +2065,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                 val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
                 val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
                 val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
-                val fullUrlList = (reachableUrls + allUrls).distinct()
+                val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
                 historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
                 viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
                     viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
@@ -2086,7 +2092,10 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // NUT 1: WoL — bat nguon NAS qua magic packet, chi can MAC address
             OutlinedButton(
-                onClick = { showWolDialog = true },
+                onClick = {
+                    macAddress = sharedPrefs.getString("mac_address", macAddress) ?: macAddress
+                    showWolDialog = true
+                },
                 modifier = Modifier.weight(1f).height(46.dp),
                 shape = RoundedCornerShape(22.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26A69A))
