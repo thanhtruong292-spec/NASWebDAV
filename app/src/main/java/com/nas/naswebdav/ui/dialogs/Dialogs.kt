@@ -89,7 +89,7 @@ fun RebootConfirmDialog(
 }
 
 // ====================================================================
-// DIALOG XÁC NHẬN SHUTDOWN
+// DIALOG XÁC NHẬN NGỦ NAS
 // ====================================================================
 @Composable
 fun ShutdownConfirmDialog(
@@ -100,12 +100,12 @@ fun ShutdownConfirmDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFFE53935), modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFF26A69A), modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Tắt nguồn NAS", fontWeight = FontWeight.Bold)
+                Text("Ngủ NAS", fontWeight = FontWeight.Bold)
             }
         },
-        text = { Text("Bạn có chắc chắn muốn tắt nguồn máy chủ không? Bạn phải dùng Wake-on-LAN để bật lại máy từ xa.", fontSize = 14.sp) },
+        text = { Text("Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.", fontSize = 14.sp) },
         confirmButton = {
             val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             Button(
@@ -121,7 +121,7 @@ fun ShutdownConfirmDialog(
                 )
             ) {
                 Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Tắt nguồn", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         },

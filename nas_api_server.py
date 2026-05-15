@@ -2430,7 +2430,7 @@ def api_speedtest():
         
 # ============ QUAN LY NGUON ============
 
-def _enable_wake_on_lan_before_poweroff():
+def _enable_wake_on_lan_before_sleep():
     """Best-effort: keep NIC armed for the next Wake-on-LAN boot."""
     ethtool_bin = shutil.which("ethtool") or "/sbin/ethtool"
     try:
@@ -2461,19 +2461,57 @@ def _enable_wake_on_lan_before_poweroff():
             continue
     return enabled
 
+def _supported_sleep_states():
+    try:
+        with open("/sys/power/state", "r", encoding="utf-8") as fh:
+            return fh.read().strip().split()
+    except Exception:
+        return []
+
+def _run_system_suspend():
+    try:
+        _enable_wake_on_lan_before_sleep()
+        subprocess.run(["sync"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        subprocess.run(["systemctl", "suspend"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+    except Exception as exc:
+        logging.warning("Suspend failed: %s", exc)
+
+def _schedule_suspend_response(legacy_endpoint=None):
+    states = _supported_sleep_states()
+    if states and not any(state in states for state in ("mem", "freeze")):
+        return jsonify({
+            "result": "error",
+            "message": "Suspend is not supported by this kernel",
+            "power_states": states
+        }), 501
+
+    wol_interfaces = _enable_wake_on_lan_before_sleep()
+    threading.Timer(2.0, _run_system_suspend).start()
+    payload = {
+        "result": "ok",
+        "mode": "suspend",
+        "wol_interfaces": wol_interfaces,
+        "power_states": states
+    }
+    if legacy_endpoint:
+        payload["legacy_endpoint"] = legacy_endpoint
+    return jsonify(payload)
+
 @app.route("/api/power/reboot", methods=["POST"])
 @requires_auth
 def api_reboot():
     threading.Timer(2.0, lambda: subprocess.run(["reboot"])).start()
     return jsonify({"result": "ok"})
 
+@app.route("/api/power/suspend", methods=["POST"])
+@requires_auth
+def api_suspend():
+    return _schedule_suspend_response()
 
 @app.route("/api/power/shutdown", methods=["POST"])
 @requires_auth
 def api_shutdown():
-    wol_interfaces = _enable_wake_on_lan_before_poweroff()
-    threading.Timer(2.0, lambda: subprocess.run(["shutdown", "-h", "now"])).start()
-    return jsonify({"result": "ok", "wol_interfaces": wol_interfaces})
+    return _schedule_suspend_response(legacy_endpoint="shutdown")
 
 
 @app.route("/api/auth/authorize", methods=["POST"])

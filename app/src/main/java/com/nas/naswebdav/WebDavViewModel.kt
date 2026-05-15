@@ -3425,16 +3425,17 @@ fun WebDavViewModel.sendCommandToNas(
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
-            val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; endpoint.contains("shutdown") -> "Tắt nguồn"; else -> endpoint }
-            val savedMac = if (endpoint.contains("shutdown")) refreshWakeOnLanMacFromNas() else null
+            val isSleepCommand = endpoint.contains("shutdown") || endpoint.contains("suspend")
+            val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; isSleepCommand -> "Ngủ"; else -> endpoint }
+            val savedMac = if (isSleepCommand) refreshWakeOnLanMacFromNas() else null
             if (savedMac != null) {
-                repository.addSystemLog("INFO", "Power", "Đã lưu MAC Wake-on-LAN $savedMac trước khi tắt nguồn NAS")
+                repository.addSystemLog("INFO", "Power", "Đã lưu MAC Wake-on-LAN $savedMac trước khi đưa NAS vào chế độ ngủ")
             }
             repository.addSystemLog("WARNING", "Power", "Đã gửi lệnh $cmdName NAS tại $host")
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
             localApiClient.newCall(request).execute().use { response ->
                 val ok = response.isSuccessful
-                val suffix = if (endpoint.contains("shutdown") && savedMac != null) " MAC WOL: $savedMac." else ""
+                val suffix = if (isSleepCommand && savedMac != null) " MAC WOL: $savedMac." else ""
                 withContext(Dispatchers.Main) {
                     onResult?.invoke(ok, if (ok) "Đã gửi lệnh $cmdName NAS.$suffix" else "NAS từ chối lệnh $cmdName (HTTP ${response.code}).")
                 }
@@ -3474,6 +3475,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
             val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
             val cmdName = when {
                 endpoint.contains("reboot") -> "Khởi động lại"
+                endpoint.contains("suspend") -> "Ngủ"
                 endpoint.contains("shutdown") -> "Tắt nguồn"
                 else -> endpoint
             }

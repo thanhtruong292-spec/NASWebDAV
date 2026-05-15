@@ -285,7 +285,7 @@ fun MainMenuScreen(
     if (showShutdownConfirm) {
         ShutdownConfirmDialog(
             onConfirm = {
-                viewModel.sendCommandToNas("power/shutdown") { ok, message ->
+                viewModel.sendCommandToNas("power/suspend") { ok, message ->
                     commonDialogType = if (ok) DialogType.WARNING else DialogType.ERROR
                     commonDialogMessage = message
                     showCommonDialog = true
@@ -524,8 +524,8 @@ fun MainMenuScreen(
                             onClick = { showPowerMenu = false; showRebootConfirm = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Tắt nguồn NAS", color = AccentRed) },
-                            leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentRed) },
+                            text = { Text("Ngủ NAS", color = AccentCyan) },
+                            leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
                             onClick = { showPowerMenu = false; showShutdownConfirm = true }
                         )
                     }
