@@ -178,7 +178,7 @@ class LongRunningApiWorker(
                 return@withContext if (isSuccess) Result.success() else Result.failure()
             }
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "LongRunning API error: ${e.message}", e)
+            android.util.Log.e(TAG, "Lỗi API tác vụ dài: ${e.message}", e)
 
             setProgress(workDataOf(
                 "status" to "error",

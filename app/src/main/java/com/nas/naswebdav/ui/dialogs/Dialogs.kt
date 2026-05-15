@@ -469,6 +469,20 @@ private fun TikTokLiveWatchSection(
         Spacer(Modifier.height(8.dp))
         Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
+    val daemonLine = buildString {
+        append(if (viewModel.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
+        if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Check cuối: ${viewModel.tiktokWatchDaemonLastTick}")
+        if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) append(" • ${viewModel.tiktokWatchDaemonSummary}")
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        daemonLine,
+        color = if (viewModel.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis
+    )
     // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
     val cookiesStatus = viewModel.tiktokCookiesStatus
     if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {

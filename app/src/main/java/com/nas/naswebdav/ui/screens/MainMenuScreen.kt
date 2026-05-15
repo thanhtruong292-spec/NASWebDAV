@@ -1643,7 +1643,7 @@ fun ToolboxDialog(
             Spacer(Modifier.height(8.dp))
             SettingsMenuCard(
                 title = "Ghi Livestream",
-                subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Dang ghi ${viewModel.activeLivestreams.size} stream..." else "TikTok / Facebook / YouTube",
+                subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh..." else "TikTok / Facebook / YouTube",
                 icon = Icons.Default.Videocam,
                 color = Color(0xFFEE1D52),
                 onClick = { onDismiss(); showLivestreamDialog() }
@@ -1872,7 +1872,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                                 }
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Livestream Recording", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("Ghi hình livestream", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 10.sp, color = Color(0xFFFF7043))
                                 }
                             }
@@ -2299,7 +2299,7 @@ data class QuickActionDef(
 
 val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B))),
-    QuickActionDef("stream", "Ghi Livestream", "Record TikTok, FB", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
+    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
     QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(Color(0xFFEF5350), Color(0xFFD32F2F))),
     QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
     QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),

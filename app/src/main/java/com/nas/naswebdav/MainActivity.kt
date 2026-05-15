@@ -227,7 +227,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     tempFile.delete()
                                 }
                             } catch (e: Exception) {
-                                android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
+                                android.util.Log.e("ShareUpload", "Tải lên thất bại: ${e.message}")
                             }
                         }
                     }

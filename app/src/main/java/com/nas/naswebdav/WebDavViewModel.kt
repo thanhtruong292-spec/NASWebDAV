@@ -776,6 +776,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         private set
     var tiktokCookiesMessage by mutableStateOf("")
         private set
+    var tiktokWatchDaemonRunning by mutableStateOf(false)
+        private set
+    var tiktokWatchDaemonLastTick by mutableStateOf("")
+        private set
+    var tiktokWatchDaemonSummary by mutableStateOf("")
+        private set
 
     var isStartingLivestream by mutableStateOf(false)
         private set
@@ -801,6 +807,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         tiktokExcludeEnd = json.optString("exclude_end", "07:00")
         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
         tiktokCookiesMessage = json.optString("cookies_message", "")
+        json.optJSONObject("daemon")?.let { daemon ->
+            tiktokWatchDaemonRunning = daemon.optBoolean("running", false)
+            tiktokWatchDaemonLastTick = daemon.optString("last_tick", "")
+            tiktokWatchDaemonSummary = daemon.optString("last_summary", "")
+        } ?: run {
+            tiktokWatchDaemonRunning = false
+            tiktokWatchDaemonLastTick = ""
+            tiktokWatchDaemonSummary = ""
+        }
         tiktokLiveWatchError = ""
     }
 
@@ -818,7 +833,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             val text = response.body?.string() ?: "{}"
             val result = org.json.JSONObject(text)
             if (!response.isSuccessful) {
-                throw IllegalStateException(result.optString("error", "NAS tu choi (${response.code})"))
+                throw IllegalStateException(result.optString("error", "NAS từ chối (${response.code})"))
             }
             return result
         }
@@ -1104,7 +1119,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("LivestreamSync", "Failed to sync livestream states: ${e.message}")
+                android.util.Log.e("LivestreamSync", "Lỗi đồng bộ trạng thái livestream: ${e.message}")
             }
         }
     }
@@ -1580,7 +1595,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     )
                 }
             } catch (e: Exception) {
-                android.util.Log.w("SmartSwitch", "checkSmartNetwork error: ${e.message}")
+                android.util.Log.w("SmartSwitch", "Lỗi kiểm tra mạng thông minh: ${e.message}")
             }
         }
     }
@@ -2270,7 +2285,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     socialExtractStatus = "❌ Lỗi kết nối API: ${e.message?.take(80)}"
-                    socialDownloadHistory = socialDownloadHistory + SocialDownloadItem(url, "Unknown", false)
+                    socialDownloadHistory = socialDownloadHistory + SocialDownloadItem(url, "Không rõ", false)
                 }
                 repository.addSystemLog("ERROR", "SocialExtract", "Lỗi gửi yt-dlp: ${e.message?.take(80)}")
             } finally {
@@ -2311,7 +2326,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         isFinished = true
                         // Khi job_id không còn trong list, tác vụ tải đã hoàn thành
                         withContext(Dispatchers.Main) {
-                            commonDialogMessage = "✅ Bơm Video ($platform) HOÀN TẤT!\nĐã tải xong và lưu vào thư mục $saveFolder"
+                            commonDialogMessage = "✅ Tải video ($platform) hoàn tất!\nĐã tải xong và lưu vào thư mục $saveFolder"
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                             showCommonDialog = true
                         }
@@ -2621,11 +2636,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        android.util.Log.e("NasAPI", "Failed to set fan mode: HTTP ${response.code}")
+                        android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: HTTP ${response.code}")
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("NasAPI", "Failed to set fan mode: ${e.message}")
+                android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { 
                     isFanModeUpdating = false 
@@ -2928,7 +2943,7 @@ object VideoDownloadHelper {
                     .replace("[^a-zA-Z0-9._-]".toRegex(), "_")
                 val targetFile = File(cacheDir, fileName)
 
-                Log.i(TAG, "Downloading: $url → ${targetFile.absolutePath}")
+                Log.i(TAG, "Đang tải: $url → ${targetFile.absolutePath}")
 
                 // 3. Tải file từ NAS với xác thực
                 val request = okhttp3.Request.Builder()
@@ -2983,7 +2998,7 @@ object VideoDownloadHelper {
                             }
                         }
 
-                        Log.i(TAG, "Download complete: ${downloadedBytes / 1024}KB")
+                        Log.i(TAG, "Tải xuống hoàn tất: ${downloadedBytes / 1024}KB")
 
                         // 5. Mở file cục bộ bằng trình phát video
                         withContext(Dispatchers.Main) {
@@ -2993,9 +3008,9 @@ object VideoDownloadHelper {
                     }
 
             } catch (e: CancellationException) {
-                Log.d(TAG, "Download cancelled")
+                Log.d(TAG, "Đã hủy tải xuống")
             } catch (e: Exception) {
-                Log.e(TAG, "Download failed: ${e.message}")
+                Log.e(TAG, "Tải xuống thất bại: ${e.message}")
                 withContext(Dispatchers.Main) {
                     onError("Lỗi tải video: ${e.message}")
                 }
@@ -3118,7 +3133,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
             } catch (e: Exception) {
                 val isTimeout = e is java.net.SocketTimeoutException || e is java.net.ConnectException
                 val msg = if (isTimeout) "Mất kết nối API (${e.javaClass.simpleName})" else "API: ${e.javaClass.simpleName}"
-                android.util.Log.w("NAS_API", "Monitor ping failed: ${e.message}")
+                android.util.Log.w("NAS_API", "Theo dõi ping thất bại: ${e.message}")
                 withContext(Dispatchers.Main) { systemStatus = systemStatus.copy(status = msg) }
                 currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
             }
@@ -3230,7 +3245,7 @@ fun WebDavViewModel.loadSystemLogs() {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("NasAPI", "Fetch remote logs failed: ${e.message}")
+            android.util.Log.e("NasAPI", "Không tải được nhật ký từ NAS: ${e.message}")
         }
         allLogs.sortByDescending { it.timestamp }
         withContext(Dispatchers.Main) { 

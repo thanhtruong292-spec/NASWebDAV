@@ -31,6 +31,108 @@ import urllib.error
 def sanitize_log_input(text):
     if not text: return str(text)
     return _re_module.sub(r'[\r\n]+', ' ', str(text))
+
+def normalize_vietnamese_message(text):
+    """Chuẩn hoá các thông báo/nhật ký cũ còn không dấu trước khi hiển thị."""
+    if text is None:
+        return ""
+    result = str(text)
+    replacements = (
+        ("stream URL stale/khong probe duoc", "URL stream đã hết hạn hoặc không kiểm tra được"),
+        ("stream URL stale/không probe được", "URL stream đã hết hạn hoặc không kiểm tra được"),
+        ("no live stream detected", "Không phát hiện livestream đang chạy"),
+        ("tiktok empty", "TikTok trả về trang rỗng"),
+        ("CANH BAO", "CẢNH BÁO"),
+        ("CANH_BAO", "CẢNH_BÁO"),
+        ("Thieu", "Thiếu"),
+        ("thieu", "thiếu"),
+        ("chua", "chưa"),
+        ("Chua", "Chưa"),
+        ("phai", "phải"),
+        ("Phai", "Phải"),
+        ("boi", "bởi"),
+        ("Boi", "Bởi"),
+        ("qua cao", "quá cao"),
+        ("Qua cao", "Quá cao"),
+        ("Khong", "Không"),
+        ("khong", "không"),
+        ("Dang", "Đang"),
+        ("dang", "đang"),
+        ("Da ", "Đã "),
+        (" da ", " đã "),
+        ("Loi", "Lỗi"),
+        ("loi", "lỗi"),
+        ("Hoan tat", "Hoàn tất"),
+        ("hoan tat", "hoàn tất"),
+        ("Tam dung", "Tạm dừng"),
+        ("tam dung", "tạm dừng"),
+        ("ket thuc", "kết thúc"),
+        ("Ket thuc", "Kết thúc"),
+        ("khoi dong", "khởi động"),
+        ("Khoi dong", "Khởi động"),
+        ("don dep", "dọn dẹp"),
+        ("Don dep", "Dọn dẹp"),
+        ("don tmp", "dọn tmp"),
+        ("Don tmp", "Dọn tmp"),
+        ("ghi hinh", "ghi hình"),
+        ("Ghi hinh", "Ghi hình"),
+        ("luong ghi", "luồng ghi"),
+        ("Luong ghi", "Luồng ghi"),
+        ("dong bo", "đồng bộ"),
+        ("Dong bo", "Đồng bộ"),
+        ("dien thoai", "điện thoại"),
+        ("Dien thoai", "Điện thoại"),
+        ("nhiet do", "nhiệt độ"),
+        ("Nhiet do", "Nhiệt độ"),
+        ("Thung rac", "Thùng rác"),
+        ("thung rac", "thùng rác"),
+        ("thu muc", "thư mục"),
+        ("Thu muc", "Thư mục"),
+        ("tep", "tệp"),
+        ("Tep", "Tệp"),
+        ("file rong", "tệp rỗng"),
+        ("File rong", "Tệp rỗng"),
+        ("thu muc rong", "thư mục rỗng"),
+        ("FLV hong", "FLV hỏng"),
+        ("tai xong", "tải xong"),
+        ("dang tai", "đang tải"),
+        ("Da tai", "Đã tải"),
+        ("phan loai", "phân loại"),
+        ("Phan loai", "Phân loại"),
+        ("sắp xep", "sắp xếp"),
+        ("sap xep", "sắp xếp"),
+        ("di chuyen", "di chuyển"),
+        ("Di chuyen", "Di chuyển"),
+        ("ton tai", "tồn tại"),
+        ("Ton tai", "Tồn tại"),
+        ("hop le", "hợp lệ"),
+        ("Hop le", "Hợp lệ"),
+        ("tu choi", "từ chối"),
+        ("Tu choi", "Từ chối"),
+        ("yeu cau", "yêu cầu"),
+        ("Yeu cau", "Yêu cầu"),
+        ("nguoi dung", "người dùng"),
+        ("Nguoi dung", "Người dùng"),
+        ("truy cap", "truy cập"),
+        ("Truy cap", "Truy cập"),
+        ("he thong", "hệ thống"),
+        ("He thong", "Hệ thống"),
+        ("o cung", "ổ cứng"),
+        ("O cung", "Ổ cứng"),
+        ("mang", "mạng"),
+        ("Mang", "Mạng"),
+        ("duoc", "được"),
+        ("Duoc", "Được"),
+        ("cap nhat", "cập nhật"),
+        ("Cap nhat", "Cập nhật"),
+        ("dang nhap", "đăng nhập"),
+        ("Dang nhap", "Đăng nhập"),
+        ("ko ", "không "),
+        ("KO ", "KHÔNG "),
+    )
+    for src, dst in replacements:
+        result = result.replace(src, dst)
+    return result
 import datetime
 import hashlib
 import signal
@@ -73,7 +175,7 @@ from flask import Flask, request, jsonify, Response
 try:
     import psutil
 except ImportError:
-    print("Thieu thu vien psutil. Cai dat: pip3 install psutil")
+    print("Thiếu thư viện psutil. Cài đặt: pip3 install psutil")
     sys.exit(1)
 
 app = Flask(__name__)
@@ -114,7 +216,7 @@ def _make_hdd_tmp_dir(prefix):
         os.makedirs(tmp_dir, exist_ok=True)
         return tmp_dir
     except Exception as e:
-        log.warning("[TMP] Khong tao duoc tmp tren HDD: %s", e)
+        log.warning("[TMP] Không tạo được thư mục tạm trên HDD: %s", e)
         return ""
 
 def _job_env_with_tmp(tmp_dir):
@@ -133,9 +235,9 @@ def _cleanup_job_tmp(tmp_dir):
         tmp_real = os.path.realpath(tmp_dir)
         if tmp_real.startswith(root_real + os.sep) and os.path.isdir(tmp_real):
             shutil.rmtree(tmp_real, ignore_errors=True)
-            log.info("[TMP] Da don tmp job: %s", tmp_real)
+            log.info("[TMP] Đã dọn thư mục tạm của tác vụ: %s", tmp_real)
     except Exception as e:
-        log.warning("[TMP] Don tmp job loi: %s", e)
+        log.warning("[TMP] Lỗi dọn thư mục tạm của tác vụ: %s", e)
 
 def _cleanup_stale_job_tmp(max_age_hours=24):
     try:
@@ -184,14 +286,14 @@ def _cleanup_runtime_tmp_artifacts(max_age_minutes=30):
         except Exception:
             continue
     if deleted:
-        log.info("[TMP] Da don %d artifact tam trong /tmp va /var/tmp.", deleted)
+        log.info("[TMP] Đã dọn %d tệp tạm trong /tmp và /var/tmp.", deleted)
     return deleted
 
 def init_db():
     try:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     except OSError as e:
-        log.error("Error creating directory: %s", e)
+        log.error("Lỗi tạo thư mục: %s", e)
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
     cur = conn.cursor()
     cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
@@ -255,7 +357,7 @@ def _load_lan_whitelist():
                     else:
                         _lan_whitelist.add(line)
     except Exception as e:
-        log.error("Loi doc LAN whitelist: %s", e)
+        log.error("Lỗi đọc danh sách LAN whitelist: %s", e)
 
 def _ip_in_whitelist(ip):
     """Kiem tra IP co trong whitelist (exact match hoac subnet match)."""
@@ -285,7 +387,7 @@ def _save_lan_whitelist():
             for ip in sorted(_lan_whitelist):
                 f.write(ip + '\n')
     except Exception as e:
-        log.error("Loi ghi LAN whitelist: %s", e)
+        log.error("Lỗi ghi danh sách LAN whitelist: %s", e)
 
 _load_lan_whitelist()
 
@@ -300,7 +402,7 @@ def _apply_iptables_for_whitelist():
         try:
             subprocess.run(['iptables', '-I', 'INPUT', '1', '-s', ip, '-j', 'ACCEPT'])
         except Exception as e:
-            log.warning("[Firewall] iptables ACCEPT failed for IP %s: %s", ip, e)
+            log.warning("[Firewall] Không áp dụng được iptables ACCEPT cho IP %s: %s", ip, e)
     for subnet in list(_lan_subnets):
         try:
             subprocess.run(['iptables', '-D', 'INPUT', '-s', subnet, '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
@@ -309,7 +411,7 @@ def _apply_iptables_for_whitelist():
         try:
             subprocess.run(['iptables', '-I', 'INPUT', '1', '-s', subnet, '-j', 'ACCEPT'])
         except Exception as e:
-            log.warning("[Firewall] iptables ACCEPT failed for subnet %s: %s", subnet, e)
+            log.warning("[Firewall] Không áp dụng được iptables ACCEPT cho subnet %s: %s", subnet, e)
     # Cố định luôn luôn mở cho dải Tailscale VPN (100.64.0.0/10) và Localhost
     for builtin_net in ['100.64.0.0/10', '127.0.0.1']:
         try:
@@ -322,10 +424,10 @@ def _apply_iptables_for_whitelist():
             subprocess.run(['iptables', '-D', 'INPUT', '-s', builtin_net, '-p', 'tcp', '--dport', '5051', '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
             subprocess.run(['iptables', '-I', 'INPUT', '1', '-s', builtin_net, '-p', 'tcp', '--dport', '5051', '-j', 'ACCEPT'])
         except Exception as e:
-            log.warning("[Firewall] iptables ACCEPT failed for builtin %s: %s", builtin_net, e)
+            log.warning("[Firewall] Không áp dụng được iptables ACCEPT cho mạng mặc định %s: %s", builtin_net, e)
             
     if _lan_whitelist or _lan_subnets:
-        log.info("[Firewall] Da ap dung iptables ACCEPT cho %d IP, %d subnet trong whitelist", len(_lan_whitelist), len(_lan_subnets))
+        log.info("[Firewall] Đã áp dụng iptables ACCEPT cho %d IP, %d subnet trong whitelist", len(_lan_whitelist), len(_lan_subnets))
 
 _apply_iptables_for_whitelist()
 
@@ -358,13 +460,13 @@ def ban_ip_permanently(ip):
         now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
-        safe_msg = sanitize_log_input("[{}] [DISABLED] Yeu cau ban IP {} bi bo qua (fail2ban da tat).".format(now, ip))
+        safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
         cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                    ("WARNING", "Firewall", safe_msg))
         conn.commit()
         conn.close()
     except Exception as e:
-        log.error("[Firewall] Log ban request for %s failed: %s", ip, e)
+        log.error("[Firewall] Lỗi ghi log yêu cầu chặn IP %s: %s", ip, e)
 
 def handle_auth_failure(ip):
     # Co che fail2ban da bi VO HIEU HOA theo yeu cau nguoi dung.
@@ -538,7 +640,7 @@ def monitor_journalctl():
                 continue
 
     except Exception as e:
-        log.error("journalctl monitor stopped: %s", e)
+        log.error("Trình giám sát journalctl đã dừng: %s", e)
 
 
 # ============ CAU HINH ============
@@ -573,9 +675,9 @@ def _load_credentials():
                     elif key == "WEBDAV_PASS":
                         passwd = val
     except Exception as e:
-        log.error("Khong doc duoc %s: %s", AUTH_CONFIG_PATH, e)
+        log.error("Không đọc được %s: %s", AUTH_CONFIG_PATH, e)
     if not user or not passwd:
-        log.warning("Chua cau hinh WEBDAV_USER/WEBDAV_PASS! Tao file %s voi WEBDAV_USER=... WEBDAV_PASS=...", AUTH_CONFIG_PATH)
+        log.warning("Chưa cấu hình WEBDAV_USER/WEBDAV_PASS. Hãy tạo file %s với WEBDAV_USER=... WEBDAV_PASS=...", AUTH_CONFIG_PATH)
     return user, passwd
 
 
@@ -613,7 +715,7 @@ def requires_auth(f):
         auth = request.authorization
         if not auth:
             conn.close()
-            return jsonify({"detail": "Unauthorized"}), 401
+            return jsonify({"detail": "Chưa xác thực"}), 401
         
         if check_auth(auth.username, auth.password):
             # Dang nhap dung: Tu dong tin cay IP nay
@@ -674,10 +776,10 @@ def run_cmd(cmd_list, timeout=10, merge_stderr=False):
         )
         return result.stdout.decode("utf-8", errors="replace").strip()
     except subprocess.TimeoutExpired:
-        log.warning("Command timeout (%ds): %s", timeout, cmd_list[:3])
+        log.warning("Lệnh quá hạn (%d giây): %s", timeout, cmd_list[:3])
         return ""
     except Exception as e:
-        log.error("Command failed: %s — %s", cmd_list[:3], e)
+        log.error("Lệnh thất bại: %s — %s", cmd_list[:3], e)
         return ""
 
 def safe_run_cmd(cmd_list, timeout=10, merge_stderr=False):
@@ -689,11 +791,11 @@ def safe_run_cmd(cmd_list, timeout=10, merge_stderr=False):
     for idx, arg in enumerate(cmd_list):
         str_arg = str(arg)
         if not str_arg or not str_arg.strip():
-            raise ValueError("Invalid command argument: %s" % arg)
+            raise ValueError("Tham số lệnh không hợp lệ: %s" % arg)
         # Bao mat Argument Injection: Chan cac tham so bat dau bang '-' neu khong nam trong hardcode whitelist
         if idx > 0 and str_arg.startswith("-") and str_arg not in allowed_flags:
              # Dac biet bo qua truong hop chuoi IP thong thuong (cuc ky hiem nhung van co kha nang bi cham vao) tuc la filter
-             raise ValueError("Security Alert: Tham so chua flag khong duoc phep (%s)" % str_arg)
+             raise ValueError("Cảnh báo bảo mật: tham số chứa flag không được phép (%s)" % str_arg)
     return run_cmd(cmd_list, timeout, merge_stderr)
 
 def _run_acl_copy(source_dir, target_dir):
@@ -710,7 +812,7 @@ def _run_acl_copy(source_dir, target_dir):
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30
             )
     except Exception as e:
-        log.warning("ACL copy failed %s -> %s: %s", source_dir, target_dir, e)
+        log.warning("Lỗi sao chép ACL %s -> %s: %s", source_dir, target_dir, e)
 
 
 def get_cpu_temp():
@@ -1124,11 +1226,11 @@ def get_fan_info():
             if os.path.exists(fan_path):
                 with open(fan_path) as f:
                     rpm = int(f.read().strip())
-                return {"rpm": rpm, "status": "Dang chay" if rpm > 0 else "Dung", "percent": None}
+                return {"rpm": rpm, "status": "Đang chạy" if rpm > 0 else "Dừng", "percent": None}
     except Exception:
         pass
 
-    return {"rpm": None, "status": "Khong do duoc", "percent": None}
+    return {"rpm": None, "status": "Không đo được", "percent": None}
 
 
 
@@ -1175,7 +1277,7 @@ def get_top_processes(n=3):
 
 
 # ============ BACKGROUND CACHE (Phan hoi API tuc thi) ============
-_status_cache = {"status": "Dang khoi dong..."}
+_status_cache = {"status": "Đang khởi động..."}
 _cache_lock = threading.Lock()
 
 def _update_status_cache():
@@ -1244,7 +1346,7 @@ def _update_status_cache():
             loop_count = (loop_count + 1) % 30
         except Exception as e:
             with _cache_lock:
-                _status_cache = {"status": "Loi: %s" % str(e)}
+                _status_cache = {"status": "Lỗi: %s" % str(e)}
         time.sleep(2)
 
 
@@ -1267,7 +1369,7 @@ _alert_states = {
 
 def _push_alert(alert_type, message, severity="INFO"):
     """Them canh bao vao hang doi de Android lay qua /api/alerts/poll"""
-    message = sanitize_log_input(message)
+    message = normalize_vietnamese_message(sanitize_log_input(message))
     alert_type = sanitize_log_input(alert_type)
     with _alert_state_lock:
         # Giu toi da 50 canh bao gan nhat
@@ -1419,7 +1521,7 @@ def _scan_photos_lightweight():
     except Exception as e:
         with _alert_state_lock:
             _alert_states["ai_scan_running"] = False
-        log.error("[AI Scan] Loi: %s", e)
+        log.error("[AI Scan] Lỗi: %s", e)
         return False
 
 
@@ -1532,7 +1634,7 @@ def _cron_worker():
             # --- 1. Kiem tra torrent hoan thanh (moi 60 giay) ---
             completed = _check_torrent_completion()
             for name in completed:
-                msg = "Torrent da tai xong: %s" % name
+                msg = "Torrent đã tải xong: %s" % name
                 _push_alert("TORRENT_DONE", msg, "SUCCESS")
 
             # --- 2. Kiem tra nhiet do HDD (moi 60 giay) ---
@@ -1541,7 +1643,7 @@ def _cron_worker():
             with _alert_state_lock:
                 prev_alerted = _alert_states["hdd_temp_alerted"]
             if is_hot and not prev_alerted:
-                msg = "CANH BAO: Nhiet do HDD dang cao: %d\u00b0C (> 60\u00b0C)!" % temp_val
+                msg = "CẢNH BÁO: Nhiệt độ HDD đang cao: %d\u00b0C (> 60\u00b0C)!" % temp_val
                 _push_alert("HDD_TEMP_HIGH", msg, "ERROR")
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = True
@@ -1608,12 +1710,12 @@ def _cron_worker():
                 try:
                     df, dd, db = _clean_empty_files_and_dirs(WEBDAV_FILE_ROOT)
                     if df + dd + db > 0:
-                        msg = "Tự động: Đã xóa %d file rỗng + %d thư mục rỗng." % (df, dd)
+                        msg = "Tự động dọn dẹp: Đã xóa %d tệp rỗng và %d thư mục rỗng." % (df, dd)
                         if db > 0:
-                            msg = msg + " FLV hong cu: %d." % db
+                            msg = msg + " FLV hỏng cũ: %d." % db
                         _push_alert("EMPTY_CLEANED", msg, "INFO")
                 except Exception as e:
-                    log.warning("[Cron] Empty cleanup loi: %s", e)
+                    log.warning("[Cron] Lỗi dọn tệp rỗng/thư mục rỗng: %s", e)
                 with _alert_state_lock:
                     _alert_states["empty_last_clean"] = now_ts
 
@@ -1927,9 +2029,9 @@ def api_system_idle():
     if cpu_pct > 50: reasons.append("CPU %.0f%% > 50%%" % cpu_pct)
     if load1 > cores * 0.7: reasons.append("Load %.2f > %.2f" % (load1, cores * 0.7))
     if mem_free_mb < 150: reasons.append("RAM trong %.0f MB < 150 MB" % mem_free_mb)
-    if recording_streams > 0: reasons.append("Co %d livestream dang ghi" % recording_streams)
-    if ytdlp_jobs > 0: reasons.append("Co %d ytdlp dang tai" % ytdlp_jobs)
-    if sync_jobs > 0: reasons.append("Dang dong bo tu dien thoai")
+    if recording_streams > 0: reasons.append("Có %d livestream đang ghi" % recording_streams)
+    if ytdlp_jobs > 0: reasons.append("Có %d tác vụ yt-dlp đang tải" % ytdlp_jobs)
+    if sync_jobs > 0: reasons.append("Đang đồng bộ từ điện thoại")
 
     is_idle = len(reasons) == 0
     return jsonify({
@@ -2021,7 +2123,7 @@ def api_smart():
                         pass
                 return jsonify({"status": status, "temperature": temperature, "raw_log": raw_log})
             else:
-                return jsonify({"status": "eMMC Only", "temperature": "--\u00b0C", "raw_log": "OMV chi phat hien eMMC. Khong co HDD/SSD."})
+                return jsonify({"status": "eMMC Only", "temperature": "--\u00b0C", "raw_log": "OMV chỉ phát hiện eMMC. Không có HDD/SSD."})
     except Exception:
         pass
 
@@ -2043,7 +2145,7 @@ def api_smart():
             continue
 
     if not has_real_hdd:
-        raw_log = "Khong tim thay o cung HDD/SSD. He thong dang chay tren eMMC/SD."
+        raw_log = "Không tìm thấy ổ cứng HDD/SSD. Hệ thống đang chạy trên eMMC/SD."
         status = "eMMC Only"
     else:
         if "test result: PASSED" in raw_log:
@@ -2251,7 +2353,7 @@ def api_processes():
             
         return jsonify({"status": "success", "data": procs[:limit]})
     except Exception as e:
-        log.error("API Processes Error: %s", e)
+        log.error("Lỗi API danh sách tiến trình: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -2294,7 +2396,7 @@ def api_speedtest():
             write_time = time.time() - start_write
             write_speed = "%.1f MB/s" % (test_size_mb / write_time) if write_time > 0 else "0 MB/s"
         except Exception as we:
-            write_speed = "Loi ghi: " + str(we)
+            write_speed = "Lỗi ghi: " + str(we)
 
         # 2. Do toc do DOC (Pure Python)
         start_read = time.time()
@@ -2310,7 +2412,7 @@ def api_speedtest():
             read_mb = read_bytes / (1024 * 1024)
             read_speed = "%.1f MB/s" % (read_mb / read_time) if read_time > 0 else "0 MB/s"
         except Exception as re:
-            read_speed = "Loi doc: " + str(re)
+            read_speed = "Lỗi đọc: " + str(re)
 
         # 3. Don dep
         try:
@@ -2323,7 +2425,7 @@ def api_speedtest():
             "read_speed": read_speed
         })
     except Exception as e:
-        return jsonify({"write_speed": "Loi he thong", "read_speed": str(e)})
+        return jsonify({"write_speed": "Lỗi hệ thống", "read_speed": str(e)})
         
 # ============ QUAN LY NGUON ============
 
@@ -2356,7 +2458,7 @@ def api_auth_authorize():
         # Gỡ bỏ rule DROP mặt định nếu trước đó lỡ quẹt trúng
         subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-j', 'DROP'], stderr=subprocess.DEVNULL)
     except Exception as e:
-        log.warning("Loi mo khoa iptables cho IP %s: %s", ip, e)
+        log.warning("Lỗi mở khóa iptables cho IP %s: %s", ip, e)
 
     # 2. Thêm vào lan_whitelist để bền vững
     if ip not in _lan_whitelist:
@@ -2364,7 +2466,7 @@ def api_auth_authorize():
         _save_lan_whitelist()
         # Reload nginx nếu NAS dùng Nginx đọc whitelist
         try: subprocess.run(["sudo", "systemctl", "reload", "nginx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-        except Exception as e: log.warning("Nginx reload failed: %s", e)
+        except Exception as e: log.warning("Reload Nginx thất bại: %s", e)
 
     # 3. Ghi log vào Database
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
@@ -2409,10 +2511,10 @@ def api_docker_control():
         container = data.get("container", "")
         if action in ("start", "stop", "restart") and container:
             if not _validate_container_name(container):
-                return jsonify({"error": "Invalid container name"}), 400
+                return jsonify({"error": "Tên container không hợp lệ"}), 400
             run_cmd(["/usr/bin/docker", action, container], timeout=30)
             return jsonify({"result": "ok"})
-        return jsonify({"error": "Invalid action"}), 400
+        return jsonify({"error": "Hành động không hợp lệ"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2486,7 +2588,7 @@ def api_fan_control():
                 _status_cache['fan_status'] = 'Đang chạy 100%'
             return jsonify({"status": "success", "mode": "on"})
             
-        return jsonify({"error": "Invalid mode"}), 400
+        return jsonify({"error": "Chế độ không hợp lệ"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2502,7 +2604,7 @@ def api_torrent_control():
         torrent_hash = data.get("hash", "")
 
         if not torrent_hash:
-            return jsonify({"error": "Missing hash"}), 400
+            return jsonify({"error": "Thiếu hash"}), 400
 
         qbt_base = "http://127.0.0.1:8080/api/v2"
 
@@ -2525,7 +2627,7 @@ def api_torrent_control():
         elif action == "delete":
             url = "%s/torrents/delete" % qbt_base
         else:
-            return jsonify({"error": "Unknown action"}), 400
+            return jsonify({"error": "Hành động không xác định"}), 400
 
         # Step 3: Send POST with form-encoded body + SID cookie
         post_data = {"hashes": torrent_hash}
@@ -2555,7 +2657,7 @@ def api_download():
         data = request.get_json(force=True)
         link = data.get("url", "")
         if not link:
-            return jsonify({"error": "Missing URL"}), 400
+            return jsonify({"error": "Thiếu URL"}), 400
 
         qbt_url = "http://127.0.0.1:8080/api/v2/torrents/add"
         post_data = urllib.parse.urlencode({"urls": link}).encode()
@@ -2575,10 +2677,10 @@ def api_unzip():
         data = request.get_json(force=True)
         file_path = data.get("path", "") or data.get("file_path", "")
         if not file_path or not os.path.exists(file_path):
-            return jsonify({"error": "File not found"}), 404
+            return jsonify({"error": "Không tìm thấy tệp"}), 404
         # SECURITY: Validate file path to prevent path traversal
         if not _validate_file_path(file_path):
-            return jsonify({"error": "Invalid file path"}), 403
+            return jsonify({"error": "Đường dẫn tệp không hợp lệ"}), 403
 
         dest_dir = os.path.dirname(file_path)
         ext = file_path.lower()
@@ -2593,7 +2695,7 @@ def api_unzip():
         elif ext.endswith(".7z"):
             run_cmd(["7z", "x", file_path, "-o" + dest_dir, "-y"], timeout=300)
         else:
-            return jsonify({"error": "Unsupported format"}), 400
+            return jsonify({"error": "Định dạng không được hỗ trợ"}), 400
 
         return jsonify({"result": "ok"})
     except Exception as e:
@@ -2725,7 +2827,7 @@ def api_cron_status():
 
     def fmt_ts(ts):
         if ts == 0:
-            return "Chua chay"
+            return "Chưa chạy"
         return datetime.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M:%S")
 
     return jsonify({
@@ -2751,7 +2853,7 @@ def api_temperature_history():
         history = [{"time": r[0], "cpu": round(r[1], 1), "hdd": round(r[2], 1)} for r in rows]
         return jsonify({"history": history})
     except Exception as e:
-        return jsonify({"history": [], "error": str(e)})
+        return jsonify({"history": [], "error": "Không tải được lịch sử nhiệt độ: %s" % normalize_vietnamese_message(str(e))})
 
 @app.route("/api/cron/trash/clean", methods=["POST"])
 @requires_auth
@@ -2761,11 +2863,11 @@ def api_cron_trash_clean():
         data = request.get_json(force=True)
         max_days = int(data.get("max_age_days", 30))
         deleted = _clean_trash(WEBDAV_FILE_ROOT, max_age_days=max_days)
-        msg = "Da xoa %d file Thung rac (qua %d ngay)." % (deleted, max_days)
+        msg = "Đã xóa %d tệp trong Thùng rác (quá %d ngày)." % (deleted, max_days)
         _push_alert("TRASH_CLEANED", msg, "INFO")
         return jsonify({"result": "ok", "deleted": deleted, "message": msg})
     except Exception as e:
-        return jsonify({"result": "error", "message": str(e)}), 500
+        return jsonify({"result": "error", "message": "Không dọn được Thùng rác: %s" % normalize_vietnamese_message(str(e))}), 500
 
 @app.route("/api/system_logs", methods=["GET"])
 def api_system_logs():
@@ -2774,11 +2876,11 @@ def api_system_logs():
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
-        logs = [{"id": r[0], "type": r[1], "module": r[2], "message": r[3], "timestamp": r[4]} for r in cur.fetchall()]
+        logs = [{"id": r[0], "type": r[1], "module": r[2], "message": normalize_vietnamese_message(r[3]), "timestamp": r[4]} for r in cur.fetchall()]
         conn.close()
         return jsonify({"status": "success", "logs": logs})
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Không tải được nhật ký hệ thống: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 # ============ SMART PHOTOS (GALLERY KHAM PHA) ============
@@ -2793,7 +2895,7 @@ def api_ai_tags():
             return jsonify({
                 "categories": {},
                 "total": 0,
-                "status": "Chua co du lieu. Nhan nut Quet de phan loai anh.",
+                "status": "Chưa có dữ liệu. Nhấn nút Quét để phân loại ảnh.",
                 "ai_running": _alert_states.get("ai_scan_running", False)
             })
         mtime = os.path.getmtime(AI_TAGS_PATH)
@@ -2808,7 +2910,7 @@ def api_ai_tags():
             "ai_running": _alert_states.get("ai_scan_running", False)
         })
     except Exception as e:
-        return jsonify({"categories": {}, "total": 0, "status": "Loi: %s" % str(e)}), 500
+        return jsonify({"categories": {}, "total": 0, "status": "Lỗi: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 @app.route("/api/ai/trigger", methods=["POST"])
@@ -2818,14 +2920,14 @@ def api_ai_trigger():
     with _alert_state_lock:
         running = _alert_states["ai_scan_running"]
     if running:
-        return jsonify({"result": "already_running", "message": "Dang quet anh, vui long cho."})
+        return jsonify({"result": "already_running", "message": "Đang quét ảnh, vui lòng chờ."})
     # Chay scan tren thread rieng de khong block API response
     def _bg_scan():
         ok = _scan_photos_lightweight()
         if ok:
-            _push_alert("AI_SCAN_DONE", "Smart Gallery: Da phan loai xong anh theo thu muc.", "SUCCESS")
+            _push_alert("AI_SCAN_DONE", "Smart Gallery: Đã phân loại xong ảnh theo thư mục.", "SUCCESS")
     threading.Thread(target=_bg_scan, daemon=True).start()
-    return jsonify({"result": "ok", "message": "Dang quet va phan loai anh... Ket qua se co trong vai phut."})
+    return jsonify({"result": "ok", "message": "Đang quét và phân loại ảnh. Kết quả sẽ có trong vài phút."})
 
 
 @app.route("/api/ai/status")
@@ -2835,7 +2937,7 @@ def api_ai_status():
     with _alert_state_lock:
         running = _alert_states["ai_scan_running"]
         last_scan = _alert_states["ai_last_scan"]
-    last_scan_str = "Chua quet" if last_scan == 0 else \
+    last_scan_str = "Chưa quét" if last_scan == 0 else \
         datetime.datetime.fromtimestamp(last_scan).strftime("%d/%m/%Y %H:%M:%S")
     tags_exist = os.path.exists(AI_TAGS_PATH)
     return jsonify({
@@ -2873,7 +2975,7 @@ def _get_video_duration(file_path):
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         return float(result.stdout.decode('utf-8', errors='ignore').strip())
     except Exception as e:
-        log.warning("[HLS] Loi ffprobe duration: %s", e)
+        log.warning("[HLS] Lỗi đọc thời lượng bằng ffprobe: %s", e)
         return 7200.0  # Fallback 2 tieng neu loi
 
 @app.route("/api/stream/transcode")
@@ -2883,11 +2985,11 @@ def api_stream_transcode():
     import hashlib
     relative_path = request.args.get("path", "")
     if not relative_path:
-        return jsonify({"error": "Thieu tham so 'path'"}), 400
+        return jsonify({"error": "Thiếu tham số 'path'"}), 400
 
     file_path = _find_source_file(relative_path)
     if not file_path:
-        return jsonify({"error": "File not found"}), 404
+        return jsonify({"error": "Không tìm thấy tệp"}), 404
 
     session_id = hashlib.md5(file_path.encode()).hexdigest()[:12]
     hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
@@ -3028,7 +3130,7 @@ def api_stream_hls_file(session_id, filename):
                 wait_count += 1
                 
             if not os.path.exists(file_path):
-                log.error("[JIT HLS] Loi FFmpeg, khong the tao %s", filename)
+                log.error("[JIT HLS] Lỗi FFmpeg, không thể tạo %s", filename)
                 return "", 500
 
         # Tra file ts ve
@@ -3093,7 +3195,7 @@ def api_organize_legacy_videos():
             subprocess.run(["chown", "-R", "daica:webdav-users", other_video_dir])
             subprocess.run(["chmod", "-R", "2775", other_video_dir])
         except Exception as e:
-            log.warning("[Organize] Khong the fix quyen ACL: %s", e)
+            log.warning("[Organize] Không thể sửa quyền ACL: %s", e)
             
     return jsonify({
         "success": True,
@@ -3260,7 +3362,7 @@ def api_smart_organize_execute():
                 shutil.move(full_path, new_path)
                 moved_count += 1
                 if moved_count % 100 == 0:
-                    log.info("[SmartOrganize] Da di chuyen %d file...", moved_count)
+                    log.info("[SmartOrganize] Đã di chuyển %d tệp...", moved_count)
             except Exception as e:
                 errors.append(str(e))
 
@@ -3272,15 +3374,15 @@ def api_smart_organize_execute():
                 subprocess.run(["chown", "-R", "daica:webdav-users", d])
                 subprocess.run(["chmod", "-R", "2775", d])
             except Exception as e:
-                log.warning("[SmartOrganize] Loi ACL: %s", e)
+                log.warning("[SmartOrganize] Lỗi ACL: %s", e)
 
         _push_alert(
             "SMART_ORGANIZE",
-            "Smart Organizer: Da sap xep %d file vao thu muc theo Nam/Thang." % moved_count,
+            "Smart Organizer: Đã sắp xếp %d tệp vào thư mục theo Năm/Tháng." % moved_count,
             "SUCCESS"
         )
 
-    log.info("[SmartOrganize] Hoan tat: %d file da di chuyen, %d loi.", moved_count, len(errors))
+    log.info("[SmartOrganize] Hoàn tất: %d tệp đã di chuyển, %d lỗi.", moved_count, len(errors))
     return jsonify({
         "success": True,
         "moved_count": moved_count,
@@ -3360,7 +3462,7 @@ def api_hash_batch():
     """Uy quyen NAS tinh Partial Hash (1MB dau tien) — Song song hoa de tang toc."""
     data = request.json
     if not data or "files" not in data:
-        return jsonify({"error": "Bad Request"}), 400
+        return jsonify({"error": "Yêu cầu không hợp lệ"}), 400
     
     result = {}
     base_dir = get_webdav_root()
@@ -3423,7 +3525,7 @@ def _apply_thumbnail_gate_locked():
         if should_pause:
             _thumb_stats["running"] = False
             if _thumb_auto_block_reasons:
-                _thumb_stats["last_file"] = "Tam dung: " + ", ".join(sorted(_thumb_auto_block_reasons))
+                _thumb_stats["last_file"] = "Tạm dừng: " + ", ".join(sorted(_thumb_auto_block_reasons))
 
 def _set_thumbnail_auto_block(reason, active):
     """Chan thumbnail khi livestream/ytdlp/sync dang chay; bo chan khi da xong."""
@@ -3656,7 +3758,7 @@ def _thumbnail_generator():
                     mem = psutil.virtual_memory()
                     if mem.percent > 88:
                         with _thumb_stats_lock:
-                            _thumb_stats["last_file"] = "DUNG KHAN CAP: RAM %d%%" % int(mem.percent)
+                            _thumb_stats["last_file"] = "Dừng khẩn cấp: RAM %d%%" % int(mem.percent)
                         abort_batch = True
                         return True
                     if mem.percent > 80:
@@ -3679,7 +3781,7 @@ def _thumbnail_generator():
                     with _thumb_stats_lock:
                         _thumb_stats["paused"] = True
                         _thumb_stats["running"] = False
-                        _thumb_stats["last_file"] = "TAM DUNG boi nguoi dung"
+                        _thumb_stats["last_file"] = "Tạm dừng bởi người dùng"
                     _thumb_paused.wait()
                     with _thumb_stats_lock:
                         _thumb_stats["paused"] = False
@@ -3719,7 +3821,7 @@ def _thumbnail_generator():
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 workers = _adaptive_workers()
                 with _thumb_stats_lock:
-                    _thumb_stats["last_file"] = "Anh: %d file, %d luong" % (len(image_pending), workers)
+                    _thumb_stats["last_file"] = "Ảnh: %d tệp, %d luồng" % (len(image_pending), workers)
                 
                 # Chia thanh cac micro-batch (100 file) de re-evaluate workers giua chung
                 for chunk_start in range(0, len(image_pending), 100):
@@ -3741,7 +3843,7 @@ def _thumbnail_generator():
             # === XU LY VIDEO: Tuan tu (FFmpeg nang, da co _ffmpeg_semaphore gioi han 2) ===
             if video_pending and not abort_batch:
                 with _thumb_stats_lock:
-                    _thumb_stats["last_file"] = "Video: %d file (tuan tu)" % len(video_pending)
+                    _thumb_stats["last_file"] = "Video: %d tệp (tuần tự)" % len(video_pending)
                 for item in video_pending:
                     if abort_batch:
                         break
@@ -3754,13 +3856,13 @@ def _thumbnail_generator():
                 _thumb_stats["generated"] = generated
                 _thumb_stats["total_media"] = total
                 _thumb_stats["running"] = False
-                _thumb_stats["last_file"] = "Hoan tat! %d/%d (loi: %d)" % (generated, total, errors)
+                _thumb_stats["last_file"] = "Hoàn tất! %d/%d (lỗi: %d)" % (generated, total, errors)
             
             try:
                 conn = sqlite3.connect(DB_PATH, timeout=20.0)
                 cur = conn.cursor()
                 cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
-                    ("INFO", "Thumbnail", "Da tao %d/%d thumbnail (loi: %d)." % (generated, total, errors)))
+                    ("INFO", "Thumbnail", "Đã tạo %d/%d ảnh thu nhỏ (lỗi: %d)." % (generated, total, errors)))
                 conn.commit()
                 conn.close()
             except Exception: pass
@@ -3768,7 +3870,7 @@ def _thumbnail_generator():
         except Exception as e:
             with _thumb_stats_lock:
                 _thumb_stats["running"] = False
-                _thumb_stats["last_file"] = "Loi: %s" % str(e)
+                _thumb_stats["last_file"] = "Lỗi: %s" % str(e)
         
         time.sleep(30)  # Quet lai sau 30 giay
 
@@ -3784,14 +3886,14 @@ def api_thumb():
     webdav_path = urllib.parse.unquote(webdav_path)
     
     if not webdav_path:
-        return jsonify({"error": "Thieu path"}), 400
+        return jsonify({"error": "Thiếu đường dẫn"}), 400
     
     base_dir = get_webdav_root()
     local_rel = webdav_path.replace("/webdav", "", 1)
     real_path = base_dir + local_rel
     
     if not os.path.exists(real_path):
-        return jsonify({"error": "File khong ton tai"}), 404
+        return jsonify({"error": "Tệp không tồn tại"}), 404
     
     thumb_path = _get_thumb_path(base_dir, real_path)
     
@@ -3804,7 +3906,7 @@ def api_thumb():
         elif ext in MEDIA_VIDEO_EXTS:
             _generate_video_thumb(real_path, thumb_path)
         else:
-            return jsonify({"error": "Khong ho tro"}), 415
+            return jsonify({"error": "Không hỗ trợ"}), 415
     
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
         return Response(
@@ -3812,7 +3914,7 @@ def api_thumb():
             mimetype='image/jpeg',
             headers={'Cache-Control': 'public, max-age=86400'}
         )
-    return jsonify({"error": "Khong tao duoc"}), 500
+    return jsonify({"error": "Không tạo được"}), 500
 
 
 @app.route("/api/thumb/status")
@@ -3869,7 +3971,7 @@ def api_thumb_control():
             paused = not _thumb_paused.is_set()
         return jsonify({"result": "ok", "paused": paused, "block_reasons": sorted(_thumb_auto_block_reasons)})
     else:
-        return jsonify({"error": "action phai la 'pause' hoac 'resume'"}), 400
+        return jsonify({"error": "Hành động phải là 'pause' hoặc 'resume'"}), 400
 
 @app.route("/api/thumb/activity", methods=["POST"])
 @requires_auth
@@ -3919,7 +4021,7 @@ def api_docker_power_post():
         try:
             conn = sqlite3.connect(DB_PATH, timeout=20.0)
             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
-                ("INFO", "Docker", "Da BAT Docker + qBittorrent"))
+                ("INFO", "Docker", "Đã bật Docker + qBittorrent"))
             conn.commit()
             conn.close()
         except Exception: pass
@@ -3933,13 +4035,13 @@ def api_docker_power_post():
         try:
             conn = sqlite3.connect(DB_PATH, timeout=20.0)
             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
-                ("INFO", "Docker", "Da TAT Docker de tiet kiem RAM"))
+                ("INFO", "Docker", "Đã tắt Docker để tiết kiệm RAM"))
             conn.commit()
             conn.close()
         except Exception: pass
         return jsonify({"result": "ok", "action": "stopped"})
     else:
-        return jsonify({"error": "action phai la 'start' hoac 'stop'"}), 400
+        return jsonify({"error": "Hành động phải là 'start' hoặc 'stop'"}), 400
 
 
 # ============ LAN WHITELIST API ============
@@ -3982,7 +4084,7 @@ def api_lan_whitelist_add():
         except Exception: pass
         return jsonify({"result": "ok", "added_ip": ip})
     else:
-        return jsonify({"error": "Thieu ip hoac subnet"}), 400
+        return jsonify({"error": "Thiếu IP hoặc subnet"}), 400
 
 @app.route("/api/lan/whitelist", methods=["DELETE"])
 @requires_auth
@@ -4010,7 +4112,7 @@ def api_lan_whitelist_remove():
         except Exception: pass
         return jsonify({"result": "ok", "removed_ip": ip})
     else:
-        return jsonify({"error": "IP/subnet khong ton tai trong whitelist"}), 404
+        return jsonify({"error": "IP/subnet không tồn tại trong whitelist"}), 404
 
 # ============ TAILSCALE WATCHDOG ============
 _tailscale_restart_count = 0
@@ -4030,15 +4132,15 @@ def _system_health_watchdog():
             if os.path.exists(REBOOT_LOCK_FILE):
                 last_time = os.path.getmtime(REBOOT_LOCK_FILE)
                 if time.time() - last_time < 900:  # 15 phút
-                    log.warning("[Watchdog] Phat hien %s, nhung bi KHOA REBOOT vi vua reboot gan day!", reason)
+                    log.warning("[Watchdog] Phát hiện %s, nhưng đã khóa reboot vì NAS vừa reboot gần đây.", reason)
                     return
             
-            log.critical("[Watchdog] THUC THI REBOOT NAS: %s", reason)
+            log.critical("[Watchdog] Thực thi reboot NAS: %s", reason)
             # Ghi log DB truoc khi ngat
             try:
                 conn = sqlite3.connect(DB_PATH, timeout=20.0)
                 conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
-                    ("CRITICAL", "Hardware", "Tu dong REBOOT NAS do: %s" % reason))
+                    ("CRITICAL", "Hardware", "Tự động reboot NAS do: %s" % reason))
                 conn.commit()
                 conn.close()
             except Exception: pass
@@ -4050,7 +4152,7 @@ def _system_health_watchdog():
                 
             subprocess.run(["reboot"])
         except Exception as e:
-            log.error("[Watchdog] Reboot failed: %s", e)
+            log.error("[Watchdog] Reboot thất bại: %s", e)
             
     # Biến đếm thời gian lỗi (Cần lỗi liên tục 2 lần mới Action để tránh chập chờn)
     hdd_error_cycles = 0
@@ -4068,7 +4170,7 @@ def _system_health_watchdog():
             # 1. Kiem tra tailscaled process
             result = subprocess.run(["pgrep", "-x", "tailscaled"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
             if result.returncode != 0:
-                log.warning("[Watchdog] tailscaled bi tat - dang khoi dong lai...")
+                log.warning("[Watchdog] tailscaled đã tắt, đang khởi động lại...")
                 restart_result = subprocess.run(["systemctl", "restart", "tailscaled"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
                 _tailscale_restart_count += 1
                 _tailscale_last_restart = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -4078,7 +4180,7 @@ def _system_health_watchdog():
                     try:
                         conn = sqlite3.connect(DB_PATH, timeout=20.0)
                         conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
-                            ("WARNING", "Network", "Tailscale bi ngat, he thong rk3328 da tu dong khoi dong lai lan %d" % _tailscale_restart_count))
+                            ("WARNING", "Network", "Tailscale bị ngắt, hệ thống RK3328 đã tự động khởi động lại lần %d" % _tailscale_restart_count))
                         conn.commit()
                         conn.close()
                     except Exception: pass
@@ -4086,7 +4188,7 @@ def _system_health_watchdog():
             # 2. Kiem tra nginx process (Dam bao WebDAV an toan, khong bi OMV chet tren boot)
             nginx_res = subprocess.run(["systemctl", "is-active", "nginx"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
             if nginx_res.stdout.decode().strip() != "active":
-                log.warning("[Watchdog] Nginx (WebDAV) bi tat/failed - dang khoi dong lai...")
+                log.warning("[Watchdog] Nginx (WebDAV) đã tắt hoặc lỗi, đang khởi động lại...")
                 subprocess.run(["systemctl", "start", "nginx"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
                 
             global _system_alert
@@ -4094,10 +4196,10 @@ def _system_health_watchdog():
             hdd_path = "/srv/dev-disk-by-label-data"
             if not os.path.exists(hdd_path) or not os.path.ismount(hdd_path):
                 hdd_error_cycles += 1
-                log.warning("[Watchdog] Khong tim thay o cung hoac chua mount (lan %d)", hdd_error_cycles)
+                log.warning("[Watchdog] Không tìm thấy ổ cứng hoặc ổ cứng chưa mount (lần %d)", hdd_error_cycles)
                 _system_alert = "⚠️ Lỗi Ổ cứng (Tự động Reboot sau %ds)" % ((6 - hdd_error_cycles) * 10)
                 if hdd_error_cycles >= 6:  # Mat HDD lien cuc trong 1 phut (6 * 10s)
-                    _trigger_hard_reboot("Mat ket noi O cung (SATA/USB bi ngat)")
+                    _trigger_hard_reboot("Mất kết nối ổ cứng (SATA/USB bị ngắt)")
                     hdd_error_cycles = 0
             else:
                 hdd_error_cycles = 0
@@ -4106,17 +4208,17 @@ def _system_health_watchdog():
             ip_res = subprocess.run(["ip", "-4", "addr", "show", "eth0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
             if "inet " not in ip_res.stdout.decode() and hdd_error_cycles == 0:
                 lan_error_cycles += 1
-                log.warning("[Watchdog] Mat ket noi IP LAN eth0 (lan %d)", lan_error_cycles)
+                log.warning("[Watchdog] Mất kết nối IP LAN eth0 (lần %d)", lan_error_cycles)
                 _system_alert = "⚠️ Mất mạng LAN (Tự động Reboot sau %ds)" % ((6 - lan_error_cycles) * 10)
                 if lan_error_cycles >= 6:  # Mat mang lien tuc trong 1 phut
-                    _trigger_hard_reboot("Mat ket noi mang LAN (eth0 khong co IP)")
+                    _trigger_hard_reboot("Mất kết nối mạng LAN (eth0 không có IP)")
                     lan_error_cycles = 0
             elif hdd_error_cycles == 0:
                 lan_error_cycles = 0
                 _system_alert = ""
                 
         except Exception as e:
-            log.error("[Watchdog] Loi giam sat: %s", e)
+            log.error("[Watchdog] Lỗi giám sát: %s", e)
             
         time.sleep(10)
             
@@ -4217,7 +4319,7 @@ def _create_linux_user(username, password):
         proc.communicate(input=("%s:%s" % (username, password)).encode())
         return True
     except Exception as e:
-        log.error("Loi tao user %s: %s", username, e)
+        log.error("Lỗi tạo user %s: %s", username, e)
         return False
 
 def _create_vsftpd_user_config(username):
@@ -4234,7 +4336,7 @@ def _create_vsftpd_user_config(username):
             f.write("allow_writeable_chroot=YES\n")
         return True
     except Exception as e:
-        log.error("Loi tao vsftpd config cho %s: %s", username, e)
+        log.error("Lỗi tạo cấu hình vsftpd cho %s: %s", username, e)
         return False
 
 def _delete_linux_user(username):
@@ -4245,7 +4347,7 @@ def _delete_linux_user(username):
         if os.path.exists(config_path):
             os.remove(config_path)
     except Exception as e:
-        log.error("Loi xoa user %s: %s", username, e)
+        log.error("Lỗi xóa user %s: %s", username, e)
 
 def _guest_expiry_watcher():
     """Background thread: quet va xoa Guest Pass da het han (moi 30 giay)."""
@@ -4258,9 +4360,9 @@ def _guest_expiry_watcher():
                 _delete_linux_user(username)
                 with _guest_lock:
                     _guest_passes.pop(username, None)
-                log.info("[GuestPass] Da thu hoi user het han: %s", username)
+                log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
         except Exception as e:
-            log.error("[GuestPass] Watcher error: %s", e)
+            log.error("[GuestPass] Lỗi watcher: %s", e)
         time.sleep(30)
 
 # Background thread quan ly het han Guest Pass
@@ -4284,7 +4386,7 @@ def api_guest_create():
         ok_ftp  = _create_vsftpd_user_config(username)
 
         if not ok_user:
-            return jsonify({"error": "Khong the tao user Linux. Kiem tra quyen root."}), 500
+            return jsonify({"error": "Không thể tạo user Linux. Kiểm tra quyền root."}), 500
 
         with _guest_lock:
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
@@ -4303,7 +4405,7 @@ def api_guest_create():
             "ftp_port":       21,
             "expires_at_unix": int(expires_at),
             "duration_minutes": duration_minutes,
-            "message":        "Da tao Guest FTP '%s' (ton tai %d phut)" % (username, duration_minutes)
+            "message":        "Đã tạo Guest FTP '%s' (tồn tại %d phút)" % (username, duration_minutes)
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -4317,13 +4419,13 @@ def api_guest_revoke():
         body = request.get_json(force=True) or {}
         username = body.get("username", "")
         if not username or not username.startswith("nasguest_"):
-            return jsonify({"error": "Username khong hop le"}), 400
+            return jsonify({"error": "Username không hợp lệ"}), 400
 
         _delete_linux_user(username)
         with _guest_lock:
             _guest_passes.pop(username, None)
 
-        return jsonify({"message": "Da thu hoi Guest FTP user '%s' thanh cong." % username})
+        return jsonify({"message": "Đã thu hồi Guest FTP user '%s' thành công." % username})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -4414,10 +4516,10 @@ def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
         if proc.returncode == 0 and codec and codec not in ("unknown", "none"):
             log.info("[Livestream] Direct FLV probe OK: codec=%s url=%s", codec, flv_url[:120])
             return True
-        log.warning("[Livestream] Direct FLV codec khong remux duoc qua ffprobe: codec=%s err=%s",
+        log.warning("[Livestream] Codec FLV trực tiếp không remux được qua ffprobe: codec=%s err=%s",
                     codec or "-", (proc.stderr or b"")[-160:])
     except Exception as e:
-        log.warning("[Livestream] Direct FLV codec probe loi: %s", e)
+        log.warning("[Livestream] Lỗi kiểm tra codec FLV trực tiếp: %s", e)
     return False
 
 def _remux_flv_to_mp4(flv_path):
@@ -4481,19 +4583,19 @@ def _remux_flv_to_mp4(flv_path):
         # biet file da bi hong/khong play duoc, KHONG xoa (de debug hoac thu
         # mo bang VLC tay).
         err_tail = (proc3.stderr or proc2.stderr or b"")[-240:]
-        log.warning("[Livestream] Remux FLV->MP4 fail het ca 3 pass (rc=%d|%d|%d): %s",
+        log.warning("[Livestream] Remux FLV sang MP4 thất bại sau cả 3 lượt thử (rc=%d|%d|%d): %s",
                     proc.returncode, proc2.returncode, proc3.returncode, err_tail)
         try:
             broken_path = flv_path + ".broken"  # vd: foo.flv.broken
             if os.path.exists(broken_path):
                 broken_path = broken_path + "." + str(int(time.time()))
             os.rename(flv_path, broken_path)
-            log.info("[Livestream] FLV khong play duoc -> doi ten thanh: %s", os.path.basename(broken_path))
+            log.info("[Livestream] FLV không mở được, đã đổi tên thành: %s", os.path.basename(broken_path))
         except Exception:
             pass
         return ""
     except Exception as e:
-        log.error("[Livestream] Remux FLV->MP4 loi: %s", e)
+        log.error("[Livestream] Lỗi remux FLV sang MP4: %s", e)
         return ""
 
 def _livestream_error_from_log(info):
@@ -4508,13 +4610,21 @@ def _livestream_error_from_log(info):
             line_clean = line.strip()
             line_lo = line_clean.lower()
             if "not currently live" in line_lo:
-                return "Kenh hien khong con live."
+                return "Kênh hiện không còn live."
             if "this live has ended" in line_lo or "live has ended" in line_lo:
-                return "Livestream da ket thuc."
-            if "error:" in line_lo or "failed" in line_lo or "http error" in line_lo or "offline" in line_lo:
-                return line_clean
+                return "Livestream đã kết thúc."
+            if "http error 403" in line_lo or "forbidden" in line_lo:
+                return "Nguồn livestream bị từ chối hoặc URL stream đã hết hạn."
+            if "http error 404" in line_lo or "not found" in line_lo:
+                return "Không tìm thấy nguồn livestream."
+            if "timed out" in line_lo or "timeout" in line_lo:
+                return "Kết nối tới nguồn livestream bị quá hạn."
+            if "offline" in line_lo:
+                return "Kênh đang offline hoặc chưa phát livestream."
+            if "error:" in line_lo or "failed" in line_lo or "http error" in line_lo:
+                return "Không tải được nguồn livestream. Vui lòng kiểm tra kênh còn live và cookie TikTok."
         if last_lines:
-            return last_lines[-1].strip()
+            return "Không đọc được trạng thái livestream từ nhật ký yt-dlp."
     except Exception:
         pass
     return ""
@@ -4585,16 +4695,16 @@ def _livestream_watchdog():
                             if flv_path:
                                 info["output_file"] = os.path.basename(flv_path) + ".broken"
                                 info["file_size"] = 0
-                            log.warning("[Livestream] Job %s: remux fail: %s", jid, e)
+                            log.warning("[Livestream] Job %s: remux thất bại: %s", jid, e)
 
                         # Kiem tra dung luong file de xac dinh thanh cong hay that bai
                         if info.get("file_size", 0) < 1000:
                             info["status"] = "error"
-                            info["error_reason"] = _livestream_error_from_log(info) or "Khong tao duoc file video hop le."
-                            log.error("[Livestream] Job %s (PID %d) da ket thuc voi loi (File < 1KB).", jid, pid)
+                            info["error_reason"] = _livestream_error_from_log(info) or "Không tạo được tệp video hợp lệ."
+                            log.error("[Livestream] Job %s (PID %d) đã kết thúc với lỗi (tệp < 1KB).", jid, pid)
                         else:
                             info["status"] = "finished"
-                            log.info("[Livestream] Job %s (PID %d) da ket thuc tu nhien.", jid, pid)
+                            log.info("[Livestream] Job %s (PID %d) đã kết thúc tự nhiên.", jid, pid)
 
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                         _cleanup_job_tmp(info.get("tmp_dir", ""))
@@ -4605,7 +4715,7 @@ def _livestream_watchdog():
                             conn = sqlite3.connect(DB_PATH, timeout=20.0)
                             cur = conn.cursor()
                             file_size_str = format_bytes(info.get("file_size", 0))
-                            msg = "Livestream %s da ghi xong: %s (%s)" % (
+                            msg = "Livestream %s đã ghi xong: %s (%s)" % (
                                 info.get("platform", "unknown"),
                                 info.get("output_file", "?"),
                                 file_size_str
@@ -4621,7 +4731,7 @@ def _livestream_watchdog():
                     # Kiem tra timeout (12 gio)
                     started = info.get("started_ts", 0)
                     if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
-                        log.warning("[Livestream] Job %s vuot qua %d gio, tu dong dung.", jid, _LIVESTREAM_MAX_HOURS)
+                        log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
                         try:
                             os.kill(pid, signal.SIGTERM)
                         except Exception:
@@ -4649,7 +4759,7 @@ def _livestream_watchdog():
             _set_thumbnail_auto_block("livestream", active)
             _set_thumbnail_auto_block("ytdlp", ytdlp_active)
         except Exception as e:
-            log.error("[Livestream] Watchdog error: %s", e)
+            log.error("[Livestream] Lỗi watchdog: %s", e)
 
 def _fan_controller_watchdog():
     """Tien trinh ngam dieu khien quat theo che do tuy chinh (Hysteresis)"""
@@ -4684,7 +4794,7 @@ def _fan_controller_watchdog():
                 subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
                 
         except Exception as e:
-            log.error("[FanWatchdog] Loi: %s", e)
+            log.error("[FanWatchdog] Lỗi: %s", e)
         time.sleep(10)
 
 # Khoi dong watchdog thread
@@ -4700,6 +4810,35 @@ _tiktok_watch_state = {
     "exclude_end": "07:00",
     "poll_interval": 60
 }
+_tiktok_watch_wake = threading.Event()
+_tiktok_watch_runtime = {
+    "running": False,
+    "started_at": "",
+    "last_tick": "",
+    "last_summary": "",
+    "last_error": "",
+    "loop_count": 0,
+}
+
+def _tiktok_watch_interval():
+    try:
+        return max(30, min(300, int(_tiktok_watch_state.get("poll_interval", 60))))
+    except Exception:
+        return 60
+
+def _normalize_tiktok_watch_user_entry(user):
+    if not isinstance(user, dict):
+        user = {"username": str(user or "")}
+    username = _normalize_tiktok_username(user.get("username", ""))
+    return {
+        "username": username,
+        "status": user.get("status", "watching") or "watching",
+        "last_check": user.get("last_check", "") or "",
+        "last_live": user.get("last_live", "") or "",
+        "last_live_verified": bool(user.get("last_live_verified", False)),
+        "last_error": normalize_vietnamese_message(user.get("last_error", "") or ""),
+        "job_id": user.get("job_id", "") or "",
+    }
 
 def _load_tiktok_watch_state():
     global _tiktok_watch_state
@@ -4709,8 +4848,19 @@ def _load_tiktok_watch_state():
                 data = json.load(f)
             if isinstance(data, dict):
                 _tiktok_watch_state.update(data)
+        users = []
+        seen = set()
+        for raw_user in _tiktok_watch_state.get("users", []):
+            user = _normalize_tiktok_watch_user_entry(raw_user)
+            username_lc = user.get("username", "").lower()
+            if not username_lc or username_lc in seen:
+                continue
+            seen.add(username_lc)
+            users.append(user)
+        _tiktok_watch_state["users"] = users
+        _tiktok_watch_state["poll_interval"] = _tiktok_watch_interval()
     except Exception as e:
-        log.error("[TikTokWatch] Load state failed: %s", e)
+        log.error("[TikTokWatch] Lỗi tải trạng thái: %s", e)
 
 def _save_tiktok_watch_state():
     try:
@@ -4720,7 +4870,7 @@ def _save_tiktok_watch_state():
             json.dump(_tiktok_watch_state, f, ensure_ascii=False)
         os.replace(tmp, _TIKTOK_WATCH_FILE)
     except Exception as e:
-        log.error("[TikTokWatch] Save state failed: %s", e)
+        log.error("[TikTokWatch] Lỗi lưu trạng thái: %s", e)
 
 def _normalize_tiktok_username(username):
     username = (username or "").strip()
@@ -4791,13 +4941,13 @@ def _ping_tiktok_cookies(path):
         if "\"uid\"" in body or "\"sec_uid\"" in body or "\"user_id\"" in body:
             return True, "HTTP %s OK" % http_code
         if "\"status_code\":8" in body or "not login" in body.lower() or "please log in" in body.lower():
-            return False, "TikTok tra ve 'chua dang nhap' — cookies da het han"
+            return False, "TikTok trả về trạng thái 'chưa đăng nhập' — cookies đã hết hạn"
         if http_code in ("401", "403"):
-            return False, "TikTok tu choi (HTTP %s) — cookies da bi thu hoi" % http_code
+            return False, "TikTok từ chối (HTTP %s) — cookies đã bị thu hồi" % http_code
         # Khong xac dinh duoc — coi nhu valid de khong false-alarm
-        return True, "HTTP %s (ko ro)" % http_code
+        return True, "HTTP %s (không rõ)" % http_code
     except Exception as e:
-        return True, "ko check duoc (%s)" % str(e)[:80]
+        return True, "Không kiểm tra được (%s)" % str(e)[:80]
 
 def _check_cookies_status(force=False):
     """Tra ve dict { status, message, checked_at } cua cookies TikTok.
@@ -4805,7 +4955,7 @@ def _check_cookies_status(force=False):
     path = _tiktok_cookies_path()
     now = time.time()
     if not os.path.exists(path):
-        _tiktok_cookies_cache.update({"status": "missing", "message": "Chua co cookies.txt o WebDAV root", "checked_at": now, "file_mtime": 0})
+        _tiktok_cookies_cache.update({"status": "missing", "message": "Chưa có cookies.txt ở thư mục gốc WebDAV", "checked_at": now, "file_mtime": 0})
         return dict(_tiktok_cookies_cache)
     try:
         mtime = os.path.getmtime(path)
@@ -4816,10 +4966,10 @@ def _check_cookies_status(force=False):
         return dict(_tiktok_cookies_cache)
     expiry, sessionid = _parse_cookies_sessionid_expiry(path)
     if not sessionid:
-        _tiktok_cookies_cache.update({"status": "missing", "message": "cookies.txt thieu sessionid TikTok", "checked_at": now, "file_mtime": mtime})
+        _tiktok_cookies_cache.update({"status": "missing", "message": "cookies.txt thiếu sessionid TikTok", "checked_at": now, "file_mtime": mtime})
         return dict(_tiktok_cookies_cache)
     if expiry and expiry < now:
-        _tiktok_cookies_cache.update({"status": "expired", "message": "Cookie sessionid het han luc %s — vui long xuat lai cookies.txt" % datetime.datetime.fromtimestamp(expiry).strftime("%d/%m/%Y %H:%M"), "checked_at": now, "file_mtime": mtime})
+        _tiktok_cookies_cache.update({"status": "expired", "message": "Cookie sessionid hết hạn lúc %s. Vui lòng xuất lại cookies.txt." % datetime.datetime.fromtimestamp(expiry).strftime("%d/%m/%Y %H:%M"), "checked_at": now, "file_mtime": mtime})
         return dict(_tiktok_cookies_cache)
     ok, detail = _ping_tiktok_cookies(path)
     if ok:
@@ -4894,6 +5044,86 @@ def _extract_tiktok_live_flv_urls(html):
         return 9
     return sorted(flv_urls, key=_flv_rank)
 
+def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
+    """Kiem tra URL stream TikTok con song bang HTTP nhe.
+
+    Watcher khong dung ffprobe de quyet dinh user dang live vi ffmpeg/ffprobe
+    3.2 tren NAS co the khong doc duoc enhanced FLV/codec moi, gay false-negative.
+    Viec co remux duoc sang MP4 hay khong van do /api/livestream/record xu ly.
+    """
+    if not stream_url:
+        return False, "Thiếu URL stream"
+    ua = user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    stream_lower = stream_url.lower()
+    common = [
+        "--http1.1",
+        "--max-time", "8",
+        "--connect-timeout", "5",
+        "-A", ua,
+        "-H", "Referer: https://www.tiktok.com/",
+    ]
+    use_cookies = bool(cookies_path and os.path.exists(cookies_path) and "tiktokcdn" not in stream_lower)
+
+    def _run_probe(extra_args):
+        cmd = ["curl", "-s", "-L"] + common + extra_args + [
+            "-o", "/dev/null",
+            "-w", "%{http_code}|%{content_type}|%{size_download}",
+        ]
+        if use_cookies:
+            cmd.extend(["-b", cookies_path])
+        cmd.append(stream_url)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+        out = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
+        parts = out.split("|")
+        http_code = parts[0] if len(parts) > 0 else "0"
+        content_type = (parts[1] if len(parts) > 1 else "").lower()
+        try:
+            size = int(float(parts[2])) if len(parts) > 2 and parts[2] else 0
+        except Exception:
+            size = 0
+        return http_code, content_type, size
+
+    def _content_type_ok(content_type):
+        if not content_type:
+            return True
+        accepted = (
+            "video/x-flv",
+            "video/flv",
+            "flv-application",
+            "application/octet-stream",
+            "video/mp4",
+        )
+        return any(token in content_type for token in accepted)
+
+    try:
+        http_code, content_type, _size = _run_probe(["-I"])
+        if http_code.startswith(("2", "3")) and _content_type_ok(content_type):
+            return True, ""
+        if http_code in ("401", "403"):
+            return False, "TikTok từ chối stream (HTTP %s), hãy kiểm tra cookies.txt" % http_code
+        if http_code == "404":
+            return False, "URL stream đã hết hạn hoặc live vừa kết thúc"
+        if http_code == "429":
+            return False, "TikTok giới hạn tốc độ, thử lại ở chu kỳ sau"
+
+        # Mot so CDN khong tra HEAD tot. Tai thu toi da 8s vao /dev/null de xem
+        # co byte video thuc su khong, khong ghi file tam xuong HDD.
+        http_code, content_type, size = _run_probe([
+            "--speed-time", "5",
+            "--speed-limit", "128",
+        ])
+        if not http_code.startswith(("4", "5")) and size >= 256 and _content_type_ok(content_type):
+            return True, ""
+        if http_code in ("401", "403"):
+            return False, "TikTok từ chối stream (HTTP %s), hãy kiểm tra cookies.txt" % http_code
+        if http_code == "404":
+            return False, "URL stream đã hết hạn hoặc live vừa kết thúc"
+        if http_code == "429":
+            return False, "TikTok giới hạn tốc độ, thử lại ở chu kỳ sau"
+        return False, "URL stream đã hết hạn hoặc không kiểm tra được"
+    except Exception as e:
+        return False, "Không kiểm tra được URL stream: %s" % normalize_vietnamese_message(str(e))[:100]
+
 def _check_tiktok_user_live(username):
     # yt-dlp --simulate hay bi TikTok bot-block tu IP datacenter/NAS nen tin hieu
     # khong dang tin cay. Dung cung phuong phap nhu /api/livestream/record:
@@ -4930,15 +5160,20 @@ def _check_tiktok_user_live(username):
             html = raw
             http_code = "?"
         if not html.strip():
-            return False, "tiktok empty (HTTP %s)" % http_code
-        # Chi coi la live khi stream URL probe duoc video codec that. HTML TikTok
-        # co the chua FLV cu/stale, neu chi regex se false-positive hang loat.
+            return False, "TikTok trả về trang rỗng (HTTP %s)" % http_code
+        # Chi coi la live khi URL stream con phan hoi thuc su. Khong bat ffprobe
+        # doc duoc codec tai day vi watcher co the false-negative voi TikTok FLV moi.
         flv_urls = _extract_tiktok_live_flv_urls(html)
         for candidate in flv_urls[:3]:
-            if _direct_flv_has_remuxable_video(candidate, cookies_path, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"):
+            ok, detail = _tiktok_stream_url_seems_live(
+                candidate,
+                cookies_path,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            )
+            if ok:
                 return True, ""
         if flv_urls:
-            return False, "stream URL stale/khong probe duoc"
+            return False, normalize_vietnamese_message(detail or "URL stream đã hết hạn hoặc không kiểm tra được")
         lowered = html.lower()
         offline_signals = (
             "live has ended",
@@ -4954,56 +5189,57 @@ def _check_tiktok_user_live(username):
         for sig in offline_signals:
             if sig in lowered:
                 return False, "offline"
-        return False, "no live stream detected"
+        return False, "Không phát hiện livestream đang chạy."
     except Exception as e:
-        return False, str(e)
+        return False, "Không kiểm tra được livestream: %s" % normalize_vietnamese_message(str(e))[:120]
 
 def _start_tiktok_watch_record(username):
     live_url = "https://www.tiktok.com/@%s/live" % username
-    payload = json.dumps({"url": live_url, "quality": "best", "watch_username": username}).encode("utf-8")
-    req = urllib.request.Request(
-        "http://127.0.0.1:5050/api/livestream/record",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Basic " + base64.b64encode(("%s:%s" % (WEBDAV_USER, WEBDAV_PASS)).encode()).decode()
-        },
-        method="POST"
-    )
+    payload = {"url": live_url, "quality": "best", "watch_username": username}
     try:
-        # /api/livestream/record bay gio chi lam HEAD check (~3s) roi tra ve nhanh,
-        # nen 45s la qua du va chiu duoc neu re-scrape FLV URL them mot lan.
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            data = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+        # Gọi trực tiếp handler trong cùng process NAS. Không phụ thuộc app Android,
+        # không phụ thuộc WorkManager, và không tự gọi HTTP localhost gây nghẽn queue.
+        view_func = getattr(api_livestream_record, "__wrapped__", api_livestream_record)
+        with app.test_request_context(
+            "/api/livestream/record",
+            method="POST",
+            data=json.dumps(payload),
+            content_type="application/json",
+        ):
+            result = view_func()
+        status_code = 200
+        response_obj = result
+        if isinstance(result, tuple):
+            response_obj = result[0]
+            if len(result) > 1 and isinstance(result[1], int):
+                status_code = result[1]
+        data = {}
+        if hasattr(response_obj, "get_json"):
+            data = response_obj.get_json(silent=True) or {}
+        if 200 <= status_code < 300:
             return data.get("job_id", ""), data.get("message", "")
-    except urllib.error.HTTPError as e:
-        # Parse JSON body de lay message ngan gon thay vi log nguyen JSON tho.
-        try:
-            raw = e.read().decode("utf-8", errors="ignore")
-            body_json = json.loads(raw) if raw else {}
-            msg = body_json.get("error") or body_json.get("detail") or e.reason or "HTTP %d" % e.code
-        except Exception:
-            msg = e.reason or "HTTP %d" % e.code
-        # Cap chieu dai de tranh tran UI; full text van xem duoc qua dialog chi tiet.
-        return "", str(msg)[:200]
+        return "", normalize_vietnamese_message(data.get("error") or data.get("detail") or ("HTTP %d" % status_code))[:200]
     except Exception as e:
-        # urllib socket timeout / connection error -> message ngan, de hieu.
-        text = str(e).lower()
-        if "timed out" in text or "timeout" in text:
-            return "", "Kết nối NAS bị quá hạn (>45s)"
-        if "refused" in text:
-            return "", "API NAS từ chối kết nối"
-        return "", str(e)[:160]
+        return "", "NAS không khởi tạo được tác vụ ghi livestream: %s" % normalize_vietnamese_message(str(e))[:120]
 
 def _tiktok_live_watchdog():
     _load_tiktok_watch_state()
+    _tiktok_watch_runtime.update({
+        "running": True,
+        "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "last_error": "",
+        "last_summary": "Đã khởi động watcher TikTok trên NAS.",
+    })
+    log.info("[TikTokWatch] Watcher TikTok chạy trên NAS, không phụ thuộc app Android.")
     while True:
         try:
-            time.sleep(int(_tiktok_watch_state.get("poll_interval", 60)))
             with _tiktok_watch_lock:
-                users_snapshot = list(_tiktok_watch_state.get("users", []))
+                users_snapshot = [dict(u) for u in _tiktok_watch_state.get("users", [])]
                 excluded = _is_tiktok_watch_excluded()
             changed = False
+            checked_count = 0
+            started_count = 0
+            recording_count = 0
             for user in users_snapshot:
                 username = user.get("username", "")
                 if not username:
@@ -5019,9 +5255,11 @@ def _tiktok_live_watchdog():
                     user["status"] = "recording"
                     user["job_id"] = existing_job
                     user["last_check"] = now_str
+                    recording_count += 1
                     changed = True
                     continue
                 is_live, err = _check_tiktok_user_live(username)
+                checked_count += 1
                 user["last_check"] = now_str
                 if is_live:
                     # Cooldown 90s: chan dispatch record lan 2 khi lan 1 chua xong
@@ -5030,7 +5268,7 @@ def _tiktok_live_watchdog():
                     last_started = _tiktok_watch_recent_starts.get(uname_lc, 0)
                     if time.time() - last_started < 90:
                         user["status"] = "starting"
-                        user["last_error"] = "Dang khoi tao luong ghi..."
+                        user["last_error"] = "Đang khởi tạo luồng ghi..."
                         changed = True
                         continue
                     _tiktok_watch_recent_starts[uname_lc] = time.time()
@@ -5039,24 +5277,41 @@ def _tiktok_live_watchdog():
                     user["job_id"] = job_id
                     user["last_error"] = "" if job_id else msg
                     if job_id:
+                        started_count += 1
+                        recording_count += 1
                         user["last_live"] = now_str
                         user["last_live_verified"] = True
+                        log.info("[TikTokWatch] @%s đang live, NAS đã tự bắt đầu ghi job %s.", username, job_id)
                     else:
                         # Start that bai -> reset cooldown de retry o tick sau
                         _tiktok_watch_recent_starts.pop(uname_lc, None)
+                        log.warning("[TikTokWatch] @%s đang live nhưng không bắt đầu ghi được: %s", username, msg)
                 else:
                     user["status"] = "watching"
                     user["job_id"] = ""
-                    user["last_error"] = "" if err == "offline" else err
+                    user["last_error"] = "" if err == "offline" else normalize_vietnamese_message(err)
                 changed = True
             if changed:
                 with _tiktok_watch_lock:
                     _tiktok_watch_state["users"] = users_snapshot
                     _save_tiktok_watch_state()
+            _tiktok_watch_runtime.update({
+                "running": True,
+                "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "last_error": "",
+                "last_summary": "Đã kiểm tra %d user, %d đang ghi, %d vừa bắt đầu." % (checked_count, recording_count, started_count),
+                "loop_count": int(_tiktok_watch_runtime.get("loop_count", 0)) + 1,
+            })
         except Exception as e:
-            log.error("[TikTokWatch] Watchdog error: %s", e)
-
-threading.Thread(target=_tiktok_live_watchdog, daemon=True).start()
+            _tiktok_watch_runtime.update({
+                "running": False,
+                "last_error": normalize_vietnamese_message(str(e))[:200],
+                "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            })
+            log.error("[TikTokWatch] Lỗi watchdog: %s", e)
+        wait_seconds = _tiktok_watch_interval()
+        _tiktok_watch_wake.wait(wait_seconds)
+        _tiktok_watch_wake.clear()
 
 @app.route("/api/tiktok/live_watch", methods=["GET"])
 @requires_auth
@@ -5091,6 +5346,8 @@ def api_tiktok_live_watch_get():
     cookies = _check_cookies_status()
     resp["cookies_status"] = cookies.get("status", "unknown")
     resp["cookies_message"] = cookies.get("message", "")
+    resp["daemon"] = dict(_tiktok_watch_runtime)
+    resp["poll_interval"] = _tiktok_watch_interval()
     return jsonify(resp)
 
 @app.route("/api/tiktok/live_watch/add", methods=["POST"])
@@ -5099,7 +5356,7 @@ def api_tiktok_live_watch_add():
     body = request.get_json(force=True) or {}
     username = _normalize_tiktok_username(body.get("username", ""))
     if not username:
-        return jsonify({"error": "Username TikTok khong hop le"}), 400
+        return jsonify({"error": "Username TikTok không hợp lệ"}), 400
     with _tiktok_watch_lock:
         users = _tiktok_watch_state.setdefault("users", [])
         if not any(u.get("username", "").lower() == username.lower() for u in users):
@@ -5113,6 +5370,7 @@ def api_tiktok_live_watch_add():
                 "job_id": ""
             })
         _save_tiktok_watch_state()
+        _tiktok_watch_wake.set()
         return jsonify(_tiktok_watch_state)
 
 @app.route("/api/tiktok/live_watch/remove", methods=["POST"])
@@ -5126,6 +5384,7 @@ def api_tiktok_live_watch_remove():
             if u.get("username", "").lower() != username.lower()
         ]
         _save_tiktok_watch_state()
+        _tiktok_watch_wake.set()
         return jsonify(_tiktok_watch_state)
 
 @app.route("/api/tiktok/live_watch/settings", methods=["POST"])
@@ -5140,6 +5399,7 @@ def api_tiktok_live_watch_settings():
         if body.get("exclude_end"):
             _tiktok_watch_state["exclude_end"] = str(body.get("exclude_end"))[:5]
         _save_tiktok_watch_state()
+        _tiktok_watch_wake.set()
         return jsonify(_tiktok_watch_state)
 
 
@@ -5158,13 +5418,13 @@ def api_livestream_record():
         watch_username = body.get("watch_username", "").strip()
 
         if not live_url:
-            return jsonify({"error": "Thieu URL livestream"}), 400
+            return jsonify({"error": "Thiếu URL livestream"}), 400
 
         # Kiem tra yt-dlp
         ytdlp_bin = _find_ytdlp_bin()
         if not ytdlp_bin:
             return jsonify({
-                "error": "yt-dlp chua duoc cai dat tren NAS",
+                "error": "yt-dlp chưa được cài đặt trên NAS",
                 "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
             }), 503
 
@@ -5195,20 +5455,20 @@ def api_livestream_record():
             load1 = 0.0
         hw_reason = ""
         if cpu_pct > 85:
-            hw_reason = "CPU %.0f%% qua cao" % cpu_pct
+            hw_reason = "CPU %.0f%% quá cao" % cpu_pct
         elif mem_free_mb < 200:
-            hw_reason = "RAM trong chi con %.0f MB" % mem_free_mb
+            hw_reason = "RAM trống chỉ còn %.0f MB" % mem_free_mb
         elif mem_pct > 90:
-            hw_reason = "RAM dung %.0f%%" % mem_pct
+            hw_reason = "RAM đang dùng %.0f%%" % mem_pct
         elif load1 > cores * 1.5:
-            hw_reason = "Load average %.2f vuot %.1f (cores x 1.5)" % (load1, cores * 1.5)
+            hw_reason = "Load average %.2f vượt %.1f (cores x 1.5)" % (load1, cores * 1.5)
         # Cap an toan tuyet doi: 16 luong song song, tranh truong hop psutil tra
         # so do sai khien NAS bi tham lam vo han.
         if active_count >= 16:
-            hw_reason = "Da co %d luong ghi dong thoi (cap an toan)" % active_count
+            hw_reason = "Đã có %d luồng ghi đồng thời (ngưỡng an toàn)" % active_count
         if hw_reason:
             return jsonify({
-                "error": "Khong the bat dau luong moi: %s" % hw_reason,
+                "error": "Không thể bắt đầu luồng mới: %s" % hw_reason,
                 "active_count": active_count,
                 "cpu_pct": round(cpu_pct, 1),
                 "mem_free_mb": int(mem_free_mb),
@@ -5221,7 +5481,7 @@ def api_livestream_record():
             free_gb = disk_usage.free / (1024 ** 3)
             if free_gb < 2.0:
                 return jsonify({
-                    "error": "HDD con qua it dung luong (%.1f GB). Can it nhat 2 GB de ghi livestream." % free_gb
+                    "error": "HDD còn quá ít dung lượng (%.1f GB). Cần ít nhất 2 GB để ghi livestream." % free_gb
                 }), 507
         except Exception:
             pass
@@ -5328,7 +5588,7 @@ def api_livestream_record():
                     if "_sd.flv" in u:
                         return 2
                     return 9
-                log.info("[Livestream] TikTok HTML fallback: bat duoc %d FLV candidate", len(flv_urls))
+                log.info("[Livestream] TikTok HTML fallback: phát hiện %d URL FLV ứng viên", len(flv_urls))
                 for candidate in sorted(flv_urls, key=_flv_rank):
                     log.info("[Livestream] TikTok HTML fallback: probe candidate %s", candidate[:180])
                     if _direct_flv_has_remuxable_video(candidate, cookies_path, tiktok_user_agent):
@@ -5338,12 +5598,12 @@ def api_livestream_record():
                             _LIVESTREAM_DIR,
                             "%s_%s_tiktok.mp4" % (platform, timestamp_str)
                         )
-                        log.info("[Livestream] TikTok HTML fallback: dung FLV H264 remuxable -> MP4")
+                        log.info("[Livestream] TikTok HTML fallback: dùng FLV H264 có thể remux sang MP4")
                         break
                 if not direct_tiktok_flv and flv_urls:
-                    log.warning("[Livestream] TikTok HTML fallback: co FLV URL nhung khong probe duoc codec remuxable")
+                    log.warning("[Livestream] TikTok HTML fallback: có URL FLV nhưng không kiểm tra được codec có thể remux")
             except Exception as e:
-                log.warning("[Livestream] TikTok HTML fallback loi: %s", e)
+                log.warning("[Livestream] Lỗi TikTok HTML fallback: %s", e)
         # --------------------------------
 
         if direct_tiktok_flv:
@@ -5514,13 +5774,13 @@ def api_livestream_record():
             cur = conn.cursor()
             cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                         ("INFO", "Livestream",
-                         "Bat dau ghi livestream %s (PID=%d): %s" % (platform, proc.pid, live_url[:120])))
+                         "Bắt đầu ghi livestream %s (PID=%d): %s" % (platform, proc.pid, live_url[:120])))
             conn.commit()
             conn.close()
         except Exception:
             pass
 
-        log.info("[Livestream] Bat dau ghi %s (PID %d) → %s", platform, proc.pid, _LIVESTREAM_DIR)
+        log.info("[Livestream] Bắt đầu ghi %s (PID %d) → %s", platform, proc.pid, _LIVESTREAM_DIR)
 
         return jsonify({
             "job_id": job_id,
@@ -5528,12 +5788,12 @@ def api_livestream_record():
             "platform": platform,
             "save_folder": "Livestream/",
             "status": "recording",
-            "message": "Dang ghi hinh livestream %s. Video se luu vao thu muc Livestream/." % platform.upper()
+            "message": "Đang ghi hình livestream %s. Video sẽ được lưu vào thư mục Livestream/." % platform.upper()
         })
 
     except Exception as e:
-        log.error("[Livestream] Record error: %s", e)
-        return jsonify({"error": str(e)}), 500
+        log.error("[Livestream] Lỗi bắt đầu ghi hình: %s", e)
+        return jsonify({"error": "Không bắt đầu được ghi livestream: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 @app.route("/api/livestream/status", methods=["GET"])
@@ -5601,7 +5861,7 @@ def api_livestream_status():
             if status == "error":
                 error_reason = _livestream_error_from_log(info)
                 if not error_reason:
-                    error_reason = "Không thể phân tích luồng stream/File hỏng."
+                    error_reason = "Không thể phân tích luồng stream hoặc tệp bị hỏng."
             info["error_reason"] = error_reason
 
             result_jobs.append({
@@ -5659,20 +5919,20 @@ def api_livestream_stop():
                             info["status"] = "stopped"
                         except Exception:
                             pass
-            return jsonify({"message": "Da gui lenh dung tat ca livestream."})
+            return jsonify({"message": "Đã gửi lệnh dừng tất cả livestream."})
 
         with _livestream_lock:
             info = _livestream_jobs.get(job_id)
 
         if not info:
-            return jsonify({"error": "Khong tim thay job: %s" % job_id}), 404
+            return jsonify({"error": "Không tìm thấy tác vụ: %s" % job_id}), 404
 
         pid = info.get("pid")
         try:
             os.kill(pid, signal.SIGTERM)  # SIGTERM de yt-dlp finalize file
             info["status"] = "stopped"
             info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            log.info("[Livestream] Da dung job %s (PID %d) theo yeu cau.", job_id, pid)
+            log.info("[Livestream] Đã dừng tác vụ %s (PID %d) theo yêu cầu.", job_id, pid)
 
             # Ghi log
             try:
@@ -5680,7 +5940,7 @@ def api_livestream_stop():
                 cur = conn.cursor()
                 cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                             ("INFO", "Livestream",
-                             "Da dung ghi livestream %s (PID=%d) theo yeu cau nguoi dung." % (info.get("platform", ""), pid)))
+                             "Đã dừng ghi livestream %s (PID=%d) theo yêu cầu người dùng." % (info.get("platform", ""), pid)))
                 conn.commit()
                 conn.close()
             except Exception:
@@ -5689,16 +5949,16 @@ def api_livestream_stop():
             return jsonify({
                 "job_id": job_id,
                 "status": "stopped",
-                "message": "Da dung ghi hinh. File video se duoc yt-dlp finalize trong vai giay."
+                "message": "Đã dừng ghi hình. Tệp video sẽ được yt-dlp hoàn tất trong vài giây."
             })
         except ProcessLookupError:
             info["status"] = "finished"
-            return jsonify({"job_id": job_id, "status": "finished", "message": "Process da ket thuc tu truoc."})
+            return jsonify({"job_id": job_id, "status": "finished", "message": "Tiến trình đã kết thúc trước đó."})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return jsonify({"error": "Không dừng được livestream: %s" % normalize_vietnamese_message(str(e))}), 500
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Không xử lý được yêu cầu dừng livestream: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 # ============ SOCIAL EXTRACTOR (YT-DLP) ============
@@ -5727,7 +5987,7 @@ def api_ytdlp_download():
         quality = body.get("quality", "best")
 
         if not video_url:
-            return jsonify({"error": "Thieu URL video"}), 400
+            return jsonify({"error": "Thiếu URL video"}), 400
 
         # Kiem tra yt-dlp co san khong
         ytdlp_bin = None
@@ -5743,7 +6003,7 @@ def api_ytdlp_download():
 
         if not ytdlp_bin:
             return jsonify({
-                "error": "yt-dlp chua duoc cai dat. Chay: pip3 install yt-dlp",
+                "error": "yt-dlp chưa được cài đặt. Chạy: pip3 install yt-dlp",
                 "install_hint": "sudo pip3 install yt-dlp"
             }), 503
 
@@ -5826,7 +6086,7 @@ def api_ytdlp_download():
             cur = conn.cursor()
             cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                         ("INFO", "SocialExtract",
-                         "Da nhan lenh yt-dlp PID=%d cho URL: %s" % (proc.pid, video_url[:100])))
+                         "Đã nhận lệnh yt-dlp PID=%d cho URL: %s" % (proc.pid, video_url[:100])))
             conn.commit()
             conn.close()
         except Exception:
@@ -5836,11 +6096,11 @@ def api_ytdlp_download():
             "job_id": job_id,
             "pid": proc.pid,
             "save_folder": dest_dir,
-            "message": "NAS da nhan lenh tai video. Video se xuat hien trong %s sau vai phut." % save_folder
+            "message": "NAS đã nhận lệnh tải video. Video sẽ xuất hiện trong %s sau vài phút." % save_folder
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Không bắt đầu được tải video: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
 @app.route("/api/ytdlp/status", methods=["GET"])
@@ -5877,7 +6137,7 @@ if __name__ == "__main__":
     # SIGTERM/SIGINT: Graceful shutdown - kill tat ca child processes truoc khi thoat
     def _graceful_shutdown(signum, frame):
         """Dung server sach, khong de lai zombie."""
-        log.info("[Shutdown] Nhan tin hieu %s, dang don dep...", signum)
+        log.info("[Shutdown] Nhận tín hiệu %s, đang dọn dẹp...", signum)
         # Kill tat ca child process cua nhom tien trinh nay
         try:
             import os as _os
@@ -5920,13 +6180,13 @@ if __name__ == "__main__":
     log.info("=" * 50)
     log.info("NAS API Server - Chainedbox L1 Pro")
     log.info("Port: 5050 (API) | 5051 (WebSocket)")
-    log.info("Bind: %s (Ho tro LAN va Tailscale)", bind_host)
-    log.info("User: %s", WEBDAV_USER if WEBDAV_USER else "(chua cau hinh)")
+    log.info("Bind: %s (hỗ trợ LAN và Tailscale)", bind_host)
+    log.info("User: %s", WEBDAV_USER if WEBDAV_USER else "(chưa cấu hình)")
     log.info("PID: %d (file: %s)", os.getpid(), PID_FILE)
     if _lan_whitelist or _lan_subnets:
         log.info("LAN Whitelist: %d IP, %d subnet", len(_lan_whitelist), len(_lan_subnets))
     else:
-        log.info("LAN Whitelist: (trong - chi truy cap qua Tailscale hoac dang nhap)")
+        log.info("LAN Whitelist: (trống - chỉ truy cập qua Tailscale hoặc đăng nhập)")
     log.info("=" * 50)
     
     # Thread giam sat log WebDAV de phat hien scan password
@@ -5938,15 +6198,20 @@ if __name__ == "__main__":
     
     # Thread tao thumbnail tu dong (Synology-style)
     threading.Thread(target=_thumbnail_generator, daemon=True).start()
-    log.info("[Thumbnail] Background generator da khoi dong.")
+    log.info("[Thumbnail] Trình tạo ảnh thu nhỏ nền đã khởi động.")
     
     # Thread giam sat Hanh vi He thong Toan Dien (Mat HDD, Mat LAN IP, Chet Service)
     threading.Thread(target=_system_health_watchdog, daemon=True).start()
-    log.info("[Watchdog] System Health Watchdog da khoi dong (tu dong xu ly loi mang/o cung).")
+    log.info("[Watchdog] Trình giám sát sức khỏe hệ thống đã khởi động (tự động xử lý lỗi mạng/ổ cứng).")
 
     # Thread cron don dep Thung rac + phat hien canh bao + kick AI ban dem
     threading.Thread(target=_cron_worker, daemon=True).start()
-    log.info("[Cron] Auto-cleanup + Proactive Alert worker da khoi dong.")
+    log.info("[Cron] Tác vụ tự động dọn dẹp và cảnh báo chủ động đã khởi động.")
+
+    # Thread dò TikTok live chạy hoàn toàn trên NAS. App Android chỉ cấu hình và
+    # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
+    threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
+    log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
     # ============ DON PORT TRUOC KHI BIND (FIX ZOMBIE PROCESS GIU PORT) ============
     import socket as _socket
     def _force_free_port(port):
@@ -5957,7 +6222,7 @@ if __name__ == "__main__":
             test_sock.bind(('0.0.0.0', port))
             test_sock.close()
         except OSError:
-            log.warning("[Port %d] Dang bi chiem, thu giai phong...", port)
+            log.warning("[Port %d] Đang bị chiếm, thử giải phóng...", port)
             try:
                 subprocess.run(['fuser', '-k', '%d/tcp' % port], stderr=subprocess.DEVNULL)
                 time.sleep(2)
@@ -5971,7 +6236,7 @@ if __name__ == "__main__":
                         subprocess.run(['kill', '-9', pid], stderr=subprocess.DEVNULL)
                 time.sleep(1)
             except Exception: pass
-            log.info("[Port %d] Da giai phong.", port)
+            log.info("[Port %d] Đã giải phóng.", port)
 
     _force_free_port(5050)
     _force_free_port(5051)
@@ -5982,7 +6247,7 @@ if __name__ == "__main__":
             from waitress import serve
             serve(app, host=bind_host, port=5050, threads=4, connection_limit=50)
         except ImportError:
-            log.warning("Thieu thu vien Waitress! Vui long chay: pip3 install waitress")
+            log.warning("Thiếu thư viện Waitress. Vui lòng chạy: pip3 install waitress")
             app.run(host=bind_host, port=5050, debug=False, threaded=True)
             
     threading.Thread(target=run_flask, daemon=True).start()
@@ -5999,5 +6264,5 @@ if __name__ == "__main__":
     _ws_sock.setblocking(False)
     ws_server = tornado.httpserver.HTTPServer(ws_app)
     ws_server.add_socket(_ws_sock)
-    log.info("Server da khoi dong thanh cong!")
+    log.info("Server đã khởi động thành công!")
     main_loop.start()

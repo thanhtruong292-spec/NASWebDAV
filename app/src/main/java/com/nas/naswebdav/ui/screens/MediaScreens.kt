@@ -2190,7 +2190,7 @@ private fun buildExtractorJs(): String = """
         NasExtractor.onVideoFound(found);
     } else {
         var counts = 'video=' + document.querySelectorAll('video').length;
-        NasExtractor.onStatusUpdate('Chua tim thay (' + counts + ')');
+        NasExtractor.onStatusUpdate('Chưa tìm thấy (' + counts + ')');
     }
 })();
 """.trimIndent()

@@ -170,7 +170,7 @@ class LivestreamMonitorWorker(
         try {
             androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(notifId, buildForegroundInfo(
                 notifId = notifId,
-                title   = "$platformIcon Đang ghi $platformLabel Live",
+                title   = "$platformIcon Đang ghi livestream $platformLabel",
                 content = "Đang kết nối..."
             ).notification)
         } catch (e: Exception) {
@@ -178,7 +178,7 @@ class LivestreamMonitorWorker(
             // Fallback to updating notification normally.
             try {
                 androidx.core.app.NotificationManagerCompat.from(applicationContext)
-                    .notify(notifId, buildForegroundInfo(notifId, "$platformIcon Đang ghi $platformLabel Live", "Đang kết nối...").notification)
+                    .notify(notifId, buildForegroundInfo(notifId, "$platformIcon Đang ghi livestream $platformLabel", "Đang kết nối...").notification)
             } catch (_: Exception) {}
         }
 
@@ -249,7 +249,7 @@ class LivestreamMonitorWorker(
                     // Cập nhật notification qua NotificationManager để bypass giới hạn setForeground throttling của Android 12+
                     val foregroundInfo = buildForegroundInfo(
                         notifId = notifId,
-                        title   = "$platformIcon Đang ghi $platformLabel Live",
+                        title   = "$platformIcon Đang ghi livestream $platformLabel",
                         content = contentLine,
                         subText = if (outFile.isNotEmpty()) outFile else null
                     )
@@ -301,11 +301,11 @@ class LivestreamMonitorWorker(
         clearJobNotifications(applicationContext, jobId)
 
         if (finalStatus == "error") {
-            val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được Video / Nguồn livestream rỗng hoặc lỗi yt-dlp."
+            val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được video. Nguồn livestream rỗng hoặc yt-dlp báo lỗi."
             showCompletionNotification(notifId, platformLabel, "⚠️", msg)
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to safeDataText(finalErrorReason, 512)))
         } else {
-            showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã lưu vào thư mục Livestream/ trên NAS")
+            showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã được lưu vào thư mục Livestream/ trên NAS")
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
         }
     }

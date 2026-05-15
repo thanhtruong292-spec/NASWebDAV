@@ -73,7 +73,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                         Log.d(TAG, "Proxy timed out, shutting down")
                         break
                     } catch (e: Exception) {
-                        if (!server.isClosed) Log.w(TAG, "Accept error: ${e.message}")
+                        if (!server.isClosed) Log.w(TAG, "Lỗi nhận kết nối: ${e.message}")
                         break
                     }
                 }
@@ -193,7 +193,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "handleRequest error: ${e.message}")
+            Log.w(TAG, "Lỗi xử lý yêu cầu: ${e.message}")
         }
     }
 

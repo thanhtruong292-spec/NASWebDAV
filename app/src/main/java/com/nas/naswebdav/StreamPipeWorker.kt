@@ -284,7 +284,7 @@ class StreamPipeWorker(
             return@withContext Result.success()
 
         } catch (e: Exception) {
-            android.util.Log.e(TAG, "Stream pipe error", e)
+            android.util.Log.e(TAG, "Lỗi truyền stream", e)
             val errMsg = e.message?.take(100) ?: "Lỗi không xác định"
 
             setProgress(workDataOf(

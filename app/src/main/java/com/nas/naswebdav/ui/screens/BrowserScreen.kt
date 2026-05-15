@@ -2251,7 +2251,7 @@ class SearchHistoryManager(context: android.content.Context) {
             list
         } catch(e: Exception) {
             // BUG FIX P1#9: Log lỗi thay vì silent fail → mất data
-            android.util.Log.e("SearchHistory", "Failed to parse history: ${e.message}")
+            android.util.Log.e("SearchHistory", "Không đọc được lịch sử tìm kiếm: ${e.message}")
             emptyList()
         }
     }
