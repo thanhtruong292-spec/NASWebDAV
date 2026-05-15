@@ -1309,11 +1309,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 // Hiển thị Dialog báo cho User
                 withContext(Dispatchers.Main) {
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                    commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào kho lưu ngầm (Offline Queue)!"
+                    commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào hàng đợi ngoại tuyến."
                     showCommonDialog = true
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi khi lưu Offline Queue: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "Lỗi khi lưu hàng đợi ngoại tuyến: ${e.message}" }
             }
         }
     }
@@ -1345,7 +1345,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 withContext(Dispatchers.Main) { fileList = oldList }
                 
                 // TÍNH NĂNG 5.I: Bẫy lỗi và tống vào Hàng Đợi Offline
-                repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào Offline Queue: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
                 val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
@@ -1474,7 +1474,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 // Bỏ refresh()
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { fileList = oldList }
-                repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, Offline Queue: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
                 val targetUrl = webDavManager.currentBaseUrl + file.name
                 enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
             }
@@ -1505,7 +1505,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 // Không refresh() để chống khựng giao diện
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { fileList = oldList } // Hoàn nguyên tên cũ
-                repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, Offline Queue: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
                 enqueueOfflineAction(context, "RENAME", file.path, newUrl)
             }
         }
@@ -1520,7 +1520,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.addSystemLog("SUCCESS", "File Ops", "Đã tạo thư mục mới: '$folderName'")
                 withContext(Dispatchers.Main) { refresh() } // Tải lại danh sách sau khi tạo thành công
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, Offline Queue: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
                 val newFolderUrl = currentUrl + folderName + "/"
                 enqueueOfflineAction(context, "CREATE_FOLDER", newFolderUrl)
             } finally {
@@ -1613,7 +1613,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun connect(urlList: List<String>, user: String, pass: String, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
         loginJob?.cancel()
         loginJob = viewModelScope.launch {
-            var lastErrorDetail = "Unknown"
+            var lastErrorDetail = "Không rõ"
 
             withContext(Dispatchers.Main) {
                 isLoading = true
@@ -1655,7 +1655,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         // BƯỚC 1: XÁC THỰC BẰNG CHÍNH WEBDAV (CỔNG CHÍNH 8822/80)
                         val pingResult = webDavManager.checkPingServer()
                         if (pingResult == null || pingResult < 0) {
-                            errorDetails.add("$activeUrl: WebDAV timeout/unauthorized")
+                            errorDetails.add("$activeUrl: WebDAV quá hạn hoặc chưa xác thực")
                             continue
                         }
 
@@ -1690,7 +1690,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         return@withContext true
                     } catch (e: Exception) {
                         android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
-                        errorDetails.add("$activeUrl: ${e.message ?: "Network Timeout"}")
+                        errorDetails.add("$activeUrl: ${e.message ?: "Mạng quá hạn"}")
                     }
                 }
                 // Tất cả URL đều thất bại
@@ -1972,7 +1972,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { metricsError = "Ấn Refresh để thử lại: ${e.message?.take(80)}" }
+                withContext(Dispatchers.Main) { metricsError = "Nhấn Làm mới để thử lại: ${e.message?.take(80)}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingMetrics = false }
             }
@@ -2346,7 +2346,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             lower.contains("facebook") || lower.contains("fb.watch") -> "Facebook"
             lower.contains("youtube") || lower.contains("youtu.be") -> "YouTube"
             lower.contains("instagram") -> "Instagram"
-            else -> "Other"
+            else -> "Khác"
         }
     }
 
@@ -2371,7 +2371,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         streamPipeProgress = 0f
         streamPipeSpeedStr = "Đang kết nối..."
         streamPipeEtaStr = "--"
-        streamPipeStatus = "⏳ Đang bơm stream qua Worker ngầm..."
+        streamPipeStatus = "⏳ Đang truyền video qua tác vụ nền..."
 
         // KIẾN TRÚC MỚI: Đẩy sang StreamPipeWorker (Foreground Service)
         // → Tắt App vẫn bơm video liên tục, Notification hiển thị % tiến trình
@@ -2437,7 +2437,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             socialDownloadHistory = socialDownloadHistory + SocialDownloadItem(sourceUrl, platform, true)
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             isStreamPiping = false
-                            streamPipeStatus = "❌ ${message.ifEmpty { "Lỗi bơm stream" }}"
+                            streamPipeStatus = "❌ ${message.ifEmpty { "Lỗi truyền video" }}"
                         } else if (workInfo.state == androidx.work.WorkInfo.State.CANCELLED) {
                             isStreamPiping = false
                             streamPipeStatus = "🛑 Đã hủy bởi người dùng"
@@ -2743,7 +2743,7 @@ fun WebDavViewModel.loadDuplicateResultsFromCache(context: android.content.Conte
                     duplicateFilesList = duplicates
                     isShowingDuplicates = true
                     if (duplicateFilesList.isEmpty()) {
-                        errorMessage = "NAS của bạn rất gọn gàng! Không có file trùng lặp."
+                        errorMessage = "NAS đang gọn gàng. Không có tệp trùng lặp."
                     } else {
                         errorMessage = ""
                     }
@@ -3264,7 +3264,7 @@ fun WebDavViewModel.fetchSmartData() {
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "")
                     withContext(Dispatchers.Main) {
-                        smartInfo = SmartInfo(status = json.optString("status", "Unknown"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
+                        smartInfo = SmartInfo(status = json.optString("status", "Không rõ"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
                     }
                 } else withContext(Dispatchers.Main) { smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}") }
             }
@@ -3441,7 +3441,7 @@ fun WebDavViewModel.approveDeviceIp(ip: String) {
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", true) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "Đã CẤP QUYỀN cho IP: $ip"; showCommonDialog = true }
+            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "Đã cấp quyền truy cập cho IP: $ip"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
 }
@@ -3454,7 +3454,7 @@ fun WebDavViewModel.denyDeviceIp(ip: String) {
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", false) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "Đã CHẶN VĨNH VIỄN IP: $ip bằng iptables"; showCommonDialog = true }
+            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "Đã chặn quyền truy cập của IP: $ip"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
 }

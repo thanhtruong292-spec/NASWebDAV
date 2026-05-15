@@ -148,7 +148,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                     nasConnection.responseCode
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot connect to NAS: ${e.message}")
-                    sendErrorResponse(output, 502, "Bad Gateway: ${e.message}")
+                    sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
                     return
                 }
 

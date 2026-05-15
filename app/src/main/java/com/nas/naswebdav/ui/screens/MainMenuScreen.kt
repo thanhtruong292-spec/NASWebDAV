@@ -683,7 +683,7 @@ fun MainMenuScreen(
                                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
                                             Icon(svcIcon, null, tint = svcColor, modifier = Modifier.size(18.dp))
                                             Text(svc.title, fontSize = 9.sp, color = svcColor, maxLines = 1, fontWeight = FontWeight.Bold)
-                                            Text(if (svc.running) "ON" else "OFF", fontSize = 9.sp, color = svcColor.copy(alpha = 0.7f))
+                                            Text(if (svc.running) "Bật" else "Tắt", fontSize = 9.sp, color = svcColor.copy(alpha = 0.7f))
                                         }
                                     }
                                 }
@@ -698,14 +698,14 @@ fun MainMenuScreen(
                                     if (net != null) {
                                         Column {
                                             Text("${net.name} • ${net.speed}Mbps", fontSize = 10.sp, color = TextSecondary, letterSpacing = 0.5.sp)
-                                            Text("${net.address} | Gateway: ${net.gateway}", fontSize = 10.sp, color = Color(0xFF81D4FA))
+                                            Text("${net.address} | Cổng mạng: ${net.gateway}", fontSize = 10.sp, color = Color(0xFF81D4FA))
                                             Text("MAC: ${net.mac}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                         }
                                     }
                                     if (hdd != null) {
                                         Column(horizontalAlignment = Alignment.End) {
                                             Text(hdd.model, fontSize = 10.sp, color = TextSecondary, maxLines = 1)
-                                            Text("SN: ${hdd.serial}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
+                                            Text("Số sê-ri: ${hdd.serial}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                             val sizeGb = (hdd.size.toLongOrNull() ?: 0L) / (1024L * 1024 * 1024)
                                             val sizeTb = if (sizeGb >= 1024) "%.1f TB".format(sizeGb / 1024f) else "$sizeGb GB"
                                             Text(sizeTb, fontSize = 10.sp, color = Color(0xFFFFA726), fontWeight = FontWeight.Bold)
@@ -1757,8 +1757,8 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Trình Tạo Ảnh Thu Nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text(when { viewModel.thumbPaused -> "Đã Tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
+                                    Text("Tạo ảnh thu nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(when { viewModel.thumbPaused -> "Đã tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
                                 }
                                 if (viewModel.thumbRunning || viewModel.thumbPaused) {
                                     IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
@@ -1786,7 +1786,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Quét Trùng Lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text(if (dupIsPaused) "⏸ Đã tạm dừng" else (if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét"), fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
                                 }
                                 if (dupIsRunning || dupIsPaused) {

@@ -471,7 +471,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 // GIAI ĐOẠN 2: TÌM FILE TRÙNG (50% → 60%)
                 // TỐI ƯU: Dùng COUNT query + getDuplicateSizes() thay vì load toàn bộ vào RAM
                 // ═══════════════════════════════════════════════════
-                currentStage.set("Phân tích file trùng lặp (1/2)")
+                currentStage.set("Phân tích tệp trùng lặp (1/2)")
                 stageNumber.set(2)
                 stageDescription.set("Đang phân lớp sơ bộ các tệp có cùng kích thước...")
                 currentStagePercent.set(0f)
@@ -486,7 +486,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     currentFileName.set("Tìm thấy $actualDuplicatesCount file nghi ngờ trùng lặp (${duplicateSizes.size} nhóm kích thước)")
                     duplicateGroupsFound.set(actualDuplicatesCount)
                 } else {
-                    currentFileName.set("Không tìm thấy file trùng lặp tiềm năng.")
+                    currentFileName.set("Không tìm thấy tệp trùng lặp tiềm năng.")
                     delay(500)
                     currentStagePercent.set(1f)
                     progressPercent.set(0.95f)
@@ -713,7 +713,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 val finalDuplicateCount = db.fileDao().countDuplicateFiles()
                 
                 currentStage.set("Hoàn tất")
-                stageDescription.set("Hoàn tất! Đã quét ${totalFilesIndexed.get()} tệp, tìm thấy $finalDuplicateCount file trùng.")
+                stageDescription.set("Hoàn tất. Đã quét ${totalFilesIndexed.get()} tệp, tìm thấy $finalDuplicateCount tệp trùng.")
                 progressPercent.set(1f)
                 currentStagePercent.set(1f)
                 DuplicateProgressState.stage.value = "Hoàn tất"
@@ -738,7 +738,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 } else {
                     notificationBuilder
                         .setContentTitle("Dọn rác hoàn tất")
-                        .setContentText("Không tìm thấy file trùng lặp nào mới.")
+                        .setContentText("Không tìm thấy tệp trùng lặp mới.")
                         .setProgress(0, 0, false)
                         .setOngoing(false)
                     notificationManager.notify(notificationId, notificationBuilder.build())
@@ -929,7 +929,7 @@ object UploadNotificationHelper {
     private const val NOTIFICATION_ID = 9001
     fun createChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Tiến trình tải lên", NotificationManager.IMPORTANCE_LOW).apply { description = "Hiển thị tiến trình upload file lên NAS"; setShowBadge(false) }
+            val channel = NotificationChannel(CHANNEL_ID, "Tiến trình tải lên", NotificationManager.IMPORTANCE_LOW).apply { description = "Hiển thị tiến trình tải tệp lên NAS"; setShowBadge(false) }
             (context.getSystemService(NotificationManager::class.java))?.createNotificationChannel(channel)
         }
     }
@@ -954,7 +954,7 @@ object UploadNotificationHelper {
         val intent = android.content.Intent(context, MainActivity::class.java).apply { flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK; putExtra("SHOW_DUPLICATES", true) }
         val pendingIntent = android.app.PendingIntent.getActivity(context, 0, intent, android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
         val builder = NotificationCompat.Builder(context, CHANNEL_ID).setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("Phát hiện file trùng lặp! 🗑️").setContentText("Tìm thấy $duplicateCount nhóm file rác trên NAS. Nhấn để dọn dẹp giải phóng dung lượng.")
+            .setContentTitle("Phát hiện tệp trùng lặp").setContentText("Tìm thấy $duplicateCount nhóm tệp trùng trên NAS. Nhấn để dọn dẹp và giải phóng dung lượng.")
             .setPriority(NotificationCompat.PRIORITY_HIGH).setContentIntent(pendingIntent).setAutoCancel(true)
         try { NotificationManagerCompat.from(context).notify(9002, builder.build()) } catch (_: SecurityException) {}
     }
@@ -1204,8 +1204,8 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         try {
             val filesToProcess = db.fileDao().getFilesWithoutFingerprint()
-            if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không có file nào cần mồi vân tay."); return@withContext Result.success() }
-            SystemLogger.log("INFO", "FingerprintWorker", "Bắt đầu tạo vân tay cho ${filesToProcess.size} files...")
+            if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không có tệp nào cần tạo vân tay."); return@withContext Result.success() }
+            SystemLogger.log("INFO", "FingerprintWorker", "Bắt đầu tạo vân tay cho ${filesToProcess.size} tệp...")
             var successCount = 0; var failCount = 0
             // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
             val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
@@ -1338,7 +1338,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
 
         try {
-            SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp file trùng lặp định kỳ.")
+            SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp tệp trùng lặp định kỳ.")
             db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
             // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
             // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.

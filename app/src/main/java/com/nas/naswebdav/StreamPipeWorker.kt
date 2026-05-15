@@ -45,10 +45,10 @@ class StreamPipeWorker(
         fun createChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "Stream Pipe Video",
+                    CHANNEL_ID, "Truyền video về NAS",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Bơm video từ Internet → NAS"
+                    description = "Truyền video từ Internet về NAS"
                     setShowBadge(false)
                 }
                 (context.getSystemService(NotificationManager::class.java))
@@ -95,7 +95,7 @@ class StreamPipeWorker(
 
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Bơm video → NAS")
+            .setContentTitle("Truyền video về NAS")
             .setContentText(fileName)
             .setProgress(100, 0, true)
             .setOngoing(true)
@@ -187,7 +187,7 @@ class StreamPipeWorker(
                             var readCount: Long
                             while (cdnSource.read(sink.buffer, bufferSize)
                                        .also { readCount = it } != -1L) {
-                                if (isStopped) throw Exception("Worker stopped by user")
+                                if (isStopped) throw Exception("Người dùng đã hủy tác vụ")
                                 sink.emit()
                                 totalBytesRead += readCount
 
@@ -264,14 +264,14 @@ class StreamPipeWorker(
                 try {
                     NasApplication.instance.database.logDao().insertLog(SystemLog(
                         type = "SUCCESS", module = "StreamPipe",
-                        message = "Đã bơm ${com.nas.naswebdav.utils.FormatUtils.formatBytes(totalBytesRead)} → $safeFileName (${elapsed.toInt()}s avg ${com.nas.naswebdav.utils.FormatUtils.formatBytes(avgSpeed)}/s)"
+                        message = "Đã truyền ${com.nas.naswebdav.utils.FormatUtils.formatBytes(totalBytesRead)} về NAS: $safeFileName (${elapsed.toInt()} giây, trung bình ${com.nas.naswebdav.utils.FormatUtils.formatBytes(avgSpeed)}/s)"
                     ))
                 } catch (_: Exception) {}
 
                 // Notification hoàn tất
                 val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                    .setContentTitle("Bơm video thành công! ✅")
+                    .setContentTitle("Truyền video thành công")
                     .setContentText("$safeFileName — ${com.nas.naswebdav.utils.FormatUtils.formatBytes(totalBytesRead)}")
                     .setAutoCancel(true)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -295,7 +295,7 @@ class StreamPipeWorker(
             // Notification lỗi
             val errorNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("Bơm video thất bại ❌")
+                .setContentTitle("Truyền video thất bại")
                 .setContentText(errMsg)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)

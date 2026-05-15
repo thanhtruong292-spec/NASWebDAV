@@ -1319,7 +1319,7 @@ fun OrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                 } else if (viewModel.organizingLegacyResult != null) {
                     Text(viewModel.organizingLegacyResult!!)
                 } else {
-                    Text("Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video KHÔNG PHẢI MP4 (như mpg, flv, mkv, avi...) vào thư mục 'Other Video' không? Tránh việc hiển thị lẫn lộn. Thao tác phân loại này diễn ra nhanh chóng trên thiết bị NAS.")
+                    Text("Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video không phải MP4 (như mpg, flv, mkv, avi...) vào thư mục 'Other Video' không? Thao tác này giúp danh sách video gọn hơn và được xử lý trực tiếp trên NAS.")
                 }
             }
         },
@@ -1368,7 +1368,7 @@ fun DuplicateConfigDialog(
                     )
                     Column(modifier = Modifier.padding(start = 4.dp)) {
                         Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else Color.White)
-                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích mạng nội dung, chỉ dùng ETag gốc (Dung lượng, Tên, Ngày sửa). Quét nháy mắt 500,000 files.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                     }
                 }
 
@@ -1395,8 +1395,8 @@ fun DuplicateConfigDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("🤖 Tự động dọn dẽp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
-                        Text("Chạy ngầm 7 ngày/lần khi điện thoại đang sạc Pin & có Wifi. Tự động chuyển file trùng (giữ lại file có đường dẫn ngắn nhất) vào thùng rác (.trash).", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
+                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                     }
                     Switch(
                         checked = viewModel.autoCleanEnabled,

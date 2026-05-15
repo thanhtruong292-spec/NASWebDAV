@@ -978,7 +978,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
 
-            if (!response.isSuccessful) throw Exception("Lỗi download: ${response.code}")
+            if (!response.isSuccessful) throw Exception("Lỗi tải xuống: ${response.code}")
 
             val body = response.body ?: throw Exception("Empty body")
 

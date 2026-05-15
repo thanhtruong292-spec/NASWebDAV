@@ -279,7 +279,7 @@ class NasDocumentProvider : DocumentsProvider() {
                         }
                         val body = response.body
                         if (body == null) {
-                            try { writeFd.closeWithError("Rỗng body") } catch (_: Exception) {}
+                            try { writeFd.closeWithError("Phản hồi từ NAS bị rỗng") } catch (_: Exception) {}
                             return@launch
                         }
                         ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { fos ->

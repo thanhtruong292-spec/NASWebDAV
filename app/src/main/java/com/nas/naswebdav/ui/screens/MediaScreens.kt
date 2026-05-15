@@ -1888,13 +1888,13 @@ fun SocialExtractorScreen(
                 isEnabled = linkInput.isNotBlank(),
                 onStart = {
                     if (usePipeMode) {
-                        // Chế độ Stream Pipe: Dùng WebView bóc link trước
+                        // Chế độ truyền trực tiếp: dùng WebView lấy liên kết trước
                         extractedVideoUrl = null
                         webViewStatus = "🔍 Đang tải trang để bóc link video..."
                         isExtracting = true
                         extractTriggerUrl = linkInput.trim()
                     } else {
-                        // Chế độ Fallback: Gửi URL thẳng về NAS (yt-dlp)
+                        // Chế độ NAS tự tải: gửi URL thẳng về NAS qua yt-dlp
                         viewModel.requestSocialDownload(linkInput.trim())
                         linkInput = ""
                     }
@@ -1910,9 +1910,9 @@ fun SocialExtractorScreen(
             Spacer(Modifier.height(8.dp))
             Text(
                 if (usePipeMode)
-                    "Stream Pipe: Điện thoại làm ống dẫn. Video chảy thẳng CDN → NAS."
+                    "Truyền trực tiếp: điện thoại chuyển dữ liệu từ CDN về NAS."
                 else
-                    "yt-dlp Mode: NAS tự tải. Cần cài yt-dlp trên NAS.",
+                    "NAS tự tải: NAS dùng yt-dlp và lưu trực tiếp vào ổ cứng.",
                 fontSize = 11.sp, color = SeTextSecondary, textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(12.dp))
@@ -1928,7 +1928,7 @@ fun SocialExtractorScreen(
             onVideoUrlFound = { mp4Url ->
                 extractedVideoUrl = mp4Url
                 extractTriggerUrl = ""  // Dừng WebView sau khi bóc xong
-                webViewStatus = "✅ Đã bóc được link video HD! Đang bơm lên NAS..."
+                webViewStatus = "✅ Đã lấy được liên kết video HD. Đang truyền về NAS..."
             },
             onLivestreamFound = { liveUrl, referer, userAgent ->
                 viewModel.startLivestreamRecord(context, liveUrl, "best", referer, userAgent)
@@ -1939,7 +1939,7 @@ fun SocialExtractorScreen(
             onFailure = { reason ->
                 isExtracting = false
                 extractTriggerUrl = ""
-                webViewStatus = "⚠️ Không bóc được link tự động ($reason). Đang chuyển sang yt-dlp..."
+                webViewStatus = "⚠️ Không lấy được liên kết tự động ($reason). Đang chuyển sang chế độ NAS tự tải..."
                 // Tự động fallback sang yt-dlp
                 viewModel.requestSocialDownload(linkInput.trim())
             },
@@ -2219,7 +2219,7 @@ private fun ModeExplainCard(isPipeMode: Boolean) {
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (isPipeMode) "Chế độ Stream Pipe 🔥" else "Chế độ yt-dlp (Fallback)",
+                    if (isPipeMode) "Chế độ truyền trực tiếp" else "Chế độ NAS tự tải",
                     fontWeight = FontWeight.Bold,
                     color = if (isPipeMode) SeAccentPink else SeAccentCyan,
                     fontSize = 13.sp
@@ -2228,9 +2228,9 @@ private fun ModeExplainCard(isPipeMode: Boolean) {
             Spacer(Modifier.height(6.dp))
             Text(
                 if (isPipeMode)
-                    "WebView ẩn bóc link → Phone bơm stream CDN → WebDAV NAS\nĐiện thoại 0MB lưu trữ. Tốc độ = tốc độ mạng LAN/Tailscale."
+                    "WebView ẩn lấy liên kết → điện thoại truyền dữ liệu CDN về WebDAV NAS.\nĐiện thoại không lưu tệp cục bộ. Tốc độ phụ thuộc mạng LAN/Tailscale."
                 else
-                    "Gửi link về NAS → NAS dùng yt-dlp tải ngầm → lưu vào ổ cứng 4TB\nKhông cần phone hoạt động, nhưng cần yt-dlp cài trên NAS.",
+                    "Gửi liên kết về NAS → NAS dùng yt-dlp tải nền → lưu vào ổ cứng 4TB.\nĐiện thoại không cần tiếp tục chạy sau khi NAS nhận lệnh.",
                 fontSize = 12.sp,
                 color = SeTextSecondary,
                 lineHeight = 18.sp
@@ -2245,16 +2245,16 @@ private fun ModeSwitchRow(isPipeMode: Boolean, onToggle: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Stream Pipe
+        // Truyền trực tiếp
         ModeTab(
-            label = "⚡ Stream Pipe",
-            desc = "Phone bơm",
+            label = "⚡ Truyền trực tiếp",
+            desc = "Điện thoại truyền",
             selected = isPipeMode,
             gradientColors = listOf(SeAccentPink, SeAccentPurple),
             modifier = Modifier.weight(1f),
             onClick = { if (!isPipeMode) onToggle() }
         )
-        // yt-dlp Fallback
+        // NAS tự tải
         ModeTab(
             label = "☁️ yt-dlp",
             desc = "NAS tự tải",
@@ -2349,9 +2349,9 @@ private fun LinkInputCard(
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        if (platform != "Unknown") "▶ $platform" else "⚠️ URL không nhận dạng được",
+                        if (platform != "Không rõ") "▶ $platform" else "⚠️ URL không nhận dạng được",
                         fontSize = 10.sp,
-                        color = if (platform != "Unknown") SeAccentCyan else SeAccentOrange,
+                        color = if (platform != "Không rõ") SeAccentCyan else SeAccentOrange,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -2570,7 +2570,7 @@ private fun MainActionButton(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (isPipeMode) "⚡ Bắt đầu Stream Pipe" else "☁️ Gửi về NAS (yt-dlp)",
+                    if (isPipeMode) "⚡ Bắt đầu truyền" else "☁️ Gửi về NAS",
                     color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
                 )
             }
@@ -2594,8 +2594,8 @@ private fun detectPlatform(url: String): String {
         l.contains("facebook") || l.contains("fb.watch") -> "Facebook"
         l.contains("youtube") || l.contains("youtu.be") -> "YouTube"
         l.contains("instagram") -> "Instagram"
-        l.startsWith("http") -> "Other"
-        else -> "Unknown"
+        l.startsWith("http") -> "Khác"
+        else -> "Không rõ"
     }
 }
 
