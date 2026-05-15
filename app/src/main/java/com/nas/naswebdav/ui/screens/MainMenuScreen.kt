@@ -2130,7 +2130,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                     showWolDialog = false
                     emergencyIsError = false
                     emergencyMsg = "Đang gửi Wake-on-LAN..."
-                    viewModel.sendWakeOnLan(wolMac) { result ->
+                    viewModel.sendWakeOnLan(wolMac, ipInput) { result ->
                         emergencyIsError = !result.success
                         emergencyMsg = result.message
                     }

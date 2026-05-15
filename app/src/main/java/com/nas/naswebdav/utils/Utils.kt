@@ -16,6 +16,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InterfaceAddress
 import java.net.NetworkInterface
+import java.net.URI
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -97,13 +98,14 @@ object WolUtil {
 
     private val wolPorts = intArrayOf(9, 7)
 
-    fun sendMagicPacket(macAddress: String): Boolean = smartWakeOnLan(macAddress).success
+    fun sendMagicPacket(macAddress: String, targetHost: String? = null): Boolean =
+        smartWakeOnLan(macAddress, targetHost).success
 
-    fun smartWakeOnLan(macAddress: String): WolResult {
+    fun smartWakeOnLan(macAddress: String, targetHost: String? = null): WolResult {
         val macBytes = parseMacAddress(macAddress)
             ?: return WolResult(false, "NONE", "Địa chỉ MAC không hợp lệ. Ví dụ đúng: AA:BB:CC:DD:EE:FF")
         val magicPacket = buildMagicPacket(macBytes)
-        val targets = discoverBroadcastAddresses()
+        val targets = discoverBroadcastAddresses(targetHost)
         val errors = mutableListOf<String>()
         var sentCount = 0
 
@@ -130,7 +132,7 @@ object WolUtil {
 
             if (sentCount > 0) {
                 val targetText = targets.joinToString(", ") { it.hostAddress ?: it.hostName }
-                WolResult(true, "LAN", "Đã gửi Wake-on-LAN qua LAN tới $targetText ($sentCount gói).")
+                WolResult(true, "LAN", "Đã phát gói Wake-on-LAN qua LAN tới $targetText ($sentCount gói).")
             } else {
                 val detail = errors.firstOrNull()?.let { ": $it" } ?: "."
                 WolResult(false, "NONE", "Không thể gửi Wake-on-LAN qua mạng LAN$detail")
@@ -160,9 +162,12 @@ object WolUtil {
             }
         }
 
-    private fun discoverBroadcastAddresses(): List<InetAddress> {
+    private fun discoverBroadcastAddresses(targetHost: String? = null): List<InetAddress> {
+        val targetAddress = resolveIpv4Host(targetHost)
         val addresses = linkedSetOf<InetAddress>()
+        targetAddress?.let { fallbackCidr24Broadcast(it)?.let(addresses::add) }
         runCatching { addresses += InetAddress.getByName("255.255.255.255") }
+        targetAddress?.let(addresses::add)
 
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
@@ -171,6 +176,10 @@ object WolUtil {
                 if (!networkInterface.isUp || networkInterface.isLoopback) continue
 
                 networkInterface.interfaceAddresses.forEach { interfaceAddress ->
+                    val localAddress = interfaceAddress.address as? Inet4Address ?: return@forEach
+                    if (!isPrivateIpv4(localAddress) && !localAddress.isLinkLocalAddress) return@forEach
+                    if (targetAddress != null && !isSameNetwork(targetAddress, interfaceAddress)) return@forEach
+
                     val broadcast = interfaceAddress.broadcast
                     if (broadcast != null && broadcast.address.size == 4) {
                         addresses += broadcast
@@ -186,12 +195,54 @@ object WolUtil {
         return addresses.toList()
     }
 
+    private fun resolveIpv4Host(targetHost: String?): Inet4Address? {
+        val raw = targetHost?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val host = try {
+            val normalized = if (raw.contains("://")) raw else "http://$raw"
+            URI(normalized).host ?: raw
+        } catch (_: Exception) {
+            raw
+        }
+            .trim('[', ']')
+            .substringBefore('/')
+            .substringBefore(':')
+            .takeIf { it.isNotBlank() }
+            ?: return null
+
+        return runCatching { InetAddress.getByName(host) as? Inet4Address }.getOrNull()
+    }
+
+    private fun fallbackCidr24Broadcast(address: Inet4Address): InetAddress? {
+        if (!isPrivateIpv4(address)) return null
+        val bytes = address.address.copyOf()
+        bytes[3] = 0xFF.toByte()
+        return runCatching { InetAddress.getByAddress(bytes) }.getOrNull()
+    }
+
+    private fun isSameNetwork(targetAddress: Inet4Address, interfaceAddress: InterfaceAddress): Boolean {
+        val localAddress = interfaceAddress.address as? Inet4Address ?: return false
+        val prefixLength = interfaceAddress.networkPrefixLength.toInt()
+        if (prefixLength !in 0..32) return false
+        val mask = if (prefixLength == 0) 0L else (0xFFFFFFFFL shl (32 - prefixLength)) and 0xFFFFFFFFL
+        return (ipv4ToLong(targetAddress) and mask) == (ipv4ToLong(localAddress) and mask)
+    }
+
+    private fun ipv4ToLong(address: Inet4Address): Long =
+        address.address.fold(0L) { acc, byte -> (acc shl 8) or (byte.toInt() and 0xFF).toLong() }
+
+    private fun isPrivateIpv4(address: Inet4Address): Boolean {
+        val bytes = address.address.map { it.toInt() and 0xFF }
+        return bytes[0] == 10 ||
+            (bytes[0] == 172 && bytes[1] in 16..31) ||
+            (bytes[0] == 192 && bytes[1] == 168)
+    }
+
     private fun derivedBroadcastAddress(interfaceAddress: InterfaceAddress): InetAddress? {
         val address = interfaceAddress.address as? Inet4Address ?: return null
         val prefixLength = interfaceAddress.networkPrefixLength.toInt()
         if (prefixLength !in 0..31) return null
 
-        val ip = address.address.fold(0L) { acc, byte -> (acc shl 8) or (byte.toInt() and 0xFF).toLong() }
+        val ip = ipv4ToLong(address)
         val mask = if (prefixLength == 0) 0L else (0xFFFFFFFFL shl (32 - prefixLength)) and 0xFFFFFFFFL
         val broadcast = (ip and mask) or (mask xor 0xFFFFFFFFL)
         val bytes = byteArrayOf(

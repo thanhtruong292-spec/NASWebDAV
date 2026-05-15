@@ -3337,10 +3337,14 @@ fun WebDavViewModel.runSpeedTest() {
 
 fun WebDavViewModel.sendWakeOnLan(
     macStr: String,
+    targetHost: String? = null,
     onResult: ((com.nas.naswebdav.utils.WolUtil.WolResult) -> Unit)? = null
 ) {
     viewModelScope.launch(Dispatchers.IO) {
-        val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr)
+        val preferredHost = targetHost?.trim()?.takeIf { it.isNotBlank() } ?: runCatching {
+            java.net.URL(webDavManager.currentBaseUrl).host
+        }.getOrNull()
+        val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr, preferredHost)
         val logType = if (result.success) "INFO" else "ERROR"
         val logMessage = if (result.success) {
             "Người dùng đã gửi Wake-on-LAN đánh thức NAS tại MAC ${macStr.trim()}: ${result.message}"
