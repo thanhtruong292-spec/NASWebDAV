@@ -1,0 +1,88 @@
+# GEMINI.md — NASWebDAV Project Context
+
+> File này được duy trì bởi **headroom learn** + **AI agent** sau mỗi phiên.
+> Đây là context supplement cho Gemini CLI / Antigravity.
+> Xem `.agents/hardrules.md` để biết quy tắc đầy đủ.
+
+---
+
+## Project Overview
+
+- **App**: NASWebDAV — Android app (Kotlin/Jetpack Compose) quản lý NAS Chainedbox (RK3328, Armbian)
+- **NAS IP LAN**: `192.168.100.254` | **Tailscale**: `100.90.135.102`
+- **WebDAV Port**: `8822` (nginx) | **API Port**: `5050` (Python Flask)
+- **WebDAV user**: `daica`
+- **Python trên NAS**: Python **3.5** — không dùng f-string, walrus, type hints phức tạp
+
+---
+
+## Critical Gotchas (học từ các phiên trước)
+
+### 1. iptables — DROP rules phải sau ACCEPT
+```
+SATH RẤT NGUY HIỂM:
+rule 3: DROP all from 192.168.100.93
+rule 5: ACCEPT all from 192.168.100.93  ← không bao giờ chạy!
+```
+→ Luôn `iptables -L INPUT -n --line-numbers` kiểm tra thứ tự trước khi thay đổi.
+
+### 2. Kotlin type inference với nested class cùng tên
+- `WebDavViewModel.LivestreamJob` ≠ `LivestreamJob` (top-level)
+- `emptyList()` → `List<Nothing>` → mất type → `Unresolved reference`
+- Fix: explicit type annotation + `.map { }` để convert
+
+### 3. NasTheme vs MaterialTheme
+- `MaterialTheme {}` trong `setContent` **không** truyền `AppTypography` → font Samsung One không hiển thị
+- Phải dùng `NasTheme {}` (bọc trong `Theme.kt`)
+
+### 4. Ping đo bằng TCP, không phải HTTP OPTIONS
+- OPTIONS → nginx xử lý auth → ~300ms fake lag
+- TCP socket connect → RTT thật (~1-5ms trên LAN)
+
+### 5. PowerShell encoding
+- `Set-Content -Encoding UTF8` ghi BOM → vỡ tiếng Việt trong .kt files
+- Luôn dùng Antigravity `replace_file_content` tool
+
+---
+
+## Cấu trúc chính
+
+```
+WebDavManager.kt      → HTTP/WebDAV + TCP ping
+WebDavViewModel.kt    → Main ViewModel (large, ~3500 lines)
+MonitoringViewModel.kt → SMART, OMV, metrics polling
+LivestreamViewModel.kt → Livestream recording
+TransferViewModel.kt  → AutoBackup, batch ops
+MainActivity.kt       → Navigation + NasTheme wrapper
+ui/theme/Type.kt      → SamsungOneFontFamily + AppTypography
+ui/theme/Theme.kt     → NasTheme (color + typography)
+nas_api_server.py     → NAS backend (Python 3.5, Flask)
+```
+
+---
+
+## AI Memory Stack
+
+| Tool | Mục đích | Command |
+|------|---------|---------|
+| `neural-memory` | Lưu/nhớ ngữ cảnh qua `nmem` | `nmem remember "..."` |
+| `headroom` | Nén context, học từ lỗi | `headroom learn --apply` |
+| `claude-mem` | Session memory (cần Node.js) | `npx claude-mem install` |
+
+**Để dùng `headroom learn`** (phân tích lỗi session → ghi vào GEMINI.md):
+```powershell
+$env:GEMINI_API_KEY = "YOUR_KEY"
+headroom learn --agent gemini --apply --project .
+```
+
+**Để cài `claude-mem`** (cần Node.js >= 18):
+```powershell
+# Cài Node.js từ https://nodejs.org trước
+npx claude-mem install --ide gemini-cli
+```
+
+---
+
+## Thay đổi gần nhất
+
+Xem [CHANGELOG.md](./CHANGELOG.md) để biết chi tiết từng thay đổi.

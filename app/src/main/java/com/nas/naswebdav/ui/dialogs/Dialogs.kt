@@ -528,14 +528,31 @@ private fun TikTokLiveWatchSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("@${user.username}", color = Color(0xFFE8E8E8), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        val sub = when (user.status) {
+                        val statusLabel = when (user.status) {
                             "recording" -> "Đang live - đã tự ghi"
                             "excluded" -> "Đang trong giờ loại trừ"
-                            "error" -> user.lastError.ifEmpty { "Lỗi kiểm tra" }
+                            "error" -> "Lỗi kiểm tra"
                             else -> "Đang theo dõi"
                         }
-                        Text(sub, color = if (user.status == "recording") Color(0xFF43A047) else Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "@${user.username}",
+                                color = Color(0xFFE8E8E8),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            TikTokWatchStatusChip(
+                                status = user.status,
+                                label = statusLabel
+                            )
+                        }
                         val checkLiveLine = buildString {
                             if (user.lastCheck.isNotEmpty()) append("Check: ${user.lastCheck}")
                             if (user.lastLive.isNotEmpty()) {
@@ -615,6 +632,57 @@ private fun TikTokLiveWatchSection(
         }
     }
     Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun TikTokWatchStatusChip(
+    status: String,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    val normalizedStatus = status.lowercase()
+    val (containerColor, borderColor, textColor) = when (normalizedStatus) {
+        "recording" -> Triple(
+            Color(0xFF43A047).copy(alpha = 0.18f),
+            Color(0xFF43A047).copy(alpha = 0.45f),
+            Color(0xFF66BB6A)
+        )
+        "excluded" -> Triple(
+            Color(0xFFFFA726).copy(alpha = 0.18f),
+            Color(0xFFFFA726).copy(alpha = 0.45f),
+            Color(0xFFFFC067)
+        )
+        "error" -> Triple(
+            Color(0xFFFF1744).copy(alpha = 0.16f),
+            Color(0xFFFF1744).copy(alpha = 0.45f),
+            Color(0xFFFF5C7A)
+        )
+        else -> Triple(
+            Color(0xFF8892B0).copy(alpha = 0.18f),
+            Color(0xFF8892B0).copy(alpha = 0.35f),
+            Color(0xFFA9B3CC)
+        )
+    }
+
+    Box(
+        modifier = modifier
+            .widthIn(max = 176.dp)
+            .clip(RoundedCornerShape(50.dp))
+            .background(containerColor)
+            .border(1.dp, borderColor, RoundedCornerShape(50.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = textColor,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

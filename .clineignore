@@ -1,0 +1,115 @@
+# ==========================================
+# FILE .clineignore TỐI ƯU HÓA TOKEN TỐI ĐA
+# ==========================================
+
+# Trọng tâm làm việc: file *.kt và nas_api_server.py
+# 1. Thư mục IDE, Git repo clone & Cấu hình cục bộ (Rất dài và không mang logic code)
+**/.git/
+**/.github/
+**/.gitmodules
+**/.svn/
+**/.idea/
+**/.gradle/
+**/.vscode/
+**/.vs/
+**/local.properties
+**/*.suo
+**/*.user
+
+# 2. Android & Kotlin (Artifacts & Code sinh tự động)
+**/build/
+**/app/build/
+**/*.apk
+**/*.aab
+**/*.jks
+**/*.keystore
+**/*~
+
+# 3. Python & Server (Cache, Môi trường ảo & Lock files)
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/venv/
+**/.venv/
+**/env/
+**/poetry.lock
+**/pip-log.txt
+
+# 4. .NET, C# & PowerShell (Thư mục biên dịch)
+**/bin/
+**/obj/
+**/TestResults/
+
+# 5. Native Binaries, GraalVM & Executables (Tuyệt đối không để LLM đọc)
+**/*.exe
+**/*.dll
+**/*.so
+**/*.class
+**/*.o
+
+# 6. Dữ liệu lớn & Media (Nguyên nhân chính gây tràn Context Window)
+# AI không thể "đọc hiểu" file nén/bảng tính thô bằng cách đọc mã nhị phân của chúng
+**/*.xlsx
+**/*.xls
+**/*.csv
+**/*.sqlite
+**/*.db
+**/*.parquet
+**/*.log
+**/*.pdf
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.svg
+**/*.ico
+**/*.mp4
+
+# 7. Frontend, Web & Node (Quản lý thư viện)
+**/node_modules/
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+**/dist/
+**/out/
+#FILE EDITING RULES:
+
+When modifying existing source files, you MUST strictly use the replace_in_file (or equivalent diff/search-and-replace) tool to target only the specific lines that need changes.
+
+DO NOT use write_to_file to output or rewrite the entire file unless you are creating a completely new file from scratch.
+
+Provide only the exact code blocks being replaced.
+# 1. NGUYÊN TẮC NGỮ CẢNH VÀ TRÍ NHỚ (QUAN TRỌNG NHẤT)
+- CẤM TUYỆT ĐỐI sử dụng trí nhớ từ các đoạn hội thoại trước đó để tự suy diễn hoặc áp dụng vào code.
+- Mọi lần thực hiện chỉnh sửa, phải coi như ĐÂY LÀ LẦN ĐẦU TIÊN đọc file đó.
+- Nếu không chắc chắn về cấu trúc file, phải yêu cầu người dùng cung cấp lại toàn bộ nội dung file hiện tại trước khi đưa ra bất kỳ dòng code nào.
+
+# 2. BẢO VỆ LOGIC HIỆN TẠI (ANTI-HALLUCINATION)
+- CHỈ tập trung giải quyết ĐÚNG vấn đề hoặc lỗi được yêu cầu. Không được phép tự ý mở rộng phạm vi.
+- KHÔNG cấu trúc lại (refactor), KHÔNG đổi tên biến, KHÔNG tối ưu hóa các hàm/logic xung quanh nếu người dùng không yêu cầu, kể cả khi bạn cho rằng nó "chưa đẹp".
+- Nếu bắt buộc phải thay đổi một logic cũ để fix bug, phải giải thích ngắn gọn rủi ro và xin phép trước khi thực thi.
+
+# 3. NGUYÊN TẮC THỰC THI (FILE EDITING)
+- Chỉ sử dụng công cụ thay thế cục bộ (replace_in_file hoặc tương đương) để nhắm đúng dòng cần sửa.
+- Không bao giờ dùng lệnh ghi đè toàn bộ file (write_to_file) trừ khi tạo file mới tinh.
+- Không tự ý thêm thư viện, module hoặc dependencies bên thứ 3 vào dự án.
+
+# 4. CHỮ KÝ XÁC NHẬN (VERIFICATION TRIGGER)
+- Khi người dùng gõ lệnh "Kiểm tra nội quy", bạn phải trả lời chính xác câu này trước khi làm bất cứ việc gì: "[HỆ THỐNG]: Đã nạp quy tắc làm việc vô cảm và bảo vệ logic tuyệt đối."
+
+# 5. NGUYÊN TẮC TỐI ƯU HÓA TOKEN VÀ PHẠM VI LÀM VIỆC
+- Thực hiện tối ưu hóa tối đa việc sử dụng token.
+- Chỉ tập trung làm việc và xử lý trên các file `*.kt` và `nas_api_server.py`.
+- Khi khởi chạy, BẮT BUỘC phải đọc và tuân thủ tuyệt đối các nguyên tắc loại trừ trong file `.cursorignore`.
+- Tuyệt đối bỏ qua, không quét hoặc đọc nội dung của các git repository được clone về (các thư mục `.git` con) để tránh lãng phí token.
+
+# 6. PHÂN VAI VÀ TRÁCH NHIỆM CỦA AI (AI PERSONA & DUTIES)
+- Định vị người dùng: Giao tiếp và hỗ trợ người dùng với tư cách là một người mới hoàn toàn, không có kiến thức về code. KHÔNG yêu cầu người dùng tự viết code, tự sửa lỗi thủ công hay cần phải hiểu các logic kỹ thuật bên dưới.
+- Tự động hóa toàn diện: AI chịu trách nhiệm tự động hóa 100% quá trình viết code, thiết lập và giải quyết vấn đề dựa trên yêu cầu bằng ngôn ngữ tự nhiên.
+- Tiêu chuẩn hệ thống: Mã nguồn sinh ra bắt buộc phải hoạt động chính xác đúng chức năng, không có lỗi ngầm, và được cấu trúc theo chuẩn production (sẵn sàng phát hành) ngay từ dòng code đầu tiên.
+- Tiêu chuẩn UI/UX: Thiết kế giao diện phải hiện đại, trực quan và thân thiện. Đảm bảo độ hoàn thiện pixel-perfect, ứng dụng chuẩn Material Design 3, tích hợp mượt mà các hiệu ứng glassmorphism và hệ thống icon custom gradient.
+
+# 7. QUẢN LÝ PHIÊN BẢN VÀ BẢO TOÀN TÍNH NĂNG (CODE INHERITANCE)
+- Bắt buộc làm việc trên base code mới nhất: Trước khi thực hiện bất kỳ chỉnh sửa nào, phải đảm bảo đang phân tích trên mã nguồn thực tế ở commit mới nhất của dự án.
+- Kế thừa và bảo vệ code cũ: Mọi thay đổi, cập nhật hoặc bổ sung tính năng mới BẮT BUỘC phải kế thừa và tích hợp liền mạch với mã nguồn hiện hành. 
+- Cấm "vẽ code" (Anti-Hallucination): Tuyệt đối không được tự ý viết lại toàn bộ file, không được tự bịa ra các logic không có thật làm ghi đè hoặc đánh mất các tính năng cũ đang hoạt động tốt. Chỉ can thiệp chính xác vào các dòng/khối code cần thiết.
+- Yêu cầu xác minh: Nếu không chắc chắn 100% về toàn bộ bối cảnh của file hiện tại, bắt buộc phải yêu cầu hệ thống/người dùng cung cấp nội dung file đầy đủ trước khi xuất ra code thay thế.

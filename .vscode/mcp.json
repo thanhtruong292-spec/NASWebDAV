@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "neural-memory": {
+      "command": "C:\\Users\\Truong\\AppData\\Local\\Python\\pythoncore-3.14-64\\Scripts\\nmem-mcp.exe"
+    },
+    "headroom": {
+      "command": "headroom",
+      "args": ["mcp-server"]
+    }
+  }
+}
