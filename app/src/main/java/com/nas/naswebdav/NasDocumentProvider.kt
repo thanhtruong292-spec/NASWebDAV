@@ -32,7 +32,8 @@ class NasDocumentProvider : DocumentsProvider() {
      * Không còn đọc SecurePrefs lặp lại cho từng tệp trong danh sách.
      */
     private fun initAndGetBaseUrl(): String {
-        val authData = SecurePrefsHelper.readEncrypted(context!!)
+        val ctx = context ?: return ""
+        val authData = SecurePrefsHelper.readEncrypted(ctx)
         if (authData is SecurePrefsHelper.AuthData.Valid) {
             val url = String(authData.url)
             val user = String(authData.user)

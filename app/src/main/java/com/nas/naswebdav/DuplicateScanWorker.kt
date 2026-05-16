@@ -225,7 +225,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     client.newCall(request).execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             try {
-                                val reader = android.util.JsonReader(java.io.InputStreamReader(response.body!!.byteStream(), "UTF-8"))
+                                val reader = android.util.JsonReader(java.io.InputStreamReader(response.body?.byteStream() ?: return@use, "UTF-8"))
                                 // android.util.JsonReader KHÔNG có isLenient — bỏ qua
 
                                 val batchBuffer = mutableListOf<CachedFile>()
@@ -381,7 +381,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         
                         val currentFolders = mutableListOf<String>()
                         while (folderQueue.isNotEmpty()) {
-                            currentFolders.add(folderQueue.poll()!!)
+                            folderQueue.poll()?.let { currentFolders.add(it) }
                         }
                         
                         if (currentFolders.isEmpty()) break
@@ -532,7 +532,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                             
                             val anchorFile = group.firstOrNull { it.imageFingerprint != null && it.imageFingerprint != "NOT_SUPPORTED" }
                             if (anchorFile != null) {
-                                val anchorFP = anchorFile.imageFingerprint!!
+                                val anchorFP = anchorFile.imageFingerprint ?: continue
                                 for (file in group) {
                                     val cachedHash = db.hashCacheDao().getHash(file.path, file.contentLength, file.lastModified)
                                     if (cachedHash != null) {

@@ -2100,7 +2100,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val result = mutableMapOf<String, List<String>>()
                         cats?.keys()?.forEach { key ->
                             val arr = cats.optJSONArray(key)
-                            val urls = (0 until (arr?.length() ?: 0)).map { arr!!.getString(it) }
+                            val urls = (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optString(it) }
                             if (urls.isNotEmpty()) result[key] = urls
                         }
                         withContext(Dispatchers.Main) {
@@ -2608,9 +2608,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 return@withContext false
                             }
 
-                            apiResponse.body!!.byteStream().use { input ->
+                            apiResponse.body?.byteStream()?.use { input ->
                                 java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
-                            }
+                            } ?: return@withContext false
                             return@withContext (thumbFile.length() > 0)
                         } else {
                             return@withContext false
@@ -3123,7 +3123,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                     localApiClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             currentDelayMs = 3000L
-                            val jsonObject = org.json.JSONObject(response.body!!.string())
+                            val jsonObject = org.json.JSONObject(response.body?.string() ?: "{}")
                             val tempRaw = jsonObject.optString("temperature", "--°C")
                             val temp = if (tempRaw != "--°C" && !tempRaw.contains("°")) "${tempRaw}°C" else tempRaw
                             val cpu = jsonObject.optString("cpu", "--%")
@@ -3600,7 +3600,7 @@ fun WebDavViewModel.loadLanWhitelist() {
             val request = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").build()
             localApiClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful && response.body != null) {
-                    val json = org.json.JSONObject(response.body!!.string())
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
                     val ips = mutableListOf<String>()
                     val subnets = mutableListOf<String>()
                     val ipsArr = json.optJSONArray("ips")

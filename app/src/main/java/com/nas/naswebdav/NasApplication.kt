@@ -315,7 +315,7 @@ object SecurePrefsHelper {
                 }
                 migrateOldCredentialsIfNeeded(context, prefs)
                 securePrefs = prefs
-                prefs!!
+                prefs ?: throw IllegalStateException("SecurePrefs init failed")
             }
         }
     }
@@ -444,7 +444,7 @@ object SmartNetworkManager {
             
             // Nếu cache còn hạn, trả về kết quả đã đánh giá ĐÚNG NHẤT thay vì lấy đại urlList.first()
             if (now - lastPingTime < CACHE_DURATION_MS && lastPingResult && cachedActiveUrl != null) {
-                return@withContext cachedActiveUrl!!
+                return@withContext cachedActiveUrl ?: urlList.first()
             }
             
             val user = SecurePrefsHelper.getUser(context)

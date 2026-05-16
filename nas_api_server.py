@@ -3026,7 +3026,8 @@ def api_ai_status():
 _transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen }
 
 def _find_source_file(relative_path):
-    """Tim file goc tren NAS tu duong dan WebDAV tuong doi"""
+    """Tim file goc tren NAS tu duong dan WebDAV tuong doi.
+    FIX SECURITY: Validate path traversal truoc khi tra ve."""
     from urllib.parse import unquote
     relative_path = unquote(relative_path)
     candidates = [
@@ -3035,7 +3036,7 @@ def _find_source_file(relative_path):
         os.path.join("/srv/dev-disk-by-label-data", relative_path.lstrip("/")),
     ]
     for c in candidates:
-        if os.path.exists(c):
+        if os.path.exists(c) and _validate_file_path(c):
             return c
     return None
 
