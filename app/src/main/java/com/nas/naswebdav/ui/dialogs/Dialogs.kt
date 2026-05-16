@@ -1849,69 +1849,24 @@ fun LivestreamRecordDialog(
                 }
             }
 
-            // Tab buttons — dung lay out giong dashboard "Nhiet do / Tai nguyen / Mang":
-            //  - Surface fill solid (khong border outline)
-            //  - Selected: nen mau accent alpha 0.5 + red-dot indicator + chu trang BOLD
-            //  - Unselected: nen den + chu xam, khong dot
+            // Tab buttons — dung [PillTab] de dam bao consistency voi cac tab khac trong app
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val watchSelected = livePanelMode == "watch"
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (watchSelected) Color(0xFFEE1D52).copy(alpha = 0.5f) else Color(0xFF0F0F0F),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(36.dp)
-                        .clickable(
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
-                        ) { livePanelMode = "watch" }
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (watchSelected) {
-                            Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(
-                            "👤 Theo dõi user",
-                            fontSize = 13.sp,
-                            fontWeight = if (watchSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (watchSelected) Color.White else Color(0xFF8892B0)
-                        )
-                    }
-                }
-                val recordSelected = livePanelMode == "record"
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (recordSelected) accentColor.copy(alpha = 0.5f) else Color(0xFF0F0F0F),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(36.dp)
-                        .clickable(
-                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
-                        ) { livePanelMode = "record" }
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (recordSelected) {
-                            Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        Text(
-                            "🔗 Ghi link live",
-                            fontSize = 13.sp,
-                            fontWeight = if (recordSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (recordSelected) Color.White else Color(0xFF8892B0)
-                        )
-                    }
-                }
+                com.nas.naswebdav.ui.components.PillTab(
+                    selected = livePanelMode == "watch",
+                    label = "Theo dõi user",
+                    emoji = "👤",
+                    accentColor = Color(0xFFEE1D52),
+                    onClick = { livePanelMode = "watch" },
+                    modifier = Modifier.weight(1f),
+                )
+                com.nas.naswebdav.ui.components.PillTab(
+                    selected = livePanelMode == "record",
+                    label = "Ghi link live",
+                    emoji = "🔗",
+                    accentColor = accentColor,
+                    onClick = { livePanelMode = "record" },
+                    modifier = Modifier.weight(1f),
+                )
             }
             Spacer(Modifier.height(6.dp))
 
