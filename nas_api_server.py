@@ -5236,6 +5236,8 @@ def _check_tiktok_user_live(username):
         # Chi coi la live khi URL stream con phan hoi thuc su. Khong bat ffprobe
         # doc duoc codec tai day vi watcher co the false-negative voi TikTok FLV moi.
         flv_urls = _extract_tiktok_live_flv_urls(html)
+        detail = ""
+        last_http_block = False  # True khi gap HTTP 401/403/429 — la loi that su (cookies/rate-limit)
         for candidate in flv_urls[:3]:
             ok, detail = _tiktok_stream_url_seems_live(
                 candidate,
@@ -5244,8 +5246,16 @@ def _check_tiktok_user_live(username):
             )
             if ok:
                 return True, ""
+            # Chi coi la "loi that su" khi cookies/rate-limit; cac truong hop khac la user offline
+            if detail and ("từ chối" in detail or "giới hạn tốc độ" in detail or "cookies.txt" in detail):
+                last_http_block = True
         if flv_urls:
-            return False, normalize_vietnamese_message(detail or "URL stream đã hết hạn hoặc không kiểm tra được")
+            # FLV URL co trong HTML nhung khong probe duoc:
+            #  - Neu vi cookies/rate-limit (401/403/429) → ERROR that, giu detail
+            #  - Neu chi vi 404 / size 0 / content-type sai → user vua offline, URL stale → coi nhu OFFLINE
+            if last_http_block:
+                return False, normalize_vietnamese_message(detail or "URL stream đã hết hạn hoặc không kiểm tra được")
+            return False, "offline"
         lowered = html.lower()
         offline_signals = (
             "live has ended",
@@ -5261,7 +5271,9 @@ def _check_tiktok_user_live(username):
         for sig in offline_signals:
             if sig in lowered:
                 return False, "offline"
-        return False, "Không phát hiện livestream đang chạy."
+        # HTML tra ve binh thuong nhung khong tim thay FLV URL va khong match signal nao
+        # → user khong dang live (TikTok khong show stream URL khi offline). KHONG phai loi.
+        return False, "offline"
     except Exception as e:
         return False, "Không kiểm tra được livestream: %s" % normalize_vietnamese_message(str(e))[:120]
 
