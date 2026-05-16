@@ -50,16 +50,31 @@ private fun friendlyError(e: Exception): String = when (e) {
 }
 
 private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
-    val preferredUrl = urlList.firstOrNull { !isTailscaleUrl(it) } ?: urlList.firstOrNull()
-    val preferredHost = preferredUrl?.let { runCatching { java.net.URL(it).host }.getOrNull() } ?: "NAS"
-    val detail = errorDetails.firstOrNull()?.substringAfter(": ")?.take(90)
-    val reason = when {
-        detail.isNullOrBlank() -> "kiểm tra tài khoản, mật khẩu hoặc dịch vụ WebDAV."
-        detail.contains("WebDAV", ignoreCase = true) -> "WebDAV quá hạn hoặc chưa xác thực."
-        detail.contains("timeout", ignoreCase = true) || detail.contains("quá hạn", ignoreCase = true) -> "NAS phản hồi quá chậm."
-        else -> detail.trim().trimEnd('.') + "."
+    if (errorDetails.isEmpty()) {
+        return "Không đăng nhập được. Kiểm tra tài khoản, mật khẩu hoặc dịch vụ WebDAV."
     }
-    return "Không đăng nhập được NAS qua $preferredHost: $reason"
+    // Hiển thị TẤT CẢ các URL đã thử (LAN + Tailscale) kèm lý do từng URL,
+    // tránh hiểu nhầm chỉ một URL được thử khi nhiều URL cùng fail.
+    val lines = errorDetails.map { detail ->
+        val colonIdx = detail.indexOf(": ")
+        val rawUrl = if (colonIdx > 0) detail.take(colonIdx) else detail
+        val rawReason = if (colonIdx > 0) detail.substring(colonIdx + 2).take(110).trim() else "không xác định"
+        val host = runCatching {
+            val u = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
+            java.net.URL(u).host
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: rawUrl
+        val niceReason = when {
+            rawReason.contains("WebDAV", ignoreCase = true) -> "WebDAV quá hạn hoặc chưa xác thực"
+            rawReason.contains("timeout", ignoreCase = true) || rawReason.contains("quá hạn", ignoreCase = true) || rawReason.contains("timed out", ignoreCase = true) -> "Mạng quá hạn / không phản hồi"
+            rawReason.contains("Unable to resolve", ignoreCase = true) || rawReason.contains("UnknownHost", ignoreCase = true) -> "Không tìm thấy host"
+            rawReason.contains("ECONNREFUSED", ignoreCase = true) || rawReason.contains("refused", ignoreCase = true) -> "Kết nối bị từ chối"
+            rawReason.contains("ENETUNREACH", ignoreCase = true) || rawReason.contains("unreachable", ignoreCase = true) -> "Mạng không thể tiếp cận"
+            else -> rawReason.trimEnd('.')
+        }
+        "• $host — $niceReason"
+    }
+    val header = if (lines.size > 1) "Không đăng nhập được NAS (đã thử ${lines.size} địa chỉ):" else "Không đăng nhập được NAS:"
+    return "$header\n" + lines.joinToString("\n")
 }
 
 // THÊM DATA CLASS CHO TORRENT
