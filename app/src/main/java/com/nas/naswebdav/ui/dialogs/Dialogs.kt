@@ -1849,60 +1849,69 @@ fun LivestreamRecordDialog(
                 }
             }
 
-            // Tab buttons: tang do tuong phan de text tab khong bi chim vao nen.
-            // Selected: container 50% alpha + chu TRANG BOLD + border solid.
-            // Unselected: container den nhe + chu sang xam, doc duoc.
+            // Tab buttons — dung lay out giong dashboard "Nhiet do / Tai nguyen / Mang":
+            //  - Surface fill solid (khong border outline)
+            //  - Selected: nen mau accent alpha 0.5 + red-dot indicator + chu trang BOLD
+            //  - Unselected: nen den + chu xam, khong dot
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val watchSelected = livePanelMode == "watch"
-                FilterChip(
-                    selected = watchSelected,
-                    onClick = { livePanelMode = "watch" },
-                    label = {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (watchSelected) Color(0xFFEE1D52).copy(alpha = 0.5f) else Color(0xFF0F0F0F),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { livePanelMode = "watch" }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (watchSelected) {
+                            Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Text(
-                            "Theo dõi user",
+                            "👤 Theo dõi user",
                             fontSize = 13.sp,
                             fontWeight = if (watchSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (watchSelected) Color.White else Color(0xFFE0E0E0)
+                            color = if (watchSelected) Color.White else Color(0xFF8892B0)
                         )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFEE1D52).copy(alpha = 0.55f),
-                        containerColor = Color(0xFF1A1A1A)
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                        selectedBorderColor = Color(0xFFEE1D52),
-                        borderWidth = 1.dp,
-                        selectedBorderWidth = 1.5.dp,
-                        enabled = true, selected = watchSelected
-                    ),
-                    modifier = Modifier.weight(1f).height(36.dp)
-                )
+                    }
+                }
                 val recordSelected = livePanelMode == "record"
-                FilterChip(
-                    selected = recordSelected,
-                    onClick = { livePanelMode = "record" },
-                    label = {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (recordSelected) accentColor.copy(alpha = 0.5f) else Color(0xFF0F0F0F),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { livePanelMode = "record" }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (recordSelected) {
+                            Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Text(
-                            "Ghi link live",
+                            "🔗 Ghi link live",
                             fontSize = 13.sp,
                             fontWeight = if (recordSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (recordSelected) Color.White else Color(0xFFE0E0E0)
+                            color = if (recordSelected) Color.White else Color(0xFF8892B0)
                         )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = accentColor.copy(alpha = 0.55f),
-                        containerColor = Color(0xFF1A1A1A)
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                        selectedBorderColor = accentColor,
-                        borderWidth = 1.dp,
-                        selectedBorderWidth = 1.5.dp,
-                        enabled = true, selected = recordSelected
-                    ),
-                    modifier = Modifier.weight(1f).height(36.dp)
-                )
+                    }
+                }
             }
             Spacer(Modifier.height(6.dp))
 
