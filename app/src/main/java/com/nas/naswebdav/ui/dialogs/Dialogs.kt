@@ -736,37 +736,38 @@ fun AutoBackupDialog(
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Icon(Icons.Default.Sync, null, tint = Color(0xFF43A047), modifier = Modifier.size(24.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.Sync, null, tint = Color(0xFF43A047), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sao lưu tự động", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 20.sp)
+                Text("Sao lưu tự động", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
             }
 
-            Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 13.sp, color = Color.LightGray)
-            Spacer(Modifier.height(16.dp))
+            Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 12.sp, color = Color.LightGray)
+            Spacer(Modifier.height(6.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onAutoBackupEnabledChange(!isAutoBackupEnabled) }.padding(vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onAutoBackupEnabledChange(!isAutoBackupEnabled) }.padding(vertical = 2.dp)) {
                 Switch(
                     checked = isAutoBackupEnabled,
                     onCheckedChange = onAutoBackupEnabledChange,
+                    modifier = Modifier.scale(0.85f),
                     colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00897B), checkedTrackColor = Color(0xFF80CBC4), uncheckedThumbColor = Color.Gray, uncheckedTrackColor = Color.DarkGray)
                 )
-                Spacer(Modifier.width(12.dp))
-                Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) Color(0xFF00897B) else Color.Gray)
+                Spacer(Modifier.width(8.dp))
+                Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) Color(0xFF00897B) else Color.Gray)
             }
-            
-            Spacer(Modifier.height(8.dp))
-            
+
+            Spacer(Modifier.height(4.dp))
+
             OutlinedCard(
                 colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFF00897B).copy(alpha = 0.15f)),
                 border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.3f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF4DB6AC), modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF4DB6AC), modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
                     Text(
                         text = "Các tệp sẽ được lưu và giữ nguyên cấu trúc thư mục của máy vào trong thư mục /AutoBackup/ trên NAS.",
                         fontSize = 11.sp, color = Color(0xFFB2DFDB), lineHeight = 14.sp
@@ -774,64 +775,68 @@ fun AutoBackupDialog(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(6.dp))
             HorizontalDivider(color = Color.DarkGray)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(6.dp))
 
-            Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
-            Spacer(Modifier.height(8.dp))
+            Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+            Spacer(Modifier.height(2.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(false) }.padding(vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(false) }.padding(vertical = 2.dp)) {
                 RadioButton(
                     selected = !deleteAfterBackup,
                     onClick = { onDeleteAfterBackupChange(false) },
+                    modifier = Modifier.scale(0.9f),
                     colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF43A047), unselectedColor = Color.Gray)
                 )
                 Column {
-                    Text("Chỉ Sao lưu (Copy)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (!deleteAfterBackup) Color(0xFF43A047) else Color.LightGray)
-                    Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 12.sp, color = Color.Gray)
+                    Text("Chỉ Sao lưu (Copy)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (!deleteAfterBackup) Color(0xFF43A047) else Color.LightGray)
+                    Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 11.sp, color = Color.Gray)
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(2.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(true) }.padding(vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(true) }.padding(vertical = 2.dp)) {
                 RadioButton(
                     selected = deleteAfterBackup,
                     onClick = { onDeleteAfterBackupChange(true) },
+                    modifier = Modifier.scale(0.9f),
                     colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFE53935), unselectedColor = Color.Gray)
                 )
                 Column {
-                    Text("Sao lưu & Giải phóng (Move)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) Color(0xFFE53935) else Color.LightGray)
-                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 12.sp, color = Color.Gray)
+                    Text("Sao lưu & Giải phóng (Move)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) Color(0xFFE53935) else Color.LightGray)
+                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 11.sp, color = Color.Gray)
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-            
+            Spacer(Modifier.height(10.dp))
+
             // Buttons Row
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = onTriggerManualSync,
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(40.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F)),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
+                    Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
                     Text("ĐỒNG BỘ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
-                
+
                 Button(
                     onClick = { onSaveAndSchedule(); onDismiss() },
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(40.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(10.dp))
         }
     }
 }
@@ -870,26 +875,26 @@ fun SystemLogDialog(
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 600.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).heightIn(max = 600.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-                Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(24.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
                 if (viewModel.systemLogsList.isNotEmpty()) {
-                    IconButton(onClick = { viewModel.clearSystemLogs() }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935))
+                    IconButton(onClick = { viewModel.clearSystemLogs() }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935), modifier = Modifier.size(18.dp))
                     }
                 }
             }
-            
+
             if (viewModel.systemLogsList.isEmpty()) {
-                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 16.dp), color = Color.Gray)
+                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray, fontSize = 13.sp)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(items = viewModel.systemLogsList, key = { it.id }) { log ->
                         val logColor = when (log.type) {
@@ -908,18 +913,18 @@ fun SystemLogDialog(
 
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-                                Icon(logIcon, null, tint = logColor, modifier = Modifier.size(18.dp).padding(top = 2.dp))
-                                Spacer(Modifier.width(8.dp))
+                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
+                                Icon(logIcon, null, tint = logColor, modifier = Modifier.size(16.dp).padding(top = 2.dp))
+                                Spacer(Modifier.width(6.dp))
                                 Column {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text(log.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = logColor)
                                         Text(timeStr, fontSize = 10.sp, color = Color.Gray)
                                     }
-                                    Spacer(Modifier.height(4.dp))
+                                    Spacer(Modifier.height(2.dp))
                                     Text(formatLogMessage(log.message), fontSize = 12.sp, color = Color.White.copy(alpha=0.85f))
                                 }
                             }
@@ -927,7 +932,7 @@ fun SystemLogDialog(
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -2285,7 +2290,7 @@ fun FilePropertiesDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Header
@@ -2294,17 +2299,17 @@ fun FilePropertiesDialog(
                     if (file.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
                     contentDescription = null,
                     tint = if (file.isDirectory) Color(0xFFFFB74D) else Color(0xFF80CBC4),
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(22.dp)
                 )
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     "Thuộc tính",
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
+                    fontSize = 17.sp,
                     color = Color(0xFFE8E8E8)
                 )
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(6.dp))
 
             // Cac dong field — label trai, value phai, value selectable de copy
             PropertyRow("Tên", file.name, selectable = true)
@@ -2323,7 +2328,7 @@ fun FilePropertiesDialog(
             }
             PropertyRow("Hash", hashDisplay, selectable = true, monospace = true)
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
 
             // Nut dong
             val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -2334,7 +2339,7 @@ fun FilePropertiesDialog(
                 contentPadding = PaddingValues(),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(46.dp)
+                    .height(40.dp)
                     .background(
                         brush = Brush.linearGradient(
                             listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
@@ -2358,7 +2363,7 @@ private fun PropertyRow(
 ) {
     Column(modifier = Modifier
         .fillMaxWidth()
-        .padding(vertical = 6.dp)
+        .padding(vertical = 3.dp)
     ) {
         Text(
             label,
@@ -2366,7 +2371,7 @@ private fun PropertyRow(
             color = Color(0xFF8892B0),
             fontWeight = FontWeight.Medium
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(1.dp))
         val style = if (monospace) {
             androidx.compose.ui.text.TextStyle(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
