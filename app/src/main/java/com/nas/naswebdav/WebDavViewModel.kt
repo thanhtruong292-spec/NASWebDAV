@@ -441,6 +441,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var weeklyReportText by mutableStateOf("Đang tải dữ liệu...")
 
     internal var webSocket: okhttp3.WebSocket? = null
+    // FIX: tranh reconnect storm — track so lan thu lai de exponential backoff
+    // va co flag chong reconnect tu nhieu listener onFailure cu va race nhau.
+    @Volatile internal var wsReconnectAttempt: Int = 0
+    @Volatile internal var wsReconnectScheduled: Boolean = false
 
     // TRÍCH XUẤT HOST CHUẨN ĐỂ FIX LỖI CRASH PORT (8822:5050)
 
@@ -2330,7 +2334,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         }
                         socialExtractStatus = statusText
                         val histItem = SocialDownloadItem(url, platform, isOk)
-                        socialDownloadHistory = socialDownloadHistory + histItem
+                        // FIX: capped O(1) prepend thay vi concat O(n). Cap 50 item de tranh growth vo tan.
+                        socialDownloadHistory = (listOf(histItem) + socialDownloadHistory).take(50)
                     }
                     repository.addSystemLog(
                         if (isOk) "SUCCESS" else "ERROR",
@@ -2348,7 +2353,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     socialExtractStatus = "❌ Lỗi kết nối API: ${e.message?.take(80)}"
-                    socialDownloadHistory = socialDownloadHistory + SocialDownloadItem(url, "Không rõ", false)
+                    socialDownloadHistory = (listOf(SocialDownloadItem(url, "Không rõ", false)) + socialDownloadHistory).take(50)
                 }
                 repository.addSystemLog("ERROR", "SocialExtract", "Lỗi gửi yt-dlp: ${e.message?.take(80)}")
             } finally {
@@ -2360,9 +2365,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private fun monitorYtdlpJob(jobId: String, url: String, platform: String, saveFolder: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch(e: Exception) { return@launch }
-            val statusUrl = "http://$host:5050/api/ytdlp/status"
+            val statusUrl = "http://$host:${com.nas.naswebdav.AppConfig.API_PORT}/api/ytdlp/status"
             var isFinished = false
-            while (!isFinished) {
+            var consecutiveErrors = 0
+            while (!isFinished && consecutiveErrors < 12) { // ~1 phut error -> tu dong huy
                 delay(5000L) // Poll every 5 seconds
                 try {
                     val requestBuilder = okhttp3.Request.Builder().url(statusUrl)
@@ -2371,8 +2377,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (user.isNotEmpty() && pass.isNotEmpty()) {
                         requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
                     }
-                    val resp = localApiClient.newCall(requestBuilder.build()).execute()
-                    val bodyStr = resp.body?.string() ?: "{}"
+                    // FIX: dung .use {} de close response (truoc day leak connection moi 5s)
+                    val bodyStr = localApiClient.newCall(requestBuilder.build()).execute().use { resp ->
+                        resp.body?.string() ?: "{}"
+                    }
+                    consecutiveErrors = 0
                     val json = org.json.JSONObject(bodyStr)
                     val jobs = json.optJSONArray("jobs") ?: continue
 
@@ -2396,6 +2405,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         repository.addSystemLog("SUCCESS", "SocialDownload", "Tải video $platform hoàn tất. Lưu tại: $saveFolder ($url)")
                     }
                 } catch (e: Exception) {
+                    consecutiveErrors++
                     // Ignore transient network errors
                 }
             }
@@ -2497,7 +2507,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             streamPipeStatus = message.ifEmpty { "✅ Hoàn tất!" }
                             // Lưu lịch sử
                             val platform = detectSocialPlatform(sourceUrl)
-                            socialDownloadHistory = socialDownloadHistory + SocialDownloadItem(sourceUrl, platform, true)
+                            socialDownloadHistory = (listOf(SocialDownloadItem(sourceUrl, platform, true)) + socialDownloadHistory).take(50)
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             isStreamPiping = false
                             streamPipeStatus = "❌ ${message.ifEmpty { "Lỗi truyền video" }}"
@@ -3206,23 +3216,33 @@ fun WebDavViewModel.listenToLocalNasApi() {
 }
 
 fun WebDavViewModel.startRealtimeAlerts() {
+    // FIX: dong socket cu truoc khi tao moi de tranh leak. Reset flag scheduled
+    // de cho phep startRealtimeAlerts() goi truc tiep (vd tu UI) khong bi block
+    // boi flag con sot lai tu lan failure truoc.
     webSocket?.close(1000, "Restarting")
+    webSocket = null
+    wsReconnectScheduled = false
     try {
         val url = webDavManager.currentBaseUrl
         if (url.isBlank()) return
         val host = java.net.URL(url).host
-        // nas_api_server.py chạy Tornado WebSocket trên Cổng 5051
-        val wsUrl = "ws://$host:5051/ws/alerts"
+        // nas_api_server.py chay Tornado WebSocket tren cong AppConfig.WS_PORT (5051)
+        val wsUrl = "ws://$host:${com.nas.naswebdav.AppConfig.WS_PORT}/ws/alerts"
         val wsRequest = okhttp3.Request.Builder().url(wsUrl).header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass)).build()
         val client = localApiClient.newBuilder()
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .build()
-        
+
         webSocket = client.newWebSocket(wsRequest, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                // FIX: reset backoff khi ket noi thanh cong de lan failure ke tiep
+                // bat dau lai tu 5s thay vi tang luong cu (vd 120s).
+                wsReconnectAttempt = 0
+            }
             override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
                 val json = try { org.json.JSONObject(text) } catch (e: Exception) { null }
                 if (json == null) return
-                
+
                 viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                     when (json.optString("type")) {
                         "SECURITY_BAN" -> {
@@ -3241,14 +3261,29 @@ fun WebDavViewModel.startRealtimeAlerts() {
             }
             override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {}
             override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                // Tự động kết nối lại ngầm sau 15 giây nếu rớt mạng
+                // FIX: exponential backoff voi jitter, va flag chong nhieu listener
+                // cu cung schedule reconnect mot luc -> hammering NAS.
+                if (wsReconnectScheduled) return
+                wsReconnectScheduled = true
+                val attempt = (++wsReconnectAttempt).coerceAtMost(8)
+                val base = com.nas.naswebdav.AppConfig.WS_RECONNECT_MIN_MS shl (attempt - 1).coerceAtMost(5)
+                val capped = base.coerceAtMost(com.nas.naswebdav.AppConfig.WS_RECONNECT_MAX_MS)
+                val jitter = (Math.random() * 1500).toLong()
+                val delayMs = capped + jitter
                 viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    kotlinx.coroutines.delay(15000)
-                    if (webDavManager.currentBaseUrl.isNotEmpty()) startRealtimeAlerts()
+                    try {
+                        kotlinx.coroutines.delay(delayMs)
+                        wsReconnectScheduled = false
+                        if (webDavManager.currentBaseUrl.isNotEmpty()) startRealtimeAlerts()
+                    } catch (_: kotlinx.coroutines.CancellationException) {
+                        wsReconnectScheduled = false
+                    }
                 }
             }
         })
-    } catch (e: Exception) { }
+    } catch (e: Exception) {
+        wsReconnectScheduled = false
+    }
 }
 
 

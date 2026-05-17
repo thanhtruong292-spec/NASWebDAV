@@ -219,6 +219,16 @@ object AppConfig {
 
     // FIX D11: Port API tập trung vào một constant, tránh hardcode":5050" rải rác
     const val API_PORT = 5050
+    // WebSocket port (cảnh báo realtime, log streaming)
+    const val WS_PORT = 5051
+
+    // Polling/reconnect intervals — gom vao day de tinh chinh tap trung
+    const val WS_RECONNECT_MIN_MS = 5_000L      // backoff bat dau o 5s
+    const val WS_RECONNECT_MAX_MS = 120_000L    // cap o 2 phut
+    const val METRICS_POLL_INTERVAL_MS = 30_000L
+    const val LIVESTREAM_POLL_INTERVAL_MS = 3_000L
+    const val YTDLP_POLL_INTERVAL_MS = 5_000L
+    const val PING_POLL_INTERVAL_MS = 3_000L
 
     const val MAIN_CONNECTION_POOL_SIZE = 15
     const val MAIN_CONNECTION_KEEPALIVE_MINUTES = 5L

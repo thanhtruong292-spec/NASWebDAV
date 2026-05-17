@@ -195,7 +195,14 @@ class LivestreamMonitorWorker(
         var finalErrorReason = ""
 
         while (!isStopped) {
-            delay(3_000L)
+            // FIX: backoff khi lien tiep loi (NAS reboot, mat mang). Khoe thi
+            // poll 3s; loi >=2 -> 6s, 9s, 12s, capped 30s. Tranh hammering khi
+            // co nhieu Worker cung loi luc.
+            val pollDelay = when {
+                consecutiveErrors == 0 -> 3_000L
+                else -> (3_000L * (consecutiveErrors + 1)).coerceAtMost(30_000L)
+            }
+            delay(pollDelay)
 
             try {
                 val requestBuilder = Request.Builder().url(statusUrl)

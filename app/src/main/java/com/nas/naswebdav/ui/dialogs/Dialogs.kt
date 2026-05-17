@@ -2180,15 +2180,26 @@ fun LivestreamRecordDialog(
                                 Column {
                                     Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
+                                    // FIX: tach 2 effect khac nhau — mot de seed gia tri ban dau khi
+                                    // viewModel push update moi (key on jobId+startedTs+durationSeconds),
+                                    // mot la ticker chay 1Hz chi key on jobId. Truoc day mot LaunchedEffect
+                                    // duy nhat key on duration tu mutating chinh no -> cancel/restart loop
+                                    // moi giay khien dong ho giat va leak timer.
                                     LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
+                                        localSeconds = if (job.startedTs > 0L) {
+                                            ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
+                                        } else {
+                                            localSeconds.coerceAtLeast(job.durationSeconds)
+                                        }
+                                    }
+                                    LaunchedEffect(job.jobId) {
                                         while (true) {
+                                            delay(1000)
                                             localSeconds = if (job.startedTs > 0L) {
                                                 ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
                                             } else {
-                                                localSeconds.coerceAtLeast(job.durationSeconds)
+                                                localSeconds + 1
                                             }
-                                            delay(1000)
-                                            if (job.startedTs <= 0L) localSeconds++
                                         }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"

@@ -212,15 +212,26 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     sharedUris.forEach { uri ->
                         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
-                                val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                                val rawName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                                     val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                                     if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
                                 } ?: uri.lastPathSegment ?: "upload_${System.currentTimeMillis()}"
+                                // FIX: sanitize tên file để tránh path traversal khi ghi tempFile vào cacheDir.
+                                // Loại bỏ '/' '\' và '..' segment vì DISPLAY_NAME có thể là malicious.
+                                val fileName = rawName
+                                    .replace('/', '_').replace('\\', '_')
+                                    .replace("..", "_")
+                                    .ifBlank { "upload_${System.currentTimeMillis()}" }
+                                    .take(200)
                                 // FIX #17: URL-encode tên file để tránh lỗi với dấu cách/kí tự đặc biệt
                                 val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
                                 val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
                                 contentResolver.openInputStream(uri)?.use { inputStream ->
                                     val tempFile = java.io.File(cacheDir, fileName)
+                                    // Phong ho them: dam bao path cuoi cung nam trong cacheDir
+                                    if (!tempFile.canonicalPath.startsWith(cacheDir.canonicalPath)) {
+                                        throw SecurityException("Tên file độc hại: $rawName")
+                                    }
                                     tempFile.outputStream().use { inputStream.copyTo(it) }
                                     val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
                                     viewModel.webDavManager.uploadFile(destUrl, tempFile, mimeType)

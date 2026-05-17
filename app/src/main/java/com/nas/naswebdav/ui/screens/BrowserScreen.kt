@@ -2121,7 +2121,9 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
                                         throw Exception("NAS trả về Icon báo lỗi thay vì Thumbnail thật")
                                     }
 
-                                    apiResponse.body!!.byteStream().use { input ->
+                                    // FIX: thay !! bang null check phong cao bang isSuccessful=true voi body rong
+                                    val stream = apiResponse.body?.byteStream() ?: throw Exception("Phản hồi rỗng từ NAS")
+                                    stream.use { input ->
                                         java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
                                         if (thumbFile.length() > 0) {
                                             localThumbPath = thumbFile.absolutePath

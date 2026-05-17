@@ -502,7 +502,8 @@ private fun AiCategoryOverview(
 
         // Danh sách danh mục AI
         val cats = viewModel.aiCategories.entries.toList()
-        items(cats.size) { idx ->
+        // FIX: dung key callback de tranh recompose toan bo grid khi 1 cat doi
+        items(count = cats.size, key = { idx -> cats[idx].key }) { idx ->
             val (catName, urls) = cats[idx]
             AiCategoryCard(
                 name = catName,
@@ -648,7 +649,8 @@ private fun AiCategoryPhotoGrid(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            items(relativePaths.size) { idx ->
+            // FIX: dung key = relativePath de tranh recompose va reload anh khi list cap nhat
+            items(count = relativePaths.size, key = { idx -> relativePaths[idx] }) { idx ->
                 val fullUrl = buildFullUrl(relativePaths[idx], baseUrl)
                 AsyncImage(
                     model = coil.request.ImageRequest.Builder(LocalContext.current)
