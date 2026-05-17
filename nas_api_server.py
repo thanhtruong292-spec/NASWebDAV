@@ -5581,10 +5581,37 @@ def api_livestream_record():
 
         # Tao ten file output
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_template = os.path.join(
-            _LIVESTREAM_DIR,
-            "%s_%s_%%(title).60s.%%(ext)s" % (platform, timestamp_str)
-        )
+        # FIX: KHONG dung %(title) trong output_template — title cua TikTok live
+        # co the thay doi giua chung (host doi caption, hoac yt-dlp re-resolve
+        # metadata sau khi mat ket noi). Moi lan title doi -> yt-dlp dong file
+        # cu va mo file moi -> 1 session bi ghi ra nhieu file .mp4.
+        #
+        # Thay vao do dung stable_id deterministic:
+        #   - Neu co watch_username (tu watcher) -> dung username
+        #   - Neu URL TikTok co @user -> trich username tu URL
+        #   - Fallback: chi platform + timestamp
+        stable_id = ""
+        if watch_username:
+            stable_id = watch_username
+        else:
+            try:
+                m = _re_module.search(r"tiktok\.com/@([\w.\-]+)", live_url)
+                if m:
+                    stable_id = m.group(1)
+            except Exception:
+                pass
+        if stable_id:
+            # Sanitize de tranh ky tu xau trong filename
+            stable_id = _re_module.sub(r"[^\w.\-]", "_", stable_id)[:40]
+            output_template = os.path.join(
+                _LIVESTREAM_DIR,
+                "%s_%s_%s.%%(ext)s" % (platform, stable_id, timestamp_str)
+            )
+        else:
+            output_template = os.path.join(
+                _LIVESTREAM_DIR,
+                "%s_%s.%%(ext)s" % (platform, timestamp_str)
+            )
         direct_tiktok_flv = False
         direct_output_file = ""
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
