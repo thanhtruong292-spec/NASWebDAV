@@ -5939,9 +5939,50 @@ def api_livestream_record():
             stable_id = watch_username
         else:
             try:
+                # Truoc tien thu match @user truc tiep tren URL
                 m = _re_module.search(r"tiktok\.com/@([\w.\-]+)", live_url)
                 if m:
                     stable_id = m.group(1)
+                else:
+                    # FIX: URL TikTok dang short (tiktok.com/t/<id>, vt.tiktok.com,
+                    # vm.tiktok.com) khong co @user -> resolve redirect de tim @user
+                    # cuoi cung. Neu khong resolve duoc thi stable_id van rong va
+                    # filename se la "tiktok_<ts>.mp4" (khong con "_tiktok" cung).
+                    is_short = ("tiktok.com/t/" in live_url.lower()
+                                or "vt.tiktok.com" in live_url.lower()
+                                or "vm.tiktok.com" in live_url.lower())
+                    if is_short:
+                        try:
+                            current = live_url
+                            # Theo redirect toi 5 hop (TikTok thuong redirect 2-3 lan)
+                            for _hop in range(5):
+                                conn = urllib.request.Request(
+                                    current,
+                                    headers={
+                                        "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36",
+                                        "Referer": "https://www.tiktok.com/",
+                                    },
+                                )
+                                # Thu HEAD truoc, neu khong duoc thi GET
+                                resp = None
+                                try:
+                                    resp = urllib.request.urlopen(conn, timeout=5)
+                                except Exception:
+                                    break
+                                next_url = resp.geturl() if resp else current
+                                try: resp.close()
+                                except Exception: pass
+                                if not next_url or next_url == current:
+                                    break
+                                current = next_url
+                                if "@" in current:
+                                    break
+                            m2 = _re_module.search(r"tiktok\.com/@([\w.\-]+)", current)
+                            if m2:
+                                stable_id = m2.group(1)
+                                log.info("[Livestream] Resolved short URL -> @%s", stable_id)
+                        except Exception as _e:
+                            log.warning("[Livestream] Khong resolve duoc short URL: %s", _e)
             except Exception:
                 pass
         if stable_id:
@@ -6049,10 +6090,19 @@ def api_livestream_record():
                     if _direct_flv_has_remuxable_video(candidate, cookies_path, tiktok_user_agent):
                         live_url = candidate
                         direct_tiktok_flv = True
-                        direct_output_file = os.path.join(
-                            _LIVESTREAM_DIR,
-                            "%s_%s_tiktok.mp4" % (platform, timestamp_str)
-                        )
+                        # FIX: dung stable_id (username) trong filename, khong de "_tiktok"
+                        # cung. Truoc day moi luc dung direct FLV path, file deu co dang
+                        # tiktok_<ts>_tiktok.mp4 -> mat thong tin user trong ten file.
+                        if stable_id:
+                            direct_output_file = os.path.join(
+                                _LIVESTREAM_DIR,
+                                "%s_%s_%s.mp4" % (platform, stable_id, timestamp_str)
+                            )
+                        else:
+                            direct_output_file = os.path.join(
+                                _LIVESTREAM_DIR,
+                                "%s_%s.mp4" % (platform, timestamp_str)
+                            )
                         log.info("[Livestream] TikTok HTML fallback: dùng FLV H264 có thể remux sang MP4")
                         break
                 if not direct_tiktok_flv and flv_urls:
