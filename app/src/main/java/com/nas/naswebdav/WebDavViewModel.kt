@@ -998,8 +998,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
                 }
 
-                localApiClient.newCall(requestBuilder.build()).execute().use { response ->
-                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                // FIX: dung client co timeout dai hon (60s) chi rieng cho call nay —
+                // preflight check TikTok co the ton 20-30s (curl HTML + probe FLV).
+                // Khong tang timeout cua client mac dinh vi cac endpoint khac phai
+                // tra ket qua nhanh.
+                val recordClient = localApiClient.newBuilder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                recordClient.newCall(requestBuilder.build()).execute().use { response ->
+                    val rawBody = response.body?.string() ?: "{}"
+                    val json = try { org.json.JSONObject(rawBody) } catch (_: Exception) { org.json.JSONObject() }
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
                         val platform = json.optString("platform", "")
@@ -1027,7 +1035,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             addTikTokLiveWatchUser(context, tiktokUsername)
                         }
                     } else {
-                        val errMsg = json.optString("error", "Lỗi không xác định")
+                        // FIX: server tra error CU THE qua field "error" + "reason"
+                        // Map HTTP code de hien icon/mau dialog hop ly.
+                        val errMsg = json.optString("error", "").ifBlank {
+                            "Lỗi NAS (HTTP ${response.code}): ${rawBody.take(150)}"
+                        }
                         withContext(Dispatchers.Main) {
                             livestreamMessage = errMsg
                             commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
@@ -1037,7 +1049,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                val errMsg = "Lỗi kết nối NAS: ${e.message}"
+                // FIX: phan loai exception cu the thay vi "Lỗi kết nối NAS: null"
+                val errMsg = when (e) {
+                    is java.net.SocketTimeoutException ->
+                        "NAS không phản hồi trong 30 giây. Có thể: " +
+                        "(1) Cookies TikTok hết hạn — cần cập nhật cookies.txt trên NAS. " +
+                        "(2) User TikTok này không live — thử URL khác. " +
+                        "(3) TikTok CDN chặn vùng — đổi mạng/VPN."
+                    is java.net.ConnectException ->
+                        "Không kết nối được NAS. Kiểm tra: NAS có đang chạy không? Tailscale có bật không?"
+                    is java.net.UnknownHostException ->
+                        "Không tìm thấy NAS (DNS/Tailscale lỗi). Kiểm tra lại địa chỉ kết nối."
+                    is javax.net.ssl.SSLException ->
+                        "Lỗi SSL: ${e.message ?: "Chứng chỉ NAS không hợp lệ"}"
+                    else -> {
+                        val raw = e.message?.take(200)
+                        if (raw.isNullOrBlank()) "Lỗi ${e.javaClass.simpleName} không có chi tiết"
+                        else "Lỗi: $raw"
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     livestreamMessage   = errMsg
                     commonDialogType    = com.nas.naswebdav.ui.dialogs.DialogType.ERROR

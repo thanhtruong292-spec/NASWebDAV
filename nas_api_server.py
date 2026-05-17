@@ -5760,6 +5760,49 @@ def api_livestream_record():
                 "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
             }), 503
 
+        # FIX: PRE-FLIGHT CHECK cho TikTok — kiem tra nhanh user co dang live khong
+        # truoc khi cham vao yt-dlp/ffmpeg (cham, ton tai nguyen). Tra error CU THE
+        # de app khong hien "timeout" chung chung nua.
+        # Chi check cho URL TikTok co @user/live; cac URL khac (FB/YT/Shopee) van di
+        # qua flow cu vi format URL khac va probe nhanh hon.
+        try:
+            tt_match = _re_module.search(r"tiktok\.com/@([\w.\-]+)", live_url)
+            if tt_match and "/live" in live_url.lower():
+                preflight_user = tt_match.group(1)
+                # Skip preflight neu duoc goi tu watcher (da check live roi)
+                if not watch_username:
+                    is_live, detail = _check_tiktok_user_live(preflight_user)
+                    if not is_live:
+                        # Xac dinh ly do cu the cho user
+                        if detail == "offline" or detail == "":
+                            return jsonify({
+                                "error": "@%s hiện không live (đã offline hoặc chưa bật stream)" % preflight_user,
+                                "reason": "offline",
+                            }), 404
+                        elif "cookies" in detail.lower() or "cookie" in detail.lower():
+                            return jsonify({
+                                "error": "Cookies TikTok không hợp lệ: %s" % detail,
+                                "reason": "cookies_invalid",
+                            }), 401
+                        elif "giới hạn tốc độ" in detail or "429" in detail:
+                            return jsonify({
+                                "error": "TikTok giới hạn tốc độ — thử lại sau vài phút",
+                                "reason": "rate_limited",
+                            }), 429
+                        elif "từ chối" in detail or "chặn" in detail or "403" in detail:
+                            return jsonify({
+                                "error": "TikTok chặn IP/vùng: %s" % detail,
+                                "reason": "blocked",
+                            }), 403
+                        else:
+                            return jsonify({
+                                "error": "Không thể bắt đầu ghi: %s" % detail,
+                                "reason": "unknown_preflight",
+                            }), 502
+        except Exception as _e:
+            # Preflight loi -> di tiep voi flow cu (yt-dlp/ffmpeg se tra error)
+            log.warning("[Livestream] Preflight check ngoai mong doi: %s", _e)
+
         # Khong gioi han so luong ghi cung; thay vao do check phan cung de
         # bao ve NAS khoi tinh trang treo. Chap nhan luong moi neu:
         #   - CPU dang dung < 85%
