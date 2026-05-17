@@ -154,8 +154,21 @@ class NasApplication : Application(), ImageLoaderFactory {
          * FIX P12: Application-scoped CoroutineScope thay thế GlobalScope trong SystemLogger.
          * SupervisorJob đảm bảo một coroutine lỗi không huỷ các coroutine khác.
          * Scope này tồn tại suốt vòng đời tiến trình App.
+         *
+         * FIX (audit #23): Gắn CoroutineExceptionHandler để uncaught exception trong
+         * applicationScope không silent crash. Log ra logcat + SystemLogger để debug.
          */
-        val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        private val applicationExceptionHandler = kotlinx.coroutines.CoroutineExceptionHandler { ctx, throwable ->
+            android.util.Log.e(
+                "AppScope",
+                "Uncaught exception trong applicationScope (job=${ctx[kotlinx.coroutines.CoroutineName]?.name ?: "?"}): ${throwable.message}",
+                throwable
+            )
+            // Khong cho exception loi tan nat di vao crash handler — chi log
+        }
+        val applicationScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.Default + applicationExceptionHandler
+        )
     }
 
     override fun onCreate() {
@@ -260,6 +273,11 @@ object AppConfig {
     const val THUMBNAIL_QUALITY = 80
 
     var UPLOAD_SPEED_LIMIT_BYTES_PER_SEC: Long = 0L
+
+    // FIX (audit #11/#18): Co the dung de pause cac polling loop nang khi
+    // app o background -> tiet kiem CPU/battery/data. MainActivity cap nhat
+    // qua ProcessLifecycleOwner. @Volatile vi duoc doc tu nhieu coroutine.
+    @Volatile var IS_APP_FOREGROUND: Boolean = true
 
     const val HASH_HAMMING_THRESHOLD = 5
 

@@ -1971,9 +1971,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchMetricsHistory(metricsHours)
                 startRealtimeAlerts()
             }
-            // Sau đó poll mỗi 30 giây
+            // Sau đó poll mỗi 30 giây (90s khi app o background)
             while (isActive) {
-                delay(30_000L)
+                delay(if (AppConfig.IS_APP_FOREGROUND) AppConfig.METRICS_POLL_INTERVAL_MS else 90_000L)
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
                     fetchMetricsHistory(metricsHours)
                 }
@@ -3220,7 +3220,11 @@ fun WebDavViewModel.listenToLocalNasApi() {
                 withContext(Dispatchers.Main) { systemStatus = systemStatus.copy(status = msg) }
                 currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
             }
-            delay(currentDelayMs)
+            // FIX (audit #11): app background -> tang delay them de tiet kiem battery.
+            // Khong tat han vi WebSocket alerts (security ban) van can biet API con song.
+            val effective = if (AppConfig.IS_APP_FOREGROUND) currentDelayMs
+                            else (currentDelayMs * 4).coerceAtMost(60_000L)
+            delay(effective)
         }
     }
 }
@@ -3911,7 +3915,9 @@ object PerformanceMonitor {
                     diskCacheCheckCounter++
                     _metricsFlow.value = SystemMetrics(totalRam, freeRam, usedRamPercent, calculateCpuUsage(), rxSpeed, txSpeed, lastDiskCacheSizeMb, maxJvm, usedJvm)
                 } catch (_: Exception) {}
-                delay(1000)
+                // FIX (audit #11): khi app vao background, gian poll 1s -> 5s
+                // -> giam CPU/battery dang ke khi user khong xem panel debug.
+                delay(if (AppConfig.IS_APP_FOREGROUND) 1000L else 5000L)
             }
         } finally { previousRx = 0L; previousTx = 0L }
     }
