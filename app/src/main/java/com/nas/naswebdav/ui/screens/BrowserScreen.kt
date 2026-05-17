@@ -1759,10 +1759,9 @@ fun FileItemGridCell(
             onDismissRequest = { showRenameDialog = false },
             title = { Text("Đổi tên", fontWeight = FontWeight.Bold) },
             text = {
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = newFileName,
                     onValueChange = { newFileName = it },
-                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
             },

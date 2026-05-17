@@ -909,7 +909,14 @@ fun MainMenuScreen(
                         Spacer(Modifier.height(4.dp))
                         completedTorrents.take(5).forEach { torrent ->
                             var showCompletedMenu by remember { mutableStateOf(false) }
-                            Box(Modifier.fillMaxWidth()) {
+                            androidx.compose.runtime.key(torrent.hash) {
+                            com.nas.naswebdav.ui.components.SwipeDeleteRow(
+                                onDelete = { viewModel.controlTorrent("delete", torrent.hash) },
+                                shape = RoundedCornerShape(6.dp),
+                                backgroundPaddingHorizontal = 8.dp,
+                                iconSize = 18.dp
+                            ) {
+                            Box(Modifier.fillMaxWidth().background(DarkCard)) {
                                 Row(
                                     Modifier.fillMaxWidth()
                                         .pointerInput(torrent.hash) { detectTapGestures(
@@ -938,17 +945,13 @@ fun MainMenuScreen(
                                     Icon(Icons.Default.Folder, null, tint = Color(0xFFFFCA28), modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Text(torrent.name, fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    IconButton(
-                                        onClick = { viewModel.controlTorrent("delete", torrent.hash) },
-                                        modifier = Modifier.size(24.dp)
-                                    ) {
-                                        Icon(Icons.Default.Close, null, tint = TextSecondary.copy(alpha=0.6f), modifier = Modifier.size(14.dp))
-                                    }
                                 }
                                 DropdownMenu(expanded = showCompletedMenu, onDismissRequest = { showCompletedMenu = false }) {
                                     DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
                                 }
                             }
+                            } // SwipeDeleteRow content
+                            } // key
                         }
                     }
                 }

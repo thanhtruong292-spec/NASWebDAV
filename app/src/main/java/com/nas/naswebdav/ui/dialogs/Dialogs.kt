@@ -149,12 +149,11 @@ fun DownloadDialog(
             Column {
                 Text("Nhập Magnet Link hoặc HTTP URL để NAS tự động tải ngầm qua qBittorrent.", fontSize = 13.sp)
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = downloadLink,
                     onValueChange = onLinkChange,
-                    placeholder = { Text("https://... hoặc magnet:?...") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    placeholder = "https://... hoặc magnet:?...",
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },
@@ -184,12 +183,11 @@ fun WolDialog(
             Column {
                 Text("Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.", fontSize = 13.sp)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = macAddress,
                     onValueChange = onMacChange,
-                    placeholder = { Text("VD: AA:BB:CC:DD:EE:FF") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    placeholder = "VD: AA:BB:CC:DD:EE:FF",
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         },
@@ -441,36 +439,13 @@ private fun TikTokLiveWatchSection(
     }
     Spacer(Modifier.height(4.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        // Dung BasicTextField + custom decoration de kiem soat padding chinh xac,
-        // tranh viec OutlinedTextField (mac dinh 16dp top/bottom) lam text bi che
-        // khuat khi height < 56dp.
-        val usernameInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-        val usernameFocused by usernameInteraction.collectIsFocusedAsState()
-        val borderColor = if (usernameFocused) Color(0xFFEE1D52) else Color(0xFFEE1D52).copy(alpha = 0.45f)
-        androidx.compose.foundation.text.BasicTextField(
+        com.nas.naswebdav.ui.components.CompactTextField(
             value = newUsername,
             onValueChange = onUsernameChange,
-            singleLine = true,
-            interactionSource = usernameInteraction,
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, color = Color(0xFFE8E8E8)),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFFEE1D52)),
-            modifier = Modifier
-                .weight(1f)
-                .height(40.dp)
-                .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-                .padding(horizontal = 10.dp),
-            decorationBox = { innerTextField ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {
-                    Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Spacer(Modifier.width(6.dp))
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                        if (newUsername.isEmpty()) {
-                            Text("Nhập username TikTok", color = Color(0xFF8892B0), fontSize = 13.sp)
-                        }
-                        innerTextField()
-                    }
-                }
-            }
+            placeholder = "Nhập username TikTok",
+            leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp) },
+            accentColor = Color(0xFFEE1D52),
+            modifier = Modifier.weight(1f)
         )
         Button(
             onClick = { viewModel.addTikTokLiveWatchUser(context, newUsername) },
@@ -668,25 +643,23 @@ private fun TikTokLiveWatchSection(
         Column(modifier = Modifier.padding(top = 4.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = viewModel.tiktokExcludeStart,
                     onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
-                    singleLine = true,
                     textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
-                    modifier = Modifier.width(80.dp).height(40.dp),
+                    accentColor = Color(0xFFEE1D52),
                     shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+                    modifier = Modifier.width(80.dp)
                 )
                 Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
                 Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = viewModel.tiktokExcludeEnd,
                     onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
-                    singleLine = true,
                     textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
-                    modifier = Modifier.width(80.dp).height(40.dp),
+                    accentColor = Color(0xFFEE1D52),
                     shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
+                    modifier = Modifier.width(80.dp)
                 )
             }
         }
@@ -1338,21 +1311,14 @@ fun LanWhitelistDialog(
             }
 
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
+                com.nas.naswebdav.ui.components.CompactTextField(
                     value = newEntry,
                     onValueChange = { newEntry = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("192.168.1.0/24", color = Color(0xFF8892B0), fontSize = 13.sp) },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Color(0xFFE8E8E8)),
+                    placeholder = "192.168.1.0/24",
+                    accentColor = Color(0xFF66BB6A),
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF66BB6A),
-                        unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                        cursorColor = Color(0xFF66BB6A),
-                        focusedTextColor = Color(0xFFE8E8E8),
-                        unfocusedTextColor = Color(0xFFE8E8E8)
-                    )
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                    modifier = Modifier.weight(1f)
                 )
                 Spacer(Modifier.width(8.dp))
                 IconButton(
@@ -1362,8 +1328,8 @@ fun LanWhitelistDialog(
                             newEntry = ""
                         }
                     },
-                    modifier = Modifier.size(48.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A)) }
+                    modifier = Modifier.size(40.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp)) }
             }
 
             if (statusMessage.isNotBlank()) {
@@ -1389,14 +1355,20 @@ fun LanWhitelistDialog(
                         Text("SUBNET", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         subnetList.forEach { subnet ->
-                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                                IconButton(
-                                    onClick = { viewModel.removeLanWhitelistEntry(subnet, true) },
-                                    modifier = Modifier.size(28.dp)
-                                ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
+                            key("subnet-$subnet") {
+                                com.nas.naswebdav.ui.components.SwipeDeleteRow(
+                                    onDelete = { viewModel.removeLanWhitelistEntry(subnet, true) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    backgroundPaddingHorizontal = 8.dp,
+                                    iconSize = 18.dp
+                                ) {
+                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                    }
+                                }
+                                Spacer(Modifier.height(3.dp))
                             }
                         }
                     }
@@ -1405,14 +1377,20 @@ fun LanWhitelistDialog(
                         Text("IP", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         ipList.forEach { ip ->
-                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                                IconButton(
-                                    onClick = { viewModel.removeLanWhitelistEntry(ip, false) },
-                                    modifier = Modifier.size(28.dp)
-                                ) { Icon(Icons.Default.Close, null, tint = Color(0xFFFF1744).copy(alpha = 0.7f), modifier = Modifier.size(16.dp)) }
+                            key("ip-$ip") {
+                                com.nas.naswebdav.ui.components.SwipeDeleteRow(
+                                    onDelete = { viewModel.removeLanWhitelistEntry(ip, false) },
+                                    shape = RoundedCornerShape(6.dp),
+                                    backgroundPaddingHorizontal = 8.dp,
+                                    iconSize = 18.dp
+                                ) {
+                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                    }
+                                }
+                                Spacer(Modifier.height(3.dp))
                             }
                         }
                     }
@@ -1768,11 +1746,10 @@ fun CreateFolderDialog(
         onDismissRequest = onDismiss,
         title = { Text("Thư mục mới") },
         text = {
-            OutlinedTextField(
+            com.nas.naswebdav.ui.components.CompactTextField(
                 value = folderName,
                 onValueChange = { folderName = it },
-                label = { Text("Nhập tên thư mục") },
-                singleLine = true,
+                placeholder = "Nhập tên thư mục",
                 modifier = Modifier.fillMaxWidth()
             )
         },
@@ -2009,27 +1986,19 @@ fun LivestreamRecordDialog(
             } else {
 
             // --- PHẦN 1: FORM TẠO JOB MỚI ---
-            OutlinedTextField(
+            com.nas.naswebdav.ui.components.CompactTextField(
                 value = liveUrl,
                 onValueChange = {
                     liveUrl = it
                     viewModel.clearLivestreamMessage()
                 },
-                label = { Text("Dán link livestream", color = Color(0xFF8892B0)) },
-                placeholder = { Text("https://www.tiktok.com/@user/live", color = Color(0xFF8892B0).copy(alpha = 0.5f), fontSize = 12.sp) },
+                placeholder = "Dán link livestream — https://www.tiktok.com/@user/live",
+                accentColor = accentColor,
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = accentColor,
-                    unfocusedBorderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                    cursorColor = accentColor,
-                    focusedTextColor = Color(0xFFE8E8E8),
-                    unfocusedTextColor = Color(0xFFE8E8E8)
-                ),
                 trailingIcon = {
                     if (liveUrl.isNotEmpty()) {
-                        IconButton(onClick = { liveUrl = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color(0xFF8892B0))
+                        IconButton(onClick = { liveUrl = "" }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                         }
                     } else if (detectedPlatform.isNotEmpty()) {
                         Text(platformIcon, fontSize = 18.sp)
