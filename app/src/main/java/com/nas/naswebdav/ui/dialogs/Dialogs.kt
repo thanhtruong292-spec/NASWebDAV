@@ -2176,15 +2176,14 @@ fun LivestreamRecordDialog(
                                 Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                             Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
+                            // FIX: chia thanh 3 cot dong nhat — Thoi gian chay | Toc do | Dung luong
+                            // 3 cot dung Row weight 1f de cach deu, label cung font 10sp xam, value cung
+                            // font 16sp bold trang. Toc do giua, dung luong phai (align end).
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                                // Cot 1: Thoi gian chay
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
-                                    // FIX: tach 2 effect khac nhau — mot de seed gia tri ban dau khi
-                                    // viewModel push update moi (key on jobId+startedTs+durationSeconds),
-                                    // mot la ticker chay 1Hz chi key on jobId. Truoc day mot LaunchedEffect
-                                    // duy nhat key on duration tu mutating chinh no -> cancel/restart loop
-                                    // moi giay khien dong ho giat va leak timer.
                                     LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
                                         localSeconds = if (job.startedTs > 0L) {
                                             ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
@@ -2205,12 +2204,17 @@ fun LivestreamRecordDialog(
                                     val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
                                     Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
-                                Column(horizontalAlignment = Alignment.End) {
+                                // Cot 2: Toc do (giua, ngang voi 2 cot kia)
+                                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("Tốc độ", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    Text(job.speed.ifEmpty { "—" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                }
+                                // Cot 3: Dung luong (align phai)
+                                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                                     Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 10.sp)
                                     Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            if (job.speed.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text("Tốc độ: ${job.speed}", color = Color(0xFF8892B0), fontSize = 12.sp) }
                             if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
