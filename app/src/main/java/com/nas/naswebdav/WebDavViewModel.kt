@@ -2731,16 +2731,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 } // end class WebDavViewModel
 
 // LỚP PHỤ TRỢ: Bộ đếm Rate Limiter (2.C)
+// FIX: dung ArrayDeque thay vi MutableList. removeAll{} cu phai duyet toan
+// bo list moi lan goi (O(n)); thay bang pollFirst() khi gia tri dau qua han,
+// chi cham vao timestamp con song -> O(k) voi k la so item bi prune.
 class RateLimiter(private val maxRequestsPerMinute: Int) {
-    private val requestTimestamps = mutableListOf<Long>()
-    
+    private val requestTimestamps = ArrayDeque<Long>()
+
     @Synchronized
     fun isAllowed(): Boolean {
         val now = System.currentTimeMillis()
-        requestTimestamps.removeAll { now - it > 60000L }
-        
+        val cutoff = now - 60_000L
+        while (requestTimestamps.isNotEmpty() && requestTimestamps.first() < cutoff) {
+            requestTimestamps.removeFirst()
+        }
+
         if (requestTimestamps.size >= maxRequestsPerMinute) return false
-        requestTimestamps.add(now)
+        requestTimestamps.addLast(now)
         return true
     }
 }
@@ -3193,8 +3199,12 @@ fun WebDavViewModel.listenToLocalNasApi() {
                                 }
                                 
                                 if (hddVal > 0f || cpuVal > 0f) {
-                                    temperatureHistory.addLast(Pair(cpuVal, hddVal))
-                                    if (temperatureHistory.size > 40) temperatureHistory.removeFirst()
+                                    // FIX: temperatureHistory boc trong mutableStateOf — in-place
+                                    // addLast khong trigger recompose. Phai reassign de Compose biet.
+                                    val next = kotlin.collections.ArrayDeque(temperatureHistory)
+                                    next.addLast(Pair(cpuVal, hddVal))
+                                    while (next.size > 40) next.removeFirst()
+                                    temperatureHistory = next
                                 }
                             }
                         } else {
@@ -3877,7 +3887,12 @@ object PerformanceMonitor {
     private var lastDiskCacheSizeMb = 0; private var diskCacheCheckCounter = 0
 
     suspend fun startMonitoring(context: Context) = withContext(Dispatchers.IO) {
-        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        // FIX: dung applicationContext de tranh giu Activity context trong singleton object
+        // qua nhieu lifecycle. Truoc day moi lan ham nay duoc goi tu MainMenuScreen LaunchedEffect,
+        // tham chieu Activity duoc cap qua `am` chi duoc cleanup khi loop bi cancel — neu
+        // process song lau hon Activity, am giu ref den Activity da huy -> leak.
+        val appContext = context.applicationContext ?: context
+        val am = appContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo()
         val uid = Process.myUid()
         try {
@@ -3892,7 +3907,7 @@ object PerformanceMonitor {
                     var rxSpeed = 0; var txSpeed = 0
                     if (previousRx > 0 && previousTx > 0) { rxSpeed = ((currentRx - previousRx) / 1024L).toInt(); txSpeed = ((currentTx - previousTx) / 1024L).toInt() }
                     previousRx = currentRx; previousTx = currentTx
-                    if (diskCacheCheckCounter % 60 == 0) { val cacheDir = File(context.cacheDir, "image_cache"); lastDiskCacheSizeMb = if (cacheDir.exists()) (getFolderSize(cacheDir) / 1048576L).toInt() else 0 }
+                    if (diskCacheCheckCounter % 60 == 0) { val cacheDir = File(appContext.cacheDir, "image_cache"); lastDiskCacheSizeMb = if (cacheDir.exists()) (getFolderSize(cacheDir) / 1048576L).toInt() else 0 }
                     diskCacheCheckCounter++
                     _metricsFlow.value = SystemMetrics(totalRam, freeRam, usedRamPercent, calculateCpuUsage(), rxSpeed, txSpeed, lastDiskCacheSizeMb, maxJvm, usedJvm)
                 } catch (_: Exception) {}

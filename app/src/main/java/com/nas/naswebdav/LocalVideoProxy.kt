@@ -38,7 +38,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         private const val BUFFER_SIZE = 65_536 // 64KB buffer cho stream
     }
 
-    private var serverSocket: ServerSocket? = null
+    @Volatile private var serverSocket: ServerSocket? = null
 
     /**
      * Khởi động proxy và trả về URL localhost để VLC kết nối.
@@ -47,6 +47,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
      * @return URL localhost dạng http://127.0.0.1:<port>/ mà VLC sẽ mở
      */
     fun start(nasUrl: String): String {
+        // FIX: dong proxy cu (neu co) truoc khi tao moi de tranh leak
+        // thread/socket khi caller goi start() nhieu lan tren cung instance.
+        stop()
         // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)
         val server = ServerSocket(0).also { serverSocket = it }
         val port = server.localPort
