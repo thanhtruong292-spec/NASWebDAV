@@ -5660,8 +5660,25 @@ def _tiktok_live_watchdog():
                     user["last_error"] = "" if err == "offline" else normalize_vietnamese_message(err)
                 changed = True
             if changed:
+                # FIX (race condition): KHONG ghi de full list users — neu user
+                # qua app /add/remove trong luc watchdog quet (30-60s/lap), thay
+                # doi do se bi xoa hen. Logic moi: merge per-username vao state
+                # hien tai. Update theo username, gi giu user moi them, bo qua
+                # user da bi remove.
                 with _tiktok_watch_lock:
-                    _tiktok_watch_state["users"] = users_snapshot
+                    snapshot_by_name = {
+                        (u.get("username") or "").lower(): u
+                        for u in users_snapshot
+                        if u.get("username")
+                    }
+                    current_users = _tiktok_watch_state.get("users", [])
+                    for cur in current_users:
+                        un = (cur.get("username") or "").lower()
+                        upd = snapshot_by_name.get(un)
+                        if upd:
+                            # Apply moi field tu snapshot vao cur (preserve cur
+                            # reference de khong dut tham chieu trong RAM khac).
+                            cur.update(upd)
                     _save_tiktok_watch_state()
             _tiktok_watch_runtime.update({
                 "running": True,
