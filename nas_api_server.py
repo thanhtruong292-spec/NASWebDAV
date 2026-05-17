@@ -3793,7 +3793,7 @@ def _frame_brightness(jpg_path):
 
 # BO KHOA BAO VE RAM: Toi da 2 luong FFmpeg
 import threading
-_ffmpeg_semaphore = threading.Semaphore(2)
+_ffmpeg_semaphore = threading.Semaphore(1)  # REVERT: 2 -> 1 de tranh I/O burst lam SATA timeout
 
 def _generate_video_thumb(src_path, dst_path):
     """FIX: chien luoc seek nhieu nac de tang ti le thumbnail thanh cong.
@@ -3965,21 +3965,16 @@ def _thumbnail_generator():
                     total += 1
                     full_path = os.path.join(root, name)
                     thumb_path = _get_thumb_path(base_dir, full_path)
-                    if os.path.exists(thumb_path):
-                        # FIX: Phan biet thumb that vs placeholder. Placeholder
-                        # gray-box do _create_placeholder_thumb tao luon co kich
-                        # thuoc deterministic ~2072 bytes (THUMB_MAX_SIZE x ratio,
-                        # JPEG q=60). Da do thuc te tren NAS: ~3400 file dung
-                        # 2072 bytes. Threshold > 2200 bytes de phan biet placeholder
-                        # vs thumb that tu video/anh thuc te (thuong >= 4KB).
-                        try:
-                            thumb_size = os.path.getsize(thumb_path)
-                        except Exception:
-                            thumb_size = 0
-                        if thumb_size > 2200:
-                            already_done += 1
-                            continue
-                        # else: thumb la placeholder hoac file rong -> retry
+                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                        # REVERT: KHONG retry placeholder nua. Threshold 2200 truoc
+                        # day khien daemon kick ffmpeg cho 3400+ file moi vong quet
+                        # -> I/O burst lien tuc -> SATA timeout -> corrupt FS.
+                        # Logic seek thong minh trong _generate_video_thumb VAN giu
+                        # cho file MOI; nhung khong dung de spam retry file cu.
+                        # Khi nao disk on dinh thi user co the xoa .thumbs/ thu cong
+                        # de retry toan bo.
+                        already_done += 1
+                        continue
                     if len(pending) < MAX_BATCH:
                         pending.append((full_path, thumb_path, ext))
             
