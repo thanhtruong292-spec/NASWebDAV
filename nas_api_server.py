@@ -28,6 +28,7 @@ import sqlite3
 import base64
 import urllib.request
 import urllib.error
+import urllib.parse
 
 def sanitize_log_input(text):
     if not text: return str(text)
@@ -2732,6 +2733,311 @@ def _pwm_apply_on(duty=10000, period=10000):
         _pwm_write("period", period)
     _pwm_write("duty_cycle", duty)
     _pwm_write("enable", 1)
+
+
+# ============================================================================
+# BACKUP / RESTORE — Sao luu va khoi phuc cau hinh NAS
+# ============================================================================
+# Backup tarball chua moi config/state cua NAS API + WebDAV + fan + watcher.
+# Luu vao /etc/nas/backups (eMMC, an toan khi HDD chet).
+# Filename: "Backup_NAS DDMMYYYY HHMMSS.tar.gz"
+#
+# Cac file duoc backup (manifest.json dinh kem trong tarball):
+#   /opt/nas_api_server.py                          (NAS API server Python)
+#   /opt/fan_custom.json                            (fan settings)
+#   /etc/systemd/system/nas_api.service             (systemd unit)
+#   /etc/systemd/system/fan.service                 (fan service neu co)
+#   /etc/nas/auth.conf                              (WEBDAV creds — chmod 600)
+#   /etc/nas/lan_whitelist.conf                     (LAN IP whitelist)
+#   /etc/nas/install-pending-cookies.sh             (auto-install script)
+#   /etc/nas/state/tiktok_live_watch.json           (watcher mirror state)
+#   /etc/nginx/openmediavault-webgui.d/nas_api.conf       (nginx reverse proxy)
+#   /etc/nginx/openmediavault-webgui.d/openmediavault-webdav.conf
+#   /var/www/webdav/config/config.php               (OMV WebDAV publicDir)
+#   <WEBDAV_ROOT>/cookies.txt                       (TikTok cookies — neu accessible)
+#   <WEBDAV_ROOT>/.nas_meta/tiktok_live_watch.json  (watcher state on HDD)
+# ============================================================================
+import tarfile
+
+_BACKUP_DIR = "/etc/nas/backups"
+_BACKUP_FILES = [
+    # (source_path, relative_path_in_tar, critical)
+    # critical = True -> bao loi neu thieu khi restore
+    ("/opt/nas_api_server.py",                              "opt/nas_api_server.py",                              True),
+    ("/opt/fan_custom.json",                                "opt/fan_custom.json",                                False),
+    ("/etc/systemd/system/nas_api.service",                 "etc/systemd/system/nas_api.service",                 True),
+    ("/etc/systemd/system/fan.service",                     "etc/systemd/system/fan.service",                     False),
+    ("/etc/nas/auth.conf",                                  "etc/nas/auth.conf",                                  True),
+    ("/etc/nas/lan_whitelist.conf",                         "etc/nas/lan_whitelist.conf",                         False),
+    ("/etc/nas/install-pending-cookies.sh",                 "etc/nas/install-pending-cookies.sh",                 False),
+    ("/etc/nas/state/tiktok_live_watch.json",               "etc/nas/state/tiktok_live_watch.json",               False),
+    ("/etc/nginx/openmediavault-webgui.d/nas_api.conf",     "etc/nginx/openmediavault-webgui.d/nas_api.conf",     False),
+    ("/etc/nginx/openmediavault-webgui.d/openmediavault-webdav.conf", "etc/nginx/openmediavault-webgui.d/openmediavault-webdav.conf", False),
+    ("/var/www/webdav/config/config.php",                   "var/www/webdav/config/config.php",                   False),
+]
+
+
+def _backup_dynamic_files():
+    """Cac path phu thuoc WEBDAV_FILE_ROOT (HDD). Lay vao runtime."""
+    return [
+        (os.path.join(WEBDAV_FILE_ROOT, "cookies.txt"),                     "webdav_root/cookies.txt",                     False),
+        (os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tiktok_live_watch.json"), "webdav_root/.nas_meta/tiktok_live_watch.json", False),
+    ]
+
+
+def _ensure_backup_dir():
+    try:
+        os.makedirs(_BACKUP_DIR, exist_ok=True)
+        return True
+    except Exception as e:
+        log.error("[Backup] Khong tao duoc thu muc: %s", e)
+        return False
+
+
+@app.route('/api/backup/create', methods=['POST'])
+@requires_auth
+def api_backup_create():
+    """Tao 1 backup .tar.gz chua moi config/state hien tai."""
+    if not _ensure_backup_dir():
+        return jsonify({"error": "Khong tao duoc thu muc backup"}), 500
+    try:
+        timestamp = datetime.datetime.now().strftime("%d%m%Y %H%M%S")
+        filename = "Backup_NAS %s.tar.gz" % timestamp
+        full_path = os.path.join(_BACKUP_DIR, filename)
+        manifest = {
+            "created_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "hostname": os.uname()[1] if hasattr(os, "uname") else "unknown",
+            "webdav_root": WEBDAV_FILE_ROOT,
+            "files": [],
+        }
+        included = 0
+        skipped = []
+        all_files = list(_BACKUP_FILES) + _backup_dynamic_files()
+        with tarfile.open(full_path, "w:gz") as tar:
+            for src, arcname, critical in all_files:
+                if not os.path.exists(src):
+                    skipped.append({"path": src, "reason": "khong ton tai"})
+                    continue
+                try:
+                    tar.add(src, arcname=arcname)
+                    sz = 0
+                    try: sz = os.path.getsize(src)
+                    except Exception: pass
+                    manifest["files"].append({
+                        "src": src,
+                        "archive_path": arcname,
+                        "size": sz,
+                    })
+                    included += 1
+                except Exception as e:
+                    skipped.append({"path": src, "reason": str(e)[:100]})
+                    if critical:
+                        log.warning("[Backup] File critical bi loi: %s -> %s", src, e)
+            # Them manifest vao tarball cuoi cung
+            manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+            info = tarfile.TarInfo(name="manifest.json")
+            info.size = len(manifest_bytes)
+            info.mtime = int(time.time())
+            try:
+                import io as _io
+                tar.addfile(info, _io.BytesIO(manifest_bytes))
+            except Exception as e:
+                log.warning("[Backup] Khong add duoc manifest: %s", e)
+        size = os.path.getsize(full_path)
+        log.info("[Backup] Tao xong %s (%d files, %d bytes)", filename, included, size)
+        return jsonify({
+            "filename": filename,
+            "size": size,
+            "size_human": format_bytes(size),
+            "created_at": manifest["created_at"],
+            "included_count": included,
+            "skipped": skipped,
+            "download_url": "/api/backup/download?filename=" + urllib.parse.quote(filename),
+        })
+    except Exception as e:
+        log.error("[Backup] Tao backup loi: %s", e)
+        return jsonify({"error": "Khong tao duoc backup: %s" % str(e)[:200]}), 500
+
+
+@app.route('/api/backup/list', methods=['GET'])
+@requires_auth
+def api_backup_list():
+    """List moi backup co san trong /etc/nas/backups."""
+    if not _ensure_backup_dir():
+        return jsonify({"backups": []})
+    items = []
+    try:
+        for name in os.listdir(_BACKUP_DIR):
+            if not name.startswith("Backup_NAS"):
+                continue
+            full = os.path.join(_BACKUP_DIR, name)
+            try:
+                st = os.stat(full)
+                items.append({
+                    "filename": name,
+                    "size": st.st_size,
+                    "size_human": format_bytes(st.st_size),
+                    "mtime": st.st_mtime,
+                    "created_at": datetime.datetime.fromtimestamp(st.st_mtime).strftime("%d/%m/%Y %H:%M:%S"),
+                    "download_url": "/api/backup/download?filename=" + urllib.parse.quote(name),
+                })
+            except Exception:
+                continue
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+    except Exception as e:
+        log.warning("[Backup] List loi: %s", e)
+    return jsonify({"backups": items, "backup_dir": _BACKUP_DIR})
+
+
+@app.route('/api/backup/download', methods=['GET'])
+@requires_auth
+def api_backup_download():
+    """Stream 1 file backup ve client."""
+    filename = request.args.get("filename", "").strip()
+    if not filename or "/" in filename or ".." in filename:
+        return jsonify({"error": "Filename khong hop le"}), 400
+    full = os.path.join(_BACKUP_DIR, filename)
+    if not os.path.exists(full):
+        return jsonify({"error": "File khong ton tai"}), 404
+    try:
+        from flask import send_file
+        return send_file(full, mimetype="application/gzip",
+                         as_attachment=True, attachment_filename=filename)
+    except TypeError:
+        # Flask cu khong co attachment_filename keyword
+        from flask import send_file
+        return send_file(full, mimetype="application/gzip", as_attachment=True)
+
+
+@app.route('/api/backup/delete', methods=['POST'])
+@requires_auth
+def api_backup_delete():
+    body = request.get_json(force=True) or {}
+    filename = (body.get("filename") or "").strip()
+    if not filename or "/" in filename or ".." in filename:
+        return jsonify({"error": "Filename khong hop le"}), 400
+    full = os.path.join(_BACKUP_DIR, filename)
+    if not os.path.exists(full):
+        return jsonify({"error": "File khong ton tai"}), 404
+    try:
+        os.remove(full)
+        log.info("[Backup] Da xoa %s", filename)
+        return jsonify({"status": "deleted", "filename": filename})
+    except Exception as e:
+        return jsonify({"error": "Khong xoa duoc: %s" % str(e)[:200]}), 500
+
+
+@app.route('/api/backup/restore', methods=['POST'])
+@requires_auth
+def api_backup_restore():
+    """Khoi phuc tu mot backup file co san hoac uploaded.
+    Body:
+      - filename: ten file backup trong _BACKUP_DIR (uu tien)
+      - file: multipart upload (neu khong co filename)
+    """
+    # Xac dinh source
+    src_tar = None
+    cleanup_after = False
+    try:
+        if request.files and "file" in request.files:
+            up = request.files["file"]
+            tmp = os.path.join("/tmp", "restore_upload_%d.tar.gz" % int(time.time()))
+            up.save(tmp)
+            src_tar = tmp
+            cleanup_after = True
+        else:
+            body = {}
+            try: body = request.get_json(silent=True) or {}
+            except Exception: body = {}
+            filename = (body.get("filename") or "").strip()
+            if filename and "/" not in filename and ".." not in filename:
+                src_tar = os.path.join(_BACKUP_DIR, filename)
+        if not src_tar or not os.path.exists(src_tar):
+            return jsonify({"error": "Khong tim thay file backup de khoi phuc"}), 400
+
+        restored = []
+        errors = []
+        manifest = None
+        with tarfile.open(src_tar, "r:gz") as tar:
+            # Doc manifest truoc
+            try:
+                m_member = tar.getmember("manifest.json")
+                m_file = tar.extractfile(m_member)
+                if m_file:
+                    manifest = json.loads(m_file.read().decode("utf-8"))
+            except Exception as e:
+                log.warning("[Backup] Khong doc duoc manifest: %s", e)
+
+            # Build map archive_path -> real_dest
+            file_map = {}
+            for src, arcname, _crit in _BACKUP_FILES:
+                file_map[arcname] = src
+            for src, arcname, _crit in _backup_dynamic_files():
+                file_map[arcname] = src
+
+            for member in tar.getmembers():
+                if member.name == "manifest.json" or not member.isfile():
+                    continue
+                dest = file_map.get(member.name)
+                if not dest:
+                    errors.append({"file": member.name, "reason": "khong xac dinh duoc duong dan dich"})
+                    continue
+                try:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                except Exception as e:
+                    errors.append({"file": dest, "reason": "mkdir loi: %s" % e})
+                    continue
+                try:
+                    f = tar.extractfile(member)
+                    if f is None:
+                        errors.append({"file": dest, "reason": "tar khong doc duoc"})
+                        continue
+                    data = f.read()
+                    # Backup file dich hien tai truoc khi ghi de (rollback neu can)
+                    if os.path.exists(dest):
+                        try: os.replace(dest, dest + ".pre-restore")
+                        except Exception: pass
+                    tmp = dest + ".restore-tmp"
+                    with open(tmp, "wb") as w:
+                        w.write(data)
+                    os.replace(tmp, dest)
+                    # Phuc hoi quyen co ban: auth.conf phai chmod 600
+                    if dest.endswith("auth.conf"):
+                        try: os.chmod(dest, 0o600)
+                        except Exception: pass
+                    if dest.endswith(".sh"):
+                        try: os.chmod(dest, 0o755)
+                        except Exception: pass
+                    restored.append(dest)
+                except Exception as e:
+                    errors.append({"file": dest, "reason": str(e)[:120]})
+
+        # Khoi dong lai services chinh
+        services_restarted = []
+        for svc in ("nas_api", "nginx", "fan"):
+            try:
+                subprocess.run(["systemctl", "daemon-reload"], timeout=10)
+                r = subprocess.run(["systemctl", "restart", svc], timeout=15, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if r.returncode == 0:
+                    services_restarted.append(svc)
+            except Exception:
+                pass
+
+        return jsonify({
+            "status": "restored",
+            "restored_count": len(restored),
+            "restored": restored,
+            "errors": errors,
+            "services_restarted": services_restarted,
+            "manifest": manifest,
+        })
+    except Exception as e:
+        log.error("[Backup] Restore loi: %s", e)
+        return jsonify({"error": "Khong khoi phuc duoc: %s" % str(e)[:200]}), 500
+    finally:
+        if cleanup_after and src_tar:
+            try: os.remove(src_tar)
+            except Exception: pass
 
 
 @app.route('/api/fan/control', methods=['POST'])

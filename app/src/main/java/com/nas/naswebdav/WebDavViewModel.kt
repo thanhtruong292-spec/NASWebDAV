@@ -322,6 +322,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // ─── STREAM PIPE STATE (Điện thoại bơm CDN → NAS trực tiếp) ──────────────
     var isStreamPiping      by mutableStateOf(false)     // Đang bơm stream
+    // NAS Config Backup/Restore state
+    data class NasConfigBackup(
+        val filename: String,
+        val sizeBytes: Long,
+        val sizeHuman: String,
+        val createdAt: String,
+        val mtime: Double,
+    )
+    var nasConfigBackups by mutableStateOf<List<NasConfigBackup>>(emptyList())
+    var isCreatingNasConfigBackup by mutableStateOf(false)
+    var isRestoringNasConfigBackup by mutableStateOf(false)
+    var nasConfigBackupMessage by mutableStateOf("")
+
     var streamPipeStatus    by mutableStateOf("")        // Mô tả trạng thái hiện tại
     var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 → 1.0 (nếu biết size)
     var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tốc độ dạng text
@@ -2757,6 +2770,172 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     override fun onCleared() {
         super.onCleared()
         try { webSocket?.close(1000, "ViewModel cleared") } catch (_: Exception) {}
+    }
+
+    // ============== NAS CONFIG BACKUP / RESTORE ==============
+    fun fetchNasConfigBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder()
+                    .url("$base/api/backup/list")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(request).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val arr = org.json.JSONObject(body).optJSONArray("backups") ?: return@use
+                    val list = mutableListOf<NasConfigBackup>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        list.add(NasConfigBackup(
+                            filename = o.optString("filename"),
+                            sizeBytes = o.optLong("size", 0L),
+                            sizeHuman = o.optString("size_human", ""),
+                            createdAt = o.optString("created_at", ""),
+                            mtime = o.optDouble("mtime", 0.0),
+                        ))
+                    }
+                    withContext(Dispatchers.Main) { nasConfigBackups = list }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("NasBackup", "list err: ${e.message}")
+            }
+        }
+    }
+
+    fun createNasConfigBackup() {
+        if (isCreatingNasConfigBackup) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                isCreatingNasConfigBackup = true
+                nasConfigBackupMessage = "Đang tạo backup..."
+            }
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                // Empty JSON body so server accepts POST
+                val body = "{}".toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/backup/create")
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                // dung client co read timeout dai (60s) vi tar.gz nhieu file co the cham
+                val client = localApiClient.newBuilder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(text)
+                    val msg = if (resp.isSuccessful) {
+                        "Đã tạo: ${json.optString("filename")} (${json.optString("size_human")})"
+                    } else {
+                        "Lỗi tạo backup: ${json.optString("error", "HTTP ${resp.code}")}"
+                    }
+                    withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
+                }
+                fetchNasConfigBackups()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
+            }
+        }
+    }
+
+    fun deleteNasConfigBackup(filename: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/backup/delete")
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string() ?: "{}"
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = if (resp.isSuccessful) "Đã xoá $filename"
+                        else "Lỗi xoá: ${org.json.JSONObject(text).optString("error","HTTP ${resp.code}")}"
+                    }
+                }
+                fetchNasConfigBackups()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi xoá: ${e.message}" }
+            }
+        }
+    }
+
+    fun restoreNasConfigBackup(filename: String) {
+        if (isRestoringNasConfigBackup) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                isRestoringNasConfigBackup = true
+                nasConfigBackupMessage = "Đang khôi phục..."
+            }
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/backup/restore")
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                // Restore goi systemctl restart nen co the mat 10-20s
+                val client = localApiClient.newBuilder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    val text = resp.body?.string() ?: "{}"
+                    val json = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+                    val msg = if (resp.isSuccessful) {
+                        "Đã khôi phục ${json.optInt("restored_count")} file. Services restart: " +
+                            (json.optJSONArray("services_restarted")?.toString() ?: "(none)")
+                    } else {
+                        "Lỗi khôi phục: ${json.optString("error", "HTTP ${resp.code}")}"
+                    }
+                    withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi khôi phục: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
+            }
+        }
+    }
+
+    /** Download backup .tar.gz xuong cacheDir va tra ve File de share/save.
+     *  Goi tu Dispatchers.IO. Tra null neu loi. */
+    suspend fun downloadNasConfigBackup(context: Context, filename: String): java.io.File? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val encoded = java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
+                val url = "$base/api/backup/download?filename=$encoded"
+                val req = okhttp3.Request.Builder()
+                    .url(url)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                val client = localApiClient.newBuilder()
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val src = resp.body?.byteStream() ?: return@withContext null
+                    val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
+                    val safe = filename.replace("/", "_").replace("\\", "_")
+                    val out = java.io.File(outDir, safe)
+                    out.outputStream().use { o -> src.copyTo(o) }
+                    out
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("NasBackup", "download err: ${e.message}")
+                null
+            }
+        }
     }
 } // end class WebDavViewModel
 

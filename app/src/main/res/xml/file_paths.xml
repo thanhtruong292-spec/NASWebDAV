@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="video_cache" path="video_temp/" />
+    <!-- NAS config backups downloaded for share-to-OneDrive flow -->
+    <cache-path name="nas_backups" path="nas_backups/" />
 </paths>

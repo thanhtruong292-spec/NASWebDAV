@@ -230,6 +230,9 @@ fun MainMenuScreen(
 
     // STATE CHO LIVESTREAM RECORD
     var showLivestreamDialog by remember { mutableStateOf(false) }
+
+    // STATE CHO NAS CONFIG BACKUP/RESTORE
+    var showNasBackupDialog by remember { mutableStateOf(false) }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
@@ -403,6 +406,12 @@ fun MainMenuScreen(
             onDismiss = { showLivestreamDialog = false }
         )
     }
+    if (showNasBackupDialog) {
+        com.nas.naswebdav.ui.dialogs.NasConfigBackupDialog(
+            viewModel = viewModel,
+            onDismiss = { showNasBackupDialog = false }
+        )
+    }
 
     // ============ TRẠNG THÁI SCROLL ============
     val scrollState = rememberScrollState()
@@ -420,6 +429,7 @@ fun MainMenuScreen(
             "organizer" -> onOpenOrganizer()
             "guest" -> onOpenGuestPass()
             "log" -> { viewModel.loadSystemLogs(); viewModel.showLogDialog = true }
+            "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
         }
     }
 
@@ -2321,7 +2331,8 @@ val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(Color(0xFFEF5350), Color(0xFFD32F2F))),
     QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
     QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
-    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7)))
+    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
+    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C)))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
