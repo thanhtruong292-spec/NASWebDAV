@@ -1200,18 +1200,28 @@ def get_fan_info():
                     pass
             percent = int((duty * 100.0) / period)
 
+            # FIX: doc them enable de bao cao "Tat" chinh xac khi PWM da bi cat hen
+            enable_path = os.path.join(PWM_DIR, "enable")
+            enable_val = 1
+            try:
+                if os.path.exists(enable_path):
+                    with open(enable_path) as f:
+                        enable_val = int(f.read().strip() or "1")
+            except Exception:
+                pass
+
             if mode not in ["auto", "custom"]:
-                if duty == 0: mode = "off"
+                if duty == 0 or enable_val == 0: mode = "off"
                 else: mode = "on"
 
             payload = {
-                "rpm": None, 
-                "percent": percent, 
+                "rpm": None,
+                "percent": percent if enable_val == 1 else 0,
                 "mode": mode,
                 "on_temp": settings.get("on_temp", 65),
                 "off_temp": settings.get("off_temp", 55)
             }
-            if duty == 0:
+            if duty == 0 or enable_val == 0:
                 payload["status"] = "Dừng"
             else:
                 payload["status"] = "Đang chạy %d%%" % percent
@@ -2607,6 +2617,66 @@ def _save_fan_settings(settings):
             json.dump(settings, f)
     except Exception: pass
 
+
+# ============================================================================
+# Fan PWM low-level helpers (FIX: nut Tat trong app phai cat hen 5V chu khong
+# chi set duty=0 — kernel PWM peripheral khi enable=1 + duty=0 van co the giu
+# transistor o trang thai khong xac dinh tuy phan cung Chainedbox).
+# ============================================================================
+PWM_PATH = "/sys/class/pwm/pwmchip0/pwm0"
+
+
+def _pwm_write(node, value):
+    """Ghi gia tri vao 1 sysfs node PWM. Im lang neu khong ton tai."""
+    path = os.path.join(PWM_PATH, node)
+    try:
+        if not os.path.exists(path):
+            return False
+        # subprocess voi sh -c de chac chan kernel nhin thay file write
+        # (mot so kernel khong cho python ghi truc tiep voi PermissionDenied).
+        subprocess.run(["sh", "-c", "echo %s > %s" % (value, path)], check=False)
+        return True
+    except Exception as e:
+        log.warning("[Fan] PWM write %s=%s loi: %s", node, value, e)
+        return False
+
+
+def _pwm_export_if_needed():
+    """Mot so kernel can echo 0 > pwmchip0/export truoc khi /pwm0 ton tai."""
+    try:
+        if not os.path.isdir(PWM_PATH):
+            export_path = "/sys/class/pwm/pwmchip0/export"
+            if os.path.exists(export_path):
+                subprocess.run(["sh", "-c", "echo 0 > %s" % export_path], check=False)
+    except Exception:
+        pass
+
+
+def _pwm_apply_off():
+    """Tat hoan toan PWM: duty=0 truoc, enable=0 sau de pin ve LOW va peripheral
+    ngung output. Tren rk3328 Chainedbox phai ca hai buoc nay 5V moi ngat tai
+    chan ra quat."""
+    _pwm_export_if_needed()
+    _pwm_write("duty_cycle", 0)
+    _pwm_write("enable", 0)
+
+
+def _pwm_apply_on(duty=10000, period=10000):
+    """Bat PWM: period -> duty -> enable. Kernel yeu cau duty <= period nen phai
+    cap nhat period truoc neu can tang duty. enable=1 cuoi cung."""
+    _pwm_export_if_needed()
+    # Doc period hien tai; chi ghi neu nho hon duty mong muon (tranh ghi -EINVAL).
+    try:
+        with open(os.path.join(PWM_PATH, "period")) as f:
+            cur_period = int(f.read().strip() or "0")
+    except Exception:
+        cur_period = 0
+    if cur_period < duty:
+        _pwm_write("period", period)
+    _pwm_write("duty_cycle", duty)
+    _pwm_write("enable", 1)
+
+
 @app.route('/api/fan/control', methods=['POST'])
 @requires_auth
 def api_fan_control():
@@ -2622,6 +2692,10 @@ def api_fan_control():
         if mode == 'auto':
             settings['mode'] = 'auto'
             _save_fan_settings(settings)
+            # fan.service se tu set duty va enable theo nhiet do. Phai bao dam
+            # enable=1 truoc khi start service de service khong gap PWM da bi
+            # disable boi lan "off" truoc do.
+            _pwm_write("enable", 1)
             run_cmd(["systemctl", "start", "fan.service"])
             with _cache_lock:
                 _status_cache['fan_mode'] = 'auto'
@@ -2633,6 +2707,9 @@ def api_fan_control():
             settings['off_temp'] = data.get('off_temp', settings.get('off_temp', 55))
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
+            # Watchdog se quyet dinh duty 0/10000 theo hysteresis. Cho phep
+            # PWM peripheral chay san de watchdog ghi duty co tac dung.
+            _pwm_write("enable", 1)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'custom'
                 _status_cache['fan_on_temp'] = settings['on_temp']
@@ -2643,7 +2720,10 @@ def api_fan_control():
             settings['mode'] = 'off'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            run_cmd(["sh", "-c", "echo 0 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            # FIX: ngat hen 5V tai chan ra PWM — KHONG chi set duty=0 (PWM
+            # peripheral van hoat dong, mot so phan cung van giu 5V o ngo ra
+            # quat). Phai disable hoan toan PWM channel.
+            _pwm_apply_off()
             with _cache_lock:
                 _status_cache['fan_mode'] = 'off'
                 _status_cache['fan_status'] = 'Dừng'
@@ -2653,7 +2733,9 @@ def api_fan_control():
             settings['mode'] = 'on'
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            run_cmd(["sh", "-c", "echo 10000 > /sys/class/pwm/pwmchip0/pwm0/duty_cycle"])
+            # FIX: bat PWM tu trang thai disabled (lan tat truoc) -> phai dam bao
+            # enable=1 sau khi set duty. Helper xu ly thu tu period/duty/enable.
+            _pwm_apply_on(duty=10000, period=10000)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'on'
                 _status_cache['fan_status'] = 'Đang chạy 100%'
@@ -4862,12 +4944,44 @@ def _fan_controller_watchdog():
                             duty = int(f.read().strip())
                     except Exception:
                         duty = 0
-                        
+
+                # FIX: enable=1 truoc khi ghi duty trong custom mode — neu user
+                # chuyen tu OFF (enable=0) sang CUSTOM ma watchdog ghi duty truoc
+                # khi enable thi kernel se tra ve EINVAL va quat khong chay.
+                _pwm_write("enable", 1)
                 subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
                 
         except Exception as e:
             log.error("[FanWatchdog] Lỗi: %s", e)
         time.sleep(10)
+
+# FIX: Khoi phuc trang thai quat sau reboot. Kernel PWM driver mac dinh
+# enable=1 -> 5V luon co o cong ra quat ngay khi NAS bat nguon. Doc lai
+# /opt/fan_custom.json, neu mode=off thi ngat PWM ngay tu dau de tranh
+# truong hop "vua bat nguon quat da chay du user da chon Tat tu lan truoc".
+def _restore_fan_state_on_boot():
+    try:
+        settings = _load_fan_settings()
+        mode = settings.get("mode", "auto")
+        if mode == "off":
+            # User da chon Tat -> ngat hen PWM ngay khi service len.
+            run_cmd(["systemctl", "stop", "fan.service"])
+            _pwm_apply_off()
+            log.info("[Fan] Khoi phuc trang thai TAT (cat 5V) tu /opt/fan_custom.json")
+        elif mode == "on":
+            run_cmd(["systemctl", "stop", "fan.service"])
+            _pwm_apply_on(duty=10000, period=10000)
+            log.info("[Fan] Khoi phuc trang thai BAT 100%% tu /opt/fan_custom.json")
+        elif mode == "custom":
+            # Watchdog se dieu khien duty, nhung enable=1 phai san sang
+            _pwm_write("enable", 1)
+            log.info("[Fan] Khoi phuc trang thai TUY CHINH — watchdog se quyet dinh")
+        # mode="auto" -> fan.service tu lo, khong can lam gi
+    except Exception as e:
+        log.warning("[Fan] Khong khoi phuc duoc trang thai: %s", e)
+
+
+_restore_fan_state_on_boot()
 
 # Khoi dong watchdog thread
 threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
