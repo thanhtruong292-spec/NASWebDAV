@@ -5158,11 +5158,27 @@ def _normalize_tiktok_watch_user_entry(user):
 def _load_tiktok_watch_state():
     global _tiktok_watch_state
     try:
-        if os.path.exists(_TIKTOK_WATCH_FILE):
-            with open(_TIKTOK_WATCH_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                _tiktok_watch_state.update(data)
+        # FIX: Load tu file moi nhat giua primary (HDD) va mirror (eMMC).
+        # Neu HDD bi RO trong khi user thay doi state -> mirror moi hon ->
+        # phai dung mirror khi reboot, neu khong se mat thay doi.
+        candidates = []
+        for path in (_TIKTOK_WATCH_FILE, _TIKTOK_WATCH_MIRROR):
+            try:
+                if os.path.exists(path):
+                    candidates.append((os.path.getmtime(path), path))
+            except Exception:
+                pass
+        candidates.sort(reverse=True)  # newest first
+        for _mtime, path in candidates:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    _tiktok_watch_state.update(data)
+                    log.info("[TikTokWatch] Loaded state tu %s (mtime=%s)", path, _mtime)
+                    break
+            except Exception as e:
+                log.warning("[TikTokWatch] Skip file %s: %s", path, e)
         users = []
         seen = set()
         for raw_user in _tiktok_watch_state.get("users", []):
@@ -5177,15 +5193,40 @@ def _load_tiktok_watch_state():
     except Exception as e:
         log.error("[TikTokWatch] Lỗi tải trạng thái: %s", e)
 
+# FIX: Mirror state vao eMMC root FS de khong mat khi HDD bi RO/corrupt.
+# Primary: WEBDAV_FILE_ROOT/.nas_meta/tiktok_live_watch.json (HDD)
+# Mirror : /etc/nas/state/tiktok_live_watch.json              (eMMC, robust)
+# Save tra ve True neu CO IT NHAT 1 noi ghi thanh cong. Load lay file moi
+# nhat theo mtime giua hai noi.
+_TIKTOK_WATCH_MIRROR = "/etc/nas/state/tiktok_live_watch.json"
+
 def _save_tiktok_watch_state():
+    primary_ok = False
+    mirror_ok = False
+    payload = json.dumps(_tiktok_watch_state, ensure_ascii=False)
+    # Primary (HDD)
     try:
         os.makedirs(os.path.dirname(_TIKTOK_WATCH_FILE), exist_ok=True)
         tmp = _TIKTOK_WATCH_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_tiktok_watch_state, f, ensure_ascii=False)
+            f.write(payload)
         os.replace(tmp, _TIKTOK_WATCH_FILE)
+        primary_ok = True
     except Exception as e:
-        log.error("[TikTokWatch] Lỗi lưu trạng thái: %s", e)
+        log.warning("[TikTokWatch] Khong luu duoc primary (HDD): %s", e)
+    # Mirror (eMMC, luon ghi de state khong mat khi HDD chet)
+    try:
+        os.makedirs(os.path.dirname(_TIKTOK_WATCH_MIRROR), exist_ok=True)
+        tmp = _TIKTOK_WATCH_MIRROR + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+        os.replace(tmp, _TIKTOK_WATCH_MIRROR)
+        mirror_ok = True
+    except Exception as e:
+        log.error("[TikTokWatch] Khong luu duoc mirror (eMMC): %s", e)
+    if not primary_ok and not mirror_ok:
+        log.error("[TikTokWatch] LUU THAT BAI O CA HAI NOI — state se mat khi reboot")
+    return primary_ok or mirror_ok
 
 def _normalize_tiktok_username(username):
     username = (username or "").strip()
@@ -5696,8 +5737,17 @@ def api_tiktok_live_watch_add():
                 "last_error": "",
                 "job_id": ""
             })
-        _save_tiktok_watch_state()
+        saved = _save_tiktok_watch_state()
         _tiktok_watch_wake.set()
+        # FIX: bao loi RO ngay cho user neu CA HAI noi luu deu fail
+        if not saved:
+            response = jsonify({
+                "error": "Đã thêm trong RAM nhưng KHÔNG lưu được xuống đĩa. Sẽ mất khi reboot.",
+                "persisted": False,
+                "users": _tiktok_watch_state.get("users", []),
+            })
+            response.status_code = 503
+            return response
         return jsonify(_tiktok_watch_state)
 
 @app.route("/api/tiktok/live_watch/remove", methods=["POST"])
@@ -5710,8 +5760,16 @@ def api_tiktok_live_watch_remove():
             u for u in _tiktok_watch_state.get("users", [])
             if u.get("username", "").lower() != username.lower()
         ]
-        _save_tiktok_watch_state()
+        saved = _save_tiktok_watch_state()
         _tiktok_watch_wake.set()
+        if not saved:
+            response = jsonify({
+                "error": "Đã xoá trong RAM nhưng KHÔNG lưu được xuống đĩa. Sẽ trở lại khi reboot.",
+                "persisted": False,
+                "users": _tiktok_watch_state.get("users", []),
+            })
+            response.status_code = 503
+            return response
         return jsonify(_tiktok_watch_state)
 
 @app.route("/api/tiktok/live_watch/settings", methods=["POST"])
