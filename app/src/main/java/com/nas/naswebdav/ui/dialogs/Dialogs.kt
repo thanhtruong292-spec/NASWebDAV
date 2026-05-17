@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -440,27 +441,41 @@ private fun TikTokLiveWatchSection(
     }
     Spacer(Modifier.height(4.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
+        // Dung BasicTextField + custom decoration de kiem soat padding chinh xac,
+        // tranh viec OutlinedTextField (mac dinh 16dp top/bottom) lam text bi che
+        // khuat khi height < 56dp.
+        val usernameInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        val usernameFocused by usernameInteraction.collectIsFocusedAsState()
+        val borderColor = if (usernameFocused) Color(0xFFEE1D52) else Color(0xFFEE1D52).copy(alpha = 0.45f)
+        androidx.compose.foundation.text.BasicTextField(
             value = newUsername,
             onValueChange = onUsernameChange,
-            leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold) },
-            placeholder = { Text("Nhập username TikTok", color = Color(0xFF8892B0), fontSize = 13.sp) },
             singleLine = true,
-            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
-            modifier = Modifier.weight(1f).height(44.dp),
-            shape = RoundedCornerShape(10.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color(0xFFEE1D52),
-                unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f),
-                cursorColor = Color(0xFFEE1D52),
-                focusedTextColor = Color(0xFFE8E8E8),
-                unfocusedTextColor = Color(0xFFE8E8E8)
-            )
+            interactionSource = usernameInteraction,
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp, color = Color(0xFFE8E8E8)),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFFEE1D52)),
+            modifier = Modifier
+                .weight(1f)
+                .height(40.dp)
+                .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+                .padding(horizontal = 10.dp),
+            decorationBox = { innerTextField ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxSize()) {
+                    Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.width(6.dp))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (newUsername.isEmpty()) {
+                            Text("Nhập username TikTok", color = Color(0xFF8892B0), fontSize = 13.sp)
+                        }
+                        innerTextField()
+                    }
+                }
+            }
         )
         Button(
             onClick = { viewModel.addTikTokLiveWatchUser(context, newUsername) },
             enabled = newUsername.isNotBlank() && !viewModel.isLoadingTikTokWatch,
-            modifier = Modifier.height(44.dp).widthIn(min = 80.dp),
+            modifier = Modifier.height(40.dp).widthIn(min = 80.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF424242)),
             shape = RoundedCornerShape(10.dp),
             contentPadding = PaddingValues(horizontal = 10.dp)
