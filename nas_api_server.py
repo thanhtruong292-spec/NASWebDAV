@@ -3910,14 +3910,16 @@ def _thumbnail_generator():
                     thumb_path = _get_thumb_path(base_dir, full_path)
                     if os.path.exists(thumb_path):
                         # FIX: Phan biet thumb that vs placeholder. Placeholder
-                        # (tao khi ffmpeg fail) chi co ~500-1500 bytes. Thumb that
-                        # tu video/anh thuong > 2KB. Treat placeholder nhu chua
-                        # done de co co hoi retry sau (vd cap nhat ffmpeg).
+                        # gray-box do _create_placeholder_thumb tao luon co kich
+                        # thuoc deterministic ~2072 bytes (THUMB_MAX_SIZE x ratio,
+                        # JPEG q=60). Da do thuc te tren NAS: ~3400 file dung
+                        # 2072 bytes. Threshold > 2200 bytes de phan biet placeholder
+                        # vs thumb that tu video/anh thuc te (thuong >= 4KB).
                         try:
                             thumb_size = os.path.getsize(thumb_path)
                         except Exception:
                             thumb_size = 0
-                        if thumb_size > 2048:  # >2KB = thumb that
+                        if thumb_size > 2200:
                             already_done += 1
                             continue
                         # else: thumb la placeholder hoac file rong -> retry
