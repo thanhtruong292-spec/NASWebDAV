@@ -107,6 +107,10 @@ fun BrowserScreen(
     // TÍNH NĂNG 7.L: Trạng thái của chế độ Multi-Selection
     var selectionMode by remember { mutableStateOf(false) }
     val selectedFiles = remember { androidx.compose.runtime.mutableStateListOf<NasFile>() }
+    // Tick increment khi can refresh red-dot "newFile" indicator tu SharedPrefs.
+    // VD: nhan "Chon tat ca" -> mark all viewed -> increment tick -> moi
+    // FileItemGridCell remember key bi invalidated -> doc lai prefs.
+    var viewedRefreshTick by remember { mutableStateOf(0) }
 
     // SORT — luu trong SharedPreferences de nho cua user qua cac lan vao app.
     // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
@@ -1140,6 +1144,18 @@ fun BrowserScreen(
                                 if (checked) {
                                     selectedFiles.clear()
                                     selectedFiles.addAll(displayedFiles)
+                                    // FIX: "Chon tat ca" cung mark moi file la da xem
+                                    // de bo cham do (newFile indicator) — user da chu y
+                                    // den toan bo danh sach thi khong can chi dau.
+                                    try {
+                                        val prefs = context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
+                                        val cur = prefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
+                                        displayedFiles.filter { !it.isDirectory }.forEach { cur.add(it.path) }
+                                        prefs.edit().putStringSet("viewed_files", cur).apply()
+                                        // Bump tick de moi FileItemGridCell remember key bi
+                                        // invalidated -> doc lai prefs -> red dot bien mat.
+                                        viewedRefreshTick++
+                                    } catch (_: Exception) {}
                                 } else {
                                     selectedFiles.clear()
                                     selectionMode = false
@@ -1594,9 +1610,10 @@ fun BrowserScreen(
                             contentType = { if (it.isDirectory) "folder" else "file" }
                         ) { file ->
                             FileItemGridCell(
-                                file = file, 
+                                file = file,
                                 viewModel = viewModel,
                                 selectionMode = selectionMode,
+                                viewedRefreshTick = viewedRefreshTick,
                                 isSelected = selectedFiles.contains(file),
                                 onLongClick = {
                                     if (!selectionMode) {
@@ -1695,6 +1712,7 @@ fun FileItemGridCell(
     viewModel: WebDavViewModel,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
+    viewedRefreshTick: Int = 0,
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,
     onVideo: (String) -> Unit
@@ -1716,7 +1734,8 @@ fun FileItemGridCell(
     // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
     // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
     val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
-    var isNewFile by remember(file.path) {
+    // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
+    var isNewFile by remember(file.path, viewedRefreshTick) {
         mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
     }
 

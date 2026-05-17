@@ -3739,44 +3739,109 @@ import threading
 _ffmpeg_semaphore = threading.Semaphore(2)
 
 def _generate_video_thumb(src_path, dst_path):
+    """FIX: chien luoc seek nhieu nac de tang ti le thumbnail thanh cong.
+
+    Loi cu:
+    - Seek 00:00:03 -> video < 3s thi ffmpeg fail im lang
+    - Timeout 10s -> video lon hoac codec phuc tap (H.265/HEVC/AV1 tren rk3328
+      ARM 1-2GB RAM khong co hwacc) thi ffmpeg bi kill truoc khi extract frame
+    - Khong probe duration -> khong biet co the seek bao nhieu
+    - Fallback -ss 0 sau khi seek 3s loi: kernel da cache file -> 2nd run nhanh hon
+      nhung van loi neu codec khong decode duoc bang ffmpeg 3.2
+    - Tao placeholder + return True che dau loi -> client khong biet re-request
+
+    Logic moi:
+    1. Probe duration nhanh (ffprobe 3s) de chon seek time hop ly.
+    2. Seek tai 10% duration (max 3s, min 0.5s) — tranh frame den dau video.
+    3. Timeout dong theo size: 15s cho file <100MB, 25s cho file <1GB, 40s cho >1GB.
+    4. Fallback seek 0 neu seek 10% loi (file hong header time index).
+    5. Chi tao placeholder khi MOI nhanh deu fail. Return False de retry sau (chu
+       khong return True che dau).
+    """
     try:
         import os, subprocess
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-        
+
         with _ffmpeg_semaphore:
-            cmd = [
-                "/usr/bin/ffmpeg", "-y", "-ss", "00:00:03", "-i", src_path,
-                "-vframes", "1", "-vf", "scale=%d:-1" % THUMB_MAX_SIZE,
-                "-q:v", "5", dst_path
-            ]
+            # Buoc 1: probe duration nhanh
+            duration = 0.0
             try:
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                probe = subprocess.run(
+                    ["/usr/bin/ffprobe", "-v", "error",
+                     "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1",
+                     src_path],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5
+                )
+                duration = float((probe.stdout or b"").decode("utf-8", errors="ignore").strip() or "0")
             except Exception:
-                pass
-            
+                duration = 0.0
+
+            # Buoc 2: chon seek time hop ly
+            if duration > 0:
+                # 10% duration, cap 0.5s..3s. Video 2s -> seek 0.2s? Khong, min 0s.
+                seek_s = max(0.5, min(3.0, duration * 0.10)) if duration >= 1.0 else 0.0
+            else:
+                # Khong probe duoc -> thu 3s nhu cu (will fallback to 0 if fail)
+                seek_s = 3.0
+
+            # Buoc 3: timeout dua theo size
+            try:
+                sz = os.path.getsize(src_path)
+            except Exception:
+                sz = 0
+            if sz > 1024 * 1024 * 1024:    # >1GB
+                ffmpeg_timeout = 40
+            elif sz > 100 * 1024 * 1024:   # >100MB
+                ffmpeg_timeout = 25
+            else:
+                ffmpeg_timeout = 15
+
+            def _run_ffmpeg(ss_arg):
+                cmd = ["/usr/bin/ffmpeg", "-y"]
+                if ss_arg is not None and ss_arg > 0:
+                    cmd += ["-ss", "%.2f" % ss_arg]
+                cmd += [
+                    "-i", src_path,
+                    "-vframes", "1",
+                    "-vf", "scale=%d:-1" % THUMB_MAX_SIZE,
+                    "-q:v", "5",
+                    "-an",  # bo audio cho nhanh
+                    dst_path,
+                ]
+                try:
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=ffmpeg_timeout)
+                except subprocess.TimeoutExpired:
+                    log.warning("[Thumb] ffmpeg timeout (%ds) ss=%s: %s", ffmpeg_timeout, ss_arg, os.path.basename(src_path))
+                except Exception as e:
+                    log.warning("[Thumb] ffmpeg loi ss=%s: %s — %s", ss_arg, os.path.basename(src_path), e)
+
+            # Try 1: seek tinh toan
+            _run_ffmpeg(seek_s)
             if os.path.exists(dst_path) and os.path.getsize(dst_path) > 100:
                 return True
-                
-            cmd_fb = [
-                "/usr/bin/ffmpeg", "-y", "-i", src_path,
-                "-vframes", "1", "-vf", "scale=%d:-1" % THUMB_MAX_SIZE,
-                "-q:v", "5", dst_path
-            ]
-            try:
-                subprocess.run(cmd_fb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-            except Exception:
-                pass
-    except Exception:
-        pass
 
-    if os.path.exists(dst_path) and os.path.getsize(dst_path) > 100:
-        return True
-    
+            # Try 2: seek 0 (frame dau tien — co the den den cho video TikTok co intro den)
+            if seek_s > 0:
+                _run_ffmpeg(0)
+                if os.path.exists(dst_path) and os.path.getsize(dst_path) > 100:
+                    return True
+
+            # Try 3: seek giua video (50%) — cuu canh khi frame dau bi hong
+            if duration > 2.0:
+                _run_ffmpeg(duration / 2.0)
+                if os.path.exists(dst_path) and os.path.getsize(dst_path) > 100:
+                    return True
+    except Exception as e:
+        log.warning("[Thumb] unexpected error %s: %s", os.path.basename(src_path), e)
+
+    # Het cach -> tao placeholder de UI khong trong tron, nhung tra ve False
+    # de _thumb_stats track that bai va co the retry o vong sau.
     try:
         _create_placeholder_thumb(dst_path)
     except Exception:
         pass
-    return True
+    return False
 
 def _create_placeholder_thumb(dst_path):
     """Tao anh placeholder nho cho video khong decode duoc (AV1, VP9...)."""
@@ -3843,9 +3908,19 @@ def _thumbnail_generator():
                     total += 1
                     full_path = os.path.join(root, name)
                     thumb_path = _get_thumb_path(base_dir, full_path)
-                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                        already_done += 1
-                        continue
+                    if os.path.exists(thumb_path):
+                        # FIX: Phan biet thumb that vs placeholder. Placeholder
+                        # (tao khi ffmpeg fail) chi co ~500-1500 bytes. Thumb that
+                        # tu video/anh thuong > 2KB. Treat placeholder nhu chua
+                        # done de co co hoi retry sau (vd cap nhat ffmpeg).
+                        try:
+                            thumb_size = os.path.getsize(thumb_path)
+                        except Exception:
+                            thumb_size = 0
+                        if thumb_size > 2048:  # >2KB = thumb that
+                            already_done += 1
+                            continue
+                        # else: thumb la placeholder hoac file rong -> retry
                     if len(pending) < MAX_BATCH:
                         pending.append((full_path, thumb_path, ext))
             
