@@ -5,6 +5,7 @@ import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
 import kotlinx.coroutines.delay
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -327,6 +328,7 @@ object LivestreamPanelState {
 // ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TikTokLiveWatchSection(
     viewModel: WebDavViewModel,
@@ -408,7 +410,7 @@ private fun TikTokLiveWatchSection(
     }
 
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(4.dp))
     // Header clickable -> toggle list user. Hien icon expand/collapse + count.
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -436,15 +438,17 @@ private fun TikTokLiveWatchSection(
             )
         }
     }
-    Spacer(Modifier.height(8.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Spacer(Modifier.height(4.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = newUsername,
             onValueChange = onUsernameChange,
             leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold) },
             placeholder = { Text("Nhập username TikTok", color = Color(0xFF8892B0), fontSize = 13.sp) },
             singleLine = true,
-            modifier = Modifier.weight(1f).height(58.dp),
+            textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
+            modifier = Modifier.weight(1f).height(44.dp),
+            shape = RoundedCornerShape(10.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = Color(0xFFEE1D52),
                 unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f),
@@ -456,17 +460,18 @@ private fun TikTokLiveWatchSection(
         Button(
             onClick = { viewModel.addTikTokLiveWatchUser(context, newUsername) },
             enabled = newUsername.isNotBlank() && !viewModel.isLoadingTikTokWatch,
-            modifier = Modifier.height(58.dp).widthIn(min = 104.dp),
+            modifier = Modifier.height(44.dp).widthIn(min = 80.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF424242)),
-            shape = RoundedCornerShape(14.dp)
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp)
         ) {
-            Icon(Icons.Default.Add, null, tint = Color.White)
-            Spacer(Modifier.width(6.dp))
-            Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold)
+            Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
     }
     if (viewModel.tiktokLiveWatchError.isNotEmpty()) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
     val daemonLine = buildString {
@@ -474,7 +479,7 @@ private fun TikTokLiveWatchSection(
         if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Check cuối: ${viewModel.tiktokWatchDaemonLastTick}")
         if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) append(" • ${viewModel.tiktokWatchDaemonSummary}")
     }
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(4.dp))
     Text(
         daemonLine,
         color = if (viewModel.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726),
@@ -486,14 +491,14 @@ private fun TikTokLiveWatchSection(
     // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
     val cookiesStatus = viewModel.tiktokCookiesStatus
     if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         val (bannerBg, bannerFg, label) = when (cookiesStatus) {
             "missing" -> Triple(Color(0x33FFA726), Color(0xFFFFA726), "Chưa có cookies.txt")
             "expired" -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok hết hạn")
             else -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok bị thu hồi")
         }
         Row(
-            Modifier.fillMaxWidth().background(bannerBg, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().background(bannerBg, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(Icons.Default.Warning, contentDescription = null, tint = bannerFg, modifier = Modifier.size(20.dp))
@@ -515,70 +520,106 @@ private fun TikTokLiveWatchSection(
     // List user theo doi — chi hien khi listExpanded == true. Mac dinh an de tiet kiem
     // khong gian man hinh khi co nhieu user; user bam header de mo.
     androidx.compose.animation.AnimatedVisibility(visible = users.isNotEmpty() && listExpanded) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 6.dp)) {
             users.forEach { user ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF15151D), RoundedCornerShape(10.dp))
-                        // Tap vao row -> mo dialog xem chi tiet trang thai/loi (rat huu ich khi
-                        // last_error qua dai bi truncate boi ellipsis o dong duoi).
-                        .clickable { detailUser = user }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        val statusLabel = when (user.status) {
-                            "recording" -> "Đang live - đã tự ghi"
-                            "excluded" -> "Đang trong giờ loại trừ"
-                            "error" -> "Lỗi kiểm tra"
-                            else -> "Đang theo dõi"
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "@${user.username}",
-                                color = Color(0xFFE8E8E8),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
+                key(user.username) {
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { value ->
+                            if (value == SwipeToDismissBoxValue.EndToStart) {
+                                viewModel.removeTikTokLiveWatchUser(context, user.username)
+                                true
+                            } else false
+                        },
+                        positionalThreshold = { totalDistance -> totalDistance * 0.35f }
+                    )
+
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        enableDismissFromStartToEnd = false,
+                        enableDismissFromEndToStart = true,
+                        backgroundContent = {
+                            val bgColor by animateColorAsState(
+                                if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
+                                    Color(0xFFFF1744).copy(alpha = 0.55f) else Color.Transparent,
+                                label = "swipeBg"
                             )
-                            Spacer(Modifier.width(8.dp))
-                            TikTokWatchStatusChip(
-                                status = user.status,
-                                label = statusLabel
-                            )
-                        }
-                        val checkLiveLine = buildString {
-                            if (user.lastCheck.isNotEmpty()) append("Check: ${user.lastCheck}")
-                            if (user.lastLive.isNotEmpty()) {
-                                if (isNotEmpty()) append("  •  ")
-                                append("Live cuối: ${user.lastLive}")
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(bgColor, RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Xoá",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
-                        if (checkLiveLine.isNotEmpty()) {
-                            Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF15151D), RoundedCornerShape(10.dp))
+                                // Tap vao row -> mo dialog xem chi tiet trang thai/loi (rat huu ich khi
+                                // last_error qua dai bi truncate boi ellipsis o dong duoi).
+                                .clickable { detailUser = user }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                val statusLabel = when (user.status) {
+                                    "recording" -> "Đang live - đã tự ghi"
+                                    "excluded" -> "Đang trong giờ loại trừ"
+                                    "error" -> "Lỗi kiểm tra"
+                                    else -> "Đang theo dõi"
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "@${user.username}",
+                                        color = Color(0xFFE8E8E8),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    TikTokWatchStatusChip(
+                                        status = user.status,
+                                        label = statusLabel
+                                    )
+                                }
+                                val checkLiveLine = buildString {
+                                    if (user.lastCheck.isNotEmpty()) append("Check: ${user.lastCheck}")
+                                    if (user.lastLive.isNotEmpty()) {
+                                        if (isNotEmpty()) append("  •  ")
+                                        append("Live cuối: ${user.lastLive}")
+                                    }
+                                }
+                                if (checkLiveLine.isNotEmpty()) {
+                                    Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (user.status == "error" && user.lastError.length > 60) {
+                                    Text("Chạm để xem chi tiết →", color = Color(0xFFFFA726), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
-                        if (user.status == "error" && user.lastError.length > 60) {
-                            Text("Chạm để xem chi tiết →", color = Color(0xFFFFA726), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    IconButton(onClick = { viewModel.removeTikTokLiveWatchUser(context, user.username) }) {
-                        Icon(Icons.Default.Close, contentDescription = "Xóa", tint = Color(0xFFFF1744))
                     }
                 }
             }
         }
     }
-    Spacer(Modifier.height(6.dp))
+    Spacer(Modifier.height(4.dp))
     Text("Thêm username TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(4.dp))
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(4.dp))
     // Header "Thoi gian loai tru" — clickable, hien icon expand/collapse.
     // Switch tat/bat de o header de user co the bat/tat khong can mo panel.
     Row(
@@ -609,29 +650,33 @@ private fun TikTokLiveWatchSection(
         )
     }
     androidx.compose.animation.AnimatedVisibility(visible = excludeExpanded) {
-        Column(modifier = Modifier.padding(top = 6.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.padding(top = 4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
                 OutlinedTextField(
                     value = viewModel.tiktokExcludeStart,
                     onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
                     singleLine = true,
-                    modifier = Modifier.width(96.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                    modifier = Modifier.width(80.dp).height(40.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
                 )
-                Text("→", color = Color(0xFF8892B0), fontSize = 18.sp)
+                Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
                 Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
                 OutlinedTextField(
                     value = viewModel.tiktokExcludeEnd,
                     onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
                     singleLine = true,
-                    modifier = Modifier.width(96.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                    modifier = Modifier.width(80.dp).height(40.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFEE1D52), unfocusedBorderColor = Color(0xFFEE1D52).copy(alpha = 0.45f), focusedTextColor = Color(0xFFE8E8E8), unfocusedTextColor = Color(0xFFE8E8E8))
                 )
             }
         }
     }
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(4.dp))
 }
 
 @Composable
