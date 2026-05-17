@@ -291,39 +291,56 @@ def _cleanup_runtime_tmp_artifacts(max_age_minutes=30):
     return deleted
 
 def init_db():
+    """FIX: KHONG duoc crash server khi HDD bi I/O error.
+
+    Truoc day: init_db chay ngay khi import module va goi sqlite3.connect tren
+    DB_PATH (nam tren HDD). Neu HDD bi loi (filesystem ro/inode hong) thi
+    OperationalError -> module import fail -> systemd restart loop vinh vien.
+
+    Logic moi: bat het exception, log warning, return False. Server van len
+    duoc, cac endpoint dung @requires_auth se fallback DB-less va van dang
+    nhap duoc bang Basic Auth.
+    """
     try:
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    except OSError as e:
-        log.error("Lỗi tạo thư mục: %s", e)
-    conn = sqlite3.connect(DB_PATH, timeout=20.0)
-    cur = conn.cursor()
-    cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
-    cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
-    cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
-    cur.execute('CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY, type TEXT, module TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
-    cur.execute('CREATE TABLE IF NOT EXISTS system_temperature_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, cpu_temp REAL, hdd_temp REAL)')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS system_metrics_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            cpu_percent REAL,
-            ram_percent REAL,
-            cpu_temp REAL,
-            hdd_temp REAL,
-            net_rx_kbps REAL,
-            net_tx_kbps REAL
-        )
-    ''')
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS daily_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_date TEXT UNIQUE,
-            report_json TEXT,
-            generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+        try:
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        except OSError as e:
+            log.warning("[init_db] Khong tao duoc thu muc (HDD co the loi): %s", e)
+            # Khong return — thu tiep connect xem co the DB file van con OK
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
+        cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
+        cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
+        cur.execute('CREATE TABLE IF NOT EXISTS system_logs (id INTEGER PRIMARY KEY, type TEXT, module TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
+        cur.execute('CREATE TABLE IF NOT EXISTS system_temperature_history (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, cpu_temp REAL, hdd_temp REAL)')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS system_metrics_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cpu_percent REAL,
+                ram_percent REAL,
+                cpu_temp REAL,
+                hdd_temp REAL,
+                net_rx_kbps REAL,
+                net_tx_kbps REAL
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS daily_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_date TEXT UNIQUE,
+                report_json TEXT,
+                generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        log.info("[init_db] DB san sang.")
+    except Exception as e:
+        # HDD/DB khong dung duoc -> server van phai len. Login se fallback
+        # DB-less mode (chi Basic Auth, khong remember IP).
+        log.error("[init_db] DB KHONG mo duoc — server chay che do DB-less: %s", e)
 
     # DỌN DẸP RÁC RAM (TMPFS) LỊCH SỬ KHI KHỞI ĐỘNG CỦA LỖI OOM
     import shutil
@@ -690,42 +707,82 @@ def check_auth(username, password):
     return username == WEBDAV_USER and password == WEBDAV_PASS
 
 def requires_auth(f):
+    """FIX: Robust voi loi disk/DB. Truoc day moi request deu mo sqlite3.connect(DB_PATH)
+    de check authorized_ips. Neu HDD bi I/O error (filesystem ro hoac inode hong)
+    thi sqlite3 throw OperationalError -> Flask tra HTTP 500 cho moi endpoint —
+    ke ca /api/ping. Hau qua: app khong dang nhap duoc khi HDD co loi (du Basic
+    Auth co the lam viec doc lap voi DB).
+
+    Logic moi:
+    - LAN whitelist check khong can DB -> kiem truoc.
+    - Co gang mo DB; neu fail vi disk loi -> fallback "DB-less mode": khong
+      remember trusted IP nua, moi request phai Basic Auth, nhung khong reject.
+    - Basic Auth check chi can WEBDAV_USER/WEBDAV_PASS (load tu /opt/nas_api.conf
+      o RAM khi start) -> hoat dong binh thuong khi HDD chet.
+    """
     @wraps(f)
     def decorated(*args, **kwargs):
         ip = request.remote_addr
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
-        cur = conn.cursor()
-        
-        # Co che fail2ban da bi VO HIEU HOA: khong check banned_ips nua.
-        # IP da bi ban truoc do van duoc qua tang nay (van phai xac thuc Basic Auth o duoi).
 
-        # Kiem tra IP trong LAN whitelist (bypass auth)
+        # Kiem tra IP trong LAN whitelist (bypass auth) — KHONG can DB
         if _ip_in_whitelist(ip):
-            conn.close()
             return f(*args, **kwargs)
 
-        # Kiem tra IP da duoc tin cay (tu dang nhap truoc do)
-        cur.execute('SELECT 1 FROM authorized_ips WHERE ip=?', (ip,))
-        is_trusted = cur.fetchone()
+        # Mo DB. Neu disk hong (I/O error, filesystem ro) -> fallback DB-less.
+        conn = None
+        cur = None
+        db_ok = False
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            cur = conn.cursor()
+            db_ok = True
+        except Exception as db_err:
+            # Disk/DB khong dung duoc -> moi request se yeu cau Basic Auth nhung
+            # khong lam app sap luong dang nhap.
+            try:
+                log.warning("[Auth] DB khong mo duoc, fallback DB-less: %s", db_err)
+            except Exception:
+                pass
 
-        if is_trusted:
-            conn.close()
-            return f(*args, **kwargs)
+        # Kiem tra IP da duoc tin cay (tu dang nhap truoc do) — neu DB available
+        if db_ok:
+            try:
+                cur.execute('SELECT 1 FROM authorized_ips WHERE ip=?', (ip,))
+                is_trusted = cur.fetchone()
+                if is_trusted:
+                    try: conn.close()
+                    except Exception: pass
+                    return f(*args, **kwargs)
+            except Exception:
+                # Neu query loi (table hong) -> coi nhu chua trusted, di tiep
+                pass
 
         # IP chua tin cay: Yeu cau xac thuc Basic Auth
         auth = request.authorization
         if not auth:
-            conn.close()
+            if conn:
+                try: conn.close()
+                except Exception: pass
             return jsonify({"detail": "Chưa xác thực"}), 401
-        
+
         if check_auth(auth.username, auth.password):
-            # Dang nhap dung: Tu dong tin cay IP nay
-            cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
-            conn.commit()
-            conn.close()
+            # Dang nhap dung: Tu dong tin cay IP nay (chi khi DB ok)
+            if db_ok:
+                try:
+                    cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
+                    conn.commit()
+                except Exception:
+                    # Khong persist duoc trusted IP — khong sao, request tiep theo
+                    # se Basic Auth lai. App van dang nhap duoc.
+                    pass
+            if conn:
+                try: conn.close()
+                except Exception: pass
             return f(*args, **kwargs)
         else:
-            conn.close()
+            if conn:
+                try: conn.close()
+                except Exception: pass
             return jsonify({"detail": "Sai mật khẩu"}), 401
 
     return decorated
