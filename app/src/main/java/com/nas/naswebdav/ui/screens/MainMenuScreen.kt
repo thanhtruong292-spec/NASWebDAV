@@ -1075,7 +1075,8 @@ fun MainMenuScreen(
             onOpenTrash = onOpenTrash,
             showAutoBackupDialog = { showAutoBackupDialog = true },
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
-            showLivestreamDialog = { showLivestreamDialog = true }
+            showLivestreamDialog = { showLivestreamDialog = true },
+            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
         )
     }
 }
@@ -1572,7 +1573,8 @@ fun ToolboxDialog(
     onOpenTrash: () -> Unit,
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
-    showLivestreamDialog: () -> Unit
+    showLivestreamDialog: () -> Unit,
+    showNasBackupDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
@@ -1627,6 +1629,14 @@ fun ToolboxDialog(
                 color = AccentGreen,
                 checked = isAutoBackupEnabled,
                 onClick = { onDismiss(); showAutoBackupDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Sao Lưu Cấu Hình NAS",
+                subtitle = "Backup config + watcher + cookies → OneDrive",
+                icon = Icons.Default.SettingsBackupRestore,
+                color = Color(0xFF66BB6A),
+                onClick = { onDismiss(); showNasBackupDialog() }
             )
             Spacer(Modifier.height(8.dp))
 
