@@ -263,7 +263,6 @@ def _cleanup_stale_job_tmp(max_age_hours=24):
 def _cleanup_runtime_tmp_artifacts(max_age_minutes=30):
     """Don rac tmp do PyInstaller/ffmpeg de lai, khong dung vao socket he thong."""
     deleted = 0
-    now = time.time()
     max_age = max_age_minutes * 60
     scan_roots = ["/tmp", "/var/tmp/yt-dlp-tmp"]
     for root in scan_roots:
@@ -6326,6 +6325,10 @@ def _normalize_tiktok_watch_user_entry(user):
         "last_live_verified": bool(user.get("last_live_verified", False)),
         "last_error": normalize_vietnamese_message(user.get("last_error", "") or ""),
         "job_id": user.get("job_id", "") or "",
+        "live_session_recorded": bool(user.get("live_session_recorded", False)),
+        "live_session_job_id": user.get("live_session_job_id", "") or "",
+        "live_session_started": user.get("live_session_started", "") or "",
+        "live_session_last_live": user.get("live_session_last_live", "") or "",
     }
 
 def _load_tiktok_watch_state():
@@ -6523,30 +6526,52 @@ def _is_tiktok_watch_excluded(now_dt=None):
     except Exception:
         return False
 
+def _tiktok_watch_mark_session_recorded(user, job_id, now_str):
+    user["live_session_recorded"] = True
+    user["live_session_job_id"] = job_id or user.get("live_session_job_id", "") or user.get("job_id", "") or ""
+    user["live_session_started"] = user.get("live_session_started", "") or now_str
+    user["live_session_last_live"] = now_str
+    user["last_live"] = now_str
+    user["last_live_verified"] = True
+
+def _tiktok_watch_clear_session(user):
+    user["live_session_recorded"] = False
+    user["live_session_job_id"] = ""
+    user["live_session_started"] = ""
+    user["live_session_last_live"] = ""
+    user["job_id"] = ""
+
 def _tiktok_watch_user_has_recording(username):
-    # Match qua watch_username gan vao job luc tao (chinh xac 100%).
-    # Fallback match qua URL "@user/live" cho job cu chua co watch_username -
-    # luu y URL co the bi ghi de thanh FLV CDN URL trong nhanh TikTok direct,
-    # nen primary key la watch_username.
     uname = username.lower()
     target_url = "@%s/live" % uname
+    now = time.time()
     with _livestream_lock:
         for jid, info in _livestream_jobs.items():
-            if info.get("status") != "recording":
+            is_match = (info.get("watch_username", "").lower() == uname or
+                        target_url in info.get("url", "").lower())
+            if not is_match:
                 continue
-            try:
-                os.kill(info.get("pid"), 0)
-            except Exception:
+            st = info.get("status", "")
+            if st == "recording":
+                alive = False
+                try:
+                    os.kill(info.get("pid"), 0)
+                    alive = True
+                except Exception:
+                    pass
+                if alive:
+                    return jid
                 continue
-            if info.get("watch_username", "").lower() == uname:
-                return jid
-            if target_url in info.get("url", "").lower():
-                return jid
+            if st == "finished":
+                finished_str = info.get("finished_at", "")
+                if finished_str:
+                    try:
+                        ft = datetime.datetime.strptime(finished_str, "%d/%m/%Y %H:%M:%S").timestamp()
+                        info["_tiktok_finished_ts"] = ft
+                    except Exception:
+                        pass
     return ""
 
-# Cooldown chong race khi watchdog tick lai trong khi start request cu (30-45s)
-# chua tra ve - tranh dispatch them 1 record thu 2 cho cung user.
-_tiktok_watch_recent_starts = {}
 
 def _extract_tiktok_live_flv_urls(html):
     flv_urls = []
@@ -6791,28 +6816,32 @@ def _tiktok_live_watchdog():
                     user["last_check"] = now_str
                     changed = True
                     continue
+                uname_lc = username.lower()
                 existing_job = _tiktok_watch_user_has_recording(username)
                 if existing_job:
+                    _tiktok_watch_mark_session_recorded(user, existing_job, now_str)
                     user["status"] = "recording"
                     user["job_id"] = existing_job
-                    user["last_check"] = now_str
+                    user["last_error"] = ""
                     recording_count += 1
+                    user["last_check"] = now_str
                     changed = True
                     continue
                 is_live, err = _check_tiktok_user_live(username)
                 checked_count += 1
                 user["last_check"] = now_str
                 if is_live:
-                    # Cooldown 90s: chan dispatch record lan 2 khi lan 1 chua xong
-                    # (record API co the ton 30-45s vi HEAD check + re-scrape).
-                    uname_lc = username.lower()
-                    last_started = _tiktok_watch_recent_starts.get(uname_lc, 0)
-                    if time.time() - last_started < 90:
-                        user["status"] = "starting"
-                        user["last_error"] = "Đang khởi tạo luồng ghi..."
+                    if user.get("live_session_recorded", False):
+                        _tiktok_watch_mark_session_recorded(
+                            user,
+                            user.get("live_session_job_id", "") or user.get("job_id", ""),
+                            now_str,
+                        )
+                        user["status"] = "recorded"
+                        user["job_id"] = user.get("live_session_job_id", "")
+                        user["last_error"] = "Da ghi phien live nay; khong tao file thu hai cho toi khi user offline."
                         changed = True
                         continue
-                    _tiktok_watch_recent_starts[uname_lc] = time.time()
                     job_id, msg = _start_tiktok_watch_record(username)
                     user["status"] = "recording" if job_id else "error"
                     user["job_id"] = job_id
@@ -6820,17 +6849,25 @@ def _tiktok_live_watchdog():
                     if job_id:
                         started_count += 1
                         recording_count += 1
-                        user["last_live"] = now_str
-                        user["last_live_verified"] = True
+                        _tiktok_watch_mark_session_recorded(user, job_id, now_str)
                         log.info("[TikTokWatch] @%s đang live, NAS đã tự bắt đầu ghi job %s.", username, job_id)
                     else:
-                        # Start that bai -> reset cooldown de retry o tick sau
-                        _tiktok_watch_recent_starts.pop(uname_lc, None)
                         log.warning("[TikTokWatch] @%s đang live nhưng không bắt đầu ghi được: %s", username, msg)
                 else:
-                    user["status"] = "watching"
-                    user["job_id"] = ""
-                    user["last_error"] = "" if err == "offline" else normalize_vietnamese_message(err)
+                    if err == "offline":
+                        if user.get("live_session_recorded", False):
+                            log.info("[TikTokWatch] @%s da offline, mo khoa phien live tiep theo.", username)
+                        _tiktok_watch_clear_session(user)
+                        user["status"] = "watching"
+                        user["last_error"] = ""
+                    elif user.get("live_session_recorded", False):
+                        user["status"] = "recorded"
+                        user["job_id"] = user.get("live_session_job_id", "")
+                        user["last_error"] = "Chua xac nhan offline: %s" % normalize_vietnamese_message(err)
+                    else:
+                        user["status"] = "watching"
+                        user["job_id"] = ""
+                        user["last_error"] = normalize_vietnamese_message(err)
                 changed = True
             if changed:
                 # FIX (race condition): KHONG ghi de full list users — neu user
@@ -6891,8 +6928,12 @@ def api_tiktok_live_watch_get():
                             except Exception:
                                 active = False
                 if not active:
-                    user["status"] = "watching"
-                    user["job_id"] = ""
+                    if user.get("live_session_recorded", False):
+                        user["status"] = "recorded"
+                        user["job_id"] = user.get("live_session_job_id", "") or jid
+                    else:
+                        user["status"] = "watching"
+                        user["job_id"] = ""
                     changed = True
             if user.get("last_live") and not user.get("last_live_verified", False):
                 user["last_live"] = ""
@@ -6925,7 +6966,11 @@ def api_tiktok_live_watch_add():
                 "last_live": "",
                 "last_live_verified": False,
                 "last_error": "",
-                "job_id": ""
+                "job_id": "",
+                "live_session_recorded": False,
+                "live_session_job_id": "",
+                "live_session_started": "",
+                "live_session_last_live": ""
             })
         saved = _save_tiktok_watch_state()
         _tiktok_watch_wake.set()
