@@ -424,7 +424,10 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
                     // FIX: Delay configurable thay vi hardcode 60s.
                     // 0 = lock ngay khi ON_PAUSE, >0 = delay X giay
-                    if (sharedPrefs.getBoolean("biometric_enabled", false)) {
+                    // FIX (re-prompt bug): bo qua neu lock screen DA dang hien thi
+                    // (BiometricPrompt khi mo se gay ra ON_PAUSE — neu khong skip,
+                    // mot job stale se fire sau delaySec giay & re-lock dap len auth thanh cong).
+                    if (sharedPrefs.getBoolean("biometric_enabled", false) && !showBiometricLock) {
 
                         val delaySec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
                         lockDelayJob?.cancel()
@@ -794,6 +797,11 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
             onAuthenticated = {
 
                 showBiometricLock = false
+                // FIX (re-prompt bug): huy job stale neu co (BiometricPrompt mo gay
+                // ON_PAUSE va schedule them job — neu khong cancel, job sau delaySec
+                // giay se re-set showBiometricLock = true va bat nguoi dung auth lai).
+                lockDelayJob?.cancel()
+                lockDelayJob = null
 
                 // BỎ QUA LOGIN: Nếu vừa khởi động app và quét vân tay đúng, tự động kết nối luôn
 
@@ -832,6 +840,8 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
             onFallbackToLogin = {
 
                 showBiometricLock = false
+                lockDelayJob?.cancel()
+                lockDelayJob = null
 
                 navController.navigate("login") {
 
