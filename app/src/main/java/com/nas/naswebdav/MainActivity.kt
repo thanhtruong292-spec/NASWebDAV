@@ -405,7 +405,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
 
-                    // FIX (audit #11/#18): bao cho pollers nang biet app khong con o foreground
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
 
                 }
@@ -413,8 +412,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
 
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = true
-
-                    // Quay lại trong vòng 1 phút → Hủy đếm ngược, KHÔNG lock
 
                 }
 
