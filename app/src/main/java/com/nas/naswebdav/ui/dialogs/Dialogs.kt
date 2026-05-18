@@ -432,6 +432,7 @@ private fun TikTokLiveWatchSection(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val statusLabel = when (openDetail.status) {
                         "recording" -> "🟢 Đang ghi live (job ${openDetail.jobId})"
+                        "recorded" -> "✅ Đã ghi phiên này"
                         "excluded" -> "💤 Trong giờ loại trừ"
                         "error" -> "🔴 Lỗi"
                         else -> "⏳ Đang theo dõi"
@@ -637,6 +638,7 @@ private fun TikTokLiveWatchSection(
                             Column(Modifier.weight(1f)) {
                                 val statusLabel = when (user.status) {
                                     "recording" -> "Đang live - đã tự ghi"
+                                    "recorded" -> "Đã ghi phiên này"
                                     "excluded" -> "Đang trong giờ loại trừ"
                                     "error" -> "Lỗi kiểm tra"
                                     else -> "Đang theo dõi"
@@ -754,6 +756,11 @@ private fun TikTokWatchStatusChip(
             Color(0xFF43A047).copy(alpha = 0.18f),
             Color(0xFF43A047).copy(alpha = 0.45f),
             Color(0xFF66BB6A)
+        )
+        "recorded" -> Triple(
+            Color(0xFF00ACC1).copy(alpha = 0.18f),
+            Color(0xFF00ACC1).copy(alpha = 0.45f),
+            Color(0xFF4DD0E1)
         )
         "excluded" -> Triple(
             Color(0xFFFFA726).copy(alpha = 0.18f),
@@ -2674,7 +2681,7 @@ fun SleepScheduleDialog(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
-                .heightIn(max = 680.dp)
+                .fillMaxHeight(0.6f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 4.dp)
@@ -2900,7 +2907,7 @@ fun DiskHealthDialog(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .fillMaxHeight(0.85f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 4.dp)

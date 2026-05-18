@@ -1981,18 +1981,35 @@ fun FileItemGridCell(
                 )
             }
 
-            // RED DOT (file moi chua xem) — thay cho icon "..." truoc day.
-            // Menu da chuyen sang dung long-press, nen vi tri goc phai tren dung
-            // hoan toan de hien chi bao "moi".
-            if (!selectionMode && !file.isDirectory && isNewFile) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
-                        .size(10.dp)
-                        .background(Color(0xFFFF1744), CircleShape)
-                        .border(1.dp, Color.White, CircleShape)
-                )
+            if (!selectionMode && !file.isDirectory) {
+                if (isTrash && file.lastModified > 0L) {
+                    val daysInTrash = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis() - file.lastModified)
+                    val daysLeft = (30 - daysInTrash).coerceAtLeast(0)
+                    val badgeColor = when {
+                        daysLeft <= 3 -> Color(0xFFFF1744)
+                        daysLeft <= 7 -> Color(0xFFFFA726)
+                        else -> Color(0xFF8892B0)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(3.dp)
+                            .background(badgeColor.copy(alpha = 0.9f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 3.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("${daysLeft} ngày", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                    }
+                } else if (isNewFile) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(10.dp)
+                            .background(Color(0xFFFF1744), CircleShape)
+                            .border(1.dp, Color.White, CircleShape)
+                    )
+                }
             }
 
             // OVERLAY MULTI-SELECT — chỉ khi đang chọn
