@@ -2966,40 +2966,40 @@ def _compute_health_score(sample):
     realloc = sample.get("reallocated_sectors") or 0
     if realloc > 0:
         score -= min(20, realloc)
-        warnings.append("%d sector da realloc" % realloc)
+        warnings.append("%d sector đã realloc" % realloc)
     pending = sample.get("pending_sectors") or 0
     if pending > 0:
         score -= min(30, pending * 2)
-        warnings.append("%d sector dang cho realloc (pending) — DAU HIEU O CUNG SAP HONG" % pending)
+        warnings.append("%d sector đang chờ realloc (pending) — DẤU HIỆU Ổ CỨNG SẮP HỎNG" % pending)
     offline_unc = sample.get("offline_uncorrectable") or 0
     if offline_unc > 0:
         score -= min(20, offline_unc * 2)
-        warnings.append("%d offline uncorrectable sector" % offline_unc)
+        warnings.append("%d sector offline uncorrectable" % offline_unc)
     cmd_to = sample.get("command_timeout") or 0
     if cmd_to > 10000:
         score -= 10
-        warnings.append("%d command timeout — SATA link khong on dinh" % cmd_to)
+        warnings.append("%d command timeout — SATA link không ổn định" % cmd_to)
     crc = sample.get("udma_crc_err") or 0
     if crc > 0:
         score -= min(10, crc)
-        warnings.append("%d UDMA CRC error (cap SATA can kiem tra)" % crc)
+        warnings.append("%d lỗi UDMA CRC (cáp SATA cần kiểm tra)" % crc)
     temp = sample.get("temp_c") or 0
     if temp > 60:
-        score -= 20; warnings.append("Nhiet do %d°C qua nong" % temp)
+        score -= 20; warnings.append("Nhiệt độ %d°C quá nóng" % temp)
     elif temp > 50:
-        score -= 8; warnings.append("Nhiet do %d°C cao" % temp)
+        score -= 8; warnings.append("Nhiệt độ %d°C cao" % temp)
     ext4 = sample.get("ext4_errors_recent") or 0
     if ext4 > 0:
         score -= min(30, ext4 * 5)
-        warnings.append("%d EXT4-fs error trong 5 phut gan day" % ext4)
+        warnings.append("%d lỗi EXT4-fs trong 5 phút gần đây" % ext4)
     sata = sample.get("sata_resets_recent") or 0
     if sata > 0:
         score -= min(40, sata * 15)
-        warnings.append("%d SATA reset/exception trong 5 phut — co the dat cap loi" % sata)
+        warnings.append("%d SATA reset/exception trong 5 phút — có thể đứt cáp/lỗi" % sata)
     ioerr = sample.get("io_errors_recent") or 0
     if ioerr > 0:
         score -= min(30, ioerr * 10)
-        warnings.append("%d I/O error trong 5 phut" % ioerr)
+        warnings.append("%d lỗi I/O trong 5 phút" % ioerr)
     return max(0, score), warnings
 
 
@@ -3021,7 +3021,7 @@ def _disk_health_sample_once():
         sample["io_stats"] = io
         score, warnings = _compute_health_score(sample)
         sample["score"] = score
-        sample["warnings"] = warnings
+        sample["warnings"] = [normalize_vietnamese_message(w) for w in warnings]
 
         with _disk_health_lock:
             _disk_health_last_sample = sample
