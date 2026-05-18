@@ -3998,6 +3998,59 @@ def api_download():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/torrent/add_file", methods=["POST"])
+@requires_auth
+def api_torrent_add_file():
+    """Upload mot file .torrent va forward sang qBittorrent."""
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "Khong co file .torrent trong request"}), 400
+        f = request.files["file"]
+        fname = (f.filename or "").strip()
+        if not fname:
+            return jsonify({"error": "File khong co ten"}), 400
+        if not fname.lower().endswith(".torrent"):
+            return jsonify({"error": "File phai co duoi .torrent"}), 400
+        content = f.read()
+        if not content or len(content) < 64:
+            return jsonify({"error": "File torrent rong hoac qua nho"}), 400
+        # qBittorrent magic: torrent file bat dau bang 'd' (bencode dict)
+        if content[0:1] != b"d":
+            return jsonify({"error": "File khong phai bencode torrent hop le"}), 400
+
+        # Build multipart de forward sang qBittorrent
+        import urllib.request as _urlreq
+        boundary = "----nas_api_torrent_boundary_%d" % int(time.time())
+        body = b""
+        body += ("--%s\r\n" % boundary).encode()
+        body += ('Content-Disposition: form-data; name="torrents"; filename="%s"\r\n' % fname).encode()
+        body += b"Content-Type: application/x-bittorrent\r\n\r\n"
+        body += content
+        body += ("\r\n--%s--\r\n" % boundary).encode()
+
+        req_obj = _urlreq.Request(
+            "http://127.0.0.1:8080/api/v2/torrents/add",
+            data=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=%s" % boundary,
+                "Content-Length": str(len(body)),
+            }
+        )
+        try:
+            resp = _urlreq.urlopen(req_obj, timeout=30)
+            qbt_response = resp.read().decode("utf-8", errors="ignore")
+            resp.close()
+            # qBittorrent tra "Ok." khi thanh cong, "Fails." khi loi
+            if "Ok" in qbt_response or resp.getcode() == 200:
+                return jsonify({"result": "ok", "filename": fname, "size": len(content)})
+            return jsonify({"error": "qBittorrent tu choi: %s" % qbt_response[:200]}), 502
+        except urllib.error.HTTPError as he:
+            return jsonify({"error": "qBittorrent HTTP %d" % he.code}), 502
+    except Exception as e:
+        log.warning("[Torrent] add_file loi: %s", e)
+        return jsonify({"error": str(e)[:200]}), 500
+
+
 # ============ GIAI NEN FILE ============
 
 @app.route("/api/file/unzip", methods=["POST"])

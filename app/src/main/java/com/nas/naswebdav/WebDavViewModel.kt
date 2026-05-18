@@ -850,10 +850,82 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val request = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/download")
                     .post(requestBody)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
-                localApiClient.newCall(request).execute().use { }
+                val text = localApiClient.newCall(request).execute().use { it.body?.string() ?: "" }
+                withContext(Dispatchers.Main) {
+                    val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+                    commonDialogMessage = if (o.optString("result") == "ok")
+                        "✅ Đã gửi link cho qBittorrent. Theo dõi tiến trình ở Dashboard."
+                    else "❌ Lỗi: ${o.optString("error", "không phản hồi")}"
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                    showCommonDialog = true
+                }
             } catch(e: Exception) {
-                // Bỏ qua lỗi mạng nếu API chưa kịp phản hồi
+                withContext(Dispatchers.Main) {
+                    commonDialogMessage = "❌ Lỗi mạng: ${e.message?.take(120)}"
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    showCommonDialog = true
+                }
+            }
+        }
+    }
+
+    /** Upload 1 file .torrent len NAS → qBittorrent.
+     *  Goi tu Dispatchers.IO se OK; method nay tu launch coroutine. */
+    fun uploadTorrentFile(context: Context, uri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val contentResolver = context.contentResolver
+                // Tim ten file (DISPLAY_NAME)
+                var fileName = "uploaded.torrent"
+                try {
+                    contentResolver.query(uri, null, null, null, null)?.use { cur ->
+                        val idx = cur.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (cur.moveToFirst() && idx >= 0) {
+                            val n = cur.getString(idx)
+                            if (!n.isNullOrBlank()) fileName = n
+                        }
+                    }
+                } catch (_: Exception) {}
+                // Sanitize ten file
+                val safeName = fileName.replace('/', '_').replace('\\', '_').take(200)
+                    .let { if (it.lowercase().endsWith(".torrent")) it else "$it.torrent" }
+
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalArgumentException("Không đọc được nội dung file")
+                if (bytes.size < 64) throw IllegalArgumentException("File .torrent quá nhỏ")
+                if (bytes[0].toInt().toChar() != 'd') throw IllegalArgumentException("File không phải định dạng torrent hợp lệ")
+
+                val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
+                val filePart = okhttp3.MultipartBody.Builder()
+                    .setType(okhttp3.MultipartBody.FORM)
+                    .addFormDataPart("file", safeName, bytes.toRequestBody(mediaType, 0, bytes.size))
+                    .build()
+
+                val req = okhttp3.Request.Builder()
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/add_file")
+                    .post(filePart)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                val client = localApiClient.newBuilder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                val text = client.newCall(req).execute().use { it.body?.string() ?: "" }
+                val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+                withContext(Dispatchers.Main) {
+                    commonDialogMessage = if (o.optString("result") == "ok")
+                        "✅ Đã gửi $safeName cho qBittorrent (${o.optInt("size")} bytes)"
+                    else "❌ Lỗi: ${o.optString("error", "không phản hồi")}"
+                    commonDialogType = if (o.optString("result") == "ok") com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    showCommonDialog = true
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    commonDialogMessage = "❌ Lỗi upload torrent: ${e.message?.take(120)}"
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    showCommonDialog = true
+                }
             }
         }
     }

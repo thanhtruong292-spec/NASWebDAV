@@ -309,6 +309,16 @@ fun MainMenuScreen(
             onDismiss = { showShutdownConfirm = false }
         )
     }
+    // Launcher de pick file .torrent tu storage
+    val torrentFilePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            viewModel.uploadTorrentFile(mContext, uri)
+            showDownloadDialog = false
+            downloadLink = ""
+        }
+    }
     if (showDownloadDialog) {
         DownloadDialog(
             downloadLink = downloadLink,
@@ -320,7 +330,12 @@ fun MainMenuScreen(
                     downloadLink = ""
                 }
             },
-            onDismiss = { showDownloadDialog = false }
+            onDismiss = { showDownloadDialog = false },
+            onPickTorrentFile = {
+                // Mo file picker — chap nhan .torrent va octet-stream (mot so file
+                // manager khong khai bao MIME chuan cho .torrent).
+                torrentFilePicker.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*"))
+            }
         )
     }
     

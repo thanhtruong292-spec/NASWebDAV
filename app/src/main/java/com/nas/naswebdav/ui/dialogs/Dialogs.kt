@@ -141,25 +141,81 @@ fun DownloadDialog(
     downloadLink: String,
     onLinkChange: (String) -> Unit,
     onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onPickTorrentFile: () -> Unit = {}
 ) {
+    var tabIndex by remember { mutableStateOf(0) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Tải xuống qua qBittorrent", fontWeight = FontWeight.Bold) },
         text = {
             Column {
-                Text("Nhập Magnet Link hoặc HTTP URL để NAS tự động tải ngầm qua qBittorrent.", fontSize = 13.sp)
-                Spacer(Modifier.height(6.dp))
-                com.nas.naswebdav.ui.components.CompactTextField(
-                    value = downloadLink,
-                    onValueChange = onLinkChange,
-                    placeholder = "https://... hoặc magnet:?...",
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // Tab selector: Link vs File
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(
+                        0 to ("🔗" to "Link / Magnet"),
+                        1 to ("📁" to "File .torrent"),
+                    ).forEach { (idx, pair) ->
+                        val (emoji, label) = pair
+                        val selected = tabIndex == idx
+                        FilterChip(
+                            selected = selected,
+                            onClick = { tabIndex = idx },
+                            label = { Text("$emoji $label", fontSize = 12.sp) },
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFF00897B).copy(alpha = 0.2f),
+                                selectedLabelColor = Color(0xFF00897B),
+                            )
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                when (tabIndex) {
+                    0 -> {
+                        // Tab 1: Link / Magnet
+                        Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                        Spacer(Modifier.height(6.dp))
+                        com.nas.naswebdav.ui.components.CompactTextField(
+                            value = downloadLink,
+                            onValueChange = onLinkChange,
+                            placeholder = "magnet:?xt=... hoặc https://...torrent",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    1 -> {
+                        // Tab 2: File picker
+                        Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { onPickTorrentFile() },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.6f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
+                        ) {
+                            Icon(Icons.Default.UploadFile, null, tint = Color(0xFF00897B), modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("CHỌN FILE .TORRENT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Sau khi chọn, file sẽ tự upload và đóng dialog.",
+                            color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 11.sp
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Thêm vào hàng đợi") }
+            if (tabIndex == 0) {
+                TextButton(onClick = onConfirm, enabled = downloadLink.isNotBlank()) {
+                    Text("THÊM VÀO HÀNG ĐỢI", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Hủy") }
