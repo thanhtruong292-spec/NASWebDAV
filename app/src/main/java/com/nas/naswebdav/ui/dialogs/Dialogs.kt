@@ -1254,14 +1254,12 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
     }
     var hasStartedAuth by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!hasStartedAuth) { hasStartedAuth = true; authenticate() } }
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.85f)).pointerInput(Unit) { detectTapGestures { } }, contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0A0A0A)).pointerInput(Unit) { detectTapGestures { authenticate() } }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Lock, contentDescription = "Lock", modifier = Modifier.size(64.dp), tint = Color(0xFF00897B))
-            Spacer(Modifier.height(16.dp))
-            Text("Ứng dụng đang khóa", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            if (authError.isNotEmpty()) { Spacer(Modifier.height(8.dp)); Text(authError, color = Color.Red, fontSize = 14.sp) }
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = authenticate, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B))) { Text("Chạm để mở khóa", color = Color.White, fontWeight = FontWeight.Bold) }
+            IconButton(onClick = authenticate, modifier = Modifier.size(140.dp)) {
+                Icon(Icons.Default.Fingerprint, contentDescription = "Quét vân tay để mở khóa", modifier = Modifier.size(120.dp), tint = Color(0xFF00897B))
+            }
+            if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = Color.Red, fontSize = 14.sp) }
         }
     }
 }
