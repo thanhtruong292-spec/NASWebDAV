@@ -2241,6 +2241,192 @@ fun LivestreamRecordDialog(
 }
 
 // ====================================================================
+// DIALOG SUC KHOE O CUNG — Hien score, attributes, warnings tu SMART
+// + dmesg + io stats. Goi /api/disk/health.
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DiskHealthDialog(
+    viewModel: WebDavViewModel,
+    onDismiss: () -> Unit
+) {
+    LaunchedEffect(Unit) {
+        viewModel.fetchDiskHealth()
+        viewModel.fetchDiskHealthHistory(7)
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+                .heightIn(max = 800.dp).verticalScroll(rememberScrollState())
+        ) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.HealthAndSafety, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Sức khoẻ ổ cứng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { viewModel.fetchDiskHealth(); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                }
+            }
+
+            val current = viewModel.diskHealthCurrent
+            if (current == null) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF66BB6A))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Đang lấy dữ liệu SMART...", color = Color(0xFF8892B0), fontSize = 13.sp)
+                }
+            } else {
+                // Score card
+                val scoreColor = when {
+                    current.score >= 80 -> Color(0xFF66BB6A)
+                    current.score >= 60 -> Color(0xFFFFA726)
+                    else -> Color(0xFFEF5350)
+                }
+                val scoreLabel = when {
+                    current.score >= 80 -> "TỐT"
+                    current.score >= 60 -> "CẢNH BÁO"
+                    current.score >= 30 -> "NGUY HIỂM"
+                    else -> "SẮP HỎNG"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(scoreColor.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                        .border(1.dp, scoreColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("${current.score}", color = scoreColor, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                        Text("/ 100", color = scoreColor.copy(alpha = 0.6f), fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(scoreLabel, color = scoreColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("SMART: ${current.smartStatus}", color = Color(0xFFE8E8E8), fontSize = 12.sp)
+                        current.tempC?.let { Text("Nhiệt độ: ${it}°C", color = Color(0xFF8892B0), fontSize = 11.sp) }
+                        current.powerOnHours?.let {
+                            val days = it / 24
+                            Text("Power-on: ${it}h (~${days / 365} năm ${(days % 365) / 30} tháng)", color = Color(0xFF8892B0), fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                // Warnings
+                if (current.warnings.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("CẢNH BÁO", color = Color(0xFFEF5350), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        current.warnings.forEach { w ->
+                            Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()
+                                .background(Color(0xFFEF5350).copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 6.dp)) {
+                                Icon(Icons.Default.Warning, null, tint = Color(0xFFEF5350), modifier = Modifier.size(14.dp).padding(top = 2.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(w, color = Color(0xFFFFCDD2), fontSize = 12.sp, lineHeight = 14.sp)
+                            }
+                        }
+                    }
+                }
+
+                // Attributes table
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFF2A2A3E))
+                Spacer(Modifier.height(8.dp))
+                Text("CHI TIẾT SMART", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.height(6.dp))
+
+                @Composable
+                fun AttrRow(label: String, value: String, highlight: Boolean = false) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(label, color = Color(0xFF8892B0), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                        Text(value, color = if (highlight) Color(0xFFEF5350) else Color(0xFFE8E8E8),
+                            fontSize = 12.sp, fontWeight = if (highlight) FontWeight.Bold else FontWeight.Medium)
+                    }
+                }
+                AttrRow("Reallocated Sectors (5)", "${current.reallocatedSectors ?: "—"}",
+                    highlight = (current.reallocatedSectors ?: 0) > 0)
+                AttrRow("Pending Sectors (197)", "${current.pendingSectors ?: "—"}",
+                    highlight = (current.pendingSectors ?: 0) > 0)
+                AttrRow("Offline Uncorrectable (198)", "${current.offlineUncorrectable ?: "—"}",
+                    highlight = (current.offlineUncorrectable ?: 0) > 0)
+                AttrRow("UDMA CRC Errors (199)", "${current.udmaCrcErr ?: "—"}",
+                    highlight = (current.udmaCrcErr ?: 0) > 0)
+                AttrRow("Command Timeout (188)", "${current.commandTimeout ?: "—"}",
+                    highlight = (current.commandTimeout ?: 0) > 10000)
+
+                // dmesg recent
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFF2A2A3E))
+                Spacer(Modifier.height(8.dp))
+                Text("SỰ KIỆN 5 PHÚT GẦN ĐÂY (DMESG)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.height(6.dp))
+                AttrRow("EXT4-fs errors", "${current.ext4ErrorsRecent}", highlight = current.ext4ErrorsRecent > 0)
+                AttrRow("SATA reset/exception", "${current.sataResetsRecent}", highlight = current.sataResetsRecent > 0)
+                AttrRow("I/O errors", "${current.ioErrorsRecent}", highlight = current.ioErrorsRecent > 0)
+
+                // History trend
+                val history = viewModel.diskHealthHistory
+                if (history.size >= 2) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = Color(0xFF2A2A3E))
+                    Spacer(Modifier.height(8.dp))
+                    Text("XU HƯỚNG SCORE 7 NGÀY (${history.size} mẫu)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Spacer(Modifier.height(8.dp))
+                    // Simple sparkline
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier.fillMaxWidth().height(80.dp)
+                            .background(Color(0xFF15151D), RoundedCornerShape(6.dp))
+                            .padding(8.dp)
+                    ) {
+                        val w = size.width
+                        val h = size.height
+                        val maxScore = 100f
+                        val n = history.size
+                        if (n > 1) {
+                            for (i in 1 until n) {
+                                val x1 = (i - 1) * w / (n - 1)
+                                val y1 = h - (history[i - 1].score / maxScore) * h
+                                val x2 = i * w / (n - 1)
+                                val y2 = h - (history[i].score / maxScore) * h
+                                drawLine(
+                                    color = scoreColor,
+                                    start = androidx.compose.ui.geometry.Offset(x1, y1),
+                                    end = androidx.compose.ui.geometry.Offset(x2, y2),
+                                    strokeWidth = 2f
+                                )
+                            }
+                            // 60-score warning line
+                            val warnY = h - (60f / maxScore) * h
+                            drawLine(
+                                color = Color(0xFFFFA726).copy(alpha = 0.4f),
+                                start = androidx.compose.ui.geometry.Offset(0f, warnY),
+                                end = androidx.compose.ui.geometry.Offset(w, warnY),
+                                strokeWidth = 1f
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Sample mỗi 5 phút. Lưu ${30} ngày trên eMMC. Cảnh báo tự động ghi vào Nhật ký hệ thống khi score < 60.",
+                    color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+// ====================================================================
 // DIALOG SAO LUU / KHOI PHUC CAU HINH NAS
 // Tao backup .tar.gz cua moi config (nas_api_server.py, systemd unit,
 // nginx, OMV WebDAV, auth.conf, watcher state, cookies, fan_custom.json)

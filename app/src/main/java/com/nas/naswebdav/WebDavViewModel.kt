@@ -335,6 +335,43 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var isRestoringNasConfigBackup by mutableStateOf(false)
     var nasConfigBackupMessage by mutableStateOf("")
 
+    // Disk Health Monitor state
+    data class DiskHealthSample(
+        val ts: Long,
+        val datetime: String,
+        val score: Int,
+        val smartStatus: String,
+        val tempC: Int?,
+        val powerOnHours: Int?,
+        val reallocatedSectors: Int?,
+        val pendingSectors: Int?,
+        val offlineUncorrectable: Int?,
+        val udmaCrcErr: Int?,
+        val commandTimeout: Int?,
+        val ext4ErrorsRecent: Int,
+        val sataResetsRecent: Int,
+        val ioErrorsRecent: Int,
+        val warnings: List<String>,
+    )
+    var diskHealthCurrent by mutableStateOf<DiskHealthSample?>(null)
+    var diskHealthHistory by mutableStateOf<List<DiskHealthSample>>(emptyList())
+    var isFetchingDiskHealth by mutableStateOf(false)
+
+    // Scheduled backup state
+    data class BackupSchedule(
+        val enabled: Boolean = false,
+        val frequency: String = "weekly",
+        val hour: Int = 3,
+        val retentionCount: Int = 7,
+        val rcloneRemote: String = "",
+        val rclonePath: String = "/NASBackup/",
+        val lastRunTs: Long = 0L,
+        val lastRunResult: String = "",
+        val lastRunFile: String = "",
+    )
+    var backupSchedule by mutableStateOf(BackupSchedule())
+    var backupScheduleMessage by mutableStateOf("")
+
     var streamPipeStatus    by mutableStateOf("")        // Mô tả trạng thái hiện tại
     var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 → 1.0 (nếu biết size)
     var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tốc độ dạng text
@@ -2903,6 +2940,147 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi khôi phục: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
+            }
+        }
+    }
+
+    // ============== DISK HEALTH ==============
+    private fun parseDiskHealth(o: org.json.JSONObject): NasConfigBackup? = null  // placeholder unused
+
+    private fun jsonToDiskHealth(o: org.json.JSONObject): DiskHealthSample {
+        val warnArr = o.optJSONArray("warnings")
+        val warnList = mutableListOf<String>()
+        if (warnArr != null) {
+            for (i in 0 until warnArr.length()) warnList.add(warnArr.optString(i))
+        }
+        fun nullableInt(key: String): Int? = if (o.isNull(key)) null else o.optInt(key)
+        return DiskHealthSample(
+            ts = o.optLong("ts"),
+            datetime = o.optString("datetime"),
+            score = o.optInt("score", 0),
+            smartStatus = o.optString("smart_status", "Unknown"),
+            tempC = nullableInt("temp_c"),
+            powerOnHours = nullableInt("power_on_hours"),
+            reallocatedSectors = nullableInt("reallocated_sectors"),
+            pendingSectors = nullableInt("pending_sectors"),
+            offlineUncorrectable = nullableInt("offline_uncorrectable"),
+            udmaCrcErr = nullableInt("udma_crc_err"),
+            commandTimeout = nullableInt("command_timeout"),
+            ext4ErrorsRecent = o.optInt("ext4_errors_recent", 0),
+            sataResetsRecent = o.optInt("sata_resets_recent", 0),
+            ioErrorsRecent = o.optInt("io_errors_recent", 0),
+            warnings = warnList,
+        )
+    }
+
+    fun fetchDiskHealth() {
+        if (isFetchingDiskHealth) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isFetchingDiskHealth = true }
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/disk/health")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val current = org.json.JSONObject(body).optJSONObject("current") ?: return@use
+                    val sample = jsonToDiskHealth(current)
+                    withContext(Dispatchers.Main) { diskHealthCurrent = sample }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DiskHealth", "fetch err: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingDiskHealth = false }
+            }
+        }
+    }
+
+    fun fetchDiskHealthHistory(days: Int = 7) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/disk/health/history?days=$days")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val arr = org.json.JSONObject(body).optJSONArray("samples") ?: return@use
+                    val list = mutableListOf<DiskHealthSample>()
+                    for (i in 0 until arr.length()) {
+                        list.add(jsonToDiskHealth(arr.getJSONObject(i)))
+                    }
+                    withContext(Dispatchers.Main) { diskHealthHistory = list }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DiskHealth", "history err: ${e.message}")
+            }
+        }
+    }
+
+    // ============== BACKUP SCHEDULE ==============
+    fun fetchBackupSchedule() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/backup/schedule")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val o = org.json.JSONObject(body)
+                    val s = BackupSchedule(
+                        enabled = o.optBoolean("enabled"),
+                        frequency = o.optString("frequency", "weekly"),
+                        hour = o.optInt("hour", 3),
+                        retentionCount = o.optInt("retention_count", 7),
+                        rcloneRemote = o.optString("rclone_remote", ""),
+                        rclonePath = o.optString("rclone_path", "/NASBackup/"),
+                        lastRunTs = o.optLong("last_run_ts", 0L),
+                        lastRunResult = o.optString("last_run_result", ""),
+                        lastRunFile = o.optString("last_run_file", ""),
+                    )
+                    withContext(Dispatchers.Main) { backupSchedule = s }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("BackupSchedule", "fetch err: ${e.message}")
+            }
+        }
+    }
+
+    fun saveBackupSchedule(newSchedule: BackupSchedule) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val jsonBody = org.json.JSONObject().apply {
+                    put("enabled", newSchedule.enabled)
+                    put("frequency", newSchedule.frequency)
+                    put("hour", newSchedule.hour)
+                    put("retention_count", newSchedule.retentionCount)
+                    put("rclone_remote", newSchedule.rcloneRemote)
+                    put("rclone_path", newSchedule.rclonePath)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/backup/schedule")
+                    .post(jsonBody)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val ok = resp.isSuccessful && org.json.JSONObject(body).optBoolean("saved", false)
+                    withContext(Dispatchers.Main) {
+                        backupScheduleMessage = if (ok) "Đã lưu lịch backup" else "Lỗi lưu"
+                    }
+                }
+                fetchBackupSchedule()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
             }
         }
     }

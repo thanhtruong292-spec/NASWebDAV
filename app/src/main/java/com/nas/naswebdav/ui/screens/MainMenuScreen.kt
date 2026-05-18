@@ -233,6 +233,8 @@ fun MainMenuScreen(
 
     // STATE CHO NAS CONFIG BACKUP/RESTORE
     var showNasBackupDialog by remember { mutableStateOf(false) }
+    // STATE CHO DISK HEALTH MONITOR
+    var showDiskHealthDialog by remember { mutableStateOf(false) }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
@@ -410,6 +412,12 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.dialogs.NasConfigBackupDialog(
             viewModel = viewModel,
             onDismiss = { showNasBackupDialog = false }
+        )
+    }
+    if (showDiskHealthDialog) {
+        com.nas.naswebdav.ui.dialogs.DiskHealthDialog(
+            viewModel = viewModel,
+            onDismiss = { showDiskHealthDialog = false }
         )
     }
 
@@ -1076,7 +1084,8 @@ fun MainMenuScreen(
             showAutoBackupDialog = { showAutoBackupDialog = true },
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
-            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
+            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
+            showDiskHealthDialog = { showDiskHealthDialog = true }
         )
     }
 }
@@ -1574,7 +1583,8 @@ fun ToolboxDialog(
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
-    showNasBackupDialog: () -> Unit = {}
+    showNasBackupDialog: () -> Unit = {},
+    showDiskHealthDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
@@ -1637,6 +1647,14 @@ fun ToolboxDialog(
                 icon = Icons.Default.SettingsBackupRestore,
                 color = Color(0xFF66BB6A),
                 onClick = { onDismiss(); showNasBackupDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Sức Khoẻ Ổ Cứng",
+                subtitle = "SMART + dmesg + score 0-100 + trend 7 ngày",
+                icon = Icons.Default.HealthAndSafety,
+                color = Color(0xFFFFA726),
+                onClick = { onDismiss(); showDiskHealthDialog() }
             )
             Spacer(Modifier.height(8.dp))
 
