@@ -1236,26 +1236,20 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
     val executor = remember { androidx.core.content.ContextCompat.getMainExecutor(activity) }
     var authError by remember { mutableStateOf("") }
     var failCount by remember { mutableStateOf(0) }
-    var authInFlight by remember { mutableStateOf(false) }
-    val authenticate = authenticate@{
-        // FIX (re-prompt bug): tranh tao nhieu BiometricPrompt song song khi
-        // nguoi dung tap nhanh hoac LaunchedEffect chay trung voi tap thu cong.
-        if (authInFlight) return@authenticate
-        authInFlight = true
+    val authenticate = {
         val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
             .setTitle("Khóa bảo mật NAS").setSubtitle("Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu")
             .setConfirmationRequired(false)
             .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build()
         val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
             object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) { super.onAuthenticationSucceeded(result); authInFlight = false; failCount = 0; onAuthenticated() }
+                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) { super.onAuthenticationSucceeded(result); failCount = 0; onAuthenticated() }
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    authInFlight = false
                     if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED || errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) onFallbackToLogin()
                     else { failCount++; authError = "Lỗi: $errString (Sai $failCount/3 lần)"; if (failCount >= 3) onFallbackToLogin() }
                 }
-                override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) { authInFlight = false; onFallbackToLogin() } }
+                override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) onFallbackToLogin() }
             })
         biometricPrompt.authenticate(promptInfo)
     }
