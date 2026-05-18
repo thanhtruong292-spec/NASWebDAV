@@ -2241,6 +2241,329 @@ fun LivestreamRecordDialog(
 }
 
 // ====================================================================
+// DIALOG GIOI HAN TOC DO UPLOAD — Throttle WebDAV upload
+// Backend (AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC) da co. Day la UI
+// chinh + persist sang SharedPreferences. App start tu doc lai gia tri.
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BandwidthThrottleDialog(
+    sharedPrefs: android.content.SharedPreferences,
+    onDismiss: () -> Unit
+) {
+    val presets = listOf(
+        0L to "Không giới hạn",
+        1L * 1024 * 1024 to "1 MB/s",
+        5L * 1024 * 1024 to "5 MB/s",
+        10L * 1024 * 1024 to "10 MB/s",
+        20L * 1024 * 1024 to "20 MB/s",
+        50L * 1024 * 1024 to "50 MB/s",
+    )
+    var selected by remember { mutableStateOf(sharedPrefs.getLong("upload_speed_limit_bps", 0L)) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.Speed, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Giới hạn tốc độ upload", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+            Text(
+                "Áp dụng cho tất cả upload qua WebDAV (auto-backup ảnh, share file, batch ops). " +
+                    "Dùng để tránh app chiếm hết băng thông Wi-Fi/LAN.",
+                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+            )
+
+            Spacer(Modifier.height(10.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                presets.forEach { (value, label) ->
+                    val isSelected = selected == value
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(
+                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .border(
+                                1.dp,
+                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.6f) else Color.Transparent,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { selected = value }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = { selected = value },
+                            modifier = Modifier.scale(0.85f),
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF42A5F5))
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            label,
+                            color = if (isSelected) Color(0xFF42A5F5) else Color(0xFFE8E8E8),
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
+                    com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                shape = RoundedCornerShape(10.dp),
+            ) { Text("ÁP DỤNG", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
+                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+
+// ====================================================================
+// DIALOG LICH NGU NAS — HDD spindown / full suspend theo gio
+// Bao ve o cung khoi mon: ngoai gio dung, parking head + ngung quay.
+// Tich hop voi Disk Health Monitor de keo dai tuoi tho o cu.
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SleepScheduleDialog(
+    viewModel: WebDavViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { viewModel.fetchSleepSchedule() }
+
+    val sched = viewModel.sleepSchedule
+    var localEnabled by remember(sched.enabled) { mutableStateOf(sched.enabled) }
+    var localMode by remember(sched.mode) { mutableStateOf(sched.mode) }
+    var localStartHour by remember(sched.startHour) { mutableStateOf(sched.startHour) }
+    var localEndHour by remember(sched.endHour) { mutableStateOf(sched.endHour) }
+    var localIdleOnly by remember(sched.idleOnly) { mutableStateOf(sched.idleOnly) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+                .heightIn(max = 720.dp).verticalScroll(rememberScrollState())
+        ) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.Bedtime, null, tint = Color(0xFF7E57C2), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Lịch ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { viewModel.fetchSleepSchedule() }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
+                }
+            }
+            Text(
+                "Tự động parking head + ngừng quay HDD ngoài giờ dùng → giảm hao mòn (đặc biệt với ổ đã già). " +
+                    "NAS vẫn online (ping/SSH OK), chỉ HDD spindown. Khi có request đụng disk → tự wake.",
+                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+            )
+
+            // Current HDD state badge
+            Spacer(Modifier.height(6.dp))
+            val stateColor = when {
+                sched.currentHddState.contains("active", true) -> Color(0xFF66BB6A)
+                sched.currentHddState.contains("standby", true) || sched.currentHddState.contains("sleeping", true) -> Color(0xFF7E57C2)
+                else -> Color(0xFF8892B0)
+            }
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(stateColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                    .border(1.dp, stateColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Storage, null, tint = stateColor, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("HDD: ${sched.currentHddState}", color = stateColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (sched.inWindowNow) "Đang trong khung giờ ngủ" else "Ngoài khung giờ ngủ",
+                        color = Color(0xFF8892B0), fontSize = 11.sp
+                    )
+                }
+            }
+
+            // Enable toggle
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF2A2A3E))
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localEnabled = !localEnabled }) {
+                Switch(
+                    checked = localEnabled,
+                    onCheckedChange = { localEnabled = it },
+                    modifier = Modifier.scale(0.85f),
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Bật lịch ngủ", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = Color(0xFF8892B0), fontSize = 11.sp)
+                }
+            }
+
+            // Time range
+            Spacer(Modifier.height(8.dp))
+            Text("KHUNG GIỜ NGỦ (24h)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
+                com.nas.naswebdav.ui.components.CompactTextField(
+                    value = localStartHour.toString(),
+                    onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localStartHour = it } },
+                    accentColor = Color(0xFF7E57C2),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    modifier = Modifier.width(60.dp)
+                )
+                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Spacer(Modifier.width(8.dp))
+                Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
+                Spacer(Modifier.width(8.dp))
+                Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
+                com.nas.naswebdav.ui.components.CompactTextField(
+                    value = localEndHour.toString(),
+                    onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localEndHour = it } },
+                    accentColor = Color(0xFF7E57C2),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    modifier = Modifier.width(60.dp)
+                )
+                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
+            }
+            Text(
+                if (localStartHour < localEndHour) "Trong ngày (${localStartHour}h-${localEndHour}h)"
+                else "Qua đêm (${localStartHour}h-${localEndHour}h sáng hôm sau)",
+                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp,
+                modifier = Modifier.padding(top = 3.dp)
+            )
+
+            // Mode picker
+            Spacer(Modifier.height(8.dp))
+            Text("CHẾ ĐỘ NGỦ", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf(
+                    "spindown" to "HDD Spindown",
+                    "suspend" to "Full Suspend",
+                ).forEach { (value, label) ->
+                    val selected = localMode == value
+                    FilterChip(
+                        selected = selected,
+                        onClick = { localMode = value },
+                        label = { Text(label, fontSize = 11.sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF7E57C2).copy(alpha = 0.2f),
+                            selectedLabelColor = Color(0xFF7E57C2),
+                            containerColor = Color.Transparent,
+                            labelColor = Color(0xFF8892B0)
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
+                            selectedBorderColor = Color(0xFF7E57C2).copy(alpha = 0.6f),
+                            enabled = true, selected = selected
+                        ),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    )
+                }
+            }
+            Text(
+                when (localMode) {
+                    "spindown" -> "HDD ngừng quay, NAS vẫn online (mạng, SSH, ping OK). Wake tự động khi có request."
+                    else -> "NAS suspend hoàn toàn — cần WoL để đánh thức. KHÔNG khuyến nghị khi đang theo dõi TikTok live."
+                },
+                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp,
+                modifier = Modifier.padding(top = 3.dp)
+            )
+
+            // Idle only toggle
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localIdleOnly = !localIdleOnly }) {
+                Switch(
+                    checked = localIdleOnly,
+                    onCheckedChange = { localIdleOnly = it },
+                    modifier = Modifier.scale(0.85f),
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Chỉ ngủ khi NAS rảnh", color = Color(0xFFE8E8E8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("CPU<30% + không có recording + không backup chạy", color = Color(0xFF8892B0), fontSize = 11.sp)
+                }
+            }
+
+            // Save + test buttons
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = {
+                        viewModel.saveSleepSchedule(
+                            WebDavViewModel.SleepSchedule(
+                                enabled = localEnabled,
+                                mode = localMode,
+                                startHour = localStartHour,
+                                endHour = localEndHour,
+                                idleOnly = localIdleOnly,
+                            )
+                        )
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7E57C2)),
+                    shape = RoundedCornerShape(10.dp),
+                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                OutlinedButton(
+                    onClick = {
+                        viewModel.spindownHddNow { ok, msg ->
+                            android.widget.Toast.makeText(context, if (ok) "Spindown OK" else "Lỗi: $msg", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7E57C2).copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7E57C2))
+                ) { Text("SPINDOWN NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            }
+
+            // Status message
+            if (viewModel.sleepScheduleMessage.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                val msgColor = if (viewModel.sleepScheduleMessage.startsWith("Lỗi")) Color(0xFFEF5350) else Color(0xFF66BB6A)
+                Text(viewModel.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
+            }
+            if (sched.lastActionState.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Lần ngủ cuối: ${sched.lastActionState}",
+                    color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+// ====================================================================
 // DIALOG SUC KHOE O CUNG — Hien score, attributes, warnings tu SMART
 // + dmesg + io stats. Goi /api/disk/health.
 // ====================================================================

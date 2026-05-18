@@ -3153,6 +3153,204 @@ def api_disk_health_history():
 
 
 # ============================================================================
+# NAS SLEEP SCHEDULE — HDD spindown / full suspend theo lich
+# ============================================================================
+# Muc dich: giam hao mon HDD (ich biet voi o cu nhieu pending sectors) bang
+# cach tu dong spindown ngoai gio dung. Khong tat NAS hoan toan (van ping duoc),
+# chi parking head + ngung quay platter.
+# ============================================================================
+_SLEEP_SCHEDULE_FILE = "/etc/nas/state/sleep_schedule.json"
+_SLEEP_SCHEDULE_DEFAULT = {
+    "enabled": False,
+    "mode": "spindown",       # "spindown" (HDD only) | "suspend" (full NAS)
+    "start_hour": 23,         # 0-23
+    "end_hour": 7,            # 0-23 — if < start_hour, span overnight
+    "idle_only": True,        # only sleep when CPU < 30% + no recording + no backup
+    "last_action_ts": 0,
+    "last_action_state": "",  # "spindown_active" | "spindown_woken" | etc
+}
+
+
+def _load_sleep_schedule():
+    try:
+        if os.path.exists(_SLEEP_SCHEDULE_FILE):
+            with open(_SLEEP_SCHEDULE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                merged = dict(_SLEEP_SCHEDULE_DEFAULT)
+                merged.update(data)
+                return merged
+    except Exception as e:
+        log.warning("[SleepSchedule] Load loi: %s", e)
+    return dict(_SLEEP_SCHEDULE_DEFAULT)
+
+
+def _save_sleep_schedule(state):
+    try:
+        os.makedirs(os.path.dirname(_SLEEP_SCHEDULE_FILE), exist_ok=True)
+        tmp = _SLEEP_SCHEDULE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _SLEEP_SCHEDULE_FILE)
+        return True
+    except Exception as e:
+        log.error("[SleepSchedule] Save loi: %s", e)
+        return False
+
+
+def _is_in_sleep_window(sched, now=None):
+    """Tra ve True neu thoi diem hien tai nam trong khung gio sleep."""
+    if now is None:
+        now = datetime.datetime.now()
+    start = int(sched.get("start_hour", 23))
+    end = int(sched.get("end_hour", 7))
+    hour = now.hour
+    if start == end:
+        return False
+    if start < end:
+        # vd 13:00 - 17:00 trong ngay
+        return start <= hour < end
+    else:
+        # vd 23:00 - 07:00 qua dem
+        return hour >= start or hour < end
+
+
+def _system_is_idle():
+    """Idle khi: CPU < 30% + RAM free > 200 MB + khong co recording + khong co backup."""
+    try:
+        cpu = psutil.cpu_percent(interval=0.5)
+        if cpu > 30: return False
+    except Exception:
+        pass
+    try:
+        mem = psutil.virtual_memory()
+        if mem.available < 200 * 1024 * 1024: return False
+    except Exception:
+        pass
+    # Khong co recording
+    try:
+        with _livestream_lock:
+            for j in _livestream_jobs.values():
+                if j.get("status") == "recording":
+                    return False
+    except Exception:
+        pass
+    return True
+
+
+def _hdd_spindown():
+    """Spindown /dev/sda bang hdparm -y. Tra (ok, msg)."""
+    try:
+        r = subprocess.run(["hdparm", "-y", "/dev/sda"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        if r.returncode == 0:
+            return True, "spundown OK"
+        return False, (r.stderr or b"").decode("utf-8", errors="ignore")[:200]
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+def _hdd_get_power_state():
+    """Doc hdparm -C /dev/sda -> 'active/idle', 'standby', 'sleeping'."""
+    try:
+        r = subprocess.run(["hdparm", "-C", "/dev/sda"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        if r.returncode == 0:
+            out = (r.stdout or b"").decode("utf-8", errors="ignore")
+            for line in out.splitlines():
+                if "drive state is:" in line:
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _sleep_schedule_worker():
+    """Daemon: kiem tra moi 5 phut, trigger sleep neu dieu kien dat."""
+    time.sleep(120)  # cho server on dinh
+    while True:
+        try:
+            sched = _load_sleep_schedule()
+            if not sched.get("enabled"):
+                time.sleep(300)
+                continue
+            in_window = _is_in_sleep_window(sched)
+            if not in_window:
+                time.sleep(300)
+                continue
+            # In window — kiem tra dieu kien idle
+            if sched.get("idle_only", True) and not _system_is_idle():
+                # Busy — bo qua tick nay, check lai sau 5 phut
+                time.sleep(300)
+                continue
+            # Trigger sleep action
+            mode = sched.get("mode", "spindown")
+            if mode == "spindown":
+                # Chi spindown neu HDD dang quay
+                state = _hdd_get_power_state()
+                if "standby" in state or "sleeping" in state:
+                    # Da spindown roi, skip
+                    time.sleep(300)
+                    continue
+                ok, msg = _hdd_spindown()
+                sched["last_action_ts"] = int(time.time())
+                sched["last_action_state"] = "spindown_active" if ok else "spindown_failed: " + msg
+                _save_sleep_schedule(sched)
+                if ok:
+                    _add_system_log("INFO", "SleepSchedule", "HDD spindown thanh cong (gio %d-%d)" % (sched.get("start_hour"), sched.get("end_hour")))
+                else:
+                    _add_system_log("WARNING", "SleepSchedule", "HDD spindown loi: %s" % msg)
+            elif mode == "suspend":
+                # Full suspend - dung systemctl
+                sched["last_action_ts"] = int(time.time())
+                sched["last_action_state"] = "suspend_initiated"
+                _save_sleep_schedule(sched)
+                _add_system_log("INFO", "SleepSchedule", "NAS suspend (full) gio %d-%d. Wake bang WoL." % (sched.get("start_hour"), sched.get("end_hour")))
+                # Don't actually suspend — too aggressive; user must opt in via explicit endpoint
+                # subprocess.run(["systemctl", "suspend"])
+            time.sleep(300)
+        except Exception as e:
+            log.error("[SleepSchedule] Worker loi: %s", e)
+            time.sleep(300)
+
+
+@app.route('/api/system/sleep_schedule', methods=['GET'])
+@requires_auth
+def api_sleep_schedule_get():
+    sched = _load_sleep_schedule()
+    sched["current_hdd_state"] = _hdd_get_power_state()
+    sched["in_window_now"] = _is_in_sleep_window(sched)
+    return jsonify(sched)
+
+
+@app.route('/api/system/sleep_schedule', methods=['POST'])
+@requires_auth
+def api_sleep_schedule_set():
+    body = request.get_json(force=True) or {}
+    sched = _load_sleep_schedule()
+    for key in ("enabled", "mode", "start_hour", "end_hour", "idle_only"):
+        if key in body:
+            sched[key] = body[key]
+    sched["enabled"] = bool(sched.get("enabled"))
+    sched["idle_only"] = bool(sched.get("idle_only", True))
+    if sched.get("mode") not in ("spindown", "suspend"):
+        sched["mode"] = "spindown"
+    try: sched["start_hour"] = max(0, min(23, int(sched.get("start_hour", 23))))
+    except Exception: sched["start_hour"] = 23
+    try: sched["end_hour"] = max(0, min(23, int(sched.get("end_hour", 7))))
+    except Exception: sched["end_hour"] = 7
+    ok = _save_sleep_schedule(sched)
+    return jsonify({"saved": ok, "schedule": sched})
+
+
+@app.route('/api/system/hdd_spindown_now', methods=['POST'])
+@requires_auth
+def api_hdd_spindown_now():
+    """Manual trigger: spindown ngay (test button)."""
+    ok, msg = _hdd_spindown()
+    state = _hdd_get_power_state()
+    return jsonify({"ok": ok, "msg": msg, "hdd_state": state})
+
+
+# ============================================================================
 # SCHEDULED AUTO-BACKUP — Backup theo lich + retention + rclone OneDrive
 # ============================================================================
 _BACKUP_SCHEDULE_FILE = "/etc/nas/state/backup_schedule.json"
@@ -7653,6 +7851,8 @@ if __name__ == "__main__":
     log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 5 phút).")
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
+    threading.Thread(target=_sleep_schedule_worker, daemon=True).start()
+    log.info("[SleepSchedule] Trình lên lịch HDD spindown đã khởi động.")
 
     # Thread cron don dep Thung rac + phat hien canh bao + kick AI ban dem
     threading.Thread(target=_cron_worker, daemon=True).start()

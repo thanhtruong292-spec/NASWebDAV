@@ -372,6 +372,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var backupSchedule by mutableStateOf(BackupSchedule())
     var backupScheduleMessage by mutableStateOf("")
 
+    // Sleep Schedule (HDD spindown / suspend) state
+    data class SleepSchedule(
+        val enabled: Boolean = false,
+        val mode: String = "spindown",     // spindown | suspend
+        val startHour: Int = 23,
+        val endHour: Int = 7,
+        val idleOnly: Boolean = true,
+        val currentHddState: String = "unknown",
+        val inWindowNow: Boolean = false,
+        val lastActionTs: Long = 0L,
+        val lastActionState: String = "",
+    )
+    var sleepSchedule by mutableStateOf(SleepSchedule())
+    var sleepScheduleMessage by mutableStateOf("")
+
     var streamPipeStatus    by mutableStateOf("")        // Mô tả trạng thái hiện tại
     var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 → 1.0 (nếu biết size)
     var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tốc độ dạng text
@@ -3081,6 +3096,91 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchBackupSchedule()
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
+            }
+        }
+    }
+
+    // ============== SLEEP SCHEDULE ==============
+    fun fetchSleepSchedule() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/system/sleep_schedule")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val o = org.json.JSONObject(body)
+                    val s = SleepSchedule(
+                        enabled = o.optBoolean("enabled"),
+                        mode = o.optString("mode", "spindown"),
+                        startHour = o.optInt("start_hour", 23),
+                        endHour = o.optInt("end_hour", 7),
+                        idleOnly = o.optBoolean("idle_only", true),
+                        currentHddState = o.optString("current_hdd_state", "unknown"),
+                        inWindowNow = o.optBoolean("in_window_now"),
+                        lastActionTs = o.optLong("last_action_ts", 0L),
+                        lastActionState = o.optString("last_action_state", ""),
+                    )
+                    withContext(Dispatchers.Main) { sleepSchedule = s }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SleepSchedule", "fetch err: ${e.message}")
+            }
+        }
+    }
+
+    fun saveSleepSchedule(newSchedule: SleepSchedule) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val jsonBody = org.json.JSONObject().apply {
+                    put("enabled", newSchedule.enabled)
+                    put("mode", newSchedule.mode)
+                    put("start_hour", newSchedule.startHour)
+                    put("end_hour", newSchedule.endHour)
+                    put("idle_only", newSchedule.idleOnly)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/system/sleep_schedule")
+                    .post(jsonBody)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val ok = resp.isSuccessful && org.json.JSONObject(body).optBoolean("saved", false)
+                    withContext(Dispatchers.Main) {
+                        sleepScheduleMessage = if (ok) "Đã lưu lịch ngủ NAS" else "Lỗi lưu"
+                    }
+                }
+                fetchSleepSchedule()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { sleepScheduleMessage = "Lỗi: ${e.message}" }
+            }
+        }
+    }
+
+    fun spindownHddNow(onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/system/hdd_spindown_now")
+                    .post("".toRequestBody("application/json".toMediaTypeOrNull()))
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val o = org.json.JSONObject(body)
+                    val ok = o.optBoolean("ok", false)
+                    val msg = o.optString("msg", "")
+                    withContext(Dispatchers.Main) { onDone(ok, msg) }
+                }
+                fetchSleepSchedule()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onDone(false, e.message ?: "error") }
             }
         }
     }

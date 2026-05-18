@@ -235,6 +235,15 @@ fun MainMenuScreen(
     var showNasBackupDialog by remember { mutableStateOf(false) }
     // STATE CHO DISK HEALTH MONITOR
     var showDiskHealthDialog by remember { mutableStateOf(false) }
+    // STATE CHO SLEEP SCHEDULE
+    var showSleepScheduleDialog by remember { mutableStateOf(false) }
+    // STATE CHO BANDWIDTH THROTTLE
+    var showBandwidthDialog by remember { mutableStateOf(false) }
+    // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
+    LaunchedEffect(Unit) {
+        val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
+        com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = savedLimit
+    }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
@@ -418,6 +427,18 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.dialogs.DiskHealthDialog(
             viewModel = viewModel,
             onDismiss = { showDiskHealthDialog = false }
+        )
+    }
+    if (showSleepScheduleDialog) {
+        com.nas.naswebdav.ui.dialogs.SleepScheduleDialog(
+            viewModel = viewModel,
+            onDismiss = { showSleepScheduleDialog = false }
+        )
+    }
+    if (showBandwidthDialog) {
+        com.nas.naswebdav.ui.dialogs.BandwidthThrottleDialog(
+            sharedPrefs = sharedPrefs,
+            onDismiss = { showBandwidthDialog = false }
         )
     }
 
@@ -1085,7 +1106,9 @@ fun MainMenuScreen(
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
             showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
-            showDiskHealthDialog = { showDiskHealthDialog = true }
+            showDiskHealthDialog = { showDiskHealthDialog = true },
+            showSleepScheduleDialog = { showSleepScheduleDialog = true },
+            showBandwidthDialog = { showBandwidthDialog = true }
         )
     }
 }
@@ -1584,7 +1607,9 @@ fun ToolboxDialog(
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
     showNasBackupDialog: () -> Unit = {},
-    showDiskHealthDialog: () -> Unit = {}
+    showDiskHealthDialog: () -> Unit = {},
+    showSleepScheduleDialog: () -> Unit = {},
+    showBandwidthDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
@@ -1655,6 +1680,22 @@ fun ToolboxDialog(
                 icon = Icons.Default.HealthAndSafety,
                 color = Color(0xFFFFA726),
                 onClick = { onDismiss(); showDiskHealthDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Lịch Ngủ NAS",
+                subtitle = "HDD spindown ngoài giờ dùng — bảo vệ ổ già",
+                icon = Icons.Default.Bedtime,
+                color = Color(0xFF7E57C2),
+                onClick = { onDismiss(); showSleepScheduleDialog() }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Giới Hạn Tốc Độ Upload",
+                subtitle = "Throttle upload tránh nghẽn mạng",
+                icon = Icons.Default.Speed,
+                color = Color(0xFF42A5F5),
+                onClick = { onDismiss(); showBandwidthDialog() }
             )
             Spacer(Modifier.height(8.dp))
 
