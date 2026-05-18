@@ -1644,18 +1644,36 @@ fun ToolboxDialog(
                 onClick = { onDismiss(); onOpenTrash() }
             )
             Spacer(Modifier.height(8.dp))
+            var showBiometricSettings by remember { mutableStateOf(false) }
             SettingsMenuCard(
                 title = "Khóa Sinh trắc học",
-                subtitle = "Vân tay / FaceID",
+                subtitle = if (isBiometricEnabled) {
+                    val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
+                    val delayLabel = when {
+                        sec == 0 -> "khoá ngay"
+                        sec < 60 -> "sau ${sec}s"
+                        else -> "sau ${sec / 60}m"
+                    }
+                    "Đã bật — $delayLabel khi vào nền"
+                } else "Vân tay / FaceID — chưa bật",
                 icon = Icons.Default.Lock,
                 color = AccentPurple,
                 checked = isBiometricEnabled,
                 onClick = {
-                    val newValue = !isBiometricEnabled
-                    sharedPrefs.edit().putBoolean("biometric_enabled", newValue).apply()
-                    isBiometricEnabled = newValue
+                    showBiometricSettings = true
                 }
             )
+            if (showBiometricSettings) {
+                com.nas.naswebdav.ui.dialogs.BiometricSettingsDialog(
+                    viewModel = viewModel,
+                    sharedPrefs = sharedPrefs,
+                    onDismiss = {
+                        showBiometricSettings = false
+                        // Re-read from SharedPrefs to update card subtitle
+                        isBiometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                    }
+                )
+            }
             Spacer(Modifier.height(8.dp))
             SettingsMenuCard(
                 title = "Auto-Backup",

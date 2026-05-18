@@ -2241,6 +2241,196 @@ fun LivestreamRecordDialog(
 }
 
 // ====================================================================
+// DIALOG CAU HINH KHOA SINH TRAC HOC
+// Truoc day chi co toggle on/off + delay hardcode 60s -> user thay nhu
+// khong tac dung. Dialog moi:
+//   - Check biometric availability (BiometricManager.canAuthenticate)
+//   - Toggle enable + delay picker (0s instant / 5s / 30s / 1m / 5m)
+//   - Nut "Khoa ngay" de test khong can doi
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BiometricSettingsDialog(
+    viewModel: WebDavViewModel,
+    sharedPrefs: android.content.SharedPreferences,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
+    var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
+
+    // Check biometric availability
+    val bioStatus = remember {
+        try {
+            val bm = androidx.biometric.BiometricManager.from(context)
+            val auth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            when (bm.canAuthenticate(auth)) {
+                androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS -> "available"
+                androidx.biometric.BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "no_hardware"
+                androidx.biometric.BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "hw_unavailable"
+                androidx.biometric.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "none_enrolled"
+                else -> "unknown"
+            }
+        } catch (e: Exception) { "error: ${e.message}" }
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.Lock, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Khóa Sinh trắc học", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
+
+            // Availability badge
+            val (bioColor, bioText) = when (bioStatus) {
+                "available" -> Color(0xFF66BB6A) to "Sinh trắc học sẵn sàng (vân tay/khuôn mặt đã đăng ký)"
+                "no_hardware" -> Color(0xFFEF5350) to "Thiết bị không hỗ trợ sinh trắc"
+                "hw_unavailable" -> Color(0xFFFFA726) to "Phần cứng sinh trắc tạm thời không khả dụng"
+                "none_enrolled" -> Color(0xFFFFA726) to "Chưa đăng ký vân tay/khuôn mặt nào. Vào Cài đặt → Sinh trắc để thêm."
+                else -> Color(0xFF8892B0) to "Trạng thái: $bioStatus"
+            }
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(bioColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .border(1.dp, bioColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    when (bioStatus) {
+                        "available" -> Icons.Default.CheckCircle
+                        else -> Icons.Default.Warning
+                    },
+                    null, tint = bioColor, modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(bioText, color = bioColor, fontSize = 12.sp, lineHeight = 15.sp)
+            }
+
+            // Enable toggle
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = Color(0xFF2A2A3E))
+            Spacer(Modifier.height(6.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable(enabled = bioStatus == "available") {
+                    enabled = !enabled
+                }
+            ) {
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { enabled = it },
+                    enabled = bioStatus == "available",
+                    modifier = Modifier.scale(0.85f),
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF9C27B0), checkedTrackColor = Color(0xFF9C27B0).copy(alpha = 0.3f))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Bật khoá sinh trắc", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (enabled) "Khoá khi app vào nền theo thời gian dưới"
+                        else "Tắt — app không bao giờ tự khoá",
+                        color = Color(0xFF8892B0), fontSize = 11.sp
+                    )
+                }
+            }
+
+            // Delay picker
+            Spacer(Modifier.height(8.dp))
+            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(6.dp))
+            val delayOptions = listOf(
+                0 to "Khoá NGAY",
+                5 to "5 giây",
+                30 to "30 giây",
+                60 to "1 phút",
+                300 to "5 phút",
+                600 to "10 phút",
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                delayOptions.forEach { (sec, label) ->
+                    val isSel = delaySec == sec
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .background(
+                                if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .clickable(enabled = enabled) { delaySec = sec }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSel,
+                            onClick = { delaySec = sec },
+                            enabled = enabled,
+                            modifier = Modifier.scale(0.8f),
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF9C27B0))
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            label,
+                            color = when {
+                                !enabled -> Color(0xFF8892B0).copy(alpha = 0.5f)
+                                isSel -> Color(0xFF9C27B0)
+                                else -> Color(0xFFE8E8E8)
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = {
+                        sharedPrefs.edit()
+                            .putBoolean("biometric_enabled", enabled)
+                            .putInt("biometric_lock_delay_sec", delaySec)
+                            .apply()
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0)),
+                    shape = RoundedCornerShape(10.dp),
+                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                OutlinedButton(
+                    onClick = {
+                        // Save first, then trigger lock
+                        sharedPrefs.edit()
+                            .putBoolean("biometric_enabled", true)
+                            .putInt("biometric_lock_delay_sec", delaySec)
+                            .apply()
+                        viewModel.lockNowRequested = true
+                        onDismiss()
+                    },
+                    enabled = bioStatus == "available",
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9C27B0).copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
+                ) { Text("KHOÁ NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Lưu ý: \"Khoá NGAY\" trong delay = không có buffer khi switch app/đọc thông báo. Đề xuất 5-30 giây.",
+                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+
+// ====================================================================
 // DIALOG GIOI HAN TOC DO UPLOAD — Throttle WebDAV upload
 // Backend (AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC) da co. Day la UI
 // chinh + persist sang SharedPreferences. App start tu doc lai gia tri.

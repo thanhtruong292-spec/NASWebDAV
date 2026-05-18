@@ -387,6 +387,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var sleepSchedule by mutableStateOf(SleepSchedule())
     var sleepScheduleMessage by mutableStateOf("")
 
+    // Biometric lock: cho phep BiometricSettingsDialog yeu cau lock ngay
+    var lockNowRequested by mutableStateOf(false)
+
     var streamPipeStatus    by mutableStateOf("")        // Mô tả trạng thái hiện tại
     var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 → 1.0 (nếu biết size)
     var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tốc độ dạng text
