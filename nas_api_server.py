@@ -2736,6 +2736,622 @@ def _pwm_apply_on(duty=10000, period=10000):
 
 
 # ============================================================================
+# PHOTO TIMELINE — Group anh theo Year/Month/Day cho UI Google-Photos-style
+# ============================================================================
+# Endpoint nhe — chi liet ke path + mtime, KHONG mo tung file de doc EXIF
+# (tranh stress disk). Client tu group theo mtime client-side.
+# ============================================================================
+@app.route('/api/photos/timeline', methods=['GET'])
+@requires_auth
+def api_photos_timeline():
+    """List anh trong WEBDAV_FILE_ROOT, sort by mtime desc, group-ready.
+    Query params:
+      - month: "YYYY-MM" -> chi tra anh trong thang do
+      - limit: max items (default 500, max 2000)
+      - offset: pagination
+    """
+    month_filter = request.args.get("month", "").strip()
+    try:
+        limit = int(request.args.get("limit", "500"))
+    except Exception:
+        limit = 500
+    limit = max(1, min(2000, limit))
+    try:
+        offset = int(request.args.get("offset", "0"))
+    except Exception:
+        offset = 0
+
+    target_year = None
+    target_month = None
+    if month_filter:
+        try:
+            parts = month_filter.split("-")
+            target_year = int(parts[0])
+            target_month = int(parts[1])
+        except Exception:
+            pass
+
+    items = []
+    try:
+        for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
+            # Skip hidden + thumb dirs (tranh stress disk)
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
+            for name in files:
+                if name.startswith('.'): continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in _IMAGE_EXTS: continue
+                full = os.path.join(root, name)
+                try:
+                    st = os.stat(full)
+                    mtime = int(st.st_mtime)
+                    if target_year is not None:
+                        dt = datetime.datetime.fromtimestamp(mtime)
+                        if dt.year != target_year or dt.month != target_month:
+                            continue
+                    rel = os.path.relpath(full, WEBDAV_FILE_ROOT).replace("\\", "/")
+                    items.append({
+                        "path": rel,
+                        "mtime": mtime,
+                        "size": st.st_size,
+                    })
+                except Exception:
+                    continue
+    except Exception as e:
+        log.warning("[PhotoTimeline] Walk loi: %s", e)
+        return jsonify({"error": str(e)[:200]}), 500
+
+    # Sort desc, apply pagination
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    total = len(items)
+    page = items[offset:offset + limit]
+    return jsonify({
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": page,
+        "filter_month": month_filter or None,
+    })
+
+
+# ============================================================================
+# DISK HEALTH MONITOR — Theo doi suc khoe HDD truoc khi qua muon
+# ============================================================================
+# Sample SMART + dmesg + io stats moi 5 phut, ghi append vao .jsonl tren eMMC.
+# Auto-alert qua system_logs khi vuot threshold. UI app doc /api/disk/health
+# (snapshot hien tai) hoac /api/disk/health/history?days=N (time series).
+# ============================================================================
+_DISK_HEALTH_HISTORY_FILE = "/etc/nas/state/disk_health_history.jsonl"
+_DISK_HEALTH_SAMPLE_INTERVAL_SEC = 300  # 5 phut
+_DISK_HEALTH_RETENTION_DAYS = 30
+_disk_health_last_sample = {}   # giu sample gan nhat trong RAM cho /api/disk/health
+_disk_health_lock = threading.Lock()
+
+
+def _read_dmesg_recent(seconds=300):
+    """Dem so EXT4 error va SATA reset trong dmesg trong N giay gan day."""
+    try:
+        out = safe_run_cmd(["dmesg", "--time-format=raw"], timeout=8)
+        if not out:
+            # Khong co --time-format raw -> fallback parse [seconds] o dau dong
+            out = safe_run_cmd(["dmesg"], timeout=8)
+    except Exception:
+        return {"ext4_errors": 0, "sata_resets": 0, "io_errors": 0}
+    ext4 = 0
+    sata = 0
+    ioerr = 0
+    # Doc tu duoi len, dem den khi vuot ngoai window
+    try:
+        with open("/proc/uptime") as f:
+            uptime_sec = float(f.read().split()[0])
+    except Exception:
+        uptime_sec = 0.0
+    threshold_sec = uptime_sec - seconds
+    for line in out.splitlines():
+        # Format: "[ 12345.678] kernel: EXT4-fs error..."
+        m = _re_module.match(r"\[\s*(\d+)\.\d+\]", line)
+        if m:
+            ts = int(m.group(1))
+            if ts < threshold_sec:
+                continue
+        low = line.lower()
+        if "ext4-fs error" in low or "ext4-fs warning" in low:
+            ext4 += 1
+        if "ata" in low and ("reset" in low or "link is slow" in low or "exception" in low):
+            sata += 1
+        if "i/o error" in low:
+            ioerr += 1
+    return {"ext4_errors": ext4, "sata_resets": sata, "io_errors": ioerr}
+
+
+def _read_io_stats(devname="sda"):
+    """Doc /sys/class/block/<dev>/stat: io wait time, sectors r/w."""
+    try:
+        with open("/sys/class/block/%s/stat" % devname) as f:
+            fields = f.read().split()
+        # Fields: 0:reads_completed 1:reads_merged 2:sectors_read 3:read_time
+        #         4:writes_completed 5:writes_merged 6:sectors_written 7:write_time
+        #         8:ios_in_progress 9:io_time 10:weighted_io_time
+        if len(fields) >= 11:
+            return {
+                "reads_completed": int(fields[0]),
+                "sectors_read": int(fields[2]),
+                "writes_completed": int(fields[4]),
+                "sectors_written": int(fields[6]),
+                "ios_in_progress": int(fields[8]),
+                "io_time_ms": int(fields[9]),
+                "weighted_io_ms": int(fields[10]),
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _parse_smart_attributes():
+    """Lay 3 metric quan trong tu smartctl: Reallocated, Pending, UDMA CRC, temp."""
+    result = {
+        "smart_status": "Unknown",
+        "temp_c": None,
+        "reallocated_sectors": None,
+        "pending_sectors": None,
+        "udma_crc_err": None,
+        "power_on_hours": None,
+    }
+    # Phat hien thiet bi HDD (skip mmcblk)
+    dev = None
+    try:
+        for cand in ("sda", "sdb"):
+            if os.path.exists("/dev/" + cand):
+                dev = "/dev/" + cand
+                break
+    except Exception:
+        pass
+    if not dev:
+        return result
+    # FIX: safe_run_cmd block '-H' flag (security whitelist). Goi subprocess
+    # truc tiep voi danh sach args co dinh (khong co user input) -> an toan.
+    out = ""
+    for cmd_attempt in (["sudo", "smartctl", "-A", "-H", dev],
+                        ["smartctl", "-A", "-H", dev]):
+        try:
+            r = subprocess.run(cmd_attempt, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            if r.stdout:
+                out = r.stdout.decode("utf-8", errors="ignore")
+                if "SMART" in out or "Attribute" in out:
+                    break
+        except Exception:
+            continue
+    if not out:
+        return result
+    try:
+        for line in out.splitlines():
+            low = line.lower()
+            if "smart overall-health" in low or "smart health status" in low:
+                if "passed" in low or "ok" in low:
+                    result["smart_status"] = "PASSED"
+                elif "failed" in low:
+                    result["smart_status"] = "FAILED"
+            # Attribute lines layout:
+            # ID# ATTRIBUTE_NAME    FLAG    VALUE  WORST  THRESH  TYPE     UPDATED  WHEN_FAILED  RAW_VALUE  [extra fields]
+            # parts[0]=ID  parts[1]=name  ...  parts[9]=RAW_VALUE
+            # FIX: dung parts[9] (raw value column) thay vi parts[-1] (sai cho line temp co "(Min/Max 30/34)")
+            parts = line.split()
+            if len(parts) < 10: continue
+            try:
+                attr_id = int(parts[0])
+            except Exception:
+                continue
+            raw = parts[9]
+            try:
+                if attr_id == 5:     result["reallocated_sectors"] = int(raw)
+                elif attr_id == 197: result["pending_sectors"] = int(raw)
+                elif attr_id == 198: result["offline_uncorrectable"] = int(raw)
+                elif attr_id == 199: result["udma_crc_err"] = int(raw)
+                elif attr_id == 194 or attr_id == 190: result["temp_c"] = int(raw)
+                elif attr_id == 9:   result["power_on_hours"] = int(raw)
+                elif attr_id == 188: result["command_timeout"] = int(raw)
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning("[DiskHealth] smartctl loi: %s", e)
+    return result
+
+
+def _compute_health_score(sample):
+    """Tinh diem suc khoe 0-100 + nhan canh bao."""
+    score = 100
+    warnings = []
+    if sample.get("smart_status") == "FAILED":
+        score -= 50; warnings.append("SMART overall-health: FAILED")
+    elif sample.get("smart_status") not in ("PASSED",):
+        score -= 5
+    realloc = sample.get("reallocated_sectors") or 0
+    if realloc > 0:
+        score -= min(20, realloc)
+        warnings.append("%d sector da realloc" % realloc)
+    pending = sample.get("pending_sectors") or 0
+    if pending > 0:
+        score -= min(30, pending * 2)
+        warnings.append("%d sector dang cho realloc (pending) — DAU HIEU O CUNG SAP HONG" % pending)
+    offline_unc = sample.get("offline_uncorrectable") or 0
+    if offline_unc > 0:
+        score -= min(20, offline_unc * 2)
+        warnings.append("%d offline uncorrectable sector" % offline_unc)
+    cmd_to = sample.get("command_timeout") or 0
+    if cmd_to > 10000:
+        score -= 10
+        warnings.append("%d command timeout — SATA link khong on dinh" % cmd_to)
+    crc = sample.get("udma_crc_err") or 0
+    if crc > 0:
+        score -= min(10, crc)
+        warnings.append("%d UDMA CRC error (cap SATA can kiem tra)" % crc)
+    temp = sample.get("temp_c") or 0
+    if temp > 60:
+        score -= 20; warnings.append("Nhiet do %d°C qua nong" % temp)
+    elif temp > 50:
+        score -= 8; warnings.append("Nhiet do %d°C cao" % temp)
+    ext4 = sample.get("ext4_errors_recent") or 0
+    if ext4 > 0:
+        score -= min(30, ext4 * 5)
+        warnings.append("%d EXT4-fs error trong 5 phut gan day" % ext4)
+    sata = sample.get("sata_resets_recent") or 0
+    if sata > 0:
+        score -= min(40, sata * 15)
+        warnings.append("%d SATA reset/exception trong 5 phut — co the dat cap loi" % sata)
+    ioerr = sample.get("io_errors_recent") or 0
+    if ioerr > 0:
+        score -= min(30, ioerr * 10)
+        warnings.append("%d I/O error trong 5 phut" % ioerr)
+    return max(0, score), warnings
+
+
+def _disk_health_sample_once():
+    """Sample 1 lan, append vao .jsonl, update RAM cache, alert neu can."""
+    global _disk_health_last_sample
+    try:
+        smart = _parse_smart_attributes()
+        dmesg = _read_dmesg_recent(seconds=_DISK_HEALTH_SAMPLE_INTERVAL_SEC)
+        io = _read_io_stats("sda")
+        sample = {
+            "ts": int(time.time()),
+            "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        sample.update(smart)
+        sample["ext4_errors_recent"] = dmesg.get("ext4_errors", 0)
+        sample["sata_resets_recent"] = dmesg.get("sata_resets", 0)
+        sample["io_errors_recent"] = dmesg.get("io_errors", 0)
+        sample["io_stats"] = io
+        score, warnings = _compute_health_score(sample)
+        sample["score"] = score
+        sample["warnings"] = warnings
+
+        with _disk_health_lock:
+            _disk_health_last_sample = sample
+
+        # Append vao .jsonl tren eMMC
+        try:
+            os.makedirs(os.path.dirname(_DISK_HEALTH_HISTORY_FILE), exist_ok=True)
+            with open(_DISK_HEALTH_HISTORY_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+        except Exception as e:
+            log.warning("[DiskHealth] Khong ghi history: %s", e)
+
+        # Alert qua system_logs neu score xuong duoi nguong hoac co warning critical
+        if score < 60:
+            try:
+                _add_system_log("WARNING", "DiskHealth",
+                    "Diem suc khoe HDD: %d/100. Canh bao: %s" % (score, "; ".join(warnings[:3])))
+            except Exception:
+                pass
+        if dmesg.get("sata_resets", 0) > 0 or dmesg.get("io_errors", 0) > 0:
+            try:
+                _add_system_log("ERROR", "DiskHealth",
+                    "Phat hien SATA/I/O error: %d SATA reset, %d I/O error trong 5 phut. Kiem tra cap SATA/nguon ngay." % (
+                        dmesg.get("sata_resets", 0), dmesg.get("io_errors", 0)))
+            except Exception:
+                pass
+    except Exception as e:
+        log.error("[DiskHealth] Sample loi: %s", e)
+
+
+def _disk_health_prune_old_records():
+    """Xoa cac dong .jsonl cu hon retention."""
+    try:
+        if not os.path.exists(_DISK_HEALTH_HISTORY_FILE): return
+        cutoff = int(time.time()) - (_DISK_HEALTH_RETENTION_DAYS * 86400)
+        kept = []
+        with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                    if obj.get("ts", 0) >= cutoff:
+                        kept.append(line.rstrip("\n"))
+                except Exception:
+                    continue
+        # Chi rewrite neu thuc su co prune
+        if kept and len(kept) < sum(1 for _ in open(_DISK_HEALTH_HISTORY_FILE)):
+            tmp = _DISK_HEALTH_HISTORY_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write("\n".join(kept) + "\n")
+            os.replace(tmp, _DISK_HEALTH_HISTORY_FILE)
+    except Exception as e:
+        log.warning("[DiskHealth] Prune loi: %s", e)
+
+
+def _disk_health_watchdog():
+    """Background daemon: sample moi 5 phut, prune moi 1 gio."""
+    time.sleep(30)  # cho server on dinh
+    prune_counter = 0
+    while True:
+        _disk_health_sample_once()
+        prune_counter += 1
+        if prune_counter >= 12:  # ~1 gio
+            _disk_health_prune_old_records()
+            prune_counter = 0
+        time.sleep(_DISK_HEALTH_SAMPLE_INTERVAL_SEC)
+
+
+def _add_system_log(level, module, message):
+    """Helper: them log vao bang system_logs neu DB available."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=3.0)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
+            (level, module, message)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+@app.route('/api/disk/health', methods=['GET'])
+@requires_auth
+def api_disk_health():
+    """Snapshot suc khoe HDD hien tai (sample gan nhat trong RAM)."""
+    with _disk_health_lock:
+        sample = dict(_disk_health_last_sample) if _disk_health_last_sample else None
+    if sample is None:
+        # Sample on-demand neu chua co
+        _disk_health_sample_once()
+        with _disk_health_lock:
+            sample = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
+    return jsonify({
+        "current": sample,
+        "sample_interval_sec": _DISK_HEALTH_SAMPLE_INTERVAL_SEC,
+    })
+
+
+@app.route('/api/disk/health/history', methods=['GET'])
+@requires_auth
+def api_disk_health_history():
+    """Time-series suc khoe HDD trong N ngay gan day (default 7)."""
+    try:
+        days = int(request.args.get("days", "7"))
+    except Exception:
+        days = 7
+    days = max(1, min(30, days))
+    cutoff = int(time.time()) - (days * 86400)
+    items = []
+    try:
+        if os.path.exists(_DISK_HEALTH_HISTORY_FILE):
+            with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("ts", 0) >= cutoff:
+                            items.append(obj)
+                    except Exception:
+                        continue
+    except Exception as e:
+        log.warning("[DiskHealth] Read history loi: %s", e)
+    return jsonify({
+        "days": days,
+        "count": len(items),
+        "samples": items,
+    })
+
+
+# ============================================================================
+# SCHEDULED AUTO-BACKUP — Backup theo lich + retention + rclone OneDrive
+# ============================================================================
+_BACKUP_SCHEDULE_FILE = "/etc/nas/state/backup_schedule.json"
+_BACKUP_SCHEDULE_DEFAULT = {
+    "enabled": False,
+    "frequency": "weekly",   # daily | weekly | monthly
+    "hour": 3,               # 0-23, gio chay (1 gio rieng dem)
+    "retention_count": 7,    # giu N backup gan nhat
+    "rclone_remote": "",     # vd "onedrive:" — empty = khong upload
+    "rclone_path": "/NASBackup/",  # path tren remote
+    "last_run_ts": 0,
+    "last_run_result": "",   # "success" | "failed: <msg>"
+    "last_run_file": "",
+}
+
+
+def _load_backup_schedule():
+    try:
+        if os.path.exists(_BACKUP_SCHEDULE_FILE):
+            with open(_BACKUP_SCHEDULE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                merged = dict(_BACKUP_SCHEDULE_DEFAULT)
+                merged.update(data)
+                return merged
+    except Exception as e:
+        log.warning("[BackupSchedule] Load loi: %s", e)
+    return dict(_BACKUP_SCHEDULE_DEFAULT)
+
+
+def _save_backup_schedule(state):
+    try:
+        os.makedirs(os.path.dirname(_BACKUP_SCHEDULE_FILE), exist_ok=True)
+        tmp = _BACKUP_SCHEDULE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _BACKUP_SCHEDULE_FILE)
+        return True
+    except Exception as e:
+        log.error("[BackupSchedule] Save loi: %s", e)
+        return False
+
+
+def _create_backup_tarball():
+    """Tao 1 backup tar.gz, return path. Tach ra de scheduled job dung lai."""
+    if not _ensure_backup_dir():
+        raise IOError("Khong tao duoc thu muc backup")
+    timestamp = datetime.datetime.now().strftime("%d%m%Y %H%M%S")
+    filename = "Backup_NAS %s.tar.gz" % timestamp
+    full_path = os.path.join(_BACKUP_DIR, filename)
+    manifest = {
+        "created_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "hostname": os.uname()[1] if hasattr(os, "uname") else "unknown",
+        "webdav_root": WEBDAV_FILE_ROOT,
+        "scheduled": True,
+        "files": [],
+    }
+    all_files = list(_BACKUP_FILES) + _backup_dynamic_files()
+    with tarfile.open(full_path, "w:gz") as tar:
+        for src, arcname, _crit in all_files:
+            if not os.path.exists(src): continue
+            try:
+                tar.add(src, arcname=arcname)
+                sz = 0
+                try: sz = os.path.getsize(src)
+                except Exception: pass
+                manifest["files"].append({"src": src, "archive_path": arcname, "size": sz})
+            except Exception as e:
+                log.warning("[Backup] Skip %s: %s", src, e)
+        manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+        info = tarfile.TarInfo(name="manifest.json")
+        info.size = len(manifest_bytes)
+        info.mtime = int(time.time())
+        import io as _io
+        tar.addfile(info, _io.BytesIO(manifest_bytes))
+    return full_path, filename
+
+
+def _apply_backup_retention(keep_count):
+    """Xoa cac backup cu, chi giu N file gan nhat."""
+    try:
+        items = []
+        for name in os.listdir(_BACKUP_DIR):
+            if not name.startswith("Backup_NAS"): continue
+            full = os.path.join(_BACKUP_DIR, name)
+            try:
+                items.append((os.path.getmtime(full), full))
+            except Exception:
+                continue
+        items.sort(reverse=True)
+        for _mtime, path in items[keep_count:]:
+            try:
+                os.remove(path)
+                log.info("[BackupSchedule] Retention: xoa %s", os.path.basename(path))
+            except Exception as e:
+                log.warning("[BackupSchedule] Khong xoa duoc %s: %s", path, e)
+    except Exception as e:
+        log.warning("[BackupSchedule] Retention loi: %s", e)
+
+
+def _rclone_upload_backup(local_path, remote, remote_path):
+    """Upload 1 backup file len rclone remote. Tra (ok, msg)."""
+    if not remote:
+        return True, "skip — chua cau hinh rclone remote"
+    rclone_bin = "/usr/bin/rclone"
+    if not os.path.exists(rclone_bin):
+        return False, "rclone khong duoc cai"
+    try:
+        full_remote = remote.rstrip(":") + ":" + remote_path.lstrip("/")
+        r = subprocess.run(
+            [rclone_bin, "copy", local_path, full_remote, "--quiet", "--timeout=300s"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600
+        )
+        if r.returncode == 0:
+            return True, "uploaded to " + full_remote
+        return False, (r.stderr or b"").decode("utf-8", errors="ignore")[:200]
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+def _scheduled_backup_worker():
+    """Daemon kiem tra lich moi 5 phut, chay backup dung gio."""
+    time.sleep(60)
+    while True:
+        try:
+            sched = _load_backup_schedule()
+            if not sched.get("enabled"):
+                time.sleep(300)
+                continue
+            now = datetime.datetime.now()
+            last_ts = int(sched.get("last_run_ts", 0))
+            last_dt = datetime.datetime.fromtimestamp(last_ts) if last_ts > 0 else None
+            should_run = False
+            target_hour = int(sched.get("hour", 3))
+            freq = sched.get("frequency", "weekly")
+            if now.hour == target_hour and (last_dt is None or last_dt.date() != now.date()):
+                # Da toi gio chay va chua chay hom nay
+                if freq == "daily":
+                    should_run = True
+                elif freq == "weekly":
+                    # Chay vao chu nhat (weekday=6)
+                    if now.weekday() == 6:
+                        should_run = True
+                elif freq == "monthly":
+                    # Chay vao ngay 1
+                    if now.day == 1:
+                        should_run = True
+            if should_run:
+                log.info("[BackupSchedule] Trigger backup theo lich (%s)", freq)
+                try:
+                    path, fname = _create_backup_tarball()
+                    sched["last_run_result"] = "success"
+                    sched["last_run_file"] = fname
+                    _apply_backup_retention(int(sched.get("retention_count", 7)))
+                    if sched.get("rclone_remote"):
+                        ok, msg = _rclone_upload_backup(path, sched["rclone_remote"], sched.get("rclone_path", "/NASBackup/"))
+                        sched["last_run_result"] = "success — " + msg if ok else "uploaded fail: " + msg
+                    _add_system_log("SUCCESS", "BackupSchedule",
+                        "Backup theo lich xong: %s" % fname)
+                except Exception as e:
+                    sched["last_run_result"] = "failed: " + str(e)[:200]
+                    _add_system_log("ERROR", "BackupSchedule",
+                        "Backup theo lich loi: %s" % str(e)[:200])
+                sched["last_run_ts"] = int(time.time())
+                _save_backup_schedule(sched)
+            time.sleep(300)  # check moi 5 phut
+        except Exception as e:
+            log.error("[BackupSchedule] Worker loi: %s", e)
+            time.sleep(300)
+
+
+@app.route('/api/backup/schedule', methods=['GET'])
+@requires_auth
+def api_backup_schedule_get():
+    return jsonify(_load_backup_schedule())
+
+
+@app.route('/api/backup/schedule', methods=['POST'])
+@requires_auth
+def api_backup_schedule_set():
+    body = request.get_json(force=True) or {}
+    sched = _load_backup_schedule()
+    # Chi cho update mot so field
+    for key in ("enabled", "frequency", "hour", "retention_count", "rclone_remote", "rclone_path"):
+        if key in body:
+            sched[key] = body[key]
+    # Sanitize
+    sched["enabled"] = bool(sched.get("enabled"))
+    try: sched["hour"] = max(0, min(23, int(sched.get("hour", 3))))
+    except Exception: sched["hour"] = 3
+    try: sched["retention_count"] = max(1, min(50, int(sched.get("retention_count", 7))))
+    except Exception: sched["retention_count"] = 7
+    if sched.get("frequency") not in ("daily", "weekly", "monthly"):
+        sched["frequency"] = "weekly"
+    ok = _save_backup_schedule(sched)
+    return jsonify({"saved": ok, "schedule": sched})
+
+
+# ============================================================================
 # BACKUP / RESTORE — Sao luu va khoi phuc cau hinh NAS
 # ============================================================================
 # Backup tarball chua moi config/state cua NAS API + WebDAV + fan + watcher.
@@ -7031,6 +7647,12 @@ if __name__ == "__main__":
     # Thread giam sat Hanh vi He thong Toan Dien (Mat HDD, Mat LAN IP, Chet Service)
     threading.Thread(target=_system_health_watchdog, daemon=True).start()
     log.info("[Watchdog] Trình giám sát sức khỏe hệ thống đã khởi động (tự động xử lý lỗi mạng/ổ cứng).")
+
+    # FEATURE: Disk health time-series daemon + scheduled backup daemon
+    threading.Thread(target=_disk_health_watchdog, daemon=True).start()
+    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 5 phút).")
+    threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
+    log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
 
     # Thread cron don dep Thung rac + phat hien canh bao + kick AI ban dem
     threading.Thread(target=_cron_worker, daemon=True).start()
