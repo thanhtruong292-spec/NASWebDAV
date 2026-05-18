@@ -2179,6 +2179,78 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             else Text("Kết nối NAS", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
 
+        // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
+        val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+        val hasSavedCreds = remember {
+            SecurePrefsHelper.getUser(context).isNotEmpty() &&
+                SecurePrefsHelper.getPass(context).isNotEmpty() &&
+                SecurePrefsHelper.getUrlList(context).isNotEmpty()
+        }
+        val biometricAvailable = remember {
+            try {
+                val bm = androidx.biometric.BiometricManager.from(context)
+                val auth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                    androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                bm.canAuthenticate(auth) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+            } catch (_: Exception) { false }
+        }
+        if (biometricEnabled && hasSavedCreds && biometricAvailable) {
+            Spacer(Modifier.height(12.dp))
+            val activity = context as? androidx.fragment.app.FragmentActivity
+            var autoTriggered by remember { mutableStateOf(false) }
+            val triggerBiometric: () -> Unit = {
+                if (activity != null) {
+                    val executor = androidx.core.content.ContextCompat.getMainExecutor(activity)
+                    val prompt = androidx.biometric.BiometricPrompt(activity, executor,
+                        object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                                super.onAuthenticationSucceeded(result)
+                                val urlList = SecurePrefsHelper.getUrlList(context)
+                                val u = SecurePrefsHelper.getUser(context)
+                                val p = SecurePrefsHelper.getPass(context)
+                                viewModel.connect(urlList, u, p, onSuccess = {
+                                    viewModel.scheduleIdleDuplicateScan(context)
+                                    viewModel.scheduleIdleSpeedTest(context)
+                                    viewModel.scheduleFingerprintWorker(context)
+                                    onLoginSuccess()
+                                }, onError = { msg ->
+                                    viewModel.commonDialogType = DialogType.ERROR
+                                    viewModel.commonDialogMessage = msg
+                                    viewModel.showCommonDialog = true
+                                })
+                            }
+                        })
+                    val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                        .setTitle("Đăng nhập NAS")
+                        .setSubtitle("Dùng vân tay/khuôn mặt để đăng nhập nhanh")
+                        .setAllowedAuthenticators(
+                            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                        ).build()
+                    prompt.authenticate(info)
+                }
+            }
+            // Auto-trigger 1 lan khi screen vua compose (chi khi user chua login va da co credentials)
+            LaunchedEffect(Unit) {
+                if (!autoTriggered && !viewModel.isLoading) {
+                    autoTriggered = true
+                    kotlinx.coroutines.delay(300)  // cho UI settle
+                    triggerBiometric()
+                }
+            }
+            OutlinedButton(
+                onClick = triggerBiometric,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF9C27B0)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
+            ) {
+                Icon(Icons.Default.Fingerprint, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Đăng nhập bằng vân tay", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
         // ── KHU VUC NUT KHAN CAP: Bat nguon (WoL) + Khoi dong lai NAS ────────────
         // Cho phep dieu khien NAS khi khong dang nhap duoc (vd NAS treo, mat ket noi).
         Spacer(Modifier.height(20.dp))
