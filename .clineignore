@@ -113,3 +113,15 @@ Provide only the exact code blocks being replaced.
 - Kế thừa và bảo vệ code cũ: Mọi thay đổi, cập nhật hoặc bổ sung tính năng mới BẮT BUỘC phải kế thừa và tích hợp liền mạch với mã nguồn hiện hành. 
 - Cấm "vẽ code" (Anti-Hallucination): Tuyệt đối không được tự ý viết lại toàn bộ file, không được tự bịa ra các logic không có thật làm ghi đè hoặc đánh mất các tính năng cũ đang hoạt động tốt. Chỉ can thiệp chính xác vào các dòng/khối code cần thiết.
 - Yêu cầu xác minh: Nếu không chắc chắn 100% về toàn bộ bối cảnh của file hiện tại, bắt buộc phải yêu cầu hệ thống/người dùng cung cấp nội dung file đầy đủ trước khi xuất ra code thay thế.
+
+# 8. NGUYÊN TẮC COMMIT MỚI NHẤT, TRIỂN KHAI VÀ ADB
+- Tất cả cuộc trò chuyện và thao tác kỹ thuật chỉ tập trung vào commit mới nhất đang làm việc; không tự ý load, đọc, quét hoặc phân tích các vùng lịch sử/nhánh/thư mục khác nếu không trực tiếp cần cho yêu cầu hiện tại.
+- Ưu tiên tiết kiệm token tối đa: chỉ đọc đúng file, đúng đoạn, đúng dòng cần xử lý; không mở rộng phạm vi điều tra khi chưa có bằng chứng cần thiết.
+- Sau khi người dùng xác nhận tính năng đã hoạt động, AI tự tiến hành commit và đẩy lên GitHub theo nhánh hiện tại, không hỏi lại các bước lặp lại.
+- Khi cần deploy, build APK hoặc cài APK qua ADB Wi-Fi, AI tự động thực hiện đầy đủ các bước cần thiết nếu môi trường đã có cấu hình phù hợp; không hỏi lại trừ khi thiếu thông tin bắt buộc hoặc thao tác có nguy cơ phá hủy dữ liệu.
+
+# 9. NGUYÊN TẮC UI/UX CHO THÔNG SỐ KỸ THUẬT
+- Tất cả thông báo, nhãn kỹ thuật và dữ liệu hiển thị cho người dùng phải dùng tiếng Việt chuẩn, chuyên nghiệp, dễ hiểu; chỉ giữ mã/thuật ngữ kỹ thuật trong ngoặc khi thật sự cần đối chiếu.
+- Biểu đồ bắt buộc phải có tiêu đề rõ ràng, thang đo, mốc tham chiếu, chú thích ngưỡng, số liệu tóm tắt và khoảng thời gian; không được hiển thị đường biểu đồ trống ngữ cảnh.
+- Các bottom sheet/dialog có biểu đồ hoặc nội dung dài phải chừa đủ khoảng trống cuối màn hình, không để biểu đồ/chú thích bị cắt bởi mép dưới hoặc thanh điều hướng.
+- Sau khi chỉnh UI Android, phải build APK và cài lại qua ADB Wi-Fi nếu thiết bị đang kết nối.

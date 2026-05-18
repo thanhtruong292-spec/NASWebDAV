@@ -2907,10 +2907,10 @@ fun DiskHealthDialog(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.85f)
+                .fillMaxHeight(0.92f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 10.dp, vertical = 2.dp)
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
@@ -2928,7 +2928,7 @@ fun DiskHealthDialog(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF66BB6A))
                     Spacer(Modifier.width(8.dp))
-                    Text("Đang lấy dữ liệu SMART...", color = Color(0xFF8892B0), fontSize = 13.sp)
+                    Text("Đang lấy dữ liệu tự kiểm tra ổ cứng...", color = Color(0xFF8892B0), fontSize = 13.sp)
                 }
             } else {
                 // Score card
@@ -2956,12 +2956,18 @@ fun DiskHealthDialog(
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
+                        val smartStatusVi = when {
+                            current.smartStatus.equals("PASSED", ignoreCase = true) -> "Đạt"
+                            current.smartStatus.equals("FAILED", ignoreCase = true) -> "Không đạt - lỗi nghiêm trọng"
+                            current.smartStatus.equals("Unknown", ignoreCase = true) -> "Chưa xác định"
+                            else -> current.smartStatus
+                        }
                         Text(scoreLabel, color = scoreColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text("SMART: ${current.smartStatus}", color = Color(0xFFE8E8E8), fontSize = 12.sp)
+                        Text("Tự kiểm tra ổ cứng: $smartStatusVi", color = Color(0xFFE8E8E8), fontSize = 12.sp)
                         current.tempC?.let { Text("Nhiệt độ: ${it}°C", color = Color(0xFF8892B0), fontSize = 11.sp) }
                         current.powerOnHours?.let {
                             val days = it / 24
-                            Text("Power-on: ${it}h (~${days / 365} năm ${(days % 365) / 30} tháng)", color = Color(0xFF8892B0), fontSize = 11.sp)
+                            Text("Thời gian ổ đã chạy: ${it}h (~${days / 365} năm ${(days % 365) / 30} tháng)", color = Color(0xFF8892B0), fontSize = 11.sp)
                         }
                     }
                 }
@@ -2988,7 +2994,7 @@ fun DiskHealthDialog(
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = Color(0xFF2A2A3E))
                 Spacer(Modifier.height(8.dp))
-                Text("CHI TIẾT SMART", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("THÔNG SỐ TỰ KIỂM TRA Ổ CỨNG", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Spacer(Modifier.height(6.dp))
 
                 @Composable
@@ -2999,26 +3005,26 @@ fun DiskHealthDialog(
                             fontSize = 12.sp, fontWeight = if (highlight) FontWeight.Bold else FontWeight.Medium)
                     }
                 }
-                AttrRow("Reallocated Sectors (5)", "${current.reallocatedSectors ?: "—"}",
+                AttrRow("Vùng dữ liệu đã thay thế (mã 5)", "${current.reallocatedSectors ?: "—"}",
                     highlight = (current.reallocatedSectors ?: 0) > 0)
-                AttrRow("Pending Sectors (197)", "${current.pendingSectors ?: "—"}",
+                AttrRow("Vùng dữ liệu đang chờ xử lý (mã 197)", "${current.pendingSectors ?: "—"}",
                     highlight = (current.pendingSectors ?: 0) > 0)
-                AttrRow("Offline Uncorrectable (198)", "${current.offlineUncorrectable ?: "—"}",
+                AttrRow("Vùng dữ liệu không thể sửa khi tự quét (mã 198)", "${current.offlineUncorrectable ?: "—"}",
                     highlight = (current.offlineUncorrectable ?: 0) > 0)
-                AttrRow("UDMA CRC Errors (199)", "${current.udmaCrcErr ?: "—"}",
+                AttrRow("Lỗi truyền dữ liệu qua cáp SATA (mã 199)", "${current.udmaCrcErr ?: "—"}",
                     highlight = (current.udmaCrcErr ?: 0) > 0)
-                AttrRow("Command Timeout (188)", "${current.commandTimeout ?: "—"}",
+                AttrRow("Số lần ổ cứng phản hồi quá hạn (mã 188)", "${current.commandTimeout ?: "—"}",
                     highlight = (current.commandTimeout ?: 0) > 10000)
 
                 // dmesg recent
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = Color(0xFF2A2A3E))
                 Spacer(Modifier.height(8.dp))
-                Text("SỰ KIỆN 5 PHÚT GẦN ĐÂY (DMESG)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text("SỰ KIỆN HỆ THỐNG TRONG 5 PHÚT GẦN ĐÂY", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Spacer(Modifier.height(6.dp))
-                AttrRow("EXT4-fs errors", "${current.ext4ErrorsRecent}", highlight = current.ext4ErrorsRecent > 0)
-                AttrRow("SATA reset/exception", "${current.sataResetsRecent}", highlight = current.sataResetsRecent > 0)
-                AttrRow("I/O errors", "${current.ioErrorsRecent}", highlight = current.ioErrorsRecent > 0)
+                AttrRow("Lỗi hệ thống tệp EXT4", "${current.ext4ErrorsRecent}", highlight = current.ext4ErrorsRecent > 0)
+                AttrRow("Lỗi hoặc đặt lại kết nối SATA", "${current.sataResetsRecent}", highlight = current.sataResetsRecent > 0)
+                AttrRow("Lỗi đọc/ghi dữ liệu", "${current.ioErrorsRecent}", highlight = current.ioErrorsRecent > 0)
 
                 // History trend
                 val history = viewModel.diskHealthHistory
@@ -3026,50 +3032,82 @@ fun DiskHealthDialog(
                     Spacer(Modifier.height(8.dp))
                     HorizontalDivider(color = Color(0xFF2A2A3E))
                     Spacer(Modifier.height(8.dp))
-                    Text("XU HƯỚNG SCORE 7 NGÀY (${history.size} mẫu)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Spacer(Modifier.height(8.dp))
-                    // Simple sparkline
-                    androidx.compose.foundation.Canvas(
-                        modifier = Modifier.fillMaxWidth().height(80.dp)
-                            .background(Color(0xFF15151D), RoundedCornerShape(6.dp))
-                            .padding(8.dp)
-                    ) {
-                        val w = size.width
-                        val h = size.height
-                        val maxScore = 100f
-                        val n = history.size
-                        if (n > 1) {
-                            for (i in 1 until n) {
-                                val x1 = (i - 1) * w / (n - 1)
-                                val y1 = h - (history[i - 1].score / maxScore) * h
-                                val x2 = i * w / (n - 1)
-                                val y2 = h - (history[i].score / maxScore) * h
-                                drawLine(
-                                    color = scoreColor,
-                                    start = androidx.compose.ui.geometry.Offset(x1, y1),
-                                    end = androidx.compose.ui.geometry.Offset(x2, y2),
-                                    strokeWidth = 2f
-                                )
+                    val minScore = history.minOf { it.score }
+                    val maxHistoryScore = history.maxOf { it.score }
+                    val firstSample = history.first()
+                    val lastSample = history.last()
+                    Text("XU HƯỚNG ĐIỂM SỨC KHỎE 7 NGÀY", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Hiện tại: ${lastSample.score}/100 • Thấp nhất: $minScore/100 • Cao nhất: $maxHistoryScore/100 • ${history.size} mẫu",
+                        color = Color(0xFFE8E8E8), fontSize = 11.sp, lineHeight = 14.sp
+                    )
+                    Text(
+                        "Từ ${firstSample.datetime} đến ${lastSample.datetime}. Đường vàng là ngưỡng cảnh báo 60/100.",
+                        color = Color(0xFF8892B0), fontSize = 10.sp, lineHeight = 13.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(modifier = Modifier.fillMaxWidth().height(102.dp)) {
+                        Column(
+                            modifier = Modifier.width(34.dp).fillMaxHeight().padding(vertical = 8.dp),
+                            verticalArrangement = Arrangement.SpaceBetween,
+                            horizontalAlignment = Alignment.End
+                        ) {
+                            Text("100", color = Color(0xFF8892B0), fontSize = 9.sp)
+                            Text("60", color = Color(0xFFFFA726), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text("0", color = Color(0xFF8892B0), fontSize = 9.sp)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Column(Modifier.weight(1f)) {
+                            androidx.compose.foundation.Canvas(
+                                modifier = Modifier.fillMaxWidth().height(78.dp)
+                                    .background(Color(0xFF15151D), RoundedCornerShape(6.dp))
+                                    .padding(8.dp)
+                            ) {
+                                val w = size.width
+                                val h = size.height
+                                val maxScore = 100f
+                                val n = history.size
+                                if (n > 1) {
+                                    val gridColor = androidx.compose.ui.graphics.Color(0xFF3A3A4E).copy(alpha = 0.55f)
+                                    for (level in listOf(100f, 60f, 0f)) {
+                                        val y = h - (level / maxScore) * h
+                                        drawLine(
+                                            color = if (level == 60f) Color(0xFFFFA726).copy(alpha = 0.55f) else gridColor,
+                                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                                            end = androidx.compose.ui.geometry.Offset(w, y),
+                                            strokeWidth = if (level == 60f) 2f else 1f
+                                        )
+                                    }
+                                    for (i in 1 until n) {
+                                        val x1 = (i - 1) * w / (n - 1)
+                                        val y1 = h - (history[i - 1].score / maxScore) * h
+                                        val x2 = i * w / (n - 1)
+                                        val y2 = h - (history[i].score / maxScore) * h
+                                        drawLine(
+                                            color = scoreColor,
+                                            start = androidx.compose.ui.geometry.Offset(x1, y1),
+                                            end = androidx.compose.ui.geometry.Offset(x2, y2),
+                                            strokeWidth = 3f
+                                        )
+                                    }
+                                }
                             }
-                            // 60-score warning line
-                            val warnY = h - (60f / maxScore) * h
-                            drawLine(
-                                color = Color(0xFFFFA726).copy(alpha = 0.4f),
-                                start = androidx.compose.ui.geometry.Offset(0f, warnY),
-                                end = androidx.compose.ui.geometry.Offset(w, warnY),
-                                strokeWidth = 1f
-                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Cũ nhất", color = Color(0xFF8892B0), fontSize = 9.sp)
+                                Text("Mới nhất", color = Color(0xFF8892B0), fontSize = 9.sp)
+                            }
                         }
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    "Sample mỗi 5 phút. Lưu ${30} ngày trên eMMC. Cảnh báo tự động ghi vào Nhật ký hệ thống khi score < 60.",
+                    "Lấy mẫu mỗi 5 phút. Dữ liệu được lưu 30 ngày trên eMMC. Hệ thống tự ghi cảnh báo vào Nhật ký hệ thống khi điểm sức khỏe dưới 60.",
                     color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
                 )
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(24.dp))
         }
     }
 }

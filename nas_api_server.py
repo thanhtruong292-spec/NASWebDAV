@@ -2960,29 +2960,29 @@ def _compute_health_score(sample):
     score = 100
     warnings = []
     if sample.get("smart_status") == "FAILED":
-        score -= 50; warnings.append("SMART overall-health: FAILED")
+        score -= 50; warnings.append("Tự kiểm tra ổ cứng báo lỗi nghiêm trọng, ổ cứng có dấu hiệu hỏng")
     elif sample.get("smart_status") not in ("PASSED",):
         score -= 5
     realloc = sample.get("reallocated_sectors") or 0
     if realloc > 0:
         score -= min(20, realloc)
-        warnings.append("%d sector đã realloc" % realloc)
+        warnings.append("%d vùng dữ liệu đã được ổ cứng thay thế bằng vùng dự phòng" % realloc)
     pending = sample.get("pending_sectors") or 0
     if pending > 0:
         score -= min(30, pending * 2)
-        warnings.append("%d sector đang chờ realloc (pending) — DẤU HIỆU Ổ CỨNG SẮP HỎNG" % pending)
+        warnings.append("%d vùng dữ liệu đang chờ xử lý — dấu hiệu ổ cứng sắp hỏng" % pending)
     offline_unc = sample.get("offline_uncorrectable") or 0
     if offline_unc > 0:
         score -= min(20, offline_unc * 2)
-        warnings.append("%d sector offline uncorrectable" % offline_unc)
+        warnings.append("%d vùng dữ liệu không thể sửa khi ổ cứng tự quét nền" % offline_unc)
     cmd_to = sample.get("command_timeout") or 0
     if cmd_to > 10000:
         score -= 10
-        warnings.append("%d command timeout — SATA link không ổn định" % cmd_to)
+        warnings.append("%d lần ổ cứng phản hồi quá hạn — kết nối SATA không ổn định" % cmd_to)
     crc = sample.get("udma_crc_err") or 0
     if crc > 0:
         score -= min(10, crc)
-        warnings.append("%d lỗi UDMA CRC (cáp SATA cần kiểm tra)" % crc)
+        warnings.append("%d lỗi truyền dữ liệu qua cáp SATA, cần kiểm tra cáp hoặc cổng kết nối" % crc)
     temp = sample.get("temp_c") or 0
     if temp > 60:
         score -= 20; warnings.append("Nhiệt độ %d°C quá nóng" % temp)
@@ -2995,7 +2995,7 @@ def _compute_health_score(sample):
     sata = sample.get("sata_resets_recent") or 0
     if sata > 0:
         score -= min(40, sata * 15)
-        warnings.append("%d SATA reset/exception trong 5 phút — có thể đứt cáp/lỗi" % sata)
+        warnings.append("%d lần kết nối SATA bị đặt lại hoặc phát sinh lỗi trong 5 phút — có thể do cáp hoặc nguồn không ổn định" % sata)
     ioerr = sample.get("io_errors_recent") or 0
     if ioerr > 0:
         score -= min(30, ioerr * 10)
@@ -3020,8 +3020,9 @@ def _disk_health_sample_once():
         sample["io_errors_recent"] = dmesg.get("io_errors", 0)
         sample["io_stats"] = io
         score, warnings = _compute_health_score(sample)
+        normalized_warnings = [normalize_vietnamese_message(w) for w in warnings]
         sample["score"] = score
-        sample["warnings"] = [normalize_vietnamese_message(w) for w in warnings]
+        sample["warnings"] = normalized_warnings
 
         with _disk_health_lock:
             _disk_health_last_sample = sample
@@ -3038,13 +3039,13 @@ def _disk_health_sample_once():
         if score < 60:
             try:
                 _add_system_log("WARNING", "DiskHealth",
-                    "Diem suc khoe HDD: %d/100. Canh bao: %s" % (score, "; ".join(warnings[:3])))
+                    "Điểm sức khỏe HDD: %d/100. Cảnh báo: %s" % (score, "; ".join(normalized_warnings[:3])))
             except Exception:
                 pass
         if dmesg.get("sata_resets", 0) > 0 or dmesg.get("io_errors", 0) > 0:
             try:
                 _add_system_log("ERROR", "DiskHealth",
-                    "Phat hien SATA/I/O error: %d SATA reset, %d I/O error trong 5 phut. Kiem tra cap SATA/nguon ngay." % (
+                    "Phát hiện lỗi kết nối ổ cứng: %d lần đặt lại SATA, %d lỗi đọc/ghi dữ liệu trong 5 phút. Kiểm tra cáp SATA và nguồn ngay." % (
                         dmesg.get("sata_resets", 0), dmesg.get("io_errors", 0)))
             except Exception:
                 pass
@@ -3092,6 +3093,7 @@ def _disk_health_watchdog():
 def _add_system_log(level, module, message):
     """Helper: them log vao bang system_logs neu DB available."""
     try:
+        message = normalize_vietnamese_message(sanitize_log_input(message))
         conn = sqlite3.connect(DB_PATH, timeout=3.0)
         cur = conn.cursor()
         cur.execute(
