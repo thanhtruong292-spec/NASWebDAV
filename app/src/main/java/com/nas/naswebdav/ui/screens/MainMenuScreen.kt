@@ -1123,7 +1123,8 @@ fun MainMenuScreen(
             showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
             showDiskHealthDialog = { showDiskHealthDialog = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
-            showBandwidthDialog = { showBandwidthDialog = true }
+            showBandwidthDialog = { showBandwidthDialog = true },
+            showDownloadDialog = { showDownloadDialog = true }
         )
     }
 }
@@ -1624,20 +1625,25 @@ fun ToolboxDialog(
     showNasBackupDialog: () -> Unit = {},
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
-    showBandwidthDialog: () -> Unit = {}
+    showBandwidthDialog: () -> Unit = {},
+    showDownloadDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
     var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = DarkSurface,
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .navigationBarsPadding()
                 .padding(10.dp)
                 .verticalScroll(androidx.compose.foundation.rememberScrollState())
         ) {
@@ -1742,6 +1748,14 @@ fun ToolboxDialog(
                 onClick = {
                     viewModel.toggleDockerPower(!viewModel.isDockerRunning)
                 }
+            )
+            Spacer(Modifier.height(8.dp))
+            SettingsMenuCard(
+                title = "Tải BitTorrent",
+                subtitle = "Magnet link, URL .torrent hoặc chọn file .torrent",
+                icon = Icons.Default.CloudDownload,
+                color = Color(0xFF26A69A),
+                onClick = { onDismiss(); showDownloadDialog() }
             )
             Spacer(Modifier.height(8.dp))
             SettingsMenuCard(

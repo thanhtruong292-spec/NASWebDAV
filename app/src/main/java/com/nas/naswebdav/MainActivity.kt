@@ -377,19 +377,11 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
 
-    val isBiometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
-
-
-
-    var showBiometricLock by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(isBiometricEnabled) }
-
-    // Observe ViewModel lockNowRequested -> trigger lock immediately (tu BiometricSettingsDialog)
-    androidx.compose.runtime.LaunchedEffect(viewModel.lockNowRequested) {
-        if (viewModel.lockNowRequested) {
-            showBiometricLock = true
-            viewModel.lockNowRequested = false
-        }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.lockNowRequested = false
     }
+    var showBiometricLock by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var lockDelayJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     var mediaUrl by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
 
@@ -405,12 +397,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
-    var lockDelayJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-
-    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-
-
-
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
 
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -422,26 +408,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                     // FIX (audit #11/#18): bao cho pollers nang biet app khong con o foreground
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
 
-                    // FIX: Delay configurable thay vi hardcode 60s.
-                    // 0 = lock ngay khi ON_PAUSE, >0 = delay X giay
-                    // FIX (re-prompt bug): bo qua neu lock screen DA dang hien thi
-                    // (BiometricPrompt khi mo se gay ra ON_PAUSE — neu khong skip,
-                    // mot job stale se fire sau delaySec giay & re-lock dap len auth thanh cong).
-                    if (sharedPrefs.getBoolean("biometric_enabled", false) && !showBiometricLock) {
-
-                        val delaySec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
-                        lockDelayJob?.cancel()
-                        if (delaySec <= 0) {
-                            showBiometricLock = true
-                        } else {
-                            lockDelayJob = coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                                kotlinx.coroutines.delay(delaySec * 1000L)
-                                showBiometricLock = true
-                            }
-                        }
-
-                    }
-
                 }
 
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
@@ -449,10 +415,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = true
 
                     // Quay lại trong vòng 1 phút → Hủy đếm ngược, KHÔNG lock
-
-                    lockDelayJob?.cancel()
-
-                    lockDelayJob = null
 
                 }
 
@@ -467,8 +429,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
         onDispose {
 
             lifecycleOwner.lifecycle.removeObserver(observer)
-
-            lockDelayJob?.cancel()
 
         }
 
@@ -788,7 +748,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
     // Hiển thị lớp Khóa Sinh trắc học đè lên trên mọi giao diện
 
-    if (showBiometricLock) {
+    if (false) {
 
         BiometricLockScreen(
 

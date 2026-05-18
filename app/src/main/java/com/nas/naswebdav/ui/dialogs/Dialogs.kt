@@ -136,6 +136,7 @@ fun ShutdownConfirmDialog(
 // ====================================================================
 // DIALOG TẢI XUỐNG TỪ XA
 // ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadDialog(
     downloadLink: String,
@@ -145,82 +146,99 @@ fun DownloadDialog(
     onPickTorrentFile: () -> Unit = {}
 ) {
     var tabIndex by remember { mutableStateOf(0) }
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Tải xuống qua qBittorrent", fontWeight = FontWeight.Bold) },
-        text = {
-            Column {
-                // Tab selector: Link vs File
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(
-                        0 to ("🔗" to "Link / Magnet"),
-                        1 to ("📁" to "File .torrent"),
-                    ).forEach { (idx, pair) ->
-                        val (emoji, label) = pair
-                        val selected = tabIndex == idx
-                        FilterChip(
-                            selected = selected,
-                            onClick = { tabIndex = idx },
-                            label = { Text("$emoji $label", fontSize = 12.sp) },
-                            modifier = Modifier.weight(1f).height(34.dp),
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color(0xFF00897B).copy(alpha = 0.2f),
-                                selectedLabelColor = Color(0xFF00897B),
-                            )
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
+        sheetState = sheetState,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Icon(Icons.Default.CloudDownload, null, tint = Color(0xFF26A69A), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Tải BitTorrent", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            }
 
-                when (tabIndex) {
-                    0 -> {
-                        // Tab 1: Link / Magnet
-                        Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = Color(0xFF8892B0))
-                        Spacer(Modifier.height(6.dp))
-                        com.nas.naswebdav.ui.components.CompactTextField(
-                            value = downloadLink,
-                            onValueChange = onLinkChange,
-                            placeholder = "magnet:?xt=... hoặc https://...torrent",
-                            modifier = Modifier.fillMaxWidth()
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    0 to ("🔗" to "Link / Magnet"),
+                    1 to ("📁" to "File .torrent"),
+                ).forEach { (idx, pair) ->
+                    val (emoji, label) = pair
+                    val selected = tabIndex == idx
+                    FilterChip(
+                        selected = selected,
+                        onClick = { tabIndex = idx },
+                        label = { Text("$emoji $label", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f).height(34.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF00897B).copy(alpha = 0.2f),
+                            selectedLabelColor = Color(0xFF00897B),
                         )
-                    }
-                    1 -> {
-                        // Tab 2: File picker
-                        Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = Color(0xFF8892B0))
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = { onPickTorrentFile() },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.6f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
-                        ) {
-                            Icon(Icons.Default.UploadFile, null, tint = Color(0xFF00897B), modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("CHỌN FILE .TORRENT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Sau khi chọn, file sẽ tự upload và đóng dialog.",
-                            color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 11.sp
-                        )
-                    }
+                    )
                 }
             }
-        },
-        confirmButton = {
-            if (tabIndex == 0) {
-                TextButton(onClick = onConfirm, enabled = downloadLink.isNotBlank()) {
-                    Text("THÊM VÀO HÀNG ĐỢI", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+
+            when (tabIndex) {
+                0 -> {
+                    Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                    Spacer(Modifier.height(6.dp))
+                    com.nas.naswebdav.ui.components.CompactTextField(
+                        value = downloadLink,
+                        onValueChange = onLinkChange,
+                        placeholder = "magnet:?xt=... hoặc https://...torrent",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = onConfirm,
+                        enabled = downloadLink.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().height(40.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("THÊM VÀO HÀNG ĐỢI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
-            } else {
-                Spacer(Modifier.width(1.dp))
+                1 -> {
+                    Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { onPickTorrentFile() },
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
+                    ) {
+                        Icon(Icons.Default.UploadFile, null, tint = Color(0xFF00897B), modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("CHỌN FILE .TORRENT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        "Sau khi chọn, file sẽ tự upload và đóng form.",
+                        color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 11.sp
+                    )
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Hủy") }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
+            ) { Text("HỦY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            Spacer(Modifier.height(4.dp))
         }
-    )
+    }
 }
 
 // ====================================================================
@@ -926,13 +944,18 @@ fun SystemLogDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).heightIn(max = 600.dp)
+            modifier = Modifier.fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(22.dp))
@@ -950,7 +973,7 @@ fun SystemLogDialog(
                 Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray, fontSize = 13.sp)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(items = viewModel.systemLogsList, key = { it.id }) { log ->
@@ -1234,24 +1257,48 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
 @Composable
 fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuthenticated: () -> Unit, onFallbackToLogin: () -> Unit) {
     val executor = remember { androidx.core.content.ContextCompat.getMainExecutor(activity) }
+    val currentOnAuthenticated by rememberUpdatedState(onAuthenticated)
+    val currentOnFallbackToLogin by rememberUpdatedState(onFallbackToLogin)
     var authError by remember { mutableStateOf("") }
     var failCount by remember { mutableStateOf(0) }
-    val authenticate = {
-        val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Khóa bảo mật NAS").setSubtitle("Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu")
-            .setConfirmationRequired(false)
-            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build()
-        val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
-            object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) { super.onAuthenticationSucceeded(result); failCount = 0; onAuthenticated() }
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED || errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) onFallbackToLogin()
-                    else { failCount++; authError = "Lỗi: $errString (Sai $failCount/3 lần)"; if (failCount >= 3) onFallbackToLogin() }
-                }
-                override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) onFallbackToLogin() }
-            })
-        biometricPrompt.authenticate(promptInfo)
+    var authInFlight by remember { mutableStateOf(false) }
+    var activePrompt by remember { mutableStateOf<androidx.biometric.BiometricPrompt?>(null) }
+    val clearActivePrompt = {
+        authInFlight = false
+        activePrompt = null
+    }
+    val authenticate = authenticate@{
+        if (authInFlight) return@authenticate
+        authInFlight = true
+        try {
+            val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Khóa bảo mật NAS").setSubtitle("Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu")
+                .setConfirmationRequired(false)
+                .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build()
+            val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
+                object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) { super.onAuthenticationSucceeded(result); clearActivePrompt(); failCount = 0; currentOnAuthenticated() }
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        super.onAuthenticationError(errorCode, errString)
+                        clearActivePrompt()
+                        if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED || errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) currentOnFallbackToLogin()
+                        else { failCount++; authError = "Lỗi: $errString (Sai $failCount/3 lần)"; if (failCount >= 3) currentOnFallbackToLogin() }
+                    }
+                    override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) { clearActivePrompt(); currentOnFallbackToLogin() } }
+                })
+            activePrompt = biometricPrompt
+            biometricPrompt.authenticate(promptInfo)
+        } catch (e: Exception) {
+            clearActivePrompt()
+            authError = "Lỗi: ${e.message ?: "Không mở được quét vân tay"}"
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            activePrompt?.cancelAuthentication()
+            activePrompt = null
+            authInFlight = false
+        }
     }
     var hasStartedAuth by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!hasStartedAuth) { hasStartedAuth = true; authenticate() } }
@@ -2313,6 +2360,7 @@ fun BiometricSettingsDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Check biometric availability
     val bioStatus = remember {
@@ -2332,10 +2380,16 @@ fun BiometricSettingsDialog(
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Lock, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
@@ -2354,7 +2408,7 @@ fun BiometricSettingsDialog(
                 Modifier.fillMaxWidth()
                     .background(bioColor.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
                     .border(1.dp, bioColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
@@ -2369,9 +2423,9 @@ fun BiometricSettingsDialog(
             }
 
             // Enable toggle
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(5.dp))
             HorizontalDivider(color = Color(0xFF2A2A3E))
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().clickable(enabled = bioStatus == "available") {
@@ -2397,9 +2451,9 @@ fun BiometricSettingsDialog(
             }
 
             // Delay picker
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(5.dp))
             Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             val delayOptions = listOf(
                 0 to "Khoá NGAY",
                 5 to "5 giây",
@@ -2413,22 +2467,23 @@ fun BiometricSettingsDialog(
                     val isSel = delaySec == sec
                     Row(
                         modifier = Modifier.fillMaxWidth()
+                            .height(44.dp)
                             .background(
                                 if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF15151D),
                                 RoundedCornerShape(6.dp)
                             )
                             .clickable(enabled = enabled) { delaySec = sec }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .padding(horizontal = 8.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = isSel,
                             onClick = { delaySec = sec },
                             enabled = enabled,
-                            modifier = Modifier.scale(0.8f),
+                            modifier = Modifier.scale(0.7f),
                             colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF9C27B0))
                         )
-                        Spacer(Modifier.width(4.dp))
+                        Spacer(Modifier.width(2.dp))
                         Text(
                             label,
                             color = when {
@@ -2443,7 +2498,7 @@ fun BiometricSettingsDialog(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = {
@@ -2474,12 +2529,12 @@ fun BiometricSettingsDialog(
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
                 ) { Text("KHOÁ NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: \"Khoá NGAY\" trong delay = không có buffer khi switch app/đọc thông báo. Đề xuất 5-30 giây.",
                 color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
         }
     }
 }
@@ -2505,14 +2560,21 @@ fun BandwidthThrottleDialog(
         50L * 1024 * 1024 to "50 MB/s",
     )
     var selected by remember { mutableStateOf(sharedPrefs.getLong("upload_speed_limit_bps", 0L)) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                 Icon(Icons.Default.Speed, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Giới hạn tốc độ upload", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -2523,12 +2585,13 @@ fun BandwidthThrottleDialog(
                 color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
             )
 
-            Spacer(Modifier.height(10.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Spacer(Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 presets.forEach { (value, label) ->
                     val isSelected = selected == value
                     Row(
                         modifier = Modifier.fillMaxWidth()
+                            .height(44.dp)
                             .background(
                                 if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.15f) else Color(0xFF15151D),
                                 RoundedCornerShape(8.dp)
@@ -2539,16 +2602,16 @@ fun BandwidthThrottleDialog(
                                 RoundedCornerShape(8.dp)
                             )
                             .clickable { selected = value }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 8.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = isSelected,
                             onClick = { selected = value },
-                            modifier = Modifier.scale(0.85f),
+                            modifier = Modifier.scale(0.7f),
                             colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF42A5F5))
                         )
-                        Spacer(Modifier.width(4.dp))
+                        Spacer(Modifier.width(2.dp))
                         Text(
                             label,
                             color = if (isSelected) Color(0xFF42A5F5) else Color(0xFFE8E8E8),
@@ -2559,7 +2622,7 @@ fun BandwidthThrottleDialog(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
                     sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
@@ -2570,12 +2633,12 @@ fun BandwidthThrottleDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
                 shape = RoundedCornerShape(10.dp),
             ) { Text("ÁP DỤNG", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
                 color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
         }
     }
 }
@@ -2601,15 +2664,20 @@ fun SleepScheduleDialog(
     var localStartHour by remember(sched.startHour) { mutableStateOf(sched.startHour) }
     var localEndHour by remember(sched.endHour) { mutableStateOf(sched.endHour) }
     var localIdleOnly by remember(sched.idleOnly) { mutableStateOf(sched.idleOnly) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
-                .heightIn(max = 720.dp).verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(max = 680.dp)
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
@@ -2822,15 +2890,20 @@ fun DiskHealthDialog(
         viewModel.fetchDiskHealth()
         viewModel.fetchDiskHealthHistory(7)
     }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
-                .heightIn(max = 800.dp).verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
