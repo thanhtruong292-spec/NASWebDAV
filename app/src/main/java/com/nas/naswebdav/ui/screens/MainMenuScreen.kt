@@ -1831,6 +1831,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
+    val isTrackingNewDisk = installedAt > 0L
+    val profileExpanded = ExclusivePanelState.current.value == "toshiba_n300"
     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
     val usedPercent = hddDisk?.percent ?: viewModel.systemStatus.disk
         .replace("%", "")
@@ -1839,14 +1841,15 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         ?: 0f
     val remainingPercent = (100f - usedPercent).coerceIn(0f, 100f)
     val estimatedFreeTiB = 3.6f * remainingPercent / 100f
-    val dailyBudgetGb = 493
-    val remainingDays = if (dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else 0
-    val activeRecordings = viewModel.activeLivestreams.size
+    val dailyBudgetGb = if (isTrackingNewDisk) 493 else 0
+    val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else 0
+    val activeRecordings = if (isTrackingNewDisk) viewModel.activeLivestreams.size else 0
     val smartTemp = viewModel.smartInfo.temperature
         .replace("Â°C", "°C")
         .replace("--", "Chưa có dữ liệu")
     val smartStatus = viewModel.smartInfo.status
     val trialStatus = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
         smartStatus.contains("PASSED", ignoreCase = true) || smartStatus.equals("OK", ignoreCase = true) -> "Ổn định"
         smartStatus.contains("Đang tải", ignoreCase = true) -> "Đang cập nhật"
         smartStatus.contains("Không", ignoreCase = true) || smartStatus.contains("Lỗi", ignoreCase = true) -> "Cần kiểm tra"
@@ -1865,21 +1868,22 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         trialDays <= 7 -> "Ngày $trialDays/7"
         else -> "Đã hoàn tất"
     }
-    val tempValue = smartTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull()
+    val tempValue = if (isTrackingNewDisk) smartTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() else null
     val tempStatus = when {
+        !isTrackingNewDisk -> "0°C"
         tempValue == null -> "Chưa có dữ liệu"
         tempValue >= 50f -> "Nóng"
         tempValue >= 45f -> "Cần theo dõi"
         else -> "Ổn định"
     }
-    val downloadTasks = viewModel.systemStatus.torrents.count { torrent ->
+    val downloadTasks = if (isTrackingNewDisk) viewModel.systemStatus.torrents.count { torrent ->
         val state = torrent.state
         state.contains("DL", ignoreCase = false) || state == "downloading" || state == "stalledDL" || state == "forcedDL" || state == "metaDL"
-    }
-    val heavyWriteTasks = activeRecordings + downloadTasks + if (viewModel.isAutoBackupRunning) 1 else 0
-    val estimatedActualWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (viewModel.isAutoBackupRunning) 30 else 0
-    val actualForecastDays = if (estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
-    val monthlyBudgetTb = 15
+    } else 0
+    val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
+    val estimatedActualWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
+    val actualForecastDays = if (isTrackingNewDisk && estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
+    val monthlyBudgetTb = if (isTrackingNewDisk) 15 else 0
 
     Spacer(Modifier.height(8.dp))
     Card(
@@ -1888,7 +1892,14 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         shape = RoundedCornerShape(10.dp)
     ) {
         Column(Modifier.padding(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                Modifier.fillMaxWidth().clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { ExclusivePanelState.toggle("toshiba_n300") },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Storage, null, tint = AccentGreen, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1897,7 +1908,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                         Text("Toshiba N300 4TB NAS • 7200 RPM • 24/7", color = TextSecondary, fontSize = 11.sp)
                     }
                 }
-                Column(horizontalAlignment = Alignment.End) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(horizontalAlignment = Alignment.End) {
                     Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Box(
                         modifier = Modifier.clickable(
@@ -1909,24 +1921,34 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                             installedAt = now
                         }
                     ) {
-                        Text("Đặt ngày lắp hôm nay", color = AccentCyan, fontSize = 10.sp)
+                        Text(if (isTrackingNewDisk) "Đang theo dõi" else "Đặt theo dõi hôm nay", color = AccentCyan, fontSize = 10.sp)
                     }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Icon(
+                        if (profileExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
+            androidx.compose.animation.AnimatedVisibility(visible = profileExpanded) {
+                Column {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
                     title = "Dung lượng",
-                    value = "3.6 TiB",
-                    subtitle = "Khả dụng sau định dạng",
+                    value = if (isTrackingNewDisk) "3.6 TiB" else "0 TiB",
+                    subtitle = if (isTrackingNewDisk) "Khả dụng sau định dạng" else "Chưa lắp ổ mới",
                     icon = Icons.Default.Inventory2,
                     color = AccentCyan,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
                     title = "Ngân sách ghi",
-                    value = "180 TB/năm",
-                    subtitle = "~493 GB/ngày",
+                    value = if (isTrackingNewDisk) "180 TB/năm" else "0 TB/năm",
+                    subtitle = if (isTrackingNewDisk) "~493 GB/ngày" else "Chưa bắt đầu theo dõi",
                     icon = Icons.Default.EditNote,
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
@@ -1934,7 +1956,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 HardwareMetricCell(
                     title = "Livestream",
                     value = "$activeRecordings phiên",
-                    subtitle = "Đang ghi hiện tại",
+                    subtitle = if (isTrackingNewDisk) "Đang ghi hiện tại" else "Chưa tính theo ổ mới",
                     icon = Icons.Default.Videocam,
                     color = AccentPink,
                     modifier = Modifier.weight(1f)
@@ -1953,7 +1975,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 HardwareMetricCell(
                     title = "Nhiệt độ N300",
                     value = tempStatus,
-                    subtitle = "Hiện tại: $smartTemp",
+                    subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Hiện tại: 0°C",
                     icon = Icons.Default.EventAvailable,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
@@ -1988,7 +2010,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 HardwareMetricCell(
                     title = "Dự báo thực tế",
                     value = "~$actualForecastDays ngày",
-                    subtitle = if (estimatedActualWriteGb > 0) "Theo tải ghi hiện tại" else "Theo mức tham chiếu",
+                    subtitle = if (!isTrackingNewDisk) "Chưa bắt đầu theo dõi" else if (estimatedActualWriteGb > 0) "Theo tải ghi hiện tại" else "Theo mức tham chiếu",
                     icon = Icons.Default.QueryStats,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
@@ -2001,6 +2023,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 fontSize = 9.sp,
                 lineHeight = 12.sp
             )
+                }
+            }
         }
     }
 }
