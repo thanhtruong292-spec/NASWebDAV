@@ -133,3 +133,4 @@ Provide only the exact code blocks being replaced.
 - Khi thêm hoặc sửa UI Compose, mọi `clickable`/`combinedClickable` phải dùng `interactionSource` riêng và `indication = null`; các component Material phải được đặt trong cấu hình tắt ripple toàn cục.
 - Sau khi thay đổi quy tắc UI/ripple, phải rà soát bằng tìm kiếm mã nguồn để tránh còn sót vị trí dùng hiệu ứng nhấn mặc định.
 - Tất cả Bottom Sheet phải dùng padding container chuẩn `horizontal = 8.dp, vertical = 6.dp`, drag handle gọn, không chừa khoảng trống lớn phía trên nội dung và không ép nội dung sát mép.
+- Khi bổ sung tính năng mới cho NAS Dashboard, ưu tiên tối đa tính ổn định và khả năng tương thích với cấu hình NAS hiện tại; tính năng mới phải được thiết kế dạng độc lập, không làm thay đổi hoặc ảnh hưởng luồng hiện có nếu không có yêu cầu trực tiếp.

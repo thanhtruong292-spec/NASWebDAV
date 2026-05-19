@@ -897,6 +897,7 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
         Spacer(Modifier.height(4.dp))
         
+        ToshibaN300ProfileCard(viewModel)
         SystemStatusCards(viewModel, mContext)
         SystemLogsSummaryCard(viewModel)
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
@@ -1824,6 +1825,131 @@ fun ToolboxDialog(
     }
 }
 
+
+@Composable
+private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
+    val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
+    val usedPercent = hddDisk?.percent ?: viewModel.systemStatus.disk
+        .replace("%", "")
+        .trim()
+        .toFloatOrNull()
+        ?: 0f
+    val remainingPercent = (100f - usedPercent).coerceIn(0f, 100f)
+    val estimatedFreeTiB = 3.6f * remainingPercent / 100f
+    val dailyBudgetGb = 493
+    val remainingDays = if (dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else 0
+    val activeRecordings = viewModel.activeLivestreams.size
+    val smartTemp = viewModel.smartInfo.temperature
+        .replace("Â°C", "°C")
+        .replace("--", "Chưa có dữ liệu")
+    val smartStatus = viewModel.smartInfo.status
+    val trialStatus = when {
+        smartStatus.contains("PASSED", ignoreCase = true) || smartStatus.equals("OK", ignoreCase = true) -> "Ổn định"
+        smartStatus.contains("Đang tải", ignoreCase = true) -> "Đang cập nhật"
+        smartStatus.contains("Không", ignoreCase = true) || smartStatus.contains("Lỗi", ignoreCase = true) -> "Cần kiểm tra"
+        else -> "Sẵn sàng theo dõi"
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF101216)),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(Modifier.padding(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Storage, null, tint = AccentGreen, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text("Hồ sơ ổ cứng mới", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Toshiba N300 4TB NAS • 7200 RPM • 24/7", color = TextSecondary, fontSize = 11.sp)
+                    }
+                }
+                Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HardwareMetricCell(
+                    title = "Dung lượng",
+                    value = "3.6 TiB",
+                    subtitle = "Khả dụng sau định dạng",
+                    icon = Icons.Default.Inventory2,
+                    color = AccentCyan,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Ngân sách ghi",
+                    value = "180 TB/năm",
+                    subtitle = "~493 GB/ngày",
+                    icon = Icons.Default.EditNote,
+                    color = AccentOrange,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Livestream",
+                    value = "$activeRecordings phiên",
+                    subtitle = "Đang ghi hiện tại",
+                    icon = Icons.Default.Videocam,
+                    color = AccentPink,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HardwareMetricCell(
+                    title = "Theo dõi 7 ngày",
+                    value = trialStatus,
+                    subtitle = "S.M.A.R.T: $smartTemp",
+                    icon = Icons.Default.HealthAndSafety,
+                    color = AccentGreen,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Dự báo còn lại",
+                    value = "~$remainingDays ngày",
+                    subtitle = "Theo mức ghi tham chiếu",
+                    icon = Icons.Default.EventAvailable,
+                    color = AccentPurple,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Bảo toàn tính năng",
+                    value = "Độc lập",
+                    subtitle = "Không đổi luồng hiện có",
+                    icon = Icons.Default.VerifiedUser,
+                    color = Color(0xFF66BB6A),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HardwareMetricCell(
+    title: String,
+    value: String,
+    subtitle: String,
+    icon: ImageVector,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(title, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
 
 @Composable
 fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Context) {
