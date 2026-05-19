@@ -3194,13 +3194,20 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
     
     var isExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     
-    Card(
-        modifier = Modifier.fillMaxWidth().animateContentSize(),
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(DarkCard)
     ) {
-        Column(Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }) {
+        Column(Modifier.fillMaxWidth().padding(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { isExpanded = !isExpanded }
+            ) {
                 Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
