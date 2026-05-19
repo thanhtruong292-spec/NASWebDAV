@@ -65,6 +65,23 @@ private val AccentPink = Color(0xFFFF6EC7)
 private val TextPrimary = Color(0xFFE8E8E8)
 private val TextSecondary = Color(0xFF8892B0)
 
+@Composable
+private fun DashboardCompactBottomSheetHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(5.dp)
+                .background(Color(0xFF6D6A75), RoundedCornerShape(50))
+        )
+    }
+}
+
 // ============ FAN SPEED ANIMATED ICON ============
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
@@ -1645,14 +1662,15 @@ fun ToolboxDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = DarkSurface,
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.92f)
                 .navigationBarsPadding()
-                .padding(10.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .verticalScroll(androidx.compose.foundation.rememberScrollState())
         ) {
             Text("🔧 CÔNG CỤ HỆ THỐNG", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
@@ -2545,10 +2563,11 @@ fun QuickActionSelectorDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).verticalScroll(rememberScrollState())
         ) {
             Text("TUỲ CHỌN LỐI TẮT TRUY CẬP", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
             AVAILABLE_QUICK_ACTIONS.forEach { action ->
@@ -2690,13 +2709,12 @@ fun ProcessListBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF141414),
-        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
@@ -2713,10 +2731,10 @@ fun ProcessListBottomSheet(
                     )
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(8.dp))
             
             // Header
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                 Text("TIẾN TRÌNH", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.weight(1f))
                 Text(if (sortBy == "cpu") "CPU" else "RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
@@ -2733,7 +2751,7 @@ fun ProcessListBottomSheet(
 
             androidx.compose.foundation.lazy.LazyColumn(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(viewModel.systemProcesses.size) { index ->
                     val proc = viewModel.systemProcesses[index]
@@ -2758,7 +2776,7 @@ fun ProcessListBottomSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // S badge
@@ -2800,13 +2818,12 @@ fun SmartDetailBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF141414),
-        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 16.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             // Title
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
@@ -2828,7 +2845,7 @@ fun SmartDetailBottomSheet(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
 
             // Device info header
             val labelMap = mapOf(
@@ -2869,12 +2886,12 @@ fun SmartDetailBottomSheet(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
             androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             // Table header
-            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                 Text("ID", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(28.dp))
                 Text("Thuộc tính", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.weight(1f))
                 Text("Giá trị", fontSize = 9.sp, color = TextSecondary, modifier = Modifier.width(32.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
@@ -2883,7 +2900,7 @@ fun SmartDetailBottomSheet(
 
             androidx.compose.foundation.lazy.LazyColumn(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 items(attrLines.size) { index ->
                     val line = attrLines[index]
@@ -2902,7 +2919,7 @@ fun SmartDetailBottomSheet(
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .background(rowColor, RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(id, color = TextSecondary, fontSize = 10.sp, modifier = Modifier.width(28.dp))

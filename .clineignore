@@ -132,3 +132,4 @@ Provide only the exact code blocks being replaced.
 - Toàn bộ ứng dụng Android không được hiển thị ripple, nền xám, vệt sáng hoặc hiệu ứng nền mặc định khi nhấn/chạm vào nút, thẻ, hàng danh sách, chip, icon hoặc vùng có thể thao tác.
 - Khi thêm hoặc sửa UI Compose, mọi `clickable`/`combinedClickable` phải dùng `interactionSource` riêng và `indication = null`; các component Material phải được đặt trong cấu hình tắt ripple toàn cục.
 - Sau khi thay đổi quy tắc UI/ripple, phải rà soát bằng tìm kiếm mã nguồn để tránh còn sót vị trí dùng hiệu ứng nhấn mặc định.
+- Tất cả Bottom Sheet phải dùng padding container chuẩn `horizontal = 8.dp, vertical = 6.dp`, drag handle gọn, không chừa khoảng trống lớn phía trên nội dung và không ép nội dung sát mép.

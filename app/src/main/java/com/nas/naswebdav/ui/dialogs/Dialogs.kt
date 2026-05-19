@@ -1,4 +1,4 @@
-package com.nas.naswebdav.ui.dialogs
+﻿package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -151,13 +153,14 @@ fun DownloadDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.CloudDownload, null, tint = Color(0xFF26A69A), modifier = Modifier.size(22.dp))
@@ -421,6 +424,23 @@ private fun normalizeTikTokWatchMessage(message: String): String {
         .replace("offline", "ngoại tuyến")
 }
 
+@Composable
+private fun CompactBottomSheetHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(5.dp)
+                .background(Color(0xFF6D6A75), RoundedCornerShape(50))
+        )
+    }
+}
+
 // ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
@@ -431,13 +451,59 @@ private fun TikTokLiveWatchSection(
     context: Context,
     users: List<WebDavViewModel.TikTokLiveWatchUser>,
     newUsername: String,
-    onUsernameChange: (String) -> Unit
+    onUsernameChange: (String) -> Unit,
+    snackbarHostState: SnackbarHostState
 ) {
     var expandedUserName by remember { mutableStateOf<String?>(null) }
+    var pendingDeleteUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
+    val snackbarScope = rememberCoroutineScope()
     // Cac panel theo doi tiktok / thoi gian loai tru / dang ghi hinh — chi 1 panel mo
     // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).
     val listExpanded = LivestreamPanelState.current.value == "watchlist"
     val excludeExpanded = LivestreamPanelState.current.value == "exclude"
+
+    pendingDeleteUser?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteUser = null },
+            containerColor = Color(0xFF15151D),
+            title = {
+                Text("Xác nhận xoá người dùng", color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Bạn có chắc chắn muốn xoá @${target.username} khỏi danh sách theo dõi TikTok Live không?",
+                    color = Color(0xFF8892B0),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val deletedUsername = target.username
+                    pendingDeleteUser = null
+                    if (expandedUserName == deletedUsername) expandedUserName = null
+                    viewModel.removeTikTokLiveWatchUser(context, deletedUsername)
+                    snackbarScope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "Đã xoá @$deletedUsername khỏi danh sách theo dõi.",
+                            actionLabel = "Hoàn tác",
+                            duration = SnackbarDuration.Long
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            viewModel.addTikTokLiveWatchUser(context, deletedUsername)
+                        }
+                    }
+                }) {
+                    Text("Xoá", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteUser = null }) {
+                    Text("Huỷ", color = Color(0xFF8892B0), fontWeight = FontWeight.SemiBold)
+                }
+            }
+        )
+    }
 
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
@@ -475,11 +541,40 @@ private fun TikTokLiveWatchSection(
             onValueChange = onUsernameChange,
             placeholder = "Nhập tài khoản TikTok",
             leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp) },
+            trailingIcon = {
+                if (newUsername.isNotBlank()) {
+                    IconButton(
+                        onClick = { onUsernameChange("") },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Clear,
+                            contentDescription = "Xoá nội dung nhập",
+                            tint = Color(0xFF8892B0),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            },
             accentColor = Color(0xFFEE1D52),
             modifier = Modifier.weight(1f)
         )
         Button(
-            onClick = { viewModel.addTikTokLiveWatchUser(context, newUsername) },
+            onClick = {
+                val cleanUsername = newUsername.trim().removePrefix("@")
+                if (users.any { it.username.equals(cleanUsername, ignoreCase = true) }) {
+                    onUsernameChange("")
+                    snackbarScope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Người dùng @$cleanUsername đã tồn tại trong danh sách theo dõi.",
+                            duration = SnackbarDuration.Short
+                        )
+                    }
+                } else {
+                    viewModel.addTikTokLiveWatchUser(context, cleanUsername)
+                    onUsernameChange("")
+                }
+            },
             enabled = newUsername.isNotBlank() && !viewModel.isLoadingTikTokWatch,
             modifier = Modifier.height(40.dp).widthIn(min = 80.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF424242)),
@@ -495,20 +590,42 @@ private fun TikTokLiveWatchSection(
         Spacer(Modifier.height(4.dp))
         Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
-    val daemonLine = buildString {
-        append(if (viewModel.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
-        if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Lần kiểm tra cuối: ${viewModel.tiktokWatchDaemonLastTick}")
-        if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) append(" • ${viewModel.tiktokWatchDaemonSummary}")
-    }
     Spacer(Modifier.height(4.dp))
-    Text(
-        daemonLine,
-        color = if (viewModel.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis
-    )
+    val daemonColor = if (viewModel.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726)
+    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        val checkLine = buildString {
+            append(if (viewModel.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
+            if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Lần kiểm tra cuối: ${viewModel.tiktokWatchDaemonLastTick}")
+        }
+        Text(
+            checkLine,
+            color = daemonColor,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) {
+            val summaryText = viewModel.tiktokWatchDaemonSummary
+            Text(
+                buildAnnotatedString {
+                    append(summaryText)
+                    Regex("""\d+\s+user|\d+\s+đang ghi|\d+\s+vừa(?:\s+mới)?\s+bắt đầu""").findAll(summaryText).forEach { match ->
+                        addStyle(
+                            SpanStyle(fontWeight = FontWeight.Bold),
+                            start = match.range.first,
+                            end = match.range.last + 1
+                        )
+                    }
+                },
+                color = daemonColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
     // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
     val cookiesStatus = viewModel.tiktokCookiesStatus
     if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
@@ -547,8 +664,8 @@ private fun TikTokLiveWatchSection(
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { value ->
                             if (value == SwipeToDismissBoxValue.EndToStart) {
-                                viewModel.removeTikTokLiveWatchUser(context, user.username)
-                                true
+                                pendingDeleteUser = user
+                                false
                             } else false
                         },
                         positionalThreshold = { totalDistance -> totalDistance * 0.35f }
@@ -844,10 +961,11 @@ fun AutoBackupDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF161616),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Sync, null, tint = Color(0xFF43A047), modifier = Modifier.size(22.dp))
@@ -985,13 +1103,14 @@ fun SystemLogDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .fillMaxHeight(0.92f)
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(22.dp))
@@ -1440,10 +1559,11 @@ fun LanWhitelistDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp).heightIn(max = 600.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).heightIn(max = 600.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                 Icon(Icons.Default.Wifi, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(24.dp))
@@ -2052,6 +2172,7 @@ fun LivestreamRecordDialog(
     // ScrollState chia se cho toan dialog — khi user mo 1 panel thi tu dong scroll
     // de panel content lo ra ngoai cua so visible (khong bi an duoi day man hinh).
     val dialogScrollState = rememberScrollState()
+    val tiktokSnackbarHostState = remember { SnackbarHostState() }
     // SheetState voi skipPartiallyExpanded = true — sheet luon o full height, khong
     // bao gio dung lai o half. Khi user mo panel thi sheet con auto expand() de
     // dam bao co du khong gian hien thi content.
@@ -2073,12 +2194,14 @@ fun LivestreamRecordDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 // Cho phep content cao den 1000dp -> du cho ca khi expand "Dang ghi hinh"
                 // voi nhieu job. Vuot qua se duoc scroll boi verticalScroll.
                 .heightIn(max = 1000.dp)
@@ -2125,7 +2248,8 @@ fun LivestreamRecordDialog(
                     context = context,
                     users = tiktokWatchUsers,
                     newUsername = newTikTokWatchUser,
-                    onUsernameChange = { newTikTokWatchUser = it.removePrefix("@") }
+                    onUsernameChange = { newTikTokWatchUser = it.removePrefix("@") },
+                    snackbarHostState = tiktokSnackbarHostState
                 )
             } else {
 
@@ -2375,6 +2499,22 @@ fun LivestreamRecordDialog(
                 Spacer(Modifier.height(12.dp))
             }
         }
+        SnackbarHost(
+            hostState = tiktokSnackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                containerColor = Color(0xFF1A1A24),
+                contentColor = Color(0xFFE8E8E8),
+                actionColor = Color(0xFF4DD0E1),
+                shape = RoundedCornerShape(8.dp)
+            )
+        }
+        }
     }
 }
 
@@ -2418,13 +2558,14 @@ fun BiometricSettingsDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Lock, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
@@ -2610,13 +2751,14 @@ fun BandwidthThrottleDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
                 Icon(Icons.Default.Speed, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
@@ -2714,14 +2856,15 @@ fun SleepScheduleDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .fillMaxHeight(0.6f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
@@ -2940,14 +3083,15 @@ fun DiskHealthDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
                 .fillMaxHeight(0.92f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 2.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
@@ -3217,10 +3361,11 @@ fun NasConfigBackupDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f)
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
                 .heightIn(max = 720.dp).verticalScroll(rememberScrollState())
         ) {
             // Header
@@ -3453,12 +3598,13 @@ fun FilePropertiesDialog(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF101012)
+        containerColor = Color(0xFF101012),
+        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             // Header
@@ -3562,3 +3708,4 @@ private fun PropertyRow(
         }
     }
 }
+

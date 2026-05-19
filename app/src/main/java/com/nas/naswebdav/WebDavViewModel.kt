@@ -1071,7 +1071,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 // Bat job ngay neu user vua them dang live - khong cho 15p chu ky Discovery.
                 syncLivestreamStateWithServer(context)
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được user"}" }
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được người dùng"}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
             }
@@ -1084,7 +1084,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/remove", org.json.JSONObject().put("username", username))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không xóa được user"}" }
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không xoá được người dùng"}" }
             }
         }
     }

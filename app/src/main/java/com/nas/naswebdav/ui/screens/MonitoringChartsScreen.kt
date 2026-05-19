@@ -21,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nas.naswebdav.DailyReportData
@@ -570,7 +571,7 @@ fun NasDailyReportPanel(report: DailyReportData) {
         report.healthScore >= 60 -> _ChartAccentOrange
         else -> _ChartAccentRed
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Sức khoẻ tổng thể", fontSize = 13.sp, color = _ChartTextPrimary, fontWeight = FontWeight.Bold)
             Text("${report.healthScore}%", fontSize = 20.sp, color = scoreColor, fontWeight = FontWeight.Bold)
@@ -580,30 +581,16 @@ fun NasDailyReportPanel(report: DailyReportData) {
             modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
             color = scoreColor, trackColor = _ChartDarkSurface
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
 
         @Composable
-        fun StatPair(label1: String, val1: String, label2: String, val2: String, c1: Color = _ChartTextPrimary, c2: Color = _ChartTextPrimary) {
-            Row(Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(label1, fontSize = 9.sp, color = _ChartTextSecond)
-                    Text(val1, fontSize = 13.sp, color = c1, fontWeight = FontWeight.Medium)
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(label2, fontSize = 9.sp, color = _ChartTextSecond)
-                    Text(val2, fontSize = 13.sp, color = c2, fontWeight = FontWeight.Medium)
-                }
+        fun StatCell(label: String, value: String, color: Color = _ChartTextPrimary, modifier: Modifier = Modifier) {
+            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label, fontSize = 8.sp, color = _ChartTextSecond, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(value, fontSize = 12.sp, color = color, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
 
-        StatPair("CPU trung bình", "%.1f%%".format(report.cpuAvg), "CPU cao nhất", "%.1f%%".format(report.cpuPeak),
-            c2 = if (report.cpuPeak > 90) _ChartAccentRed else _ChartTextPrimary)
-        StatPair("RAM trung bình", "%.1f%%".format(report.ramAvg), "RAM cao nhất", "%.1f%%".format(report.ramPeak),
-            c2 = if (report.ramPeak > 90) _ChartAccentRed else _ChartTextPrimary)
-        StatPair("CPU °C trung bình", "%.1f".format(report.cpuTempAvg), "CPU °C cao nhất", "%.1f".format(report.cpuTempPeak),
-            c2 = if (report.cpuTempPeak > 75) _ChartAccentOrange else _ChartAccentGreen)
-        StatPair("HDD °C trung bình", "%.1f".format(report.hddTempAvg), "HDD °C cao nhất", "%.1f".format(report.hddTempPeak),
-            c2 = if (report.hddTempPeak > 50) _ChartAccentOrange else _ChartAccentGreen)
         val fmtSize = { mb: Float ->
             val bytes = mb * 1024 * 1024
             when {
@@ -614,10 +601,33 @@ fun NasDailyReportPanel(report: DailyReportData) {
                 else -> "%.0f B".format(bytes.toDouble())
             }
         }
-        StatPair("Tải về", fmtSize(report.downloadMb), "Tải lên", fmtSize(report.uploadMb))
-        StatPair("Lỗi hệ thống", "${report.errorCount}", "Cảnh báo", "${report.warningCount}",
-            c1 = if (report.errorCount > 0) _ChartAccentRed else _ChartAccentGreen,
-            c2 = if (report.warningCount > 0) _ChartAccentOrange else _ChartAccentGreen)
+        val stats = listOf(
+            Triple("CPU trung bình", "%.1f%%".format(report.cpuAvg), _ChartTextPrimary),
+            Triple("CPU cao nhất", "%.1f%%".format(report.cpuPeak), if (report.cpuPeak > 90) _ChartAccentRed else _ChartTextPrimary),
+            Triple("RAM trung bình", "%.1f%%".format(report.ramAvg), _ChartTextPrimary),
+            Triple("RAM cao nhất", "%.1f%%".format(report.ramPeak), if (report.ramPeak > 90) _ChartAccentRed else _ChartTextPrimary),
+            Triple("CPU °C trung bình", "%.1f".format(report.cpuTempAvg), _ChartTextPrimary),
+            Triple("CPU °C cao nhất", "%.1f".format(report.cpuTempPeak), if (report.cpuTempPeak > 75) _ChartAccentOrange else _ChartAccentGreen),
+            Triple("HDD °C trung bình", "%.1f".format(report.hddTempAvg), _ChartTextPrimary),
+            Triple("HDD °C cao nhất", "%.1f".format(report.hddTempPeak), if (report.hddTempPeak > 50) _ChartAccentOrange else _ChartAccentGreen),
+            Triple("Tải về", fmtSize(report.downloadMb), _ChartTextPrimary),
+            Triple("Tải lên", fmtSize(report.uploadMb), _ChartTextPrimary),
+            Triple("Lỗi hệ thống", "${report.errorCount}", if (report.errorCount > 0) _ChartAccentRed else _ChartAccentGreen),
+            Triple("Cảnh báo", "${report.warningCount}", if (report.warningCount > 0) _ChartAccentOrange else _ChartAccentGreen)
+        )
+        stats.chunked(3).forEach { rowItems ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowItems.forEach { (label, value, color) ->
+                    StatCell(label, value, color, Modifier.weight(1f))
+                }
+                repeat(3 - rowItems.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
         Text("Tổng mẫu: ${report.samples} điểm trong ngày ${report.date}",
             fontSize = 9.sp, color = _ChartTextSecond)
     }

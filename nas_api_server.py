@@ -6896,7 +6896,7 @@ def _tiktok_live_watchdog():
                 "running": True,
                 "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "last_error": "",
-                "last_summary": "Đã kiểm tra %d user, %d đang ghi, %d vừa bắt đầu." % (checked_count, recording_count, started_count),
+                "last_summary": "Đã kiểm tra %d user, %d đang ghi, %d vừa mới bắt đầu." % (checked_count, recording_count, started_count),
                 "loop_count": int(_tiktok_watch_runtime.get("loop_count", 0)) + 1,
             })
         except Exception as e:

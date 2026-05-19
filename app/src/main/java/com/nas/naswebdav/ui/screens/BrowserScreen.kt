@@ -448,11 +448,26 @@ fun BrowserScreen(
             onDismissRequest = { viewModel.isScanningDuplicates = false },
             sheetState = scanSheetState,
             containerColor = Color(0xFF0F0F0F),
-            scrimColor = Color.Black.copy(alpha = 0.6f)
+            scrimColor = Color.Black.copy(alpha = 0.6f),
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, bottom = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(5.dp)
+                            .background(Color(0xFF6D6A75), RoundedCornerShape(50))
+                    )
+                }
+            }
         ) {
             Column(modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .heightIn(max = 720.dp)
                 .verticalScroll(rememberScrollState())
             ) {
