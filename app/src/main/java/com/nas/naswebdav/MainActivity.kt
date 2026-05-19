@@ -381,7 +381,8 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
         viewModel.lockNowRequested = false
     }
     var showBiometricLock by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    var lockDelayJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var hasCompletedFirstResume by remember { mutableStateOf(false) }
+    var requireBiometricOnReturn by remember { mutableStateOf(false) }
 
     var mediaUrl by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
 
@@ -393,25 +394,43 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
 
 
-    // Lắng nghe vòng đời Ứng dụng: Khóa lại sau 1 phút khi chuyển App hoặc về Home (ON_PAUSE + delay 60s)
+    // Khóa lại ngay khi người dùng rời app. Bỏ qua màn đăng nhập và lần resume đầu khi app vừa khởi động.
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, navController) {
 
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
 
             when (event) {
 
-                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
 
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
+                    val isLoginScreen = navController.currentDestination?.route == "login" ||
+                        navController.currentDestination == null
+                    val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                    if (biometricEnabled && !isLoginScreen && !showBiometricLock) {
+                        requireBiometricOnReturn = true
+                    }
 
                 }
 
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
 
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = true
+                    if (!hasCompletedFirstResume) {
+                        hasCompletedFirstResume = true
+                        return@LifecycleEventObserver
+                    }
+                    if (requireBiometricOnReturn) {
+                        val isLoginScreen = navController.currentDestination?.route == "login" ||
+                            navController.currentDestination == null
+                        if (!isLoginScreen && sharedPrefs.getBoolean("biometric_enabled", false)) {
+                            showBiometricLock = true
+                        }
+                        requireBiometricOnReturn = false
+                    }
 
                 }
 
@@ -745,7 +764,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
     // Hiển thị lớp Khóa Sinh trắc học đè lên trên mọi giao diện
 
-    if (false) {
+    if (showBiometricLock) {
 
         BiometricLockScreen(
 
@@ -754,11 +773,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
             onAuthenticated = {
 
                 showBiometricLock = false
-                // FIX (re-prompt bug): huy job stale neu co (BiometricPrompt mo gay
-                // ON_PAUSE va schedule them job — neu khong cancel, job sau delaySec
-                // giay se re-set showBiometricLock = true va bat nguoi dung auth lai).
-                lockDelayJob?.cancel()
-                lockDelayJob = null
+                requireBiometricOnReturn = false
 
                 // BỎ QUA LOGIN: Nếu vừa khởi động app và quét vân tay đúng, tự động kết nối luôn
 
@@ -797,8 +812,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
             onFallbackToLogin = {
 
                 showBiometricLock = false
-                lockDelayJob?.cancel()
-                lockDelayJob = null
+                requireBiometricOnReturn = false
 
                 navController.navigate("login") {
 
