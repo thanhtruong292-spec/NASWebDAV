@@ -1832,6 +1832,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
     var showTrackingConfirm by remember { mutableStateOf(false) }
+    var showResetTrackingConfirm by remember { mutableStateOf(false) }
     var writePanelExpanded by remember { mutableStateOf(false) }
     val isTrackingNewDisk = installedAt > 0L
     val profileExpanded = ExclusivePanelState.current.value == "toshiba_n300"
@@ -1894,6 +1895,31 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         heavyWriteTasks == 1 -> "Tải ghi nhẹ"
         else -> "Không có tác vụ ghi"
     }
+    val cpuLoad = viewModel.systemStatus.cpu.replace("%", "").trim().toFloatOrNull() ?: 0f
+    val ramLoad = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull() ?: 0f
+    val fillWarning = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
+        actualForecastDays in 1..7 -> "Cảnh báo 7 ngày"
+        actualForecastDays in 8..14 -> "Cảnh báo 14 ngày"
+        actualForecastDays in 15..30 -> "Cảnh báo 30 ngày"
+        else -> "Dung lượng ổn"
+    }
+    val livestreamReady = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
+        remainingPercent < 5f -> "Không nên ghi"
+        tempValue != null && tempValue >= 50f -> "Nhiệt độ cao"
+        heavyWriteTasks >= 4 -> "Đang tải cao"
+        cpuLoad >= 85f || ramLoad >= 90f -> "Hệ thống tải cao"
+        else -> "Sẵn sàng ghi"
+    }
+    val operationAdvice = when (livestreamReady) {
+        "Sẵn sàng ghi" -> "NAS đủ điều kiện ghi livestream theo dữ liệu hiện tại."
+        "Chưa theo dõi" -> "Hãy đặt mốc theo dõi sau khi lắp Toshiba N300 4TB."
+        "Không nên ghi" -> "Dung lượng trống thấp, nên dọn dữ liệu trước khi ghi thêm."
+        "Nhiệt độ cao" -> "Nên bật quạt hoặc giảm tác vụ ghi cho đến khi ổ mát hơn."
+        "Đang tải cao" -> "Nên tránh chạy thêm livestream khi nhiều tác vụ ghi đang hoạt động."
+        else -> "Nên chờ CPU/RAM ổn định trước khi bắt đầu ghi livestream."
+    }
 
     if (showTrackingConfirm) {
         AlertDialog(
@@ -1917,6 +1943,30 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { showTrackingConfirm = false }) { Text("Hủy", color = TextSecondary) }
+            }
+        )
+    }
+    if (showResetTrackingConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetTrackingConfirm = false },
+            containerColor = Color(0xFF15161D),
+            title = { Text("Đặt lại mốc theo dõi", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Thao tác này đưa hồ sơ ổ mới về trạng thái chưa theo dõi và các số liệu sẽ trở lại 0 cho đến khi đặt mốc mới.",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    prefs.edit().remove("toshiba_n300_installed_at").apply()
+                    installedAt = 0L
+                    showResetTrackingConfirm = false
+                }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetTrackingConfirm = false }) { Text("Hủy", color = TextSecondary) }
             }
         )
     }
@@ -1956,6 +2006,16 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                         }
                     ) {
                         Text(if (isTrackingNewDisk) "Đang theo dõi" else "Đặt theo dõi hôm nay", color = AccentCyan, fontSize = 10.sp)
+                    }
+                    if (isTrackingNewDisk) {
+                        Box(
+                            modifier = Modifier.clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { showResetTrackingConfirm = true }
+                        ) {
+                            Text("Đặt lại mốc", color = AccentOrange, fontSize = 10.sp)
+                        }
                     }
                     }
                     Spacer(Modifier.width(8.dp))
@@ -2049,6 +2109,48 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
                 )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HardwareMetricCell(
+                    title = "Cảnh báo đầy ổ",
+                    value = fillWarning,
+                    subtitle = if (isTrackingNewDisk) "Dự báo: ~$actualForecastDays ngày" else "Chưa bắt đầu theo dõi",
+                    icon = Icons.Default.WarningAmber,
+                    color = AccentOrange,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Sẵn sàng ghi",
+                    value = livestreamReady,
+                    subtitle = "CPU ${cpuLoad.toInt()}% • RAM ${ramLoad.toInt()}%",
+                    icon = Icons.Default.PlayCircle,
+                    color = if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Dữ liệu ghi thật",
+                    value = "Chưa bật",
+                    subtitle = "Cần NAS API ghi lịch sử",
+                    icon = Icons.Default.History,
+                    color = TextSecondary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.TipsAndUpdates, null, tint = AccentGreen, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Khuyến nghị vận hành hôm nay", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(operationAdvice, color = TextSecondary, fontSize = 11.sp, lineHeight = 14.sp)
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
