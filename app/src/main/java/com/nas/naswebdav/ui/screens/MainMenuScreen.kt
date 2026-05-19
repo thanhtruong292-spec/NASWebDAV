@@ -1828,6 +1828,9 @@ fun ToolboxDialog(
 
 @Composable
 private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
+    var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
     val usedPercent = hddDisk?.percent ?: viewModel.systemStatus.disk
         .replace("%", "")
@@ -1849,6 +1852,34 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         smartStatus.contains("Không", ignoreCase = true) || smartStatus.contains("Lỗi", ignoreCase = true) -> "Cần kiểm tra"
         else -> "Sẵn sàng theo dõi"
     }
+    val installedDate = if (installedAt > 0L) {
+        java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("vi", "VN")).format(java.util.Date(installedAt))
+    } else {
+        "Chưa đặt"
+    }
+    val trialDays = if (installedAt > 0L) {
+        (((System.currentTimeMillis() - installedAt) / 86_400_000L) + 1L).coerceIn(1L, 999L).toInt()
+    } else 0
+    val trialLabel = when {
+        installedAt == 0L -> "Chưa bắt đầu"
+        trialDays <= 7 -> "Ngày $trialDays/7"
+        else -> "Đã hoàn tất"
+    }
+    val tempValue = smartTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull()
+    val tempStatus = when {
+        tempValue == null -> "Chưa có dữ liệu"
+        tempValue >= 50f -> "Nóng"
+        tempValue >= 45f -> "Cần theo dõi"
+        else -> "Ổn định"
+    }
+    val downloadTasks = viewModel.systemStatus.torrents.count { torrent ->
+        val state = torrent.state
+        state.contains("DL", ignoreCase = false) || state == "downloading" || state == "stalledDL" || state == "forcedDL" || state == "metaDL"
+    }
+    val heavyWriteTasks = activeRecordings + downloadTasks + if (viewModel.isAutoBackupRunning) 1 else 0
+    val estimatedActualWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (viewModel.isAutoBackupRunning) 30 else 0
+    val actualForecastDays = if (estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
+    val monthlyBudgetTb = 15
 
     Spacer(Modifier.height(8.dp))
     Card(
@@ -1866,7 +1897,21 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                         Text("Toshiba N300 4TB NAS • 7200 RPM • 24/7", color = TextSecondary, fontSize = 11.sp)
                     }
                 }
-                Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            val now = System.currentTimeMillis()
+                            prefs.edit().putLong("toshiba_n300_installed_at", now).apply()
+                            installedAt = now
+                        }
+                    ) {
+                        Text("Đặt ngày lắp hôm nay", color = AccentCyan, fontSize = 10.sp)
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1898,30 +1943,64 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
-                    title = "Theo dõi 7 ngày",
-                    value = trialStatus,
-                    subtitle = "S.M.A.R.T: $smartTemp",
+                    title = "Ngày lắp ổ",
+                    value = installedDate,
+                    subtitle = "Chạy rà: $trialLabel",
                     icon = Icons.Default.HealthAndSafety,
                     color = AccentGreen,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
-                    title = "Dự báo còn lại",
-                    value = "~$remainingDays ngày",
-                    subtitle = "Theo mức ghi tham chiếu",
+                    title = "Nhiệt độ N300",
+                    value = tempStatus,
+                    subtitle = "Hiện tại: $smartTemp",
                     icon = Icons.Default.EventAvailable,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
-                    title = "Bảo toàn tính năng",
-                    value = "Độc lập",
-                    subtitle = "Không đổi luồng hiện có",
+                    title = "Tác vụ ghi nặng",
+                    value = "$heavyWriteTasks tác vụ",
+                    subtitle = "Live $activeRecordings • Tải $downloadTasks",
                     icon = Icons.Default.VerifiedUser,
                     color = Color(0xFF66BB6A),
                     modifier = Modifier.weight(1f)
                 )
             }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HardwareMetricCell(
+                    title = "Ghi hôm nay",
+                    value = "~$estimatedActualWriteGb GB",
+                    subtitle = "Ước tính từ tác vụ",
+                    icon = Icons.Default.Today,
+                    color = AccentCyan,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Ngân sách tháng",
+                    value = "$monthlyBudgetTb TB",
+                    subtitle = "Theo 180 TB/năm",
+                    icon = Icons.Default.CalendarMonth,
+                    color = AccentOrange,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Dự báo thực tế",
+                    value = "~$actualForecastDays ngày",
+                    subtitle = if (estimatedActualWriteGb > 0) "Theo tải ghi hiện tại" else "Theo mức tham chiếu",
+                    icon = Icons.Default.QueryStats,
+                    color = AccentPurple,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Các chỉ số mới chỉ dùng dữ liệu hiện có để dự báo, không thay đổi tác vụ ghi, WebDAV, đăng nhập hoặc lịch nền.",
+                color = TextSecondary,
+                fontSize = 9.sp,
+                lineHeight = 12.sp
+            )
         }
     }
 }
