@@ -134,3 +134,5 @@ Provide only the exact code blocks being replaced.
 - Sau khi thay đổi quy tắc UI/ripple, phải rà soát bằng tìm kiếm mã nguồn để tránh còn sót vị trí dùng hiệu ứng nhấn mặc định.
 - Tất cả Bottom Sheet phải dùng padding container chuẩn `horizontal = 8.dp, vertical = 6.dp`, drag handle gọn, không chừa khoảng trống lớn phía trên nội dung và không ép nội dung sát mép.
 - Khi bổ sung tính năng mới cho NAS Dashboard, ưu tiên tối đa tính ổn định và khả năng tương thích với cấu hình NAS hiện tại; tính năng mới phải được thiết kế dạng độc lập, không làm thay đổi hoặc ảnh hưởng luồng hiện có nếu không có yêu cầu trực tiếp.
+- Tất cả tiêu đề của thẻ, card, panel, Bottom Sheet/BottomCard trong NAS Dashboard phải thống nhất cùng kiểu chữ với tiêu đề OMV: cỡ chữ 11sp, `FontWeight.Black`, `letterSpacing = 1.5sp`; chỉ khác màu theo nhóm chức năng để phân biệt với nội dung.
+- Trạng thái kết nối NAS trên header phải hiển thị bằng chip: Online nền xanh lá chữ trắng, Offline nền đỏ chữ trắng; trạng thái cập nhật realtime đặt cùng hàng với chip kết nối.

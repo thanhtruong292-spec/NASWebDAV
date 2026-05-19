@@ -64,6 +64,22 @@ private val AccentPurple = Color(0xFFBB86FC)
 private val AccentPink = Color(0xFFFF6EC7)
 private val TextPrimary = Color(0xFFE8E8E8)
 private val TextSecondary = Color(0xFF8892B0)
+private val PanelTitleCyan = Color(0xFF4DD0E1)
+private val PanelTitleGreen = Color(0xFF66BB6A)
+private val PanelTitlePurple = Color(0xFFB388FF)
+private val PanelTitleSize = 11.sp
+private val PanelTitleLetterSpacing = 1.5.sp
+
+private fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
+    if (lastRefreshAt <= 0L) return "Đang chờ dữ liệu"
+    val ageSec = ((now - lastRefreshAt).coerceAtLeast(0L) / 1000L).toInt()
+    return when {
+        ageSec < 5 -> "Vừa cập nhật"
+        ageSec < 60 -> "Cập nhật ${ageSec} giây trước"
+        ageSec < 3600 -> "Cập nhật ${ageSec / 60} phút trước"
+        else -> "Dữ liệu trễ ${ageSec / 3600} giờ"
+    }
+}
 
 @Composable
 private fun DashboardCompactBottomSheetHandle() {
@@ -206,6 +222,13 @@ fun MainMenuScreen(
 ) {
     val mContext = LocalContext.current
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    var realtimeNow by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            realtimeNow = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1_000L)
+        }
+    }
 
     // STATE CHO POPUP TẢI TỪ XA
     var showDownloadDialog by remember { mutableStateOf(false) }
@@ -268,6 +291,7 @@ fun MainMenuScreen(
         viewModel.fetchSmartData()
         viewModel.fetchOmvOverview()
         viewModel.syncLivestreamStateWithServer(mContext)
+        viewModel.launchDashboardRealtimeScheduler()
     }
 
     // FIX D10: Collect tất cả AutoBackupState values cùng lúc ở top-level Composable.
@@ -506,6 +530,7 @@ fun MainMenuScreen(
             viewModel.checkSmartNetwork(mContext)
             viewModel.fetchSmartData()
             viewModel.listenToLocalNasApi() // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
+            viewModel.launchDashboardRealtimeScheduler()
             kotlinx.coroutines.delay(1000)
             pullRefreshState.endRefresh()
         }
@@ -529,6 +554,7 @@ fun MainMenuScreen(
         ) {
             // Đèn tín hiệu trạng thái (Pulse animation)
             val currentStatus = viewModel.systemStatus.status
+            val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
             val statusColor = when {
                 currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
                 currentStatus.contains("Chờ", true) -> AccentOrange
@@ -539,10 +565,40 @@ fun MainMenuScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Chainedbox L1 Pro", fontSize = 12.sp, color = TextSecondary)
                     Text("  \u2022  ", fontSize = 12.sp, color = TextSecondary)
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isOnlineStatus) AccentGreen else AccentRed)
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            if (isOnlineStatus) "Online" else "Offline",
+                            fontSize = 11.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    val isRealtimeStale = viewModel.lastStatusRefreshAt <= 0L || realtimeNow - viewModel.lastStatusRefreshAt > 10_000L
+                    val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
+                    Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(currentStatus, fontSize = 12.sp, color = statusColor, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        realtimeFreshnessLabel(viewModel.lastStatusRefreshAt, realtimeNow),
+                        fontSize = 10.sp,
+                        color = realtimeColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    viewModel.apiLatencyMs?.let { latency ->
+                        Spacer(Modifier.width(8.dp))
+                        Text("API ${latency}ms", fontSize = 10.sp, color = TextSecondary)
+                    }
+                    if (viewModel.apiFailureCount > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text("${viewModel.apiFailureCount} lỗi", fontSize = 10.sp, color = AccentRed, fontWeight = FontWeight.Bold)
+                    }
                 }
                 
                 // ── SMART SWITCH BADGE ──
@@ -620,8 +676,8 @@ fun MainMenuScreen(
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                Text("HỆ THỐNG", fontSize = 9.sp, color = TextSecondary, fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.5.sp)
+                Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
+                    letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(
@@ -720,7 +776,7 @@ fun MainMenuScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Dashboard, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("OMV", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color(0xFF42A5F5), letterSpacing = 1.5.sp)
+                            Text("OMV", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing)
                             if (viewModel.omvOverview.omvVersion.isNotBlank()) {
                                 Spacer(Modifier.width(6.dp))
                                 Text(viewModel.omvOverview.omvVersion, fontSize = 10.sp, color = TextSecondary)
@@ -907,18 +963,18 @@ fun MainMenuScreen(
         
         SystemStatusCards(viewModel, mContext)
         SystemLogsSummaryCard(viewModel)
-        // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
-        if (viewModel.systemStatus.torrents.isNotEmpty()) {
-            val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
-                val s = t.state
-                // Active or paused download - NOT yet completed
-                s.contains("DL", ignoreCase = false) || s == "downloading" || s == "stalledDL" || s == "forcedDL" || s == "metaDL" || s.isEmpty()
-            }
-            val completedTorrents = viewModel.systemStatus.torrents.filter { t ->
-                val s = t.state
-                // stoppedUP, uploading, pausedUP, forcedUP = seeding after completion
-                s.contains("UP", ignoreCase = false) || t.progress >= 1f
-            }
+        // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
+        val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
+            val s = t.state
+            // Active or paused download - NOT yet completed
+            s.contains("DL", ignoreCase = false) || s == "downloading" || s == "stalledDL" || s == "forcedDL" || s == "metaDL" || s.isEmpty()
+        }
+        val completedTorrents = viewModel.systemStatus.torrents.filter { t ->
+            val s = t.state
+            // stoppedUP, uploading, pausedUP, forcedUP = seeding after completion
+            s.contains("UP", ignoreCase = false) || t.progress >= 1f
+        }
+        if (downloadingTorrents.isNotEmpty() || completedTorrents.isNotEmpty()) {
             
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1045,7 +1101,7 @@ fun MainMenuScreen(
 
 
         // Đã DANH MỤC TRUY CẬP NHANH Đã 
-        Text("Truy cập nhanh", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 6.dp))
+        Text("TRUY CẬP NHANH", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitlePurple, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 6.dp))
 
         // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1059,6 +1115,11 @@ fun MainMenuScreen(
             BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s3.id) }, onLongClick = { editingSlot = 3 })
             val s4 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot4Id } ?: AVAILABLE_QUICK_ACTIONS[2]
             BigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s4.id) }, onLongClick = { editingSlot = 4 })
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(Color(0xFF7C4DFF), Color(0xFF00D2FF)), Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(Color(0xFFFF6EC7), Color(0xFFFF9100)), Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {
@@ -1397,34 +1458,40 @@ fun SettingsMenuCard(
     subtitle: String,
     icon: ImageVector,
     color: Color,
+    modifier: Modifier = Modifier,
     checked: Boolean? = null,
     onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .height(92.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = RoundedCornerShape(10.dp)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
+                .fillMaxHeight()
                 .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 Modifier
-                    .size(30.dp)
+                    .size(28.dp)
                     .background(color.copy(alpha = 0.15f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
+                Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             }
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                Text(subtitle, fontSize = 11.sp, color = TextSecondary)
+                Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.sp, color = TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (checked != null) {
                 Switch(
@@ -1436,10 +1503,10 @@ fun SettingsMenuCard(
                         uncheckedThumbColor = TextSecondary,
                         uncheckedTrackColor = TextSecondary.copy(alpha = 0.2f)
                     ),
-                    modifier = Modifier.graphicsLayer { scaleX = 0.8f; scaleY = 0.8f }
+                    modifier = Modifier.graphicsLayer { scaleX = 0.7f; scaleY = 0.7f }
                 )
             } else {
-                Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -1681,43 +1748,37 @@ fun ToolboxDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
                 .verticalScroll(androidx.compose.foundation.rememberScrollState())
         ) {
-            Text("🔧 CÔNG CỤ HỆ THỐNG", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
-            
-            // Nhóm Media
+            Text("CÔNG CỤ HỆ THỐNG", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 8.dp))
+
+            var showBiometricSettings by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                BigMenuTile("Ảnh mới", "Bộ sưu tập", Icons.Default.Collections, listOf(Color(0xFF42A5F5), Color(0xFF1565C0)), Modifier.weight(1f), { onDismiss(); onOpenLatestPhotos() })
-                BigMenuTile("Video", "Phim gần đây", Icons.Default.VideoLibrary, listOf(Color(0xFF66BB6A), Color(0xFF2E7D32)), Modifier.weight(1f), { onDismiss(); onOpenRecentVideos() })
+                SettingsMenuCard(
+                    title = "Thùng Rác",
+                    subtitle = "Khôi phục tệp bị xoá",
+                    icon = Icons.Default.Delete,
+                    color = Color(0xFFEF5350),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); onOpenTrash() }
+                )
+                SettingsMenuCard(
+                    title = "Khóa Sinh trắc học",
+                    subtitle = if (isBiometricEnabled) {
+                        val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
+                        val delayLabel = when {
+                            sec == 0 -> "khoá ngay"
+                            sec < 60 -> "sau ${sec}s"
+                            else -> "sau ${sec / 60}m"
+                        }
+                        "Đã bật — $delayLabel khi vào nền"
+                    } else "Vân tay / FaceID — chưa bật",
+                    icon = Icons.Default.Lock,
+                    color = AccentPurple,
+                    modifier = Modifier.weight(1f),
+                    checked = isBiometricEnabled,
+                    onClick = { showBiometricSettings = true }
+                )
             }
             Spacer(Modifier.height(8.dp))
-
-            // Nhóm SettingsCard
-            SettingsMenuCard(
-                title = "Thùng Rác",
-                subtitle = "Khôi phục tệp bị xoá",
-                icon = Icons.Default.Delete,
-                color = Color(0xFFEF5350),
-                onClick = { onDismiss(); onOpenTrash() }
-            )
-            Spacer(Modifier.height(8.dp))
-            var showBiometricSettings by remember { mutableStateOf(false) }
-            SettingsMenuCard(
-                title = "Khóa Sinh trắc học",
-                subtitle = if (isBiometricEnabled) {
-                    val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
-                    val delayLabel = when {
-                        sec == 0 -> "khoá ngay"
-                        sec < 60 -> "sau ${sec}s"
-                        else -> "sau ${sec / 60}m"
-                    }
-                    "Đã bật — $delayLabel khi vào nền"
-                } else "Vân tay / FaceID — chưa bật",
-                icon = Icons.Default.Lock,
-                color = AccentPurple,
-                checked = isBiometricEnabled,
-                onClick = {
-                    showBiometricSettings = true
-                }
-            )
             if (showBiometricSettings) {
                 com.nas.naswebdav.ui.dialogs.BiometricSettingsDialog(
                     viewModel = viewModel,
@@ -1729,104 +1790,120 @@ fun ToolboxDialog(
                     }
                 )
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Auto-Backup",
+                    subtitle = if (deleteAfterBackup) "Copy & xoá gốc" else "Chỉ copy",
+                    icon = Icons.Default.Sync,
+                    color = AccentGreen,
+                    modifier = Modifier.weight(1f),
+                    checked = isAutoBackupEnabled,
+                    onClick = { onDismiss(); showAutoBackupDialog() }
+                )
+                SettingsMenuCard(
+                    title = "Sao lưu cấu hình NAS",
+                    subtitle = "Config + watcher + cookies",
+                    icon = Icons.Default.SettingsBackupRestore,
+                    color = Color(0xFF66BB6A),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showNasBackupDialog() }
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Auto-Backup",
-                subtitle = if (deleteAfterBackup) "Copy & Xóa gốc" else "Chỉ Copy",
-                icon = Icons.Default.Sync,
-                color = AccentGreen,
-                checked = isAutoBackupEnabled,
-                onClick = { onDismiss(); showAutoBackupDialog() }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Sức khoẻ ổ cứng",
+                    subtitle = "SMART + dmesg + điểm",
+                    icon = Icons.Default.HealthAndSafety,
+                    color = Color(0xFFFFA726),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showDiskHealthDialog() }
+                )
+                SettingsMenuCard(
+                    title = "Lịch ngủ NAS",
+                    subtitle = "HDD spindown ngoài giờ",
+                    icon = Icons.Default.Bedtime,
+                    color = Color(0xFF7E57C2),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showSleepScheduleDialog() }
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Sao Lưu Cấu Hình NAS",
-                subtitle = "Backup config + watcher + cookies → OneDrive",
-                icon = Icons.Default.SettingsBackupRestore,
-                color = Color(0xFF66BB6A),
-                onClick = { onDismiss(); showNasBackupDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Sức Khoẻ Ổ Cứng",
-                subtitle = "SMART + dmesg + score 0-100 + trend 7 ngày",
-                icon = Icons.Default.HealthAndSafety,
-                color = Color(0xFFFFA726),
-                onClick = { onDismiss(); showDiskHealthDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Lịch Ngủ NAS",
-                subtitle = "HDD spindown ngoài giờ dùng — bảo vệ ổ già",
-                icon = Icons.Default.Bedtime,
-                color = Color(0xFF7E57C2),
-                onClick = { onDismiss(); showSleepScheduleDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Giới Hạn Tốc Độ Upload",
-                subtitle = "Throttle upload tránh nghẽn mạng",
-                icon = Icons.Default.Speed,
-                color = Color(0xFF42A5F5),
-                onClick = { onDismiss(); showBandwidthDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Giới hạn upload",
+                    subtitle = "Tránh nghẽn mạng",
+                    icon = Icons.Default.Speed,
+                    color = Color(0xFF42A5F5),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showBandwidthDialog() }
+                )
 
             androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
-            SettingsMenuCard(
-                title = "Docker / qBittorrent",
-                subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Đã tắt (tiết kiệm RAM)",
-                icon = Icons.Default.ViewInAr,
-                color = Color(0xFF1E88E5),
-                checked = viewModel.isDockerRunning,
-                onClick = {
-                    viewModel.toggleDockerPower(!viewModel.isDockerRunning)
-                }
-            )
+                SettingsMenuCard(
+                    title = "Docker / qBittorrent",
+                    subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Đã tắt",
+                    icon = Icons.Default.ViewInAr,
+                    color = Color(0xFF1E88E5),
+                    modifier = Modifier.weight(1f),
+                    checked = viewModel.isDockerRunning,
+                    onClick = { viewModel.toggleDockerPower(!viewModel.isDockerRunning) }
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Tải BitTorrent",
-                subtitle = "Magnet link, URL .torrent hoặc chọn file .torrent",
-                icon = Icons.Default.CloudDownload,
-                color = Color(0xFF26A69A),
-                onClick = { onDismiss(); showDownloadDialog() }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Tải BitTorrent",
+                    subtitle = "Magnet, URL, tệp .torrent",
+                    icon = Icons.Default.CloudDownload,
+                    color = Color(0xFF26A69A),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showDownloadDialog() }
+                )
+                SettingsMenuCard(
+                    title = "Nhật ký hệ thống",
+                    subtitle = "Lịch sử tiến trình",
+                    icon = Icons.Default.Assignment,
+                    color = AccentCyan,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        viewModel.loadSystemLogs()
+                        onDismiss()
+                        viewModel.showLogDialog = true
+                    }
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Nhật ký hệ thống",
-                subtitle = "Lịch sử tiến trình",
-                icon = Icons.Default.Assignment,
-                color = AccentCyan,
-                onClick = {
-                    viewModel.loadSystemLogs()
-                    onDismiss()
-                    viewModel.showLogDialog = true
-                }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "LAN Whitelist",
+                    subtitle = "IP LAN truy cập thẳng",
+                    icon = Icons.Default.Wifi,
+                    color = Color(0xFF66BB6A),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showLanWhitelistDialog() }
+                )
+                SettingsMenuCard(
+                    title = "Ghi Livestream",
+                    subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
+                    icon = Icons.Default.Videocam,
+                    color = Color(0xFFEE1D52),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showLivestreamDialog() }
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "LAN Whitelist",
-                subtitle = "IP LAN truy cập thẳng",
-                icon = Icons.Default.Wifi,
-                color = Color(0xFF66BB6A),
-                onClick = { onDismiss(); showLanWhitelistDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Ghi Livestream",
-                subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh..." else "TikTok / Facebook / YouTube",
-                icon = Icons.Default.Videocam,
-                color = Color(0xFFEE1D52),
-                onClick = { onDismiss(); showLivestreamDialog() }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingsMenuCard(
-                title = "Dọn Thùng Rác (30 ngày)",
-                subtitle = "Xóa rác cũ hơn 30 ngày",
-                icon = Icons.Default.DeleteSweep,
-                color = Color(0xFFEF5350),
-                onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
-            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Dọn thùng rác",
+                    subtitle = "Xoá rác cũ hơn 30 ngày",
+                    icon = Icons.Default.DeleteSweep,
+                    color = Color(0xFFEF5350),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
+                )
+                Spacer(Modifier.weight(1f))
+            }
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -2475,9 +2552,9 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Sync, null, tint = AccentGreen, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Sync, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("TÁC VỤ NỀN", fontSize = 10.sp, color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        Text("TÁC VỤ NỀN", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -3210,7 +3287,7 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
             ) {
                 Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
+                Text("NHẬT KÝ HỆ THỐNG", fontWeight = FontWeight.Black, color = PanelTitleCyan, fontSize = PanelTitleSize, letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.width(8.dp))
                 Icon(
                     if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,

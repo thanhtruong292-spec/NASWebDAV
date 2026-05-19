@@ -29,7 +29,7 @@ import com.nas.naswebdav.MetricsSnapshot
 import com.nas.naswebdav.WebDavViewModel
 
 
-private val _ChartDarkCard    = Color(0xFF0A0A0A)
+private val _ChartDarkCard    = Color(0xFF0F0F0F)
 private val _ChartDarkSurface = Color.Black
 private val _ChartAccentBlue  = Color(0xFF2196F3)
 private val _ChartAccentCyan  = Color(0xFF00D2FF)
@@ -40,6 +40,10 @@ private val _ChartAccentPurple= Color(0xFFBB86FC)
 private val _ChartAccentPink  = Color(0xFFFF6EC7)
 private val _ChartTextPrimary = Color(0xFFE8E8E8)
 private val _ChartTextSecond  = Color(0xFF8892B0)
+private val _ChartPanelTitle  = Color(0xFF4DD0E1)
+private val _ChartReportTitle = Color(0xFFB388FF)
+private val _ChartPanelTitleSize = 11.sp
+private val _ChartPanelTitleLetterSpacing = 1.5.sp
 
 // Ke thua nguong tu GaugeCard (MainMenuScreen.kt) de bieu do duong dong bo voi GaugeCard tron.
 // Mau: Do 0xFFEF5350 / Vang 0xFFFFC400 (vang am thuan, dam hon Material 400 mat) / Xanh 0xFF66BB6A
@@ -95,9 +99,9 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = _ChartDarkCard),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(10.dp)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(8.dp)) {
             // Mo doc quyen: chart mo dong bo voi ExclusivePanelState — khi mo
             // panel khac (OMV, Tasks) thi chart tu cup.
             val chartExpanded = com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value == "chart"
@@ -114,14 +118,22 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Insights, null, tint = _ChartAccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("GIÁM SÁT", fontSize = 9.sp, color = _ChartTextSecond, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Text("GIÁM SÁT", fontSize = _ChartPanelTitleSize, color = _ChartPanelTitle, fontWeight = FontWeight.Black, letterSpacing = _ChartPanelTitleLetterSpacing)
+                    val ageSec = if (viewModel.lastMetricsRefreshAt > 0L) ((System.currentTimeMillis() - viewModel.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
+                    val refreshLabel = when {
+                        ageSec < 0 -> "Đang chờ dữ liệu"
+                        ageSec < 60 -> "Mới ${ageSec}s"
+                        else -> "Mới ${ageSec / 60}p"
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(refreshLabel, fontSize = 9.sp, color = if (ageSec in 0..89) _ChartTextSecond else _ChartAccentOrange)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     hourLabels.forEachIndexed { i, label ->
                         val selected = hourValues[i] == viewModel.metricsHours
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = if (selected) _ChartAccentCyan.copy(alpha = 0.2f) else Color.Transparent,
+                            color = if (selected) _ChartAccentCyan.copy(alpha = 0.16f) else Color.Transparent,
                             modifier = Modifier.clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
@@ -133,7 +145,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                         ) {
                             Text(label, fontSize = 10.sp,
                                 color = if (selected) _ChartAccentCyan else _ChartTextSecond,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
                         }
                     }
                     Spacer(Modifier.width(4.dp))
@@ -158,7 +170,10 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (sel) Color(0xFF1B5E20).copy(alpha = 0.5f) else _ChartDarkSurface,
-                        modifier = Modifier.weight(1f).clickable { viewModel.metricsChartTab = i }
+                        modifier = Modifier.weight(1f).clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { viewModel.metricsChartTab = i }
                     ) {
                         Row(
                             modifier = Modifier.padding(vertical = 5.dp).fillMaxWidth(),
@@ -260,7 +275,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.Assessment, null, tint = _ChartAccentPurple, modifier = Modifier.size(18.dp))
                         Column {
-                            Text("Báo cáo hôm qua", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = _ChartTextPrimary)
+                            Text("BÁO CÁO HÔM QUA", fontSize = _ChartPanelTitleSize, fontWeight = FontWeight.Black, color = _ChartReportTitle, letterSpacing = _ChartPanelTitleLetterSpacing)
                             if (report != null) {
                                 val icon = when {
                                     report.healthScore >= 80 -> "🟢"

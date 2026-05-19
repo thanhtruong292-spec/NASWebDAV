@@ -311,10 +311,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var systemProcesses by mutableStateOf<List<SystemProcess>>(emptyList())
     var isLoadingProcesses by mutableStateOf(false)
     private var metricsPollingJob: kotlinx.coroutines.Job? = null
+    private var dashboardRealtimeJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
 
     // TÍNH NĂNG 4.H: Lắng nghe trạng thái mạng Ping (ms)
     var networkPingMs by mutableStateOf<Long?>(null)
+    var lastStatusRefreshAt by mutableStateOf(0L)
+    var lastMetricsRefreshAt by mutableStateOf(0L)
+    var lastStorageRefreshAt by mutableStateOf(0L)
+    var lastSmartRefreshAt by mutableStateOf(0L)
+    var lastLogsRefreshAt by mutableStateOf(0L)
+    var apiLatencyMs by mutableStateOf<Long?>(null)
+    var apiFailureCount by mutableIntStateOf(0)
 
     // ─── SMART NETWORK – trạng thái đang dùng LAN hay Tailscale ───────────────
     var isOnLan by mutableStateOf(true) // true = LAN, false = Tailscale
@@ -2130,6 +2138,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // Khởi động vòng lặp lấy metrics biểu đồ:
         // Chờ cho URL sẵn sàng rồi mới fetch lần đầu, sau đó poll mỗi 30s
         launchMetricsPolling()
+        launchDashboardRealtimeScheduler()
     }
 
     // Dọn các listener (nếu có)
@@ -2217,6 +2226,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         metricsHistory.addAll(snaps)
                         metricsHours = hours
                         metricsError = null
+                        lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                 }
             } catch (e: Exception) {
@@ -3089,7 +3099,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (!resp.isSuccessful) return@use
                     val current = org.json.JSONObject(body).optJSONObject("current") ?: return@use
                     val sample = jsonToDiskHealth(current)
-                    withContext(Dispatchers.Main) { diskHealthCurrent = sample }
+                    withContext(Dispatchers.Main) {
+                        diskHealthCurrent = sample
+                        lastSmartRefreshAt = System.currentTimeMillis()
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.w("DiskHealth", "fetch err: ${e.message}")
@@ -3123,6 +3136,46 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
+    fun launchDashboardRealtimeScheduler() {
+        dashboardRealtimeJob?.cancel()
+        dashboardRealtimeJob = viewModelScope.launch(Dispatchers.IO) {
+            var waited = 0
+            while (isActive && webDavManager.currentBaseUrl.isEmpty() && waited < 60) {
+                delay(1_000L)
+                waited++
+            }
+            var lastHeavyRefresh = 0L
+            var lastStorageRefresh = 0L
+            var lastLogRefresh = 0L
+            var lastSmartRefresh = 0L
+            while (isActive) {
+                val hasUrl = webDavManager.currentBaseUrl.isNotEmpty()
+                if (hasUrl) {
+                    val now = System.currentTimeMillis()
+                    if (lastHeavyRefresh == 0L || now - lastHeavyRefresh >= 300_000L) {
+                        fetchOmvOverview()
+                        fetchDailyReport()
+                        lastHeavyRefresh = now
+                    }
+                    if (now - lastLogRefresh >= if (AppConfig.IS_APP_FOREGROUND) 15_000L else 60_000L) {
+                        loadSystemLogs()
+                        lastLogRefresh = now
+                    }
+                    if (now - lastStorageRefresh >= if (AppConfig.IS_APP_FOREGROUND) 60_000L else 180_000L) {
+                        fetchStorageUsage()
+                        lastStorageRefresh = now
+                    }
+                    if (now - lastSmartRefresh >= 300_000L) {
+                        fetchSmartData()
+                        fetchDiskHealth()
+                        lastSmartRefresh = now
+                    }
+                }
+                delay(if (AppConfig.IS_APP_FOREGROUND) 2_000L else 10_000L)
+            }
+        }
+    }
+
     fun fetchStorageUsage() {
         if (isFetchingStorageUsage) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -3151,7 +3204,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             )
                         )
                     }
-                    withContext(Dispatchers.Main) { storageFolderUsage = list }
+                    withContext(Dispatchers.Main) {
+                        storageFolderUsage = list
+                        lastStorageRefreshAt = System.currentTimeMillis()
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.w("StorageUsage", "fetch err: ${e.message}")
@@ -3762,9 +3818,11 @@ fun WebDavViewModel.listenToLocalNasApi() {
                 if (baseUrl.isNotEmpty()) {
                     val host = java.net.URL(baseUrl).host
                     val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/status").build()
+                    val startedAt = System.currentTimeMillis()
                     localApiClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             currentDelayMs = 3000L
+                            val latency = System.currentTimeMillis() - startedAt
                             val jsonObject = org.json.JSONObject(response.body?.string() ?: "{}")
                             val tempRaw = jsonObject.optString("temperature", "--°C")
                             val temp = if (tempRaw != "--°C" && !tempRaw.contains("°")) "${tempRaw}°C" else tempRaw
@@ -3797,6 +3855,9 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             withContext(Dispatchers.Main) {
+                                apiLatencyMs = latency
+                                apiFailureCount = 0
+                                lastStatusRefreshAt = System.currentTimeMillis()
                                 // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 15s (để chờ NAS xử lý service tốn thời gian)
                                 if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 15000L) {
                                     systemStatus = newStatus.copy(
@@ -3819,7 +3880,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                                 }
                             }
                         } else {
-                            withContext(Dispatchers.Main) { systemStatus = systemStatus.copy(status = "API từ chối") }
+                            withContext(Dispatchers.Main) { apiFailureCount += 1; systemStatus = systemStatus.copy(status = "API từ chối") }
                             currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
                         }
                     }
@@ -3828,7 +3889,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                 val isTimeout = e is java.net.SocketTimeoutException || e is java.net.ConnectException
                 val msg = if (isTimeout) "Mất kết nối API (${e.javaClass.simpleName})" else "API: ${e.javaClass.simpleName}"
                 android.util.Log.w("NAS_API", "Theo dõi ping thất bại: ${e.message}")
-                withContext(Dispatchers.Main) { systemStatus = systemStatus.copy(status = msg) }
+                withContext(Dispatchers.Main) { apiFailureCount += 1; systemStatus = systemStatus.copy(status = msg) }
                 currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
             }
             // FIX (audit #11): app background -> tang delay them de tiet kiem battery.
@@ -3973,6 +4034,7 @@ fun WebDavViewModel.loadSystemLogs() {
         allLogs.sortByDescending { it.timestamp }
         withContext(Dispatchers.Main) { 
             systemLogsList = allLogs.take(200) 
+            lastLogsRefreshAt = System.currentTimeMillis()
         }
     }
 }
@@ -3988,6 +4050,7 @@ fun WebDavViewModel.fetchSmartData() {
                     val json = org.json.JSONObject(response.body?.string() ?: "")
                     withContext(Dispatchers.Main) {
                         smartInfo = SmartInfo(status = json.optString("status", "Không rõ"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
+                        lastSmartRefreshAt = System.currentTimeMillis()
                     }
                 } else withContext(Dispatchers.Main) { smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}") }
             }
