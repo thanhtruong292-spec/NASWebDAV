@@ -1831,6 +1831,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
+    var showTrackingConfirm by remember { mutableStateOf(false) }
+    var writePanelExpanded by remember { mutableStateOf(false) }
     val isTrackingNewDisk = installedAt > 0L
     val profileExpanded = ExclusivePanelState.current.value == "toshiba_n300"
     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
@@ -1884,6 +1886,40 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     val estimatedActualWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
     val actualForecastDays = if (isTrackingNewDisk && estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
     val monthlyBudgetTb = if (isTrackingNewDisk) 15 else 0
+    val backupTasks = if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
+    val writeRiskLabel = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
+        heavyWriteTasks >= 4 -> "Tải ghi cao"
+        heavyWriteTasks >= 2 -> "Tải ghi vừa"
+        heavyWriteTasks == 1 -> "Tải ghi nhẹ"
+        else -> "Không có tác vụ ghi"
+    }
+
+    if (showTrackingConfirm) {
+        AlertDialog(
+            onDismissRequest = { showTrackingConfirm = false },
+            containerColor = Color(0xFF15161D),
+            title = { Text("Xác nhận theo dõi ổ mới", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Chỉ đặt mốc theo dõi sau khi đã lắp Toshiba N300 4TB vào NAS. Mốc này dùng để tính checklist 1 ngày, 7 ngày và 30 ngày.",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val now = System.currentTimeMillis()
+                    prefs.edit().putLong("toshiba_n300_installed_at", now).apply()
+                    installedAt = now
+                    showTrackingConfirm = false
+                }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTrackingConfirm = false }) { Text("Hủy", color = TextSecondary) }
+            }
+        )
+    }
 
     Spacer(Modifier.height(8.dp))
     Card(
@@ -1916,9 +1952,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) {
-                            val now = System.currentTimeMillis()
-                            prefs.edit().putLong("toshiba_n300_installed_at", now).apply()
-                            installedAt = now
+                            if (!isTrackingNewDisk) showTrackingConfirm = true
                         }
                     ) {
                         Text(if (isTrackingNewDisk) "Đang theo dõi" else "Đặt theo dõi hôm nay", color = AccentCyan, fontSize = 10.sp)
@@ -2017,6 +2051,46 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 )
             }
             Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NewDiskChecklistItem("Sau 24 giờ", if (isTrackingNewDisk && trialDays >= 1) "Đến hạn" else "Chưa bắt đầu", Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
+                NewDiskChecklistItem("Sau 7 ngày", if (isTrackingNewDisk && trialDays >= 7) "Đến hạn" else "Chưa đến hạn", Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
+                NewDiskChecklistItem("Sau 30 ngày", if (isTrackingNewDisk && trialDays >= 30) "Đến hạn" else "Định kỳ", Icons.Default.EventRepeat, AccentOrange, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { writePanelExpanded = !writePanelExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.EditNote, null, tint = AccentOrange, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Column {
+                            Text("Tác vụ đang ghi vào ổ", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(writeRiskLabel, color = TextSecondary, fontSize = 10.sp)
+                        }
+                    }
+                    Icon(if (writePanelExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
+                }
+                androidx.compose.animation.AnimatedVisibility(visible = writePanelExpanded) {
+                    Column {
+                        Spacer(Modifier.height(6.dp))
+                        WriteTaskRow("Livestream đang ghi", "$activeRecordings phiên", AccentPink)
+                        WriteTaskRow("Torrent đang tải", "$downloadTasks tác vụ", AccentCyan)
+                        WriteTaskRow("Sao lưu nền", "$backupTasks tác vụ", AccentGreen)
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
             Text(
                 "Các chỉ số mới chỉ dùng dữ liệu hiện có để dự báo, không thay đổi tác vụ ghi, WebDAV, đăng nhập hoặc lịch nền.",
                 color = TextSecondary,
@@ -2026,6 +2100,44 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NewDiskChecklistItem(
+    title: String,
+    status: String,
+    icon: ImageVector,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(title, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(status, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Nhắc kiểm tra S.M.A.R.T", color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun WriteTaskRow(title: String, value: String, color: Color) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(title, color = TextSecondary, fontSize = 11.sp)
+        Text(value, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }
 
