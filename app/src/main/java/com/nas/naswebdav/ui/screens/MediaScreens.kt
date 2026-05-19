@@ -9,6 +9,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.*
@@ -2287,7 +2288,11 @@ private fun ModeTab(
                 color = if (selected) Color.Transparent else SeTextSecondary.copy(0.2f),
                 shape = RoundedCornerShape(12.dp)
             )
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
             .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -2552,7 +2557,11 @@ private fun MainActionButton(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(if (isEnabled || isWorking) gradient else disabledGradient)
-            .clickable(enabled = isEnabled || isWorking) {
+            .clickable(
+                enabled = isEnabled || isWorking,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
                 if (isWorking) onCancel() else onStart()
             }
             .padding(vertical = 14.dp),

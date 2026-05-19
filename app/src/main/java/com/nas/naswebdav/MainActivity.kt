@@ -122,6 +122,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
 
         super.onCreate(savedInstanceState)
@@ -328,13 +329,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
 
             MaterialTheme(colorScheme = colorScheme) {
-
-                Surface(color = MaterialTheme.colorScheme.background) {
-
-                    NasAppNavigation(viewModel)
-
+                CompositionLocalProvider(
+                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
+                ) {
+                    Surface(color = MaterialTheme.colorScheme.background) {
+                        NasAppNavigation(viewModel)
+                    }
                 }
-
             }
 
         }

@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ExperimentalMaterial3Api
 import com.nas.naswebdav.ui.screens.VideoPlayerScreen
 import android.app.PictureInPictureParams
 import android.util.Rational
@@ -17,6 +18,7 @@ class VideoPlayerActivity : ComponentActivity() {
     var videoAspectRatio = Rational(16, 9)
     var isPlayingVideo = false
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val url = intent.getStringExtra("url") ?: return finish()

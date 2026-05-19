@@ -399,6 +399,28 @@ object LivestreamPanelState {
     }
 }
 
+private fun normalizeTikTokWatchMessage(message: String): String {
+    if (message.isBlank()) return ""
+    return message
+        .replace("Da ghi phien live nay; khong tao file thu hai cho toi khi user offline.", "Đã ghi phiên live này; không tạo tệp thứ hai cho tới khi người dùng ngoại tuyến.")
+        .replace("Chua xac nhan offline:", "Chưa xác nhận ngoại tuyến:")
+        .replace("da offline", "đã ngoại tuyến")
+        .replace("mo khoa phien live tiep theo", "mở khoá phiên live tiếp theo")
+        .replace("khong", "không")
+        .replace("Khong", "Không")
+        .replace("chua", "chưa")
+        .replace("Chua", "Chưa")
+        .replace("dang", "đang")
+        .replace("Dang", "Đang")
+        .replace("loi", "lỗi")
+        .replace("Loi", "Lỗi")
+        .replace("phien", "phiên")
+        .replace("tao", "tạo")
+        .replace("thu hai", "thứ hai")
+        .replace("toi khi", "tới khi")
+        .replace("offline", "ngoại tuyến")
+}
+
 // ====================================================================
 // DIALOG CẤU HÌNH AUTO-BACKUP
 // ====================================================================
@@ -411,78 +433,11 @@ private fun TikTokLiveWatchSection(
     newUsername: String,
     onUsernameChange: (String) -> Unit
 ) {
-    // User dang xem chi tiet loi (null = an dialog)
-    var detailUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
+    var expandedUserName by remember { mutableStateOf<String?>(null) }
     // Cac panel theo doi tiktok / thoi gian loai tru / dang ghi hinh — chi 1 panel mo
     // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).
     val listExpanded = LivestreamPanelState.current.value == "watchlist"
     val excludeExpanded = LivestreamPanelState.current.value == "exclude"
-
-    val openDetail = detailUser
-    if (openDetail != null) {
-        AlertDialog(
-            onDismissRequest = { detailUser = null },
-            containerColor = Color(0xFF0F0F0F),
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("♪ @${openDetail.username}", color = Color(0xFFEE1D52), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                }
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val statusLabel = when (openDetail.status) {
-                        "recording" -> "🟢 Đang ghi live (job ${openDetail.jobId})"
-                        "recorded" -> "✅ Đã ghi phiên này"
-                        "excluded" -> "💤 Trong giờ loại trừ"
-                        "error" -> "🔴 Lỗi"
-                        else -> "⏳ Đang theo dõi"
-                    }
-                    Text(statusLabel, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    if (openDetail.lastCheck.isNotEmpty()) {
-                        Text("Kiểm tra lần cuối: ${openDetail.lastCheck}", color = Color(0xFF8892B0), fontSize = 12.sp)
-                    }
-                    if (openDetail.lastLive.isNotEmpty()) {
-                        Text("Phát hiện live cuối: ${openDetail.lastLive}", color = Color(0xFF8892B0), fontSize = 12.sp)
-                    }
-                    if (openDetail.lastError.isNotEmpty()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text("CHI TIẾT LỖI", color = Color(0xFFFFA726), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        // Cho phep scroll khi message dai, hien toan bo chu khong ellipsis.
-                        androidx.compose.foundation.layout.Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 320.dp)
-                                .verticalScroll(rememberScrollState())
-                                .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
-                                .padding(10.dp)
-                        ) {
-                            androidx.compose.foundation.text.selection.SelectionContainer {
-                                Text(
-                                    openDetail.lastError,
-                                    color = Color(0xFFFF8A65),
-                                    fontSize = 12.sp,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { detailUser = null }) {
-                    Text("Đóng", color = Color(0xFFEE1D52), fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    viewModel.removeTikTokLiveWatchUser(context, openDetail.username)
-                    detailUser = null
-                }) {
-                    Text("Xoá user này", color = Color(0xFF8892B0))
-                }
-            },
-        )
-    }
 
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
@@ -502,7 +457,7 @@ private fun TikTokLiveWatchSection(
         Spacer(Modifier.width(8.dp))
         Text("THEO DÕI TIKTOK LIVE", color = Color(0xFFEE1D52), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Spacer(Modifier.weight(1f))
-        Text("${users.size} user", color = Color(0xFF9AA3B8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("${users.size} người dùng", color = Color(0xFF9AA3B8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         if (users.isNotEmpty()) {
             Spacer(Modifier.width(6.dp))
             Icon(
@@ -518,7 +473,7 @@ private fun TikTokLiveWatchSection(
         com.nas.naswebdav.ui.components.CompactTextField(
             value = newUsername,
             onValueChange = onUsernameChange,
-            placeholder = "Nhập username TikTok",
+            placeholder = "Nhập tài khoản TikTok",
             leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp) },
             accentColor = Color(0xFFEE1D52),
             modifier = Modifier.weight(1f)
@@ -542,7 +497,7 @@ private fun TikTokLiveWatchSection(
     }
     val daemonLine = buildString {
         append(if (viewModel.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
-        if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Check cuối: ${viewModel.tiktokWatchDaemonLastTick}")
+        if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Lần kiểm tra cuối: ${viewModel.tiktokWatchDaemonLastTick}")
         if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) append(" • ${viewModel.tiktokWatchDaemonSummary}")
     }
     Spacer(Modifier.height(4.dp))
@@ -625,55 +580,129 @@ private fun TikTokLiveWatchSection(
                             }
                         }
                     ) {
-                        Row(
+                        Column(
                             Modifier
                                 .fillMaxWidth()
                                 .background(Color(0xFF15151D), RoundedCornerShape(10.dp))
-                                // Tap vao row -> mo dialog xem chi tiet trang thai/loi (rat huu ich khi
-                                // last_error qua dai bi truncate boi ellipsis o dong duoi).
-                                .clickable { detailUser = user }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                val statusLabel = when (user.status) {
-                                    "recording" -> "Đang live - đã tự ghi"
-                                    "recorded" -> "Đã ghi phiên này"
-                                    "excluded" -> "Đang trong giờ loại trừ"
-                                    "error" -> "Lỗi kiểm tra"
-                                    else -> "Đang theo dõi"
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null
                                 ) {
-                                    Text(
-                                        "@${user.username}",
-                                        color = Color(0xFFE8E8E8),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    TikTokWatchStatusChip(
-                                        status = user.status,
-                                        label = statusLabel
-                                    )
+                                    expandedUserName = if (expandedUserName == user.username) null else user.username
                                 }
-                                val checkLiveLine = buildString {
-                                    if (user.lastCheck.isNotEmpty()) append("Check: ${user.lastCheck}")
-                                    if (user.lastLive.isNotEmpty()) {
-                                        if (isNotEmpty()) append("  •  ")
-                                        append("Live cuối: ${user.lastLive}")
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            val isUserExpanded = expandedUserName == user.username
+                            val statusLabel = when (user.status) {
+                                "recording" -> "Đang live - đã tự ghi"
+                                "recorded" -> "Đã ghi phiên này"
+                                "excluded" -> "Đang trong giờ loại trừ"
+                                "error" -> "Lỗi kiểm tra"
+                                else -> "Đang theo dõi"
+                            }
+                            val displayLastError = normalizeTikTokWatchMessage(user.lastError)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "@${user.username}",
+                                    color = Color(0xFFE8E8E8),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                TikTokWatchStatusChip(
+                                    status = user.status,
+                                    label = statusLabel,
+                                    modifier = Modifier.widthIn(min = 116.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Icon(
+                                    if (isUserExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (isUserExpanded) "Thu gọn người dùng" else "Mở chi tiết người dùng",
+                                    tint = Color(0xFF6F7890),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            val checkLiveLine = buildString {
+                                if (user.lastCheck.isNotEmpty()) append("Kiểm tra: ${user.lastCheck}")
+                                if (user.lastLive.isNotEmpty()) {
+                                    if (isNotEmpty()) append("  •  ")
+                                    append("Live cuối: ${user.lastLive}")
+                                }
+                            }
+                            if (checkLiveLine.isNotEmpty()) {
+                                Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            androidx.compose.animation.AnimatedVisibility(visible = isUserExpanded) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp)
+                                        .background(Color(0xFF1A1A24), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("THÔNG TIN THEO DÕI", color = Color(0xFFEE1D52), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text(statusLabel, color = Color(0xFFE8E8E8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    if (user.jobId.isNotEmpty()) {
+                                        Text("Tác vụ ghi hình: ${user.jobId}", color = Color(0xFF8892B0), fontSize = 11.sp)
                                     }
-                                }
-                                if (checkLiveLine.isNotEmpty()) {
-                                    Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                if (user.status == "error" && user.lastError.length > 60) {
-                                    Text("Chạm để xem chi tiết →", color = Color(0xFFFFA726), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    if (user.lastCheck.isNotEmpty() || user.lastLive.isNotEmpty()) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (user.lastCheck.isNotEmpty()) {
+                                                Text(
+                                                    "Kiểm tra lần cuối: ${user.lastCheck}",
+                                                    color = Color(0xFF8892B0),
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            } else {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                            if (user.lastLive.isNotEmpty()) {
+                                                Text(
+                                                    "Phát hiện live cuối: ${user.lastLive}",
+                                                    color = Color(0xFF8892B0),
+                                                    fontSize = 11.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    textAlign = TextAlign.End,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (displayLastError.isNotEmpty()) {
+                                        Text("CHI TIẾT LỖI", color = Color(0xFFFFA726), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        androidx.compose.foundation.layout.Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 220.dp)
+                                                .verticalScroll(rememberScrollState())
+                                                .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                                                .padding(8.dp)
+                                        ) {
+                                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                                Text(
+                                                    displayLastError,
+                                                    color = Color(0xFFFF8A65),
+                                                    fontSize = 11.sp,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -683,7 +712,7 @@ private fun TikTokLiveWatchSection(
         }
     }
     Spacer(Modifier.height(4.dp))
-    Text("Thêm username TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(4.dp))
     HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
@@ -2073,7 +2102,7 @@ fun LivestreamRecordDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 com.nas.naswebdav.ui.components.PillTab(
                     selected = livePanelMode == "watch",
-                    label = "Theo dõi user",
+                    label = "Theo dõi người dùng",
                     emoji = "👤",
                     accentColor = Color(0xFFEE1D52),
                     onClick = { livePanelMode = "watch" },
@@ -2435,7 +2464,11 @@ fun BiometricSettingsDialog(
             Spacer(Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().clickable(enabled = bioStatus == "available") {
+                modifier = Modifier.fillMaxWidth().clickable(
+                    enabled = bioStatus == "available",
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null
+                ) {
                     enabled = !enabled
                 }
             ) {
@@ -2479,7 +2512,11 @@ fun BiometricSettingsDialog(
                                 if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF15151D),
                                 RoundedCornerShape(6.dp)
                             )
-                            .clickable(enabled = enabled) { delaySec = sec }
+                            .clickable(
+                                enabled = enabled,
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) { delaySec = sec }
                             .padding(horizontal = 8.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {

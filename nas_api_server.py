@@ -6841,7 +6841,7 @@ def _tiktok_live_watchdog():
                         )
                         user["status"] = "recorded"
                         user["job_id"] = user.get("live_session_job_id", "")
-                        user["last_error"] = "Da ghi phien live nay; khong tao file thu hai cho toi khi user offline."
+                        user["last_error"] = "Đã ghi phiên live này; không tạo tệp thứ hai cho tới khi người dùng ngoại tuyến."
                         changed = True
                         continue
                     job_id, msg = _start_tiktok_watch_record(username)
@@ -6858,14 +6858,14 @@ def _tiktok_live_watchdog():
                 else:
                     if err == "offline":
                         if user.get("live_session_recorded", False):
-                            log.info("[TikTokWatch] @%s da offline, mo khoa phien live tiep theo.", username)
+                            log.info("[TikTokWatch] @%s đã ngoại tuyến, mở khoá phiên live tiếp theo.", username)
                         _tiktok_watch_clear_session(user)
                         user["status"] = "watching"
                         user["last_error"] = ""
                     elif user.get("live_session_recorded", False):
                         user["status"] = "recorded"
                         user["job_id"] = user.get("live_session_job_id", "")
-                        user["last_error"] = "Chua xac nhan offline: %s" % normalize_vietnamese_message(err)
+                        user["last_error"] = "Chưa xác nhận ngoại tuyến: %s" % normalize_vietnamese_message(err)
                     else:
                         user["status"] = "watching"
                         user["job_id"] = ""

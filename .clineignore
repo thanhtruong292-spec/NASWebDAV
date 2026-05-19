@@ -125,3 +125,10 @@ Provide only the exact code blocks being replaced.
 - Biểu đồ bắt buộc phải có tiêu đề rõ ràng, thang đo, mốc tham chiếu, chú thích ngưỡng, số liệu tóm tắt và khoảng thời gian; không được hiển thị đường biểu đồ trống ngữ cảnh.
 - Các bottom sheet/dialog có biểu đồ hoặc nội dung dài phải chừa đủ khoảng trống cuối màn hình, không để biểu đồ/chú thích bị cắt bởi mép dưới hoặc thanh điều hướng.
 - Sau khi chỉnh UI Android, phải build APK và cài lại qua ADB Wi-Fi nếu thiết bị đang kết nối.
+
+# 10. NGUYÊN TẮC GHI NHỚ YÊU CẦU NGƯỜI DÙNG VÀ HIỆU ỨNG NHẤN
+- Khi bắt đầu bất kỳ cuộc trò chuyện/công việc nào trong dự án này, AI bắt buộc phải đọc `.clineignore` trước và duy trì các nguyên tắc trong file này xuyên suốt cuộc trò chuyện.
+- Mọi yêu cầu ổn định, lặp lại của người dùng phải được ghi bổ sung vào `.clineignore` để các phiên sau không cần nhắc lại.
+- Toàn bộ ứng dụng Android không được hiển thị ripple, nền xám, vệt sáng hoặc hiệu ứng nền mặc định khi nhấn/chạm vào nút, thẻ, hàng danh sách, chip, icon hoặc vùng có thể thao tác.
+- Khi thêm hoặc sửa UI Compose, mọi `clickable`/`combinedClickable` phải dùng `interactionSource` riêng và `indication = null`; các component Material phải được đặt trong cấu hình tắt ripple toàn cục.
+- Sau khi thay đổi quy tắc UI/ripple, phải rà soát bằng tìm kiếm mã nguồn để tránh còn sót vị trí dùng hiệu ứng nhấn mặc định.
