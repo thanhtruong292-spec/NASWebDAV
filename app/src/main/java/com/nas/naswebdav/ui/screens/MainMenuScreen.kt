@@ -252,6 +252,7 @@ fun MainMenuScreen(
     var showNasBackupDialog by remember { mutableStateOf(false) }
     // STATE CHO DISK HEALTH MONITOR
     var showDiskHealthDialog by remember { mutableStateOf(false) }
+    var showNewDiskProfileSheet by remember { mutableStateOf(false) }
     // STATE CHO SLEEP SCHEDULE
     var showSleepScheduleDialog by remember { mutableStateOf(false) }
     // STATE CHO BANDWIDTH THROTTLE
@@ -461,6 +462,12 @@ fun MainMenuScreen(
             onDismiss = { showDiskHealthDialog = false }
         )
     }
+    if (showNewDiskProfileSheet) {
+        ToshibaN300ProfileBottomSheet(
+            viewModel = viewModel,
+            onDismiss = { showNewDiskProfileSheet = false }
+        )
+    }
     if (showSleepScheduleDialog) {
         com.nas.naswebdav.ui.dialogs.SleepScheduleDialog(
             viewModel = viewModel,
@@ -652,7 +659,8 @@ fun MainMenuScreen(
                             icon = Icons.Default.Storage,
                             gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
                             modifier = Modifier.weight(1f),
-                            overridePercent = hddDisk.percent
+                            overridePercent = hddDisk.percent,
+                            onClick = { showNewDiskProfileSheet = true }
                         )
                     } else Spacer(Modifier.weight(1f))
                     
@@ -897,7 +905,6 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
         Spacer(Modifier.height(4.dp))
         
-        ToshibaN300ProfileCard(viewModel)
         SystemStatusCards(viewModel, mContext)
         SystemLogsSummaryCard(viewModel)
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã 
@@ -1826,8 +1833,12 @@ fun ToolboxDialog(
 }
 
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
+private fun ToshibaN300ProfileBottomSheet(
+    viewModel: WebDavViewModel,
+    onDismiss: () -> Unit
+) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
@@ -1836,7 +1847,6 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     var writePanelExpanded by remember { mutableStateOf(false) }
     var operationMode by remember { mutableStateOf(prefs.getString("operation_mode", "balanced") ?: "balanced") }
     val isTrackingNewDisk = installedAt > 0L
-    val profileExpanded = ExclusivePanelState.current.value == "toshiba_n300"
     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
     val usedPercent = hddDisk?.percent ?: viewModel.systemStatus.disk
         .replace("%", "")
@@ -1942,8 +1952,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         else -> "Cân bằng"
     }
 
-    LaunchedEffect(profileExpanded) {
-        if (profileExpanded) viewModel.fetchStorageUsage()
+    LaunchedEffect(Unit) {
+        viewModel.fetchStorageUsage()
     }
 
     if (showTrackingConfirm) {
@@ -1996,18 +2006,20 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         )
     }
 
-    Spacer(Modifier.height(8.dp))
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF101216)),
-        shape = RoundedCornerShape(10.dp)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF101216),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
-        Column(Modifier.padding(8.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
             Row(
-                Modifier.fillMaxWidth().clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { ExclusivePanelState.toggle("toshiba_n300") },
+                Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -2043,17 +2055,8 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                         }
                     }
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        if (profileExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null,
-                        tint = TextSecondary,
-                        modifier = Modifier.size(22.dp)
-                    )
                 }
             }
-            androidx.compose.animation.AnimatedVisibility(visible = profileExpanded) {
-                Column {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
@@ -2314,8 +2317,6 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 fontSize = 9.sp,
                 lineHeight = 12.sp
             )
-                }
-            }
         }
     }
 }
