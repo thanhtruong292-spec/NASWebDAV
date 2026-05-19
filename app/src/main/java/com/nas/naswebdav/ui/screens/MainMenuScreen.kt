@@ -1834,6 +1834,7 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     var showTrackingConfirm by remember { mutableStateOf(false) }
     var showResetTrackingConfirm by remember { mutableStateOf(false) }
     var writePanelExpanded by remember { mutableStateOf(false) }
+    var operationMode by remember { mutableStateOf(prefs.getString("operation_mode", "balanced") ?: "balanced") }
     val isTrackingNewDisk = installedAt > 0L
     val profileExpanded = ExclusivePanelState.current.value == "toshiba_n300"
     val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
@@ -1897,6 +1898,9 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
     }
     val cpuLoad = viewModel.systemStatus.cpu.replace("%", "").trim().toFloatOrNull() ?: 0f
     val ramLoad = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull() ?: 0f
+    val storageUsage = viewModel.storageFolderUsage
+    val trashUsage = storageUsage.firstOrNull { it.path == ".trash" }
+    val trashWarning = if ((trashUsage?.sizeBytes ?: 0L) > 50L * 1024L * 1024L * 1024L) "Nên dọn thùng rác" else "Thùng rác ổn"
     val fillWarning = when {
         !isTrackingNewDisk -> "Chưa theo dõi"
         actualForecastDays in 1..7 -> "Cảnh báo 7 ngày"
@@ -1919,6 +1923,27 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
         "Nhiệt độ cao" -> "Nên bật quạt hoặc giảm tác vụ ghi cho đến khi ổ mát hơn."
         "Đang tải cao" -> "Nên tránh chạy thêm livestream khi nhiều tác vụ ghi đang hoạt động."
         else -> "Nên chờ CPU/RAM ổn định trước khi bắt đầu ghi livestream."
+    }
+    val nasHealthState = when {
+        !isTrackingNewDisk -> "Chưa theo dõi ổ mới"
+        livestreamReady == "Sẵn sàng ghi" && ramLoad < 80f && cpuLoad < 75f -> "Ổn định"
+        livestreamReady == "Không nên ghi" || ramLoad >= 90f || cpuLoad >= 90f -> "Không nên ghi thêm"
+        else -> "Cần theo dõi"
+    }
+    val quietWindowAdvice = if (heavyWriteTasks > 0) "Nên tránh chạy quét file/thumbnail khi đang ghi." else "Có thể chạy tác vụ bảo trì nhẹ."
+    val ramGuardAdvice = when {
+        ramLoad >= 90f -> "RAM rất cao, nên giảm tác vụ nền."
+        ramLoad >= 80f -> "RAM cao, theo dõi trước khi mở thêm tác vụ."
+        else -> "RAM phù hợp cho vận hành hiện tại."
+    }
+    val operationModeLabel = when (operationMode) {
+        "stream" -> "Ưu tiên ghi livestream"
+        "eco" -> "Tiết kiệm tài nguyên"
+        else -> "Cân bằng"
+    }
+
+    LaunchedEffect(profileExpanded) {
+        if (profileExpanded) viewModel.fetchStorageUsage()
     }
 
     if (showTrackingConfirm) {
@@ -2153,6 +2178,96 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 Text(operationAdvice, color = TextSecondary, fontSize = 11.sp, lineHeight = 14.sp)
             }
             Spacer(Modifier.height(6.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Tune, null, tint = AccentPurple, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Chế độ vận hành", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(operationModeLabel, color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OperationModeChip("stream", "Ghi live", operationMode, prefs) { operationMode = it }
+                    OperationModeChip("balanced", "Cân bằng", operationMode, prefs) { operationMode = it }
+                    OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) { operationMode = it }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                HardwareMetricCell(
+                    title = "Sức khỏe NAS",
+                    value = nasHealthState,
+                    subtitle = "CPU ${cpuLoad.toInt()}% • RAM ${ramLoad.toInt()}%",
+                    icon = Icons.Default.MonitorHeart,
+                    color = if (nasHealthState == "Ổn định") AccentGreen else AccentOrange,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Bảo vệ RAM thấp",
+                    value = if (ramLoad >= 80f) "Đang theo dõi" else "Ổn định",
+                    subtitle = ramGuardAdvice,
+                    icon = Icons.Default.Memory,
+                    color = if (ramLoad >= 80f) AccentOrange else AccentGreen,
+                    modifier = Modifier.weight(1f)
+                )
+                HardwareMetricCell(
+                    title = "Lịch yên tĩnh",
+                    value = if (heavyWriteTasks > 0) "Nên bật" else "Chưa cần",
+                    subtitle = quietWindowAdvice,
+                    icon = Icons.Default.Bedtime,
+                    color = AccentPurple,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Theo dõi thư mục lớn", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(if (viewModel.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                if (storageUsage.isEmpty()) {
+                    Text("Chưa có dữ liệu thư mục. App sẽ tự tải khi NAS API sẵn sàng.", color = TextSecondary, fontSize = 11.sp)
+                } else {
+                    storageUsage.take(4).forEach { item ->
+                        WriteTaskRow(item.name, "${item.size} • ${item.files} tệp", if (item.path == ".trash") AccentOrange else AccentCyan)
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Summarize, null, tint = AccentGreen, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Nhật ký vận hành hôm nay", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(4.dp))
+                WriteTaskRow("Livestream đang ghi", "$activeRecordings phiên", AccentPink)
+                WriteTaskRow("Tải ghi hiện tại", writeRiskLabel, AccentOrange)
+                WriteTaskRow("Trạng thái ghi", livestreamReady, if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange)
+            }
+            Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 NewDiskChecklistItem("Sau 24 giờ", if (isTrackingNewDisk && trialDays >= 1) "Đến hạn" else "Chưa bắt đầu", Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
                 NewDiskChecklistItem("Sau 7 ngày", if (isTrackingNewDisk && trialDays >= 7) "Đến hạn" else "Chưa đến hạn", Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
@@ -2202,6 +2317,32 @@ private fun ToshibaN300ProfileCard(viewModel: WebDavViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OperationModeChip(
+    mode: String,
+    label: String,
+    selectedMode: String,
+    prefs: android.content.SharedPreferences,
+    onSelect: (String) -> Unit
+) {
+    val selected = mode == selectedMode
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) AccentCyan.copy(alpha = 0.18f) else Color(0xFF101216))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                prefs.edit().putString("operation_mode", mode).apply()
+                onSelect(mode)
+            }
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(label, color = if (selected) AccentCyan else TextSecondary, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 

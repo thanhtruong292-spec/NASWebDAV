@@ -161,6 +161,15 @@ data class DiskPart(
     val used: String
 )
 
+data class StorageFolderUsage(
+    val name: String,
+    val path: String,
+    val size: String,
+    val sizeBytes: Long,
+    val files: Int,
+    val partial: Boolean
+)
+
 // Data class lưu trữ trạng thái hệ thống qua Local API
 data class NasSystemStatus(
     val temp: String = "--°C",
@@ -356,6 +365,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var diskHealthCurrent by mutableStateOf<DiskHealthSample?>(null)
     var diskHealthHistory by mutableStateOf<List<DiskHealthSample>>(emptyList())
     var isFetchingDiskHealth by mutableStateOf(false)
+    var storageFolderUsage by mutableStateOf<List<StorageFolderUsage>>(emptyList())
+    var isFetchingStorageUsage by mutableStateOf(false)
 
     // Scheduled backup state
     data class BackupSchedule(
@@ -3108,6 +3119,44 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             } catch (e: Exception) {
                 android.util.Log.w("DiskHealth", "history err: ${e.message}")
+            }
+        }
+    }
+
+    fun fetchStorageUsage() {
+        if (isFetchingStorageUsage) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isFetchingStorageUsage = true }
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/storage/usage")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val arr = org.json.JSONObject(body).optJSONArray("folders") ?: return@use
+                    val list = mutableListOf<StorageFolderUsage>()
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        list.add(
+                            StorageFolderUsage(
+                                name = o.optString("name"),
+                                path = o.optString("path"),
+                                size = o.optString("size", "0 B"),
+                                sizeBytes = o.optLong("size_bytes", 0L),
+                                files = o.optInt("files", 0),
+                                partial = o.optBoolean("partial", false)
+                            )
+                        )
+                    }
+                    withContext(Dispatchers.Main) { storageFolderUsage = list }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("StorageUsage", "fetch err: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingStorageUsage = false }
             }
         }
     }

@@ -1221,6 +1221,53 @@ def get_disk_partitions():
     return parts
 
 
+def _safe_dir_usage(path, max_files=4000, max_seconds=2.0):
+    """Tinh nhanh dung luong thu muc, gioi han de khong lam NAS bi nang."""
+    start = time.time()
+    total = 0
+    count = 0
+    if not os.path.exists(path):
+        return 0, 0, False
+    try:
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if d not in (".nas_meta", ".thumbnails", "@eaDir")]
+            for name in files:
+                if count >= max_files or (time.time() - start) > max_seconds:
+                    return total, count, True
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                    count += 1
+                except OSError:
+                    continue
+    except OSError:
+        return total, count, True
+    return total, count, False
+
+
+def get_storage_usage_summary():
+    """Tom tat dung luong cac thu muc lon de app hien thi khuyen nghi don dep."""
+    folders = [
+        ("Livestream", "Livestream"),
+        ("Tải xuống", "Downloads"),
+        ("Sao lưu", "Backup"),
+        ("Thùng rác", ".trash"),
+    ]
+    result = []
+    for label, rel in folders:
+        path = os.path.join(WEBDAV_FILE_ROOT, rel)
+        size, files, partial = _safe_dir_usage(path)
+        result.append({
+            "name": label,
+            "path": rel,
+            "size_bytes": size,
+            "size": format_bytes(size),
+            "files": files,
+            "partial": partial,
+        })
+    result.sort(key=lambda x: x.get("size_bytes", 0), reverse=True)
+    return result
+
+
 
 def get_fan_info():
     """Lay thong tin quat lam mat - Chainedbox rk3328 dung PWM pwmchip0."""
@@ -2036,6 +2083,25 @@ def api_status():
         pass
         
     return jsonify(data)
+
+
+@app.route("/api/storage/usage")
+@requires_auth
+def api_storage_usage():
+    """Dung luong cac thu muc lon. Chi doc metadata, gioi han thoi gian quet."""
+    try:
+        usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
+        return jsonify({
+            "ok": True,
+            "root": WEBDAV_FILE_ROOT,
+            "total": format_bytes(usage.total),
+            "used": format_bytes(usage.used),
+            "free": format_bytes(usage.free),
+            "percent": round(usage.percent, 1),
+            "folders": get_storage_usage_summary(),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": "Không tải được dung lượng thư mục: %s" % normalize_vietnamese_message(str(e)), "folders": []}), 500
 
 
 @app.route("/api/ping", methods=["GET", "HEAD"])
