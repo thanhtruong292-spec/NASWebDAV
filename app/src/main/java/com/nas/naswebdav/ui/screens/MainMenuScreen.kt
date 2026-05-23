@@ -82,6 +82,35 @@ private fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
 }
 
 @Composable
+private fun PanelFreshnessTag(
+    lastRefreshAt: Long,
+    now: Long,
+    staleAfterMs: Long = 30_000L,
+) {
+    val ageMs = (now - lastRefreshAt).coerceAtLeast(0L)
+    val isWaiting = lastRefreshAt <= 0L
+    val isStale = isWaiting || ageMs > staleAfterMs
+    val color = if (isStale) AccentOrange else AccentGreen
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            realtimeFreshnessLabel(lastRefreshAt, now),
+            fontSize = 9.sp,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
 private fun DashboardCompactBottomSheetHandle() {
     Box(
         modifier = Modifier
@@ -280,6 +309,8 @@ fun MainMenuScreen(
     var showSleepScheduleDialog by remember { mutableStateOf(false) }
     // STATE CHO BANDWIDTH THROTTLE
     var showBandwidthDialog by remember { mutableStateOf(false) }
+    // STATE CHO USB IMPORT
+    var showUsbImportDialog by remember { mutableStateOf(false) }
     // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
     LaunchedEffect(Unit) {
         val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
@@ -498,6 +529,12 @@ fun MainMenuScreen(
             onDismiss = { showSleepScheduleDialog = false }
         )
     }
+    if (showUsbImportDialog) {
+        com.nas.naswebdav.ui.dialogs.UsbImportDialog(
+            viewModel = viewModel,
+            onDismiss = { showUsbImportDialog = false }
+        )
+    }
     if (showBandwidthDialog) {
         com.nas.naswebdav.ui.dialogs.BandwidthThrottleDialog(
             sharedPrefs = sharedPrefs,
@@ -676,8 +713,12 @@ fun MainMenuScreen(
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
-                    letterSpacing = PanelTitleLetterSpacing)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
+                        letterSpacing = PanelTitleLetterSpacing)
+                    Spacer(Modifier.weight(1f))
+                    PanelFreshnessTag(viewModel.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
+                }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(
@@ -962,7 +1003,7 @@ fun MainMenuScreen(
         Spacer(Modifier.height(4.dp))
         
         SystemStatusCards(viewModel, mContext)
-        SystemLogsSummaryCard(viewModel)
+        SystemLogsSummaryCard(viewModel, realtimeNow)
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
             val s = t.state
@@ -1214,6 +1255,7 @@ fun MainMenuScreen(
             showDiskHealthDialog = { showDiskHealthDialog = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
+            showUsbImportDialog = { viewModel.fetchUsbImportStatus(); showUsbImportDialog = true },
             showDownloadDialog = { showDownloadDialog = true }
         )
     }
@@ -1726,6 +1768,7 @@ fun ToolboxDialog(
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
+    showUsbImportDialog: () -> Unit = {},
     showDownloadDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
@@ -1812,6 +1855,15 @@ fun ToolboxDialog(
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
+                    title = "USB Import",
+                    subtitle = "Tự copy ổ USB 3.0",
+                    icon = Icons.Default.Usb,
+                    color = Color(0xFF26A69A),
+                    modifier = Modifier.weight(1f),
+                    checked = viewModel.usbImportState.settings.enabled,
+                    onClick = { onDismiss(); showUsbImportDialog() }
+                )
+                SettingsMenuCard(
                     title = "Sức khoẻ ổ cứng",
                     subtitle = "SMART + dmesg + điểm",
                     icon = Icons.Default.HealthAndSafety,
@@ -1819,6 +1871,9 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showDiskHealthDialog() }
                 )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
                     title = "Lịch ngủ NAS",
                     subtitle = "HDD spindown ngoài giờ",
@@ -1827,9 +1882,6 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showSleepScheduleDialog() }
                 )
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
                     title = "Giới hạn upload",
                     subtitle = "Tránh nghẽn mạng",
@@ -1838,8 +1890,10 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showBandwidthDialog() }
                 )
-
-            androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
                 SettingsMenuCard(
                     title = "Docker / qBittorrent",
                     subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Đã tắt",
@@ -1849,9 +1903,6 @@ fun ToolboxDialog(
                     checked = viewModel.isDockerRunning,
                     onClick = { viewModel.toggleDockerPower(!viewModel.isDockerRunning) }
                 )
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
                     title = "Tải BitTorrent",
                     subtitle = "Magnet, URL, tệp .torrent",
@@ -1860,6 +1911,9 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showDownloadDialog() }
                 )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
                     title = "Nhật ký hệ thống",
                     subtitle = "Lịch sử tiến trình",
@@ -3260,7 +3314,7 @@ fun QuickActionSelectorDialog(
 }
 
 @Composable
-fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
+fun SystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.loadSystemLogs()
     }
@@ -3295,6 +3349,8 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel) {
                     tint = TextSecondary,
                     modifier = Modifier.size(18.dp)
                 )
+                Spacer(Modifier.width(8.dp))
+                PanelFreshnessTag(viewModel.lastLogsRefreshAt, realtimeNow, staleAfterMs = 30_000L)
                 Spacer(Modifier.weight(1f))
                 TextButton(
                     onClick = { viewModel.showLogDialog = true },
