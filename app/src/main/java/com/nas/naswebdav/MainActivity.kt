@@ -420,13 +420,16 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                 androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
 
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = true
+                    val isLoginScreen = navController.currentDestination?.route == "login" ||
+                        navController.currentDestination == null
+                    if (!isLoginScreen) {
+                        viewModel.refreshNasStateOnForeground(mContext.applicationContext)
+                    }
                     if (!hasCompletedFirstResume) {
                         hasCompletedFirstResume = true
                         return@LifecycleEventObserver
                     }
                     if (requireBiometricOnReturn) {
-                        val isLoginScreen = navController.currentDestination?.route == "login" ||
-                            navController.currentDestination == null
                         if (!isLoginScreen && sharedPrefs.getBoolean("biometric_enabled", false)) {
                             showBiometricLock = true
                         }

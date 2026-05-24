@@ -518,7 +518,7 @@ fun MainMenuScreen(
         )
     }
     if (showNewDiskProfileSheet) {
-        ToshibaN300ProfileBottomSheet(
+        DiskProfileBottomSheet(
             viewModel = viewModel,
             onDismiss = { showNewDiskProfileSheet = false }
         )
@@ -537,6 +537,7 @@ fun MainMenuScreen(
     }
     if (showBandwidthDialog) {
         com.nas.naswebdav.ui.dialogs.BandwidthThrottleDialog(
+            viewModel = viewModel,
             sharedPrefs = sharedPrefs,
             onDismiss = { showBandwidthDialog = false }
         )
@@ -744,7 +745,8 @@ fun MainMenuScreen(
                         }
                     )
                     
-                    val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
+                    val hddDisk = viewModel.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
+                        ?: viewModel.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
                     if (hddDisk != null) {
                         val fmtTotal = hddDisk.total.let {
                             val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
@@ -876,7 +878,7 @@ fun MainMenuScreen(
 
                             // Network + Hardware info
                             val net = viewModel.omvOverview.network.firstOrNull()
-                            val hdd = viewModel.omvOverview.disks.find { !it.isRoot }
+                            val hdd = selectNasTargetDisk(viewModel.omvOverview.disks)
                             if (net != null || hdd != null) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     if (net != null) {
@@ -1002,7 +1004,17 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
         Spacer(Modifier.height(4.dp))
         
-        SystemStatusCards(viewModel, mContext)
+        SystemStatusCards(
+            viewModel = viewModel,
+            mContext = mContext,
+            onOpenAutoBackup = { showAutoBackupDialog = true },
+            onOpenLivestream = { showLivestreamDialog = true },
+            onOpenUsbImport = {
+                viewModel.fetchUsbImportStatus()
+                showUsbImportDialog = true
+            },
+            onOpenDuplicateScan = { showProcessDialog = true }
+        )
         SystemLogsSummaryCard(viewModel, realtimeNow)
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
@@ -1964,36 +1976,171 @@ fun ToolboxDialog(
 }
 
 
+private fun parseProfileSizeBytes(raw: String): Long {
+    val value = raw.replace(",", ".").replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: return 0L
+    val upper = raw.uppercase(java.util.Locale.US)
+    val multiplier = when {
+        "TIB" in upper -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+        "TB" in upper -> 1000.0 * 1000.0 * 1000.0 * 1000.0
+        "GIB" in upper -> 1024.0 * 1024.0 * 1024.0
+        "GB" in upper -> 1000.0 * 1000.0 * 1000.0
+        "MIB" in upper -> 1024.0 * 1024.0
+        "MB" in upper -> 1000.0 * 1000.0
+        else -> 1.0
+    }
+    return (value * multiplier).toLong().coerceAtLeast(0L)
+}
+
+private fun profileSizeLabel(bytes: Long): String {
+    if (bytes <= 0L) return "Chưa rõ"
+    val tib = bytes / (1024.0 * 1024.0 * 1024.0 * 1024.0)
+    return if (tib >= 1.0) "%.2f TiB".format(java.util.Locale.US, tib)
+    else com.nas.naswebdav.utils.FormatUtils.formatBytes(bytes)
+}
+
+private fun profilePercent(raw: String): Float =
+    raw.replace("%", "").trim().toFloatOrNull()?.coerceIn(0f, 100f) ?: 0f
+
+private fun profileTempValue(raw: String): Float? =
+    raw.replace(Regex("[^0-9.]"), "").toFloatOrNull()?.takeIf { it > 0f }
+
+private fun profileParseLoggedSizeBytes(message: String): Long {
+    val match = Regex("""\(([\d.,]+)\s*(B|KB|MB|GB|TB)\)""", RegexOption.IGNORE_CASE).find(message) ?: return 0L
+    val value = match.groupValues[1].replace(",", ".").toDoubleOrNull() ?: return 0L
+    val unit = match.groupValues[2].uppercase(java.util.Locale.US)
+    val multiplier = when (unit) {
+        "TB" -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+        "GB" -> 1024.0 * 1024.0 * 1024.0
+        "MB" -> 1024.0 * 1024.0
+        "KB" -> 1024.0
+        else -> 1.0
+    }
+    return (value * multiplier).toLong().coerceAtLeast(0L)
+}
+
+private fun profileIsToday(timestamp: Long): Boolean {
+    val cal = java.util.Calendar.getInstance()
+    val todayYear = cal.get(java.util.Calendar.YEAR)
+    val todayDay = cal.get(java.util.Calendar.DAY_OF_YEAR)
+    cal.timeInMillis = timestamp
+    return cal.get(java.util.Calendar.YEAR) == todayYear &&
+        cal.get(java.util.Calendar.DAY_OF_YEAR) == todayDay
+}
+
+private fun isNasTargetDisk(disk: OmvDiskInfo): Boolean {
+    val blob = "${disk.name} ${disk.device} ${disk.model} ${disk.serial}".uppercase(java.util.Locale.US)
+    return disk.isTargetHdd ||
+        disk.serial.equals("X6N7KALWFVLC", ignoreCase = true) ||
+        disk.device == "/dev/sda" ||
+        disk.name == "sda" ||
+        "TOSHIBA" in blob ||
+        "MG04" in blob ||
+        "N300" in blob
+}
+
+private fun selectNasTargetDisk(disks: List<OmvDiskInfo>): OmvDiskInfo? =
+    disks.firstOrNull { isNasTargetDisk(it) } ?:
+        disks.firstOrNull { !it.isRoot && !it.isUsbImport && it.name != "sdb" && it.device != "/dev/sdb" }
+
+private fun profileDiskKey(disk: OmvDiskInfo?, fallback: String): String {
+    val serial = disk?.serial?.trim().orEmpty()
+    val model = disk?.model?.trim().orEmpty()
+    return when {
+        serial.isNotBlank() -> "disk_${serial.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
+        model.isNotBlank() -> "disk_${model.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
+        else -> "disk_${fallback.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
+    }
+}
+
+private fun profileDiskEnduranceTbPerYear(model: String): Int? {
+    val upper = model.uppercase(java.util.Locale.US)
+    return when {
+        "MG04" in upper -> 550
+        Regex("""\bMG\d{2}""").containsMatchIn(upper) -> 550
+        "N300" in upper -> 180
+        "MN04" in upper || "MN05" in upper -> 180
+        "MN08" in upper || "MN09" in upper || "MN10" in upper -> 300
+        "IRONWOLF" in upper -> 180
+        "RED" in upper || "WD" in upper -> 180
+        else -> null
+    }
+}
+
+private fun profileStatusColor(status: String): Color = when {
+    status.contains("nguy", ignoreCase = true) ||
+        status.contains("không nên", ignoreCase = true) ||
+        status.contains("lỗi", ignoreCase = true) -> AccentRed
+    status.contains("cảnh", ignoreCase = true) ||
+        status.contains("theo dõi", ignoreCase = true) ||
+        status.contains("cao", ignoreCase = true) -> AccentOrange
+    status.contains("chưa", ignoreCase = true) -> TextSecondary
+    else -> AccentGreen
+}
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun ToshibaN300ProfileBottomSheet(
+private fun DiskProfileBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
-    var installedAt by remember { mutableStateOf(prefs.getLong("toshiba_n300_installed_at", 0L)) }
     var showTrackingConfirm by remember { mutableStateOf(false) }
     var showResetTrackingConfirm by remember { mutableStateOf(false) }
     var writePanelExpanded by remember { mutableStateOf(false) }
     var operationMode by remember { mutableStateOf(prefs.getString("operation_mode", "balanced") ?: "balanced") }
+    val hddDisk = viewModel.systemStatus.diskParts
+        .filter { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
+        .sortedByDescending { it.mount.startsWith("/srv/dev-disk-by-label-data") }
+        .maxByOrNull { parseProfileSizeBytes(it.total) }
+    val omvDisk = selectNasTargetDisk(viewModel.omvOverview.disks)
+    val activeDiskKey = profileDiskKey(omvDisk, hddDisk?.mount ?: "unknown")
+    var installedAt by remember(activeDiskKey) {
+        val serialValue = prefs.getLong("${activeDiskKey}_installed_at", 0L)
+        val legacyValue = prefs.getLong("toshiba_n300_installed_at", 0L)
+        mutableStateOf(if (serialValue > 0L) serialValue else legacyValue)
+    }
     val isTrackingNewDisk = installedAt > 0L
-    val hddDisk = viewModel.systemStatus.diskParts.find { it.mount != "/" }
-    val usedPercent = hddDisk?.percent ?: viewModel.systemStatus.disk
-        .replace("%", "")
-        .trim()
-        .toFloatOrNull()
-        ?: 0f
+    val usedPercent = hddDisk?.percent ?: profilePercent(viewModel.systemStatus.disk)
     val remainingPercent = (100f - usedPercent).coerceIn(0f, 100f)
-    val estimatedFreeTiB = 3.6f * remainingPercent / 100f
-    val dailyBudgetGb = if (isTrackingNewDisk) 493 else 0
-    val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else 0
+    val fsBytes = viewModel.omvOverview.filesystems
+        .filter { it.mountpoint != "/" && !it.mountpoint.startsWith("/mnt/usb-import") }
+        .sortedByDescending { it.mountpoint.startsWith("/srv/dev-disk-by-label-data") }
+        .maxOfOrNull { it.sizeBytes }
+        ?: 0L
+    val totalBytes = listOf(
+        fsBytes,
+        parseProfileSizeBytes(hddDisk?.total ?: ""),
+        parseProfileSizeBytes(omvDisk?.size ?: "")
+    ).maxOrNull() ?: 0L
+    val totalTiB = if (totalBytes > 0L) totalBytes / (1024.0 * 1024.0 * 1024.0 * 1024.0) else 0.0
+    val estimatedFreeTiB = (totalTiB * remainingPercent / 100.0).toFloat()
+    val diskModel = omvDisk?.model?.takeIf { it.isNotBlank() } ?: "Ổ dữ liệu NAS"
+    val diskSerial = omvDisk?.serial?.takeIf { it.isNotBlank() } ?: "Chưa đọc được serial"
+    val enduranceTbPerYear = profileDiskEnduranceTbPerYear(diskModel)
+    val dailyBudgetGb = enduranceTbPerYear?.let { ((it * 1024f) / 365f).toInt() } ?: 0
+    val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else null
     val activeRecordings = if (isTrackingNewDisk) viewModel.activeLivestreams.size else 0
+    val completedLivestreamLogsToday = viewModel.systemLogsList.filter { log ->
+        log.module.equals("Livestream", ignoreCase = true) &&
+            log.message.contains("đã ghi xong", ignoreCase = true) &&
+            profileIsToday(log.timestamp)
+    }
+    val completedLivestreamSessionsToday = if (isTrackingNewDisk) completedLivestreamLogsToday.count { log ->
+        !log.message.contains("(0 B)", ignoreCase = true)
+    } else 0
+    val completedLivestreamBytesToday = if (isTrackingNewDisk) completedLivestreamLogsToday.sumOf { log ->
+        profileParseLoggedSizeBytes(log.message)
+    } else 0L
+    val livestreamSessionsToday = activeRecordings + completedLivestreamSessionsToday
     val smartTemp = viewModel.smartInfo.temperature
         .replace("Â°C", "°C")
         .replace("--", "Chưa có dữ liệu")
     val smartStatus = viewModel.smartInfo.status
+    val diskHealth = viewModel.diskHealthCurrent
+    val healthScore = diskHealth?.score
     val trialStatus = when {
+        isTrackingNewDisk && healthScore != null && healthScore < 60 -> "Cần kiểm tra"
         !isTrackingNewDisk -> "Chưa theo dõi"
         smartStatus.contains("PASSED", ignoreCase = true) || smartStatus.equals("OK", ignoreCase = true) -> "Ổn định"
         smartStatus.contains("Đang tải", ignoreCase = true) -> "Đang cập nhật"
@@ -2006,14 +2153,14 @@ private fun ToshibaN300ProfileBottomSheet(
         "Chưa đặt"
     }
     val trialDays = if (installedAt > 0L) {
-        (((System.currentTimeMillis() - installedAt) / 86_400_000L) + 1L).coerceIn(1L, 999L).toInt()
+        ((System.currentTimeMillis() - installedAt) / 86_400_000L).coerceIn(0L, 999L).toInt()
     } else 0
     val trialLabel = when {
         installedAt == 0L -> "Chưa bắt đầu"
         trialDays <= 7 -> "Ngày $trialDays/7"
         else -> "Đã hoàn tất"
     }
-    val tempValue = if (isTrackingNewDisk) smartTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() else null
+    val tempValue = if (isTrackingNewDisk) profileTempValue(smartTemp) ?: diskHealth?.tempC?.toFloat() else null
     val tempStatus = when {
         !isTrackingNewDisk -> "0°C"
         tempValue == null -> "Chưa có dữ liệu"
@@ -2026,9 +2173,11 @@ private fun ToshibaN300ProfileBottomSheet(
         state.contains("DL", ignoreCase = false) || state == "downloading" || state == "stalledDL" || state == "forcedDL" || state == "metaDL"
     } else 0
     val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
-    val estimatedActualWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
+    val estimatedActiveWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
+    val completedLivestreamWriteGb = (completedLivestreamBytesToday / (1024.0 * 1024.0 * 1024.0)).toInt()
+    val estimatedActualWriteGb = estimatedActiveWriteGb + completedLivestreamWriteGb
     val actualForecastDays = if (isTrackingNewDisk && estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
-    val monthlyBudgetTb = if (isTrackingNewDisk) 15 else 0
+    val monthlyBudgetTb = enduranceTbPerYear?.let { it / 12 } ?: 0
     val backupTasks = if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
     val writeRiskLabel = when {
         !isTrackingNewDisk -> "Chưa theo dõi"
@@ -2037,20 +2186,21 @@ private fun ToshibaN300ProfileBottomSheet(
         heavyWriteTasks == 1 -> "Tải ghi nhẹ"
         else -> "Không có tác vụ ghi"
     }
-    val cpuLoad = viewModel.systemStatus.cpu.replace("%", "").trim().toFloatOrNull() ?: 0f
-    val ramLoad = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull() ?: 0f
+    val cpuLoad = profilePercent(viewModel.systemStatus.cpu)
+    val ramLoad = profilePercent(viewModel.systemStatus.ramPercent)
     val storageUsage = viewModel.storageFolderUsage
     val trashUsage = storageUsage.firstOrNull { it.path == ".trash" }
     val trashWarning = if ((trashUsage?.sizeBytes ?: 0L) > 50L * 1024L * 1024L * 1024L) "Nên dọn thùng rác" else "Thùng rác ổn"
     val fillWarning = when {
         !isTrackingNewDisk -> "Chưa theo dõi"
-        actualForecastDays in 1..7 -> "Cảnh báo 7 ngày"
-        actualForecastDays in 8..14 -> "Cảnh báo 14 ngày"
-        actualForecastDays in 15..30 -> "Cảnh báo 30 ngày"
+        actualForecastDays != null && actualForecastDays in 1..7 -> "Cảnh báo 7 ngày"
+        actualForecastDays != null && actualForecastDays in 8..14 -> "Cảnh báo 14 ngày"
+        actualForecastDays != null && actualForecastDays in 15..30 -> "Cảnh báo 30 ngày"
         else -> "Dung lượng ổn"
     }
     val livestreamReady = when {
         !isTrackingNewDisk -> "Chưa theo dõi"
+        healthScore != null && healthScore < 60 -> "SMART cảnh báo"
         remainingPercent < 5f -> "Không nên ghi"
         tempValue != null && tempValue >= 50f -> "Nhiệt độ cao"
         heavyWriteTasks >= 4 -> "Đang tải cao"
@@ -2059,16 +2209,17 @@ private fun ToshibaN300ProfileBottomSheet(
     }
     val operationAdvice = when (livestreamReady) {
         "Sẵn sàng ghi" -> "NAS đủ điều kiện ghi livestream theo dữ liệu hiện tại."
-        "Chưa theo dõi" -> "Hãy đặt mốc theo dõi sau khi lắp Toshiba N300 4TB."
+        "Chưa theo dõi" -> "Hãy đặt mốc theo dõi cho ổ dữ liệu hiện tại: $diskModel."
         "Không nên ghi" -> "Dung lượng trống thấp, nên dọn dữ liệu trước khi ghi thêm."
         "Nhiệt độ cao" -> "Nên bật quạt hoặc giảm tác vụ ghi cho đến khi ổ mát hơn."
         "Đang tải cao" -> "Nên tránh chạy thêm livestream khi nhiều tác vụ ghi đang hoạt động."
+        "SMART cảnh báo" -> "SMART/disk health đang cảnh báo, nên kiểm tra ổ trước khi ghi thêm."
         else -> "Nên chờ CPU/RAM ổn định trước khi bắt đầu ghi livestream."
     }
     val nasHealthState = when {
-        !isTrackingNewDisk -> "Chưa theo dõi ổ mới"
+        !isTrackingNewDisk -> "Chưa theo dõi ổ"
         livestreamReady == "Sẵn sàng ghi" && ramLoad < 80f && cpuLoad < 75f -> "Ổn định"
-        livestreamReady == "Không nên ghi" || ramLoad >= 90f || cpuLoad >= 90f -> "Không nên ghi thêm"
+        livestreamReady == "Không nên ghi" || livestreamReady == "SMART cảnh báo" || ramLoad >= 90f || cpuLoad >= 90f -> "Không nên ghi thêm"
         else -> "Cần theo dõi"
     }
     val quietWindowAdvice = if (heavyWriteTasks > 0) "Nên tránh chạy quét file/thumbnail khi đang ghi." else "Có thể chạy tác vụ bảo trì nhẹ."
@@ -2082,9 +2233,42 @@ private fun ToshibaN300ProfileBottomSheet(
         "eco" -> "Tiết kiệm tài nguyên"
         else -> "Cân bằng"
     }
+    val realWriteDataLabel = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
+        estimatedActualWriteGb > 0 -> "~$estimatedActualWriteGb GB/ngày"
+        else -> "Đang nhàn rỗi"
+    }
+    val actualForecastLabel = when {
+        !isTrackingNewDisk -> "Chưa theo dõi"
+        actualForecastDays != null -> "~$actualForecastDays ngày"
+        estimatedActualWriteGb == 0 -> "Không có tải ghi"
+        else -> "Chưa rõ"
+    }
+    val forecastSubtitle = when {
+        !isTrackingNewDisk -> "Chưa bắt đầu theo dõi"
+        estimatedActualWriteGb > 0 -> "Theo tải ghi hiện tại"
+        dailyBudgetGb > 0 -> "Theo ngân sách workload"
+        else -> "Thiếu thông số workload"
+    }
+    val smartRiskText = when {
+        healthScore == null -> smartStatus
+        healthScore >= 80 -> "Tốt ${healthScore}/100"
+        healthScore >= 60 -> "Cảnh báo ${healthScore}/100"
+        else -> "Nguy hiểm ${healthScore}/100"
+    }
+    fun profileChecklistStatus(targetDay: Int): String = when {
+        !isTrackingNewDisk -> "Chưa bắt đầu"
+        trialDays < targetDay -> "Còn ${targetDay - trialDays} ngày"
+        trialDays == targetDay -> "Đến hạn"
+        else -> "Quá hạn ${trialDays - targetDay} ngày"
+    }
 
     LaunchedEffect(Unit) {
+        viewModel.fetchSmartData()
+        viewModel.fetchDiskHealth()
+        viewModel.fetchOmvOverview()
         viewModel.fetchStorageUsage()
+        viewModel.loadSystemLogs()
     }
 
     if (showTrackingConfirm) {
@@ -2094,7 +2278,7 @@ private fun ToshibaN300ProfileBottomSheet(
             title = { Text("Xác nhận theo dõi ổ mới", color = TextPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "Chỉ đặt mốc theo dõi sau khi đã lắp Toshiba N300 4TB vào NAS. Mốc này dùng để tính checklist 1 ngày, 7 ngày và 30 ngày.",
+                    "Chỉ đặt mốc theo dõi sau khi đã xác nhận ổ dữ liệu hiện tại là ổ cần theo dõi. Mốc này gắn với model/serial ổ để tính checklist 24 giờ, 7 ngày và 30 ngày.",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -2102,7 +2286,12 @@ private fun ToshibaN300ProfileBottomSheet(
             confirmButton = {
                 TextButton(onClick = {
                     val now = System.currentTimeMillis()
-                    prefs.edit().putLong("toshiba_n300_installed_at", now).apply()
+                    prefs.edit()
+                        .putLong("${activeDiskKey}_installed_at", now)
+                        .putString("${activeDiskKey}_model", diskModel)
+                        .putString("${activeDiskKey}_serial", diskSerial)
+                        .apply()
+                    viewModel.logUserAction("DiskProfile", "dat moc theo doi o $diskModel ($diskSerial).")
                     installedAt = now
                     showTrackingConfirm = false
                 }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
@@ -2126,7 +2315,12 @@ private fun ToshibaN300ProfileBottomSheet(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    prefs.edit().remove("toshiba_n300_installed_at").apply()
+                    prefs.edit()
+                        .remove("${activeDiskKey}_installed_at")
+                        .remove("${activeDiskKey}_model")
+                        .remove("${activeDiskKey}_serial")
+                        .apply()
+                    viewModel.logUserAction("DiskProfile", "dat lai moc theo doi o $diskModel ($diskSerial).", "WARNING")
                     installedAt = 0L
                     showResetTrackingConfirm = false
                 }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
@@ -2159,7 +2353,7 @@ private fun ToshibaN300ProfileBottomSheet(
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text("Hồ sơ ổ cứng mới", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text("Toshiba N300 4TB NAS • 7200 RPM • 24/7", color = TextSecondary, fontSize = 11.sp)
+                        Text("$diskModel • $diskSerial", color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2192,24 +2386,24 @@ private fun ToshibaN300ProfileBottomSheet(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
                     title = "Dung lượng",
-                    value = if (isTrackingNewDisk) "3.6 TiB" else "0 TiB",
-                    subtitle = if (isTrackingNewDisk) "Khả dụng sau định dạng" else "Chưa lắp ổ mới",
+                    value = if (isTrackingNewDisk) profileSizeLabel(totalBytes) else "Chưa theo dõi",
+                    subtitle = if (isTrackingNewDisk) "Trống ~%.2f TiB • dùng %.0f%%".format(java.util.Locale.US, estimatedFreeTiB, usedPercent) else "Nhấn đặt mốc để bắt đầu",
                     icon = Icons.Default.Inventory2,
                     color = AccentCyan,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
                     title = "Ngân sách ghi",
-                    value = if (isTrackingNewDisk) "180 TB/năm" else "0 TB/năm",
-                    subtitle = if (isTrackingNewDisk) "~493 GB/ngày" else "Chưa bắt đầu theo dõi",
+                    value = if (isTrackingNewDisk && enduranceTbPerYear != null) "$enduranceTbPerYear TB/năm" else "Chưa rõ",
+                    subtitle = if (isTrackingNewDisk && dailyBudgetGb > 0) "~$dailyBudgetGb GB/ngày" else "Không có thông số workload",
                     icon = Icons.Default.EditNote,
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
                     title = "Livestream",
-                    value = "$activeRecordings phiên",
-                    subtitle = if (isTrackingNewDisk) "Đang ghi hiện tại" else "Chưa tính theo ổ mới",
+                    value = "$livestreamSessionsToday phiên",
+                    subtitle = if (isTrackingNewDisk) "Đang ghi $activeRecordings • xong hôm nay $completedLivestreamSessionsToday" else "Chưa tính theo ổ mới",
                     icon = Icons.Default.Videocam,
                     color = AccentPink,
                     modifier = Modifier.weight(1f)
@@ -2226,9 +2420,9 @@ private fun ToshibaN300ProfileBottomSheet(
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
-                    title = "Nhiệt độ N300",
+                    title = "Nhiệt độ ổ",
                     value = tempStatus,
-                    subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Hiện tại: 0°C",
+                    subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Chưa theo dõi",
                     icon = Icons.Default.EventAvailable,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
@@ -2246,8 +2440,8 @@ private fun ToshibaN300ProfileBottomSheet(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
                     title = "Ghi hôm nay",
-                    value = "~$estimatedActualWriteGb GB",
-                    subtitle = "Ước tính từ tác vụ",
+                    value = if (completedLivestreamBytesToday > 0L) com.nas.naswebdav.utils.FormatUtils.formatBytes(completedLivestreamBytesToday) else "~$estimatedActualWriteGb GB",
+                    subtitle = if (completedLivestreamBytesToday > 0L) "Livestream đã hoàn tất hôm nay" else "Ước tính từ tác vụ",
                     icon = Icons.Default.Today,
                     color = AccentCyan,
                     modifier = Modifier.weight(1f)
@@ -2255,15 +2449,15 @@ private fun ToshibaN300ProfileBottomSheet(
                 HardwareMetricCell(
                     title = "Ngân sách tháng",
                     value = "$monthlyBudgetTb TB",
-                    subtitle = "Theo 180 TB/năm",
+                    subtitle = enduranceTbPerYear?.let { "Theo $it TB/năm" } ?: "Chưa có thông số",
                     icon = Icons.Default.CalendarMonth,
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
                     title = "Dự báo thực tế",
-                    value = "~$actualForecastDays ngày",
-                    subtitle = if (!isTrackingNewDisk) "Chưa bắt đầu theo dõi" else if (estimatedActualWriteGb > 0) "Theo tải ghi hiện tại" else "Theo mức tham chiếu",
+                    value = actualForecastLabel,
+                    subtitle = forecastSubtitle,
                     icon = Icons.Default.QueryStats,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
@@ -2274,7 +2468,7 @@ private fun ToshibaN300ProfileBottomSheet(
                 HardwareMetricCell(
                     title = "Cảnh báo đầy ổ",
                     value = fillWarning,
-                    subtitle = if (isTrackingNewDisk) "Dự báo: ~$actualForecastDays ngày" else "Chưa bắt đầu theo dõi",
+                    subtitle = if (isTrackingNewDisk) "Dự báo: $actualForecastLabel" else "Chưa bắt đầu theo dõi",
                     icon = Icons.Default.WarningAmber,
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
@@ -2289,10 +2483,10 @@ private fun ToshibaN300ProfileBottomSheet(
                 )
                 HardwareMetricCell(
                     title = "Dữ liệu ghi thật",
-                    value = "Chưa bật",
-                    subtitle = "Cần NAS API ghi lịch sử",
+                    value = realWriteDataLabel,
+                    subtitle = smartRiskText,
                     icon = Icons.Default.History,
-                    color = TextSecondary,
+                    color = profileStatusColor(smartRiskText),
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -2328,9 +2522,18 @@ private fun ToshibaN300ProfileBottomSheet(
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OperationModeChip("stream", "Ghi live", operationMode, prefs) { operationMode = it }
-                    OperationModeChip("balanced", "Cân bằng", operationMode, prefs) { operationMode = it }
-                    OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) { operationMode = it }
+                    OperationModeChip("stream", "Ghi live", operationMode, prefs) {
+                        operationMode = it
+                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                    }
+                    OperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
+                        operationMode = it
+                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                    }
+                    OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
+                        operationMode = it
+                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                    }
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -2340,7 +2543,7 @@ private fun ToshibaN300ProfileBottomSheet(
                     value = nasHealthState,
                     subtitle = "CPU ${cpuLoad.toInt()}% • RAM ${ramLoad.toInt()}%",
                     icon = Icons.Default.MonitorHeart,
-                    color = if (nasHealthState == "Ổn định") AccentGreen else AccentOrange,
+                    color = profileStatusColor(nasHealthState),
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
@@ -2397,15 +2600,15 @@ private fun ToshibaN300ProfileBottomSheet(
                     Text("Nhật ký vận hành hôm nay", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(4.dp))
-                WriteTaskRow("Livestream đang ghi", "$activeRecordings phiên", AccentPink)
+                WriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
                 WriteTaskRow("Tải ghi hiện tại", writeRiskLabel, AccentOrange)
                 WriteTaskRow("Trạng thái ghi", livestreamReady, if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange)
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                NewDiskChecklistItem("Sau 24 giờ", if (isTrackingNewDisk && trialDays >= 1) "Đến hạn" else "Chưa bắt đầu", Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
-                NewDiskChecklistItem("Sau 7 ngày", if (isTrackingNewDisk && trialDays >= 7) "Đến hạn" else "Chưa đến hạn", Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
-                NewDiskChecklistItem("Sau 30 ngày", if (isTrackingNewDisk && trialDays >= 30) "Đến hạn" else "Định kỳ", Icons.Default.EventRepeat, AccentOrange, Modifier.weight(1f))
+                NewDiskChecklistItem("Sau 24 giờ", profileChecklistStatus(1), Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
+                NewDiskChecklistItem("Sau 7 ngày", profileChecklistStatus(7), Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
+                NewDiskChecklistItem("Sau 30 ngày", profileChecklistStatus(30), Icons.Default.EventRepeat, AccentOrange, Modifier.weight(1f))
             }
             Spacer(Modifier.height(6.dp))
             Column(
@@ -2435,7 +2638,8 @@ private fun ToshibaN300ProfileBottomSheet(
                 androidx.compose.animation.AnimatedVisibility(visible = writePanelExpanded) {
                     Column {
                         Spacer(Modifier.height(6.dp))
-                        WriteTaskRow("Livestream đang ghi", "$activeRecordings phiên", AccentPink)
+                        WriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
+                        WriteTaskRow("Đã hoàn tất hôm nay", "$completedLivestreamSessionsToday phiên • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(completedLivestreamBytesToday)}", AccentGreen)
                         WriteTaskRow("Torrent đang tải", "$downloadTasks tác vụ", AccentCyan)
                         WriteTaskRow("Sao lưu nền", "$backupTasks tác vụ", AccentGreen)
                     }
@@ -2542,7 +2746,14 @@ private fun HardwareMetricCell(
 }
 
 @Composable
-fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Context) {
+fun SystemStatusCards(
+    viewModel: WebDavViewModel,
+    mContext: android.content.Context,
+    onOpenAutoBackup: () -> Unit = {},
+    onOpenLivestream: () -> Unit = {},
+    onOpenUsbImport: () -> Unit = {},
+    onOpenDuplicateScan: () -> Unit = {}
+) {
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         viewModel.fetchThumbStatus()
@@ -2576,18 +2787,45 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
     
     // 4. Livestream
     val activeStreams = viewModel.activeLivestreams
+    val usbImport = viewModel.usbImportState
+    val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
+    LaunchedEffect(Unit) {
+        viewModel.fetchUsbImportStatus()
+    }
+    LaunchedEffect(usbImport.status) {
+        while (usbImport.status == "copying" || usbImport.status == "cancelling") {
+            kotlinx.coroutines.delay(1000)
+            viewModel.fetchUsbImportStatus()
+        }
+    }
+    val usbImportProgress = if (usbImport.bytesTotal > 0L) {
+        usbImport.bytesProcessed.toFloat() / usbImport.bytesTotal.toFloat()
+    } else if (usbImport.filesTotal > 0) {
+        (usbImport.filesDone + usbImport.filesSkipped + usbImport.filesFailed).toFloat() / usbImport.filesTotal.toFloat()
+    } else 0f
+    fun usbImportEtaLabel(seconds: Long): String {
+        if (seconds <= 0L) return "--"
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return when {
+            h > 0 -> "${h}h ${m}m"
+            m > 0 -> "${m}m ${s}s"
+            else -> "${s}s"
+        }
+    }
 
     // Thumbnail generator is an internal maintenance job. Keep it out of the
     // user-facing background task panel so livestream/sync progress stays clean.
     val showThumbTask = false
-    val hasAnyTasks = dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty()
+    val hasAnyTasks = dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty()
 
     if (!hasAnyTasks) return
 
     Column(Modifier.fillMaxWidth()) {
         // Mo doc quyen: panel mo dong bo voi ExclusivePanelState
         val tasksExpanded = ExclusivePanelState.current.value == "tasks"
-        val activeCount = listOf(dupIsActive, autoBackupIsActive, activeStreams.isNotEmpty()).count { it }
+        val activeCount = listOf(dupIsActive, autoBackupIsActive, usbImportIsActive, activeStreams.isNotEmpty()).count { it }
         Spacer(Modifier.height(8.dp))
 
         Card(
@@ -2630,7 +2868,13 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                         // --- THUMBNAIL ---
                         if (showThumbTask && thumbIsActive) {
                             Spacer(Modifier.height(10.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onOpenDuplicateScan() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.PhotoLibrary, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(18.dp))
                                 }
@@ -2653,7 +2897,7 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                             }
                         }
 
-                        if (showThumbTask && thumbIsActive && (dupIsActive || autoBackupIsActive || activeStreams.isNotEmpty())) {
+                        if (showThumbTask && thumbIsActive && (dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
                             HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
@@ -2686,13 +2930,19 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                             }
                         }
 
-                        if (dupIsActive && (autoBackupIsActive || activeStreams.isNotEmpty())) {
+                        if (dupIsActive && (autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
                             HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- AUTO BACKUP ---
                         if (autoBackupIsActive) {
-                            Row(verticalAlignment = Alignment.Top) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onOpenAutoBackup() },
+                                verticalAlignment = Alignment.Top
+                            ) {
                                 Box(
                                     Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape),
                                     contentAlignment = Alignment.Center
@@ -2739,13 +2989,85 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                             }
                         }
 
-                        if (autoBackupIsActive && activeStreams.isNotEmpty()) {
+                        if (autoBackupIsActive && (usbImportIsActive || activeStreams.isNotEmpty())) {
+                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                        }
+
+                        // --- USB IMPORT ---
+                        if (usbImportIsActive) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onOpenUsbImport() },
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Box(
+                                    Modifier.size(38.dp).background(Color(0xFF26A69A).copy(alpha = 0.15f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Usb, null, tint = Color(0xFF26A69A), modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("USB Import", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(
+                                        if (usbImport.status == "cancelling") "Đang hủy copy USB" else "Đang copy từ ${usbImport.activeDevice.ifBlank { "ổ USB" }}",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF26A69A)
+                                    )
+                                    if (usbImport.currentFile.isNotBlank()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text("Tệp: ${usbImport.currentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (usbImport.currentSource.isNotBlank()) {
+                                        Text("Từ: ${usbImport.currentSource}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    if (usbImport.currentDest.isNotBlank()) {
+                                        Text("Lưu: ${usbImport.currentDest}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { usbImportProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                        color = Color(0xFF26A69A),
+                                        trackColor = Color(0xFF161616)
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            "${usbImport.filesDone}/${usbImport.filesTotal} tệp • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(usbImport.bytesProcessed)}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = TextSecondary
+                                        )
+                                        Text(
+                                            "${com.nas.naswebdav.utils.FormatUtils.formatBytes(usbImport.copySpeedBps)}/s • ETA ${usbImportEtaLabel(usbImport.etaSeconds)}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF26A69A)
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { viewModel.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+
+                        if (usbImportIsActive && activeStreams.isNotEmpty()) {
                             HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- LIVESTREAM ---
                         if (activeStreams.isNotEmpty()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onOpenLivestream() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Box(Modifier.size(30.dp).background(Color(0xFFFF7043).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.Videocam, null, tint = Color(0xFFFF7043), modifier = Modifier.size(16.dp))
                                 }
@@ -2775,7 +3097,15 @@ fun SystemStatusCards(viewModel: WebDavViewModel, mContext: android.content.Cont
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
 
-                                    Column(Modifier.fillMaxWidth().padding(start = 38.dp, top = 4.dp)) {
+                                    Column(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 38.dp, top = 4.dp)
+                                            .clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) { onOpenLivestream() }
+                                    ) {
                                         // Hien "@user" neu co watchUsername (tu /api/livestream/status hoac local extract),
                                         // fallback ve "${platform} • ${jobId.takeLast(6)}" cho cac job khong gan voi user (vd FB/YT).
                                         val primaryLabel = if (job.watchUsername.isNotBlank())

@@ -95,7 +95,16 @@ data class SpeedTestResult(val writeSpeed: String, val readSpeed: String)
 data class OmvServiceInfo(val name: String, val title: String, val enabled: Boolean, val running: Boolean)
 data class OmvNetworkInfo(val name: String, val address: String, val mac: String, val speed: Int, val state: String, val gateway: String, val wol: Boolean)
 data class OmvFilesystem(val device: String, val label: String, val mountpoint: String, val used: String, val sizeBytes: Long, val percentage: Int, val description: String)
-data class OmvDiskInfo(val name: String, val model: String, val serial: String, val size: String, val isRoot: Boolean)
+data class OmvDiskInfo(
+    val name: String,
+    val model: String,
+    val serial: String,
+    val size: String,
+    val isRoot: Boolean,
+    val device: String = "",
+    val isTargetHdd: Boolean = false,
+    val isUsbImport: Boolean = false
+)
 data class OmvOverview(
     val hostname: String = "", val omvVersion: String = "", val kernel: String = "",
     val services: List<OmvServiceInfo> = emptyList(),
@@ -391,6 +400,46 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var backupSchedule by mutableStateOf(BackupSchedule())
     var backupScheduleMessage by mutableStateOf("")
 
+    // USB Import state (NAS-side daemon)
+    data class UsbImportSettings(
+        val enabled: Boolean = true,
+        val destFolder: String = "USB Import",
+        val copyMode: String = "new_only",
+        val autoMount: Boolean = true,
+        val mountReadonly: Boolean = true,
+        val pollSeconds: Int = 15,
+    )
+    data class UsbImportState(
+        val enabled: Boolean = true,
+        val status: String = "idle",
+        val message: String = "",
+        val activeDevice: String = "",
+        val activeMount: String = "",
+        val destDir: String = "",
+        val startedAt: Long = 0L,
+        val finishedAt: Long = 0L,
+        val filesTotal: Int = 0,
+        val filesDone: Int = 0,
+        val filesSkipped: Int = 0,
+        val filesFailed: Int = 0,
+        val bytesDone: Long = 0L,
+        val bytesProcessed: Long = 0L,
+        val bytesTotal: Long = 0L,
+        val currentFile: String = "",
+        val currentSource: String = "",
+        val currentDest: String = "",
+        val currentFileBytesDone: Long = 0L,
+        val currentFileBytesTotal: Long = 0L,
+        val copySpeedBps: Long = 0L,
+        val etaSeconds: Long = 0L,
+        val lastProgressAt: Long = 0L,
+        val lastError: String = "",
+        val settings: UsbImportSettings = UsbImportSettings(),
+    )
+    var usbImportState by mutableStateOf(UsbImportState())
+    var usbImportMessage by mutableStateOf("")
+    var isUsbImportLoading by mutableStateOf(false)
+
     // Sleep Schedule (HDD spindown / suspend) state
     data class SleepSchedule(
         val enabled: Boolean = false,
@@ -547,6 +596,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var commonDialogMessage by mutableStateOf("")
     var commonDialogType by mutableStateOf(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS)
     var showCommonDialog by mutableStateOf(false)
+
+    fun logUserAction(module: String, message: String, type: String = "INFO") {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.addSystemLog(type, module, "Nguoi dung: $message")
+                withContext(Dispatchers.Main) { loadSystemLogs() }
+            } catch (e: Exception) {
+                android.util.Log.w("UserActionLog", "log failed: ${e.message}")
+            }
+        }
+    }
+
     // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
     private var lastNetworkErrorDialogAt = 0L
     internal var lastFanModeSettingTime = 0L
@@ -1087,9 +1148,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/add", org.json.JSONObject().put("username", clean))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: thêm tài khoản theo dõi live @$clean.")
                 // Bat job ngay neu user vua them dang live - khong cho 15p chu ky Discovery.
                 syncLivestreamStateWithServer(context)
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: thêm tài khoản @$clean thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được người dùng"}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
@@ -1102,7 +1165,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/remove", org.json.JSONObject().put("username", username))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: xoá tài khoản theo dõi live @$username.")
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: xoá tài khoản @$username thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không xoá được người dùng"}" }
             }
         }
@@ -1118,7 +1183,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/settings", body)
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
+                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: cập nhật khung loại trừ TikTok Watch (${if (enabled) "bật" else "tắt"}, $start-$end).")
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: cập nhật cấu hình TikTok Watch thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không lưu được cấu hình"}" }
             }
         }
@@ -1170,6 +1237,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
                         val platform = json.optString("platform", "")
+                        repository.addSystemLog("INFO", "Livestream", "Nguoi dung: bat dau ghi livestream ${tiktokUsername.ifBlank { url.take(80) }} chat luong $quality.")
 
                         // Thêm vào danh sách active (mặc định trạng thái recording)
                         withContext(Dispatchers.Main) {
@@ -1205,6 +1273,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             commonDialogMessage = errMsg
                             showCommonDialog    = true
                         }
+                        repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: bat dau ghi livestream that bai: ${errMsg.take(120)}")
                     }
                 }
             } catch (e: Exception) {
@@ -1233,6 +1302,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     commonDialogMessage = errMsg
                     showCommonDialog    = true
                 }
+                repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: bat dau ghi livestream that bai: ${errMsg.take(120)}")
             } finally {
                 withContext(Dispatchers.Main) {
                     isStartingLivestream = false
@@ -1465,11 +1535,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
 
                 localApiClient.newCall(request).execute().use { }
+                repository.addSystemLog("INFO", "Livestream", "Nguoi dung: dung ghi livestream job $jobId.")
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
                     livestreamMessage   = "⏹ Đã dừng ghi hình. File đang được xử lý..."
                 }
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: dung ghi livestream job $jobId that bai: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }
             }
         }
@@ -1819,7 +1891,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val user = webDavManager.currentUser
                     val pass = webDavManager.currentPass
                     withContext(Dispatchers.Main) {
-                        connectionStatus = if (onLan) "🏠 Chuyển sang LAN – Gigabit" else "🌐 Chuyển sang Tailscale VPN"
+                        connectionStatus = if (onLan) "Chuyển sang LAN - Gigabit" else "Chuyển sang Tailscale VPN"
                     }
                     withContext(Dispatchers.IO) {
                         try {
@@ -1843,7 +1915,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                     withContext(Dispatchers.Main) {
                         currentUrl = safeActive
-                        connectionStatus = if (onLan) "🏠 LAN – Gigabit" else "🌐 Tailscale VPN"
+                        connectionStatus = if (onLan) "LAN - Gigabit" else "Tailscale VPN"
                     }
                     repository.addSystemLog(
                         "INFO", "SmartSwitch",
@@ -1852,6 +1924,43 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             } catch (e: Exception) {
                 android.util.Log.w("SmartSwitch", "Lỗi kiểm tra mạng thông minh: ${e.message}")
+            }
+        }
+    }
+
+    private var lastForegroundRefreshAt = 0L
+
+    fun refreshNasStateOnForeground(context: android.content.Context, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastForegroundRefreshAt < 2500L) return
+        lastForegroundRefreshAt = now
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (webDavManager.currentBaseUrl.isEmpty()) {
+                    val savedUrl = SmartNetworkManager.getActiveBaseUrl(context)
+                        .ifEmpty { SecurePrefsHelper.getUrl(context) }
+                    val savedUser = SecurePrefsHelper.getUser(context)
+                    val savedPass = SecurePrefsHelper.getPass(context)
+                    if (savedUrl.isNotBlank() && savedUser.isNotBlank()) {
+                        runCatching { webDavManager.connect(if (savedUrl.endsWith("/")) savedUrl else "$savedUrl/", savedUser, savedPass) }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            withContext(Dispatchers.Main) {
+                AppConfig.IS_APP_FOREGROUND = true
+                checkSmartNetwork(context)
+                listenToLocalNasApi()
+                launchDashboardRealtimeScheduler()
+                launchMetricsPolling()
+                restoreLivestreamStateIfRunning(context)
+                fetchUsbImportStatus()
+                fetchSmartData()
+                fetchDiskHealth()
+                fetchOmvOverview()
+                fetchStorageUsage()
+                loadSystemLogs()
             }
         }
     }
@@ -2848,6 +2957,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
+        logUserAction("AutoBackup", "chay dong bo anh thu cong len NAS.")
         // Cập nhật Toast hoặc Trạng thái UI để User biết
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
         commonDialogMessage = "Đã ra lệnh đồng bộ ảnh lên NAS!"
@@ -2858,6 +2968,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val newState = !AutoBackupState.isPaused.value
         AutoBackupState.isPaused.value = newState
         autoBackupIsPaused = newState
+        logUserAction("AutoBackup", if (newState) "tam dung Auto-Backup." else "tiep tuc Auto-Backup.")
     }
 
     // ==========================================
@@ -2899,11 +3010,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
+                    repository.addSystemLog(
+                        if (response.isSuccessful) "INFO" else "WARNING",
+                        "Fan",
+                        "Người dùng: đặt chế độ quạt '$mode'${if (mode == "custom" && onTemp != null && offTemp != null) " (${onTemp.toInt()}°C/${offTemp.toInt()}°C)" else ""} ${if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"}."
+                    )
                     if (!response.isSuccessful) {
                         android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: HTTP ${response.code}")
                     }
                 }
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "Fan", "Người dùng: đặt chế độ quạt '$mode' thất bại: ${e.message?.take(120)}")
                 android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { 
@@ -2980,10 +3097,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     } else {
                         "Lỗi tạo backup: ${json.optString("error", "HTTP ${resp.code}")}"
                     }
+                    repository.addSystemLog(if (resp.isSuccessful) "SUCCESS" else "WARNING", "NasBackup", "Người dùng: tạo backup cấu hình NAS ${if (resp.isSuccessful) "thành công ${json.optString("filename")}" else "thất bại HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
                 }
                 fetchNasConfigBackups()
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "NasBackup", "Người dùng: tạo backup cấu hình NAS thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
@@ -3004,6 +3123,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val text = resp.body?.string() ?: "{}"
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "NasBackup", "Người dùng: xoá backup cấu hình '$filename' ${if (resp.isSuccessful) "thành công" else "thất bại HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) {
                         nasConfigBackupMessage = if (resp.isSuccessful) "Đã xoá $filename"
                         else "Lỗi xoá: ${org.json.JSONObject(text).optString("error","HTTP ${resp.code}")}"
@@ -3011,6 +3131,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 fetchNasConfigBackups()
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "NasBackup", "Người dùng: xoá backup '$filename' thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi xoá: ${e.message}" }
             }
         }
@@ -3045,9 +3166,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     } else {
                         "Lỗi khôi phục: ${json.optString("error", "HTTP ${resp.code}")}"
                     }
+                    repository.addSystemLog(if (resp.isSuccessful) "WARNING" else "ERROR", "NasBackup", "Người dùng: khôi phục cấu hình từ '$filename' ${if (resp.isSuccessful) "thành công" else "thất bại HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
                 }
             } catch (e: Exception) {
+                repository.addSystemLog("ERROR", "NasBackup", "Người dùng: khôi phục cấu hình từ '$filename' thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi khôi phục: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
@@ -3269,13 +3392,194 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
                     val ok = resp.isSuccessful && org.json.JSONObject(body).optBoolean("saved", false)
+                    repository.addSystemLog(
+                        if (ok) "INFO" else "WARNING",
+                        "BackupSchedule",
+                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} lịch backup (${if (newSchedule.enabled) "bật" else "tắt"}, ${newSchedule.frequency}, ${newSchedule.hour}h, giữ ${newSchedule.retentionCount} bản)."
+                    )
                     withContext(Dispatchers.Main) {
                         backupScheduleMessage = if (ok) "Đã lưu lịch backup" else "Lỗi lưu"
                     }
                 }
                 fetchBackupSchedule()
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "BackupSchedule", "Người dùng: lưu lịch backup thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
+            }
+        }
+    }
+
+    // ============== USB IMPORT ==============
+    private fun parseUsbImportState(o: org.json.JSONObject): UsbImportState {
+        val settingsJson = o.optJSONObject("settings") ?: org.json.JSONObject()
+        val settings = UsbImportSettings(
+            enabled = settingsJson.optBoolean("enabled", o.optBoolean("enabled", true)),
+            destFolder = settingsJson.optString("dest_folder", "USB Import"),
+            copyMode = settingsJson.optString("copy_mode", "new_only"),
+            autoMount = settingsJson.optBoolean("auto_mount", true),
+            mountReadonly = settingsJson.optBoolean("mount_readonly", true),
+            pollSeconds = settingsJson.optInt("poll_seconds", 15),
+        )
+        return UsbImportState(
+            enabled = o.optBoolean("enabled", settings.enabled),
+            status = o.optString("status", "idle"),
+            message = o.optString("message", ""),
+            activeDevice = o.optString("active_device", ""),
+            activeMount = o.optString("active_mount", ""),
+            destDir = o.optString("dest_dir", ""),
+            startedAt = o.optLong("started_at", 0L),
+            finishedAt = o.optLong("finished_at", 0L),
+            filesTotal = o.optInt("files_total", 0),
+            filesDone = o.optInt("files_done", 0),
+            filesSkipped = o.optInt("files_skipped", 0),
+            filesFailed = o.optInt("files_failed", 0),
+            bytesDone = o.optLong("bytes_done", 0L),
+            bytesProcessed = o.optLong("bytes_processed", o.optLong("bytes_done", 0L)),
+            bytesTotal = o.optLong("bytes_total", 0L),
+            currentFile = o.optString("current_file", ""),
+            currentSource = o.optString("current_source", ""),
+            currentDest = o.optString("current_dest", ""),
+            currentFileBytesDone = o.optLong("current_file_bytes_done", 0L),
+            currentFileBytesTotal = o.optLong("current_file_bytes_total", 0L),
+            copySpeedBps = o.optLong("copy_speed_bps", 0L),
+            etaSeconds = o.optLong("eta_seconds", 0L),
+            lastProgressAt = o.optLong("last_progress_at", 0L),
+            lastError = o.optString("last_error", ""),
+            settings = settings,
+        )
+    }
+
+    fun fetchUsbImportStatus() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) { isUsbImportLoading = true }
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/usb_import/status")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) {
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }
+                        return@use
+                    }
+                    val state = parseUsbImportState(org.json.JSONObject(body))
+                    withContext(Dispatchers.Main) {
+                        usbImportState = state
+                        usbImportMessage = ""
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isUsbImportLoading = false }
+            }
+        }
+    }
+
+    fun saveUsbImportSettings(settings: UsbImportSettings) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().apply {
+                    put("enabled", settings.enabled)
+                    put("dest_folder", settings.destFolder)
+                    put("copy_mode", settings.copyMode)
+                    put("auto_mount", settings.autoMount)
+                    put("mount_readonly", settings.mountReadonly)
+                    put("poll_seconds", settings.pollSeconds)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/usb_import/settings")
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val raw = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) {
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi lưu USB Import: HTTP ${resp.code}" }
+                        return@use
+                    }
+                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val ok = resp.isSuccessful && o.optBoolean("saved", false)
+                    val stateJson = o.optJSONObject("state")
+                    repository.addSystemLog(
+                        if (ok) "INFO" else "WARNING",
+                        "USBImport",
+                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} cấu hình USB Import (${if (settings.enabled) "bật" else "tắt"}, ${settings.copyMode}, đích '${settings.destFolder}', readonly=${settings.mountReadonly})."
+                    )
+                    withContext(Dispatchers.Main) {
+                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
+                        usbImportMessage = if (ok) "Đã lưu cấu hình USB Import" else "Lỗi lưu USB Import"
+                    }
+                }
+                fetchUsbImportStatus()
+            } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "USBImport", "Người dùng: lưu cấu hình USB Import thất bại: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            }
+        }
+    }
+
+    fun startUsbImportNow() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/usb_import/start")
+                    .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val raw = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) {
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi bắt đầu USB Import: HTTP ${resp.code}" }
+                        return@use
+                    }
+                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val stateJson = o.optJSONObject("state")
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay (${o.optString("message", "không có phản hồi")}).")
+                    withContext(Dispatchers.Main) {
+                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
+                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã bắt đầu copy USB" else "Không bắt đầu được")
+                    }
+                }
+                fetchUsbImportStatus()
+            } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay thất bại: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            }
+        }
+    }
+
+    fun cancelUsbImport() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/usb_import/cancel")
+                    .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val raw = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) {
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi huỷ USB Import: HTTP ${resp.code}" }
+                        return@use
+                    }
+                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val stateJson = o.optJSONObject("state")
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: gửi lệnh hủy USB Import (${if (resp.isSuccessful) "đã gửi" else "thất bại"}).")
+                    withContext(Dispatchers.Main) {
+                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
+                        usbImportMessage = if (resp.isSuccessful) "Đã gửi lệnh hủy" else "Không hủy được"
+                    }
+                }
+                fetchUsbImportStatus()
+            } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             }
         }
     }
@@ -3331,12 +3635,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
                     val ok = resp.isSuccessful && org.json.JSONObject(body).optBoolean("saved", false)
+                    repository.addSystemLog(
+                        if (ok) "INFO" else "WARNING",
+                        "SleepSchedule",
+                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} lịch ngủ NAS (${if (newSchedule.enabled) "bật" else "tắt"}, ${newSchedule.mode}, ${newSchedule.startHour}h-${newSchedule.endHour}h, idleOnly=${newSchedule.idleOnly})."
+                    )
                     withContext(Dispatchers.Main) {
                         sleepScheduleMessage = if (ok) "Đã lưu lịch ngủ NAS" else "Lỗi lưu"
                     }
                 }
                 fetchSleepSchedule()
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "SleepSchedule", "Người dùng: lưu lịch ngủ NAS thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { sleepScheduleMessage = "Lỗi: ${e.message}" }
             }
         }
@@ -3356,10 +3666,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val o = org.json.JSONObject(body)
                     val ok = o.optBoolean("ok", false)
                     val msg = o.optString("msg", "")
+                    repository.addSystemLog(if (ok) "INFO" else "WARNING", "SleepSchedule", "Nguoi dung: yeu cau HDD spindown ngay (${if (ok) "thanh cong" else "that bai"}: $msg).")
                     withContext(Dispatchers.Main) { onDone(ok, msg) }
                 }
                 fetchSleepSchedule()
             } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "SleepSchedule", "Nguoi dung: yeu cau HDD spindown ngay that bai: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { onDone(false, e.message ?: "error") }
             }
         }
@@ -4085,7 +4397,16 @@ fun WebDavViewModel.fetchOmvOverview() {
                     }
                     val disks = (0 until diskArr.length()).map { i ->
                         val d = diskArr.getJSONObject(i)
-                        OmvDiskInfo(d.optString("name"), d.optString("model"), d.optString("serial"), d.optString("size"), d.optBoolean("is_root"))
+                        OmvDiskInfo(
+                            d.optString("name"),
+                            d.optString("model"),
+                            d.optString("serial"),
+                            d.optString("size"),
+                            d.optBoolean("is_root"),
+                            d.optString("device"),
+                            d.optBoolean("is_target_hdd"),
+                            d.optBoolean("is_usb_import")
+                        )
                     }
                     withContext(Dispatchers.Main) {
                         omvOverview = OmvOverview(
@@ -4265,8 +4586,13 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
             val body = org.json.JSONObject().put("action", if (turnOn) "start" else "stop").toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").post(body).build()
             val client = localApiClient.newBuilder().readTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
-            client.newCall(request).execute().use { response -> if (response.isSuccessful) withContext(Dispatchers.Main) { isDockerRunning = turnOn } }
-        } catch (_: Exception) {}
+            client.newCall(request).execute().use { response ->
+                repository.addSystemLog(if (response.isSuccessful) "INFO" else "WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent ${if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"}.")
+                if (response.isSuccessful) withContext(Dispatchers.Main) { isDockerRunning = turnOn }
+            }
+        } catch (e: Exception) {
+            repository.addSystemLog("WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent thất bại: ${e.message?.take(120)}")
+        }
         withContext(Dispatchers.Main) { isTogglingDocker = false }
     }
 }

@@ -668,8 +668,65 @@ def monitor_journalctl():
 #   WEBDAV_PASS=your_password_here
 AUTH_CONFIG_PATH = "/etc/nas/auth.conf"
 
-# Danh sach o cung de kiem tra S.M.A.R.T (Tu dong quet)
-SMART_DISKS = ["/dev/sdb", "/dev/sda", "/dev/hda", "/dev/vda"]
+# Chi lay S.M.A.R.T cua o du lieu NAS. Khong quet /dev/sdb vi day co the la
+# o USB import, lam nhieu dashboard bang trang thai cua o ngoai.
+SMART_DISKS = ["/dev/sda"]
+TARGET_HDD_MOUNTPOINTS = ("/srv/dev-disk-by-label-data", "/sharedfolders/Data")
+TARGET_HDD_MODEL_HINTS = ("TOSHIBA", "MG04", "N300")
+TARGET_HDD_SERIAL_HINTS = ("X6N7KALWFVLC",)
+
+def _parent_disk_from_device(device):
+    device = str(device or "").strip()
+    if not device.startswith("/dev/"):
+        return ""
+    base = os.path.basename(device)
+    if base.startswith(("nvme", "mmcblk")):
+        parent = _re_module.sub(r"p\d+$", "", base)
+    else:
+        parent = _re_module.sub(r"\d+$", "", base)
+    return "/dev/" + parent if parent else ""
+
+def _target_hdd_device_path():
+    try:
+        with open("/proc/mounts", "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                source, mountpoint = parts[0], parts[1]
+                if mountpoint in TARGET_HDD_MOUNTPOINTS or mountpoint.startswith("/srv/dev-disk-by-label-data/"):
+                    parent = _parent_disk_from_device(source)
+                    if parent and os.path.exists(parent):
+                        return parent
+    except Exception:
+        pass
+    for disk_path in SMART_DISKS:
+        if os.path.exists(disk_path):
+            return disk_path
+    return SMART_DISKS[0]
+
+def _target_hdd_devname():
+    return os.path.basename(_target_hdd_device_path())
+
+def _is_target_hdd_omv_device(dev):
+    if not isinstance(dev, dict):
+        return False
+    devname = str(dev.get("devicename", "") or "")
+    devicefile = str(dev.get("devicefile", "") or "")
+    if "mmc" in devname.lower() or "mmc" in devicefile.lower():
+        return False
+    target_path = _target_hdd_device_path()
+    target_name = os.path.basename(target_path)
+    if devicefile == target_path or devname == target_name:
+        return True
+    blob = " ".join(str(dev.get(k, "") or "") for k in ("vendor", "model", "serialnumber", "description")).upper()
+    return any(h in blob for h in TARGET_HDD_MODEL_HINTS) or any(h in blob for h in TARGET_HDD_SERIAL_HINTS)
+
+def _select_target_omv_smart_device(devices):
+    for dev in devices or []:
+        if _is_target_hdd_omv_device(dev):
+            return dev
+    return None
 
 # File tam de do toc do o cung
 SPEED_TEST_FILE = "/tmp/nas_speed_test.bin"
@@ -942,10 +999,9 @@ def get_hdd_temp():
         omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=10)
         if omv_out and omv_out.strip().startswith("{"):
             devs = json.loads(omv_out)
-            for key in devs:
-                dev = devs[key]
-                if "mmc" in dev.get("devicename", ""):
-                    continue
+            dev_list = list(devs.values()) if isinstance(devs, dict) else devs
+            dev = _select_target_omv_smart_device(dev_list)
+            if dev:
                 temp_str = dev.get("temperature", "")
                 if temp_str and temp_str != "--\u00b0C":
                     # OMV tra ve "31°C" hoac "31"
@@ -955,7 +1011,7 @@ def get_hdd_temp():
     except Exception:
         pass
     # Phuong phap 1: smartctl voi regex chinh xac
-    for disk_path in SMART_DISKS:
+    for disk_path in [_target_hdd_device_path()]:
         try:
             # Dung 2>&1 de lay ca stdout va stderr
             if not _validate_disk_path(disk_path):
@@ -993,22 +1049,24 @@ def get_hdd_temp():
         except Exception:
             pass
     # Xong buoc lap qua cac disk
-    # Phuong phap 3: drivetemp kernel module (psutil)
+    # Phuong phap 3: drivetemp kernel module (psutil) chi dung neu label dung o NAS.
     try:
         temps = psutil.sensors_temperatures()
         if "drivetemp" in temps:
             for entry in temps["drivetemp"]:
-                if entry.current > 0:
+                label = str(getattr(entry, "label", "") or "").lower()
+                if _target_hdd_devname().lower() in label and entry.current > 0:
                     return "%d\u00b0C" % int(entry.current)
     except Exception:
         pass
     # Phuong phap 4: Doc truc tiep tu sysfs hwmon (khong can smartctl)
     try:
         import glob
-        # Tim hwmon cua o cung /dev/sda
-        hwmon_paths = glob.glob("/sys/block/sda/device/hwmon/hwmon*/temp1_input")
+        # Tim hwmon cua o du lieu NAS
+        target_name = _target_hdd_devname()
+        hwmon_paths = glob.glob("/sys/block/%s/device/hwmon/hwmon*/temp1_input" % target_name)
         if not hwmon_paths:
-            hwmon_paths = glob.glob("/sys/block/sda/device/hwmon/*/temp1_input")
+            hwmon_paths = glob.glob("/sys/block/%s/device/hwmon/*/temp1_input" % target_name)
         for hp in hwmon_paths:
             with open(hp) as f:
                 temp_milli = int(f.read().strip())
@@ -1029,7 +1087,7 @@ def get_hdd_temp():
                 if os.path.exists(name_file):
                     with open(name_file) as f:
                         name = f.read().strip().lower()
-                    if "drivetemp" in name or "hdd" in name:
+                    if ("drivetemp" in name or "hdd" in name) and _target_hdd_devname() in hwmon_dir:
                         temp_file = os.path.join(hwmon_dir, "temp1_input")
                         if os.path.exists(temp_file):
                             with open(temp_file) as f:
@@ -1049,7 +1107,8 @@ def get_hdd_temp():
         temps = psutil.sensors_temperatures()
         if "drivetemp" in temps:
             for entry in temps["drivetemp"]:
-                if entry.current > 0:
+                label = str(getattr(entry, "label", "") or "").lower()
+                if _target_hdd_devname().lower() in label and entry.current > 0:
                     return "%d\u00b0C" % int(entry.current)
     except Exception:
         pass
@@ -2200,10 +2259,8 @@ def api_smart():
                 devices = list(raw_parsed.values())
             else:
                 devices = raw_parsed
-            # Tim o cung that (khong phai eMMC/mmcblk)
-            real_devs = [d for d in devices if isinstance(d, dict) and "mmc" not in d.get("devicename", "")]
-            if real_devs:
-                dev = real_devs[0]
+            dev = _select_target_omv_smart_device(devices)
+            if dev:
                 overall = dev.get("overallstatus", "")
                 if overall.upper() == "GOOD":
                     status = "PASSED"
@@ -2255,16 +2312,23 @@ def api_smart():
                         temperature = get_hdd_temp()
                     except Exception:
                         pass
-                return jsonify({"status": status, "temperature": temperature, "raw_log": raw_log})
+                return jsonify({
+                    "status": status,
+                    "temperature": temperature,
+                    "raw_log": raw_log,
+                    "device": dev.get("devicefile", "/dev/%s" % devname),
+                    "model": full_model,
+                    "serial": serial,
+                    "target_disk": True
+                })
             else:
-                return jsonify({"status": "eMMC Only", "temperature": "--\u00b0C", "raw_log": "OMV chỉ phát hiện eMMC. Không có HDD/SSD."})
+                return jsonify({"status": "Unknown", "temperature": "--\u00b0C", "raw_log": "Khong tim thay o du lieu NAS Toshiba trong danh sach SMART OMV.", "target_disk": False})
     except Exception:
         pass
 
     # === Phuong phap 2: Fallback smartctl truc tiep ===
     has_real_hdd = False
-    real_disks = [d for d in SMART_DISKS if "mmc" not in d]
-    for disk_path in real_disks:
+    for disk_path in [_target_hdd_device_path()]:
         try:
             if not _validate_disk_path(disk_path):
                 continue
@@ -2402,14 +2466,18 @@ def api_omv_overview():
             for d in disk_data:
                 vendor = d.get("vendor", "")
                 model = d.get("model", "")
+                devicefile = d.get("devicefile", "")
+                is_target = _is_target_hdd_omv_device(d)
                 disks.append({
                     "name": d.get("devicename", ""),
-                    "device": d.get("devicefile", ""),
+                    "device": devicefile,
                     "model": ("%s %s" % (vendor, model)).strip(),
                     "serial": d.get("serialnumber", ""),
                     "size": d.get("size", "0"),
                     "description": d.get("description", ""),
-                    "is_root": d.get("isroot", False)
+                    "is_root": d.get("isroot", False),
+                    "is_target_hdd": is_target,
+                    "is_usb_import": (not is_target and str(devicefile).startswith("/dev/sdb"))
                 })
             result["disks"] = disks
     except Exception:
@@ -2955,22 +3023,15 @@ def _parse_smart_attributes():
     """Lay 3 metric quan trong tu smartctl: Reallocated, Pending, UDMA CRC, temp."""
     result = {
         "smart_status": "Unknown",
+        "device": _target_hdd_device_path(),
         "temp_c": None,
         "reallocated_sectors": None,
         "pending_sectors": None,
         "udma_crc_err": None,
         "power_on_hours": None,
     }
-    # Phat hien thiet bi HDD (skip mmcblk)
-    dev = None
-    try:
-        for cand in ("sda", "sdb"):
-            if os.path.exists("/dev/" + cand):
-                dev = "/dev/" + cand
-                break
-    except Exception:
-        pass
-    if not dev:
+    dev = _target_hdd_device_path()
+    if not dev or not os.path.exists(dev):
         return result
     # FIX: safe_run_cmd block '-H' flag (security whitelist). Goi subprocess
     # truc tiep voi danh sach args co dinh (khong co user input) -> an toan.
@@ -3075,10 +3136,12 @@ def _disk_health_sample_once():
     try:
         smart = _parse_smart_attributes()
         dmesg = _read_dmesg_recent(seconds=_DISK_HEALTH_SAMPLE_INTERVAL_SEC)
-        io = _read_io_stats("sda")
+        target_devname = _target_hdd_devname()
+        io = _read_io_stats(target_devname)
         sample = {
             "ts": int(time.time()),
             "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "device": "/dev/%s" % target_devname,
         }
         sample.update(smart)
         sample["ext4_errors_recent"] = dmesg.get("ext4_errors", 0)
@@ -3306,9 +3369,9 @@ def _system_is_idle():
 
 
 def _hdd_spindown():
-    """Spindown /dev/sda bang hdparm -y. Tra (ok, msg)."""
+    """Spindown o du lieu NAS bang hdparm -y. Tra (ok, msg)."""
     try:
-        r = subprocess.run(["hdparm", "-y", "/dev/sda"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        r = subprocess.run(["hdparm", "-y", _target_hdd_device_path()], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
         if r.returncode == 0:
             return True, "spundown OK"
         return False, (r.stderr or b"").decode("utf-8", errors="ignore")[:200]
@@ -3317,9 +3380,9 @@ def _hdd_spindown():
 
 
 def _hdd_get_power_state():
-    """Doc hdparm -C /dev/sda -> 'active/idle', 'standby', 'sleeping'."""
+    """Doc hdparm -C o du lieu NAS -> 'active/idle', 'standby', 'sleeping'."""
     try:
-        r = subprocess.run(["hdparm", "-C", "/dev/sda"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        r = subprocess.run(["hdparm", "-C", _target_hdd_device_path()], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         if r.returncode == 0:
             out = (r.stdout or b"").decode("utf-8", errors="ignore")
             for line in out.splitlines():
@@ -3587,6 +3650,621 @@ def _scheduled_backup_worker():
         except Exception as e:
             log.error("[BackupSchedule] Worker loi: %s", e)
             time.sleep(300)
+
+
+# ============================================================================
+# USB IMPORT - tu phat hien o USB va copy vao NAS
+# ============================================================================
+_USB_IMPORT_SETTINGS_FILE = "/etc/nas/state/usb_import_settings.json"
+_USB_IMPORT_STATE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "usb_import_state.json")
+_USB_IMPORT_ALLOWED_FS = set(["exfat", "ntfs", "ntfs3", "vfat", "fat32", "ext2", "ext3", "ext4"])
+_USB_IMPORT_SKIP_MOUNT_PREFIXES = (
+    "/boot", "/dev", "/proc", "/run", "/sys", "/tmp", "/var",
+    "/srv/dev-disk-by-label-data", WEBDAV_FILE_ROOT,
+)
+_usb_import_lock = threading.Lock()
+_usb_import_cancel = threading.Event()
+_usb_import_running = False
+_usb_import_state = {
+    "enabled": True,
+    "status": "idle",
+    "message": "Dang cho o USB.",
+    "active_device": "",
+    "active_mount": "",
+    "dest_dir": os.path.join(WEBDAV_FILE_ROOT, "USB Import"),
+    "started_at": 0,
+    "finished_at": 0,
+    "files_total": 0,
+    "files_done": 0,
+    "files_skipped": 0,
+    "files_failed": 0,
+    "bytes_done": 0,
+    "bytes_processed": 0,
+    "bytes_total": 0,
+    "current_file": "",
+    "current_source": "",
+    "current_dest": "",
+    "current_file_bytes_done": 0,
+    "current_file_bytes_total": 0,
+    "copy_speed_bps": 0,
+    "eta_seconds": 0,
+    "last_progress_at": 0,
+    "last_error": "",
+    "detected_devices": [],
+    "seen_devices": [],
+}
+
+
+def _usb_import_load_settings():
+    settings = {
+        "enabled": True,
+        "dest_folder": "USB Import",
+        "copy_mode": "new_only",
+        "auto_mount": True,
+        "mount_readonly": True,
+        "poll_seconds": 15,
+    }
+    try:
+        if os.path.exists(_USB_IMPORT_SETTINGS_FILE):
+            with open(_USB_IMPORT_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                settings.update(data)
+    except Exception as e:
+        log.warning("[USBImport] Load settings loi: %s", e)
+    settings["enabled"] = bool(settings.get("enabled", True))
+    settings["auto_mount"] = bool(settings.get("auto_mount", True))
+    settings["mount_readonly"] = bool(settings.get("mount_readonly", True))
+    settings["dest_folder"] = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(settings.get("dest_folder") or "USB Import")).strip() or "USB Import"
+    if settings.get("copy_mode") not in ("new_only", "overwrite"):
+        settings["copy_mode"] = "new_only"
+    try:
+        settings["poll_seconds"] = max(5, min(300, int(settings.get("poll_seconds", 15))))
+    except Exception:
+        settings["poll_seconds"] = 15
+    return settings
+
+
+def _usb_import_save_settings(settings):
+    try:
+        os.makedirs(os.path.dirname(_USB_IMPORT_SETTINGS_FILE), exist_ok=True)
+        tmp = _USB_IMPORT_SETTINGS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _USB_IMPORT_SETTINGS_FILE)
+        return True
+    except Exception as e:
+        log.error("[USBImport] Save settings loi: %s", e)
+        return False
+
+
+def _usb_import_save_state():
+    try:
+        os.makedirs(os.path.dirname(_USB_IMPORT_STATE_FILE), exist_ok=True)
+        tmp = _USB_IMPORT_STATE_FILE + ".tmp"
+        with _usb_import_lock:
+            payload = dict(_usb_import_state)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _USB_IMPORT_STATE_FILE)
+    except Exception as e:
+        log.warning("[USBImport] Save state loi: %s", e)
+
+
+def _usb_import_set_state(**kwargs):
+    with _usb_import_lock:
+        _usb_import_state.update(kwargs)
+    _usb_import_save_state()
+
+
+def _usb_import_public_state():
+    settings = _usb_import_load_settings()
+    with _usb_import_lock:
+        state = dict(_usb_import_state)
+    state["settings"] = settings
+    state["dest_dir"] = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"))
+    return state
+
+
+def _usb_import_is_safe_mount(mountpoint):
+    if not mountpoint:
+        return False
+    try:
+        real = os.path.realpath(mountpoint)
+        webdav_real = os.path.realpath(WEBDAV_FILE_ROOT)
+        if real == webdav_real or real.startswith(webdav_real + os.sep):
+            return False
+        for prefix in _USB_IMPORT_SKIP_MOUNT_PREFIXES:
+            prefix_real = os.path.realpath(prefix)
+            if real == prefix_real or real.startswith(prefix_real.rstrip("/") + os.sep):
+                return False
+        return os.path.isdir(real)
+    except Exception:
+        return False
+
+
+def _usb_import_lsblk():
+    columns = [
+        "NAME,PATH,TYPE,TRAN,HOTPLUG,RM,FSTYPE,LABEL,UUID,MOUNTPOINTS,SIZE,MODEL,SERIAL",
+        "NAME,PATH,TYPE,TRAN,FSTYPE,LABEL,UUID,MOUNTPOINTS,SIZE,MODEL,SERIAL",
+    ]
+    try:
+        for cols in columns:
+            r = subprocess.run(
+                ["lsblk", "-J", "-o", cols],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10
+            )
+            if r.returncode != 0:
+                continue
+            data = json.loads(r.stdout.decode("utf-8", errors="ignore") or "{}")
+            return _usb_import_normalize_lsblk_nodes(data.get("blockdevices", []) if isinstance(data, dict) else [])
+        r = subprocess.run(["lsblk", "-J"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        if r.returncode == 0:
+            data = json.loads(r.stdout.decode("utf-8", errors="ignore") or "{}")
+            return _usb_import_normalize_lsblk_nodes(data.get("blockdevices", []) if isinstance(data, dict) else [])
+    except Exception as e:
+        log.warning("[USBImport] lsblk loi: %s", e)
+    return []
+
+
+def _usb_import_normalize_lsblk_nodes(nodes):
+    normalized = []
+    for node in nodes or []:
+        item = dict(node)
+        name = str(item.get("name") or "")
+        if name and not item.get("path"):
+            item["path"] = "/dev/%s" % name
+        if "mountpoint" in item and "mountpoints" not in item:
+            item["mountpoints"] = [item.get("mountpoint")] if item.get("mountpoint") else []
+        item["children"] = _usb_import_normalize_lsblk_nodes(item.get("children") or [])
+        normalized.append(item)
+    return normalized
+
+
+def _usb_import_blkid_info(dev_path):
+    info = {}
+    if not dev_path:
+        return info
+    try:
+        r = subprocess.run(["blkid", dev_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+        if r.returncode != 0:
+            return info
+        text = (r.stdout or b"").decode("utf-8", errors="ignore")
+        for key, val in _re_module.findall(r'([A-Z0-9_]+)="([^"]*)"', text):
+            key_l = key.lower()
+            if key_l == "type":
+                info["fstype"] = val.lower()
+            elif key_l in ("label", "uuid", "partuuid", "partlabel"):
+                info[key_l] = val
+    except Exception as e:
+        log.warning("[USBImport] blkid %s loi: %s", dev_path, e)
+    return info
+
+
+def _usb_import_sysfs_is_usb(dev_name):
+    if not dev_name:
+        return False
+    name = os.path.basename(str(dev_name)).strip()
+    if not name:
+        return False
+    try:
+        real = os.path.realpath(os.path.join("/sys/class/block", name))
+        return "/usb" in real.lower() or "/usb" in real.replace("\\", "/").lower()
+    except Exception:
+        return False
+
+
+def _usb_import_node_has_usb_signal(node, parent_usb=False):
+    tran = str(node.get("tran") or "").lower()
+    hotplug = str(node.get("hotplug") or "").lower()
+    removable = str(node.get("rm") or "").lower()
+    name = node.get("name") or os.path.basename(str(node.get("path") or ""))
+    return (
+        parent_usb
+        or tran == "usb"
+        or hotplug in ("1", "true", "yes")
+        or removable in ("1", "true", "yes")
+        or _usb_import_sysfs_is_usb(name)
+    )
+
+
+def _usb_import_flatten_devices(nodes, parent_usb=False):
+    out = []
+    for node in nodes or []:
+        is_usb = _usb_import_node_has_usb_signal(node, parent_usb)
+        if node.get("type") in ("part", "disk") and is_usb:
+            out.append(node)
+        out.extend(_usb_import_flatten_devices(node.get("children") or [], is_usb))
+    return out
+
+
+def _usb_import_mount_device(dev, settings):
+    mountpoints = dev.get("mountpoints") or []
+    if isinstance(mountpoints, str):
+        mountpoints = [mountpoints]
+    for mnt in mountpoints:
+        if _usb_import_is_safe_mount(mnt):
+            return mnt, False
+    if any(mountpoints):
+        return "", False
+    if not settings.get("auto_mount"):
+        return "", False
+    dev_path = dev.get("path") or ""
+    fs_type = str(dev.get("fstype") or "").lower()
+    if dev_path and not fs_type:
+        blkid_info = _usb_import_blkid_info(dev_path)
+        if blkid_info:
+            dev.update(blkid_info)
+            fs_type = str(dev.get("fstype") or "").lower()
+    uuid_value = str(dev.get("uuid") or dev.get("name") or uuid.uuid4().hex)
+    if not dev_path or fs_type not in _USB_IMPORT_ALLOWED_FS:
+        return "", False
+    safe_name = _re_module.sub(r"[^A-Za-z0-9_.-]+", "_", uuid_value).strip("_") or "usb"
+    mountpoint = os.path.join("/mnt/usb-import", safe_name)
+    try:
+        os.makedirs(mountpoint, exist_ok=True)
+        opts = "nosuid,nodev,noexec"
+        if settings.get("mount_readonly", True):
+            opts = "ro," + opts
+        r = subprocess.run(["mount", "-o", opts, dev_path, mountpoint],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        if r.returncode == 0 and _usb_import_is_safe_mount(mountpoint):
+            log.info("[USBImport] Mounted %s tai %s", dev_path, mountpoint)
+            return mountpoint, True
+        err = (r.stderr or b"").decode("utf-8", errors="ignore")[:200]
+        log.warning("[USBImport] Mount %s loi: %s", dev_path, err)
+    except Exception as e:
+        log.warning("[USBImport] Mount exception %s: %s", dev_path, e)
+    return "", False
+
+
+def _usb_import_find_candidates(settings):
+    candidates = []
+    nodes = _usb_import_lsblk()
+    flattened = _usb_import_flatten_devices(nodes)
+    detected = []
+    for dev in flattened:
+        fs_type = str(dev.get("fstype") or "").lower()
+        if (not fs_type) and dev.get("path"):
+            blkid_info = _usb_import_blkid_info(dev.get("path"))
+            if blkid_info:
+                dev.update(blkid_info)
+                fs_type = str(dev.get("fstype") or "").lower()
+        info = {
+            "path": dev.get("path") or "",
+            "type": dev.get("type") or "",
+            "tran": dev.get("tran") or "",
+            "hotplug": dev.get("hotplug") or "",
+            "rm": dev.get("rm") or "",
+            "fstype": fs_type,
+            "label": dev.get("label") or "",
+            "size": dev.get("size") or "",
+            "model": dev.get("model") or "",
+            "reason": "",
+        }
+        if fs_type and fs_type not in _USB_IMPORT_ALLOWED_FS:
+            info["reason"] = "filesystem khong ho tro: %s" % fs_type
+            detected.append(info)
+            continue
+        mountpoint, mounted_by_us = _usb_import_mount_device(dev, settings)
+        if not mountpoint:
+            info["reason"] = "khong mount duoc hoac chua co phan vung/filesystem"
+            detected.append(info)
+            continue
+        ident = str(dev.get("uuid") or dev.get("serial") or dev.get("path") or mountpoint)
+        info["reason"] = "hop le"
+        detected.append(info)
+        candidates.append({
+            "id": ident,
+            "path": dev.get("path") or "",
+            "label": dev.get("label") or "",
+            "mountpoint": mountpoint,
+            "fstype": fs_type,
+            "size": dev.get("size") or "",
+            "model": dev.get("model") or "",
+            "mounted_by_us": mounted_by_us,
+        })
+    if not candidates:
+        all_count = len(nodes or [])
+        usb_count = len(flattened or [])
+        msg = "lsblk thay %d block device, %d co dau hieu USB/hotplug/removable." % (all_count, usb_count)
+        if detected:
+            msg += " " + "; ".join(
+                "%s %s %s" % (d.get("path") or "?", d.get("fstype") or "no-fs", d.get("reason") or "")
+                for d in detected[:4]
+            )
+        _usb_import_set_state(detected_devices=detected[:12], last_error=msg)
+    else:
+        _usb_import_set_state(detected_devices=detected[:12], last_error="")
+    return candidates
+
+
+def _usb_import_scan_files(src_root):
+    total = 0
+    size_total = 0
+    for root, dirs, files in os.walk(src_root):
+        dirs[:] = [d for d in dirs if d not in (".Trash-1000", "$RECYCLE.BIN", "System Volume Information")]
+        for name in files:
+            full = os.path.join(root, name)
+            try:
+                if os.path.islink(full):
+                    continue
+                total += 1
+                size_total += os.path.getsize(full)
+            except Exception:
+                continue
+    return total, size_total
+
+
+def _usb_import_unique_dest(path):
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    for i in range(1, 1000):
+        candidate = "%s_copy%d%s" % (base, i, ext)
+        if not os.path.exists(candidate):
+            return candidate
+    return "%s_copy_%s%s" % (base, uuid.uuid4().hex[:8], ext)
+
+
+def _usb_import_copy_file_with_progress(src, dst, totals):
+    buf_size = 4 * 1024 * 1024
+    file_size = 0
+    try:
+        file_size = os.path.getsize(src)
+    except Exception:
+        file_size = 0
+    current_name = os.path.basename(src)
+    totals["current_file_done"] = 0
+    _usb_import_set_state(
+        current_file=current_name,
+        current_source=src,
+        current_dest=dst,
+        current_file_bytes_done=0,
+        current_file_bytes_total=file_size,
+        last_progress_at=int(time.time()),
+    )
+    last_emit = time.monotonic()
+    with open(src, "rb") as fin, open(dst, "wb") as fout:
+        while True:
+            if _usb_import_cancel.is_set():
+                raise InterruptedError("USB import cancelled")
+            chunk = fin.read(buf_size)
+            if not chunk:
+                break
+            fout.write(chunk)
+            n = len(chunk)
+            totals["bytes_done"] += n
+            totals["bytes_processed"] += n
+            totals["current_file_done"] += n
+            now = time.monotonic()
+            if now - last_emit >= 1.0:
+                elapsed = max(0.001, now - totals["speed_started_at"])
+                speed = int(max(0, totals["bytes_done"] - totals["speed_start_bytes"]) / elapsed)
+                remaining = max(0, totals["bytes_total"] - totals["bytes_processed"])
+                eta = int(remaining / speed) if speed > 0 else 0
+                _usb_import_set_state(
+                    files_done=totals["done"],
+                    files_skipped=totals["skipped"],
+                    files_failed=totals["failed"],
+                    bytes_done=totals["bytes_done"],
+                    bytes_processed=totals["bytes_processed"],
+                    current_file_bytes_done=totals["current_file_done"],
+                    copy_speed_bps=speed,
+                    eta_seconds=eta,
+                    last_progress_at=int(time.time()),
+                )
+                last_emit = now
+    try:
+        shutil.copystat(src, dst, follow_symlinks=True)
+    except Exception:
+        pass
+    _usb_import_set_state(
+        current_file_bytes_done=file_size,
+        bytes_done=totals["bytes_done"],
+        bytes_processed=totals["bytes_processed"],
+        last_progress_at=int(time.time()),
+    )
+
+
+def _usb_import_copy_tree(candidate, settings):
+    global _usb_import_running
+    src_root = candidate["mountpoint"]
+    label = candidate.get("label") or os.path.basename(src_root.rstrip("/")) or "USB"
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_label = _re_module.sub(r"[^A-Za-z0-9_. -]+", "_", label).strip() or "USB"
+    dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), "%s_%s" % (safe_label, stamp))
+    files_total, bytes_total = _usb_import_scan_files(src_root)
+    _usb_import_set_state(
+        status="copying", message="Dang copy du lieu tu USB.",
+        active_device=candidate.get("path", ""), active_mount=src_root, dest_dir=dest_base,
+        started_at=int(time.time()), finished_at=0, files_total=files_total,
+        files_done=0, files_skipped=0, files_failed=0, bytes_done=0,
+        bytes_processed=0, bytes_total=bytes_total,
+        current_file="", current_source="", current_dest="",
+        current_file_bytes_done=0, current_file_bytes_total=0,
+        copy_speed_bps=0, eta_seconds=0, last_progress_at=int(time.time()),
+        last_error=""
+    )
+    os.makedirs(dest_base, exist_ok=True)
+    done = skipped = failed = bytes_done = bytes_processed = 0
+    totals = {
+        "done": 0,
+        "skipped": 0,
+        "failed": 0,
+        "bytes_done": 0,
+        "bytes_processed": 0,
+        "bytes_total": bytes_total,
+        "current_file_done": 0,
+        "speed_started_at": time.monotonic(),
+        "speed_start_bytes": 0,
+    }
+    try:
+        for root, dirs, files in os.walk(src_root):
+            if _usb_import_cancel.is_set():
+                _usb_import_set_state(status="cancelled", message="Da huy copy USB.", finished_at=int(time.time()))
+                return
+            dirs[:] = [d for d in dirs if d not in (".Trash-1000", "$RECYCLE.BIN", "System Volume Information")]
+            rel_dir = os.path.relpath(root, src_root)
+            if rel_dir == ".":
+                rel_dir = ""
+            target_dir = os.path.join(dest_base, rel_dir)
+            os.makedirs(target_dir, exist_ok=True)
+            for name in files:
+                if _usb_import_cancel.is_set():
+                    _usb_import_set_state(status="cancelled", message="Da huy copy USB.", finished_at=int(time.time()))
+                    return
+                src = os.path.join(root, name)
+                try:
+                    if os.path.islink(src):
+                        skipped += 1
+                        totals["skipped"] = skipped
+                        continue
+                    src_size = 0
+                    try:
+                        src_size = os.path.getsize(src)
+                    except Exception:
+                        pass
+                    dst = os.path.join(target_dir, name)
+                    if os.path.exists(dst):
+                        if settings.get("copy_mode") != "overwrite":
+                            try:
+                                if src_size == os.path.getsize(dst):
+                                    skipped += 1
+                                    bytes_processed += src_size
+                                    totals["skipped"] = skipped
+                                    totals["bytes_processed"] = bytes_processed
+                                    continue
+                            except Exception:
+                                pass
+                            dst = _usb_import_unique_dest(dst)
+                    _usb_import_copy_file_with_progress(src, dst, totals)
+                    done += 1
+                    bytes_done = totals["bytes_done"]
+                    bytes_processed = totals["bytes_processed"]
+                    totals["done"] = done
+                except InterruptedError:
+                    raise
+                except Exception as e:
+                    failed += 1
+                    totals["failed"] = failed
+                    _usb_import_set_state(last_error=str(e)[:200])
+                if (done + skipped + failed) % 20 == 0:
+                    _usb_import_set_state(
+                        files_done=done, files_skipped=skipped, files_failed=failed,
+                        bytes_done=bytes_done, bytes_processed=bytes_processed
+                    )
+        try:
+            subprocess.run(["sync"], timeout=120)
+        except Exception:
+            pass
+        _usb_import_set_state(
+            status="done", message="Da copy xong USB.",
+            files_done=done, files_skipped=skipped, files_failed=failed,
+            bytes_done=bytes_done, bytes_processed=bytes_processed,
+            current_file="", current_source="", current_dest="",
+            current_file_bytes_done=0, current_file_bytes_total=0,
+            copy_speed_bps=0, eta_seconds=0,
+            finished_at=int(time.time())
+        )
+        _add_system_log("SUCCESS", "USBImport", "Da copy USB vao %s: %d file, skip %d, loi %d" % (dest_base, done, skipped, failed))
+    finally:
+        if candidate.get("mounted_by_us"):
+            try:
+                subprocess.run(["umount", src_root], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            except Exception:
+                pass
+        with _usb_import_lock:
+            seen = list(_usb_import_state.get("seen_devices") or [])
+            ident = candidate.get("id")
+            if ident and ident not in seen:
+                seen.append(ident)
+                _usb_import_state["seen_devices"] = seen[-50:]
+        _usb_import_running = False
+        _usb_import_save_state()
+
+
+def _usb_import_watchdog():
+    global _usb_import_running
+    time.sleep(45)
+    log.info("[USBImport] Trinh phat hien USB da khoi dong.")
+    while True:
+        settings = _usb_import_load_settings()
+        try:
+            if not settings.get("enabled"):
+                _usb_import_set_state(enabled=False, status="disabled", message="USB import dang tat.")
+                time.sleep(settings.get("poll_seconds", 15))
+                continue
+            _usb_import_set_state(enabled=True)
+            if not _usb_import_running:
+                candidates = _usb_import_find_candidates(settings)
+                with _usb_import_lock:
+                    seen = set(_usb_import_state.get("seen_devices") or [])
+                for candidate in candidates:
+                    if candidate.get("id") in seen:
+                        continue
+                    _usb_import_cancel.clear()
+                    _usb_import_running = True
+                    threading.Thread(target=_usb_import_copy_tree, args=(candidate, settings), daemon=True, name="USBImportCopy").start()
+                    break
+                if not candidates:
+                    _usb_import_set_state(status="idle", message="Dang cho o USB hop le.", active_device="", active_mount="")
+        except Exception as e:
+            _usb_import_running = False
+            log.error("[USBImport] Watchdog loi: %s", e)
+            _usb_import_set_state(status="error", message="Loi USB import.", last_error=str(e)[:200], finished_at=int(time.time()))
+        time.sleep(settings.get("poll_seconds", 15))
+
+
+@app.route("/api/usb_import/status", methods=["GET"])
+@requires_auth
+def api_usb_import_status():
+    return jsonify(_usb_import_public_state())
+
+
+@app.route("/api/usb_import/settings", methods=["POST"])
+@requires_auth
+def api_usb_import_settings():
+    current = _usb_import_load_settings()
+    body = request.get_json(silent=True) or {}
+    for key in ("enabled", "auto_mount", "mount_readonly"):
+        if key in body:
+            current[key] = bool(body.get(key))
+    if "dest_folder" in body:
+        current["dest_folder"] = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(body.get("dest_folder") or "USB Import")).strip() or "USB Import"
+    if body.get("copy_mode") in ("new_only", "overwrite"):
+        current["copy_mode"] = body.get("copy_mode")
+    if "poll_seconds" in body:
+        try:
+            current["poll_seconds"] = max(5, min(300, int(body.get("poll_seconds"))))
+        except Exception:
+            pass
+    saved = _usb_import_save_settings(current)
+    return jsonify({"saved": saved, "settings": current, "state": _usb_import_public_state()})
+
+
+@app.route("/api/usb_import/start", methods=["POST"])
+@requires_auth
+def api_usb_import_start():
+    global _usb_import_running
+    if _usb_import_running:
+        return jsonify({"ok": False, "message": "USB import dang chay", "state": _usb_import_public_state()}), 409
+    settings = _usb_import_load_settings()
+    candidates = _usb_import_find_candidates(settings)
+    if not candidates:
+        return jsonify({"ok": False, "message": "Khong tim thay o USB hop le", "state": _usb_import_public_state()}), 404
+    _usb_import_cancel.clear()
+    _usb_import_running = True
+    threading.Thread(target=_usb_import_copy_tree, args=(candidates[0], settings), daemon=True, name="USBImportManualCopy").start()
+    return jsonify({"ok": True, "message": "Da bat dau copy USB", "state": _usb_import_public_state()})
+
+
+@app.route("/api/usb_import/cancel", methods=["POST"])
+@requires_auth
+def api_usb_import_cancel():
+    _usb_import_cancel.set()
+    _usb_import_set_state(status="cancelling", message="Dang huy copy USB.")
+    return jsonify({"ok": True, "state": _usb_import_public_state()})
 
 
 @app.route('/api/backup/schedule', methods=['GET'])
@@ -5684,7 +6362,7 @@ def _system_health_watchdog():
     # THIẾT LẬP TỐI ƯU CƠ HỌC CHO Ổ SEAGATE SKYHAWK ST4000VX (SURVEILLANCE): 
     # CẤM APM VÀ CẤM STANDBY CHỐNG HAO MÒN KHỞI ĐỘNG MOTOR (SPIN-DOWN)
     try:
-        run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", "/dev/sda"], merge_stderr=True)
+        run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", _target_hdd_device_path()], merge_stderr=True)
     except Exception:
         pass
 
@@ -8017,6 +8695,8 @@ if __name__ == "__main__":
     log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 5 phút).")
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
+    threading.Thread(target=_usb_import_watchdog, daemon=True, name="USBImportWatchdog").start()
+    log.info("[USBImport] Trinh tu dong phat hien va copy USB da khoi dong.")
     threading.Thread(target=_sleep_schedule_worker, daemon=True).start()
     log.info("[SleepSchedule] Trình lên lịch HDD spindown đã khởi động.")
 

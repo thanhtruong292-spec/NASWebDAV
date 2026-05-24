@@ -2691,6 +2691,7 @@ fun BiometricSettingsDialog(
                             .putBoolean("biometric_enabled", enabled)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
+                        viewModel.logUserAction("Security", "cap nhat khoa sinh trac (${if (enabled) "bat" else "tat"}, tre ${delaySec}s).")
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
@@ -2704,6 +2705,7 @@ fun BiometricSettingsDialog(
                             .putBoolean("biometric_enabled", true)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
+                        viewModel.logUserAction("Security", "khoa ung dung ngay bang sinh trac.")
                         viewModel.lockNowRequested = true
                         onDismiss()
                     },
@@ -2733,6 +2735,7 @@ fun BiometricSettingsDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BandwidthThrottleDialog(
+    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
@@ -2813,6 +2816,8 @@ fun BandwidthThrottleDialog(
                 onClick = {
                     sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
+                    val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
+                    viewModel.logUserAction("Bandwidth", "dat gioi han upload dien thoai: $selectedLabel.")
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),
@@ -3532,6 +3537,262 @@ fun NasConfigBackupDialog(
                 }
             }
 
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+// ====================================================================
+// USB IMPORT - quan ly daemon copy o USB gan ngoai vao NAS
+// ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UsbImportDialog(
+    viewModel: WebDavViewModel,
+    onDismiss: () -> Unit
+) {
+    val state = viewModel.usbImportState
+    val settings = state.settings
+    var enabled by remember(settings) { mutableStateOf(settings.enabled) }
+    var autoMount by remember(settings) { mutableStateOf(settings.autoMount) }
+    var mountReadonly by remember(settings) { mutableStateOf(settings.mountReadonly) }
+    var copyMode by remember(settings) { mutableStateOf(settings.copyMode) }
+    var destFolder by remember(settings) { mutableStateOf(settings.destFolder) }
+
+    LaunchedEffect(Unit) { viewModel.fetchUsbImportStatus() }
+    LaunchedEffect(state.status) {
+        while (state.status == "copying" || state.status == "cancelling") {
+            delay(1000)
+            viewModel.fetchUsbImportStatus()
+        }
+    }
+
+    val fileCountProgress = if (state.filesTotal > 0) {
+        (state.filesDone + state.filesSkipped + state.filesFailed).toFloat() / state.filesTotal.toFloat()
+    } else 0f
+    val progress = if (state.bytesTotal > 0L) {
+        state.bytesProcessed.toFloat() / state.bytesTotal.toFloat()
+    } else fileCountProgress
+    val currentFileProgress = if (state.currentFileBytesTotal > 0L) {
+        state.currentFileBytesDone.toFloat() / state.currentFileBytesTotal.toFloat()
+    } else 0f
+    fun usbEtaLabel(seconds: Long): String {
+        if (seconds <= 0L) return "--"
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return when {
+            h > 0 -> "${h}h ${m}m"
+            m > 0 -> "${m}m ${s}s"
+            else -> "${s}s"
+        }
+    }
+    val isRunning = state.status == "copying" || state.status == "cancelling"
+    val statusColor = when (state.status) {
+        "copying" -> Color(0xFF42A5F5)
+        "done" -> Color(0xFF66BB6A)
+        "error" -> Color(0xFFEF5350)
+        "disabled" -> Color(0xFF8892B0)
+        else -> Color(0xFFFFA726)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 720.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Usb, null, tint = Color(0xFF26A69A), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("USB Import", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { viewModel.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                }
+            }
+            Text(
+                "NAS tự phát hiện ổ cứng/USB gắn qua cổng USB 3.0 và copy dữ liệu vào thư mục USB Import.",
+                color = Color(0xFF8892B0),
+                fontSize = 11.sp,
+                lineHeight = 14.sp
+            )
+            Spacer(Modifier.height(8.dp))
+
+            Column(
+                modifier = Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(8.dp)).padding(8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
+                    Spacer(Modifier.width(6.dp))
+                    Text(state.status.uppercase(), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    if (viewModel.isUsbImportLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF42A5F5), strokeWidth = 2.dp)
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(state.message.ifBlank { "Đang chờ trạng thái từ NAS" }, color = Color.White, fontSize = 13.sp)
+                if (state.activeDevice.isNotBlank()) {
+                    Text(state.activeDevice, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (state.destDir.isNotBlank()) {
+                    Text(state.destDir, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(8.dp))
+                if (state.currentFile.isNotBlank()) {
+                    Text("File đang copy", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    Text(state.currentFile, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (state.currentSource.isNotBlank()) {
+                        Text("Từ: ${state.currentSource}", color = Color(0xFF8892B0), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (state.currentDest.isNotBlank()) {
+                        Text("Đến: ${state.currentDest}", color = Color(0xFF8892B0), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { currentFileProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
+                        color = Color(0xFF26A69A),
+                        trackColor = Color(0xFF2A2A3E)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesDone)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesTotal)}",
+                            color = Color(0xFFE8E8E8),
+                            fontSize = 10.sp
+                        )
+                        Text(
+                            "${(currentFileProgress * 100f).toInt()}%",
+                            color = Color(0xFF8892B0),
+                            fontSize = 10.sp
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text("Tổng tiến trình", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)),
+                    color = statusColor,
+                    trackColor = Color(0xFF2A2A3E)
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${state.filesDone}/${state.filesTotal} file", color = Color(0xFFE8E8E8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (state.bytesTotal > 0L)
+                            "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesProcessed)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesTotal)}"
+                        else com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesDone),
+                        color = Color(0xFF8892B0),
+                        fontSize = 11.sp
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Bỏ qua ${state.filesSkipped} • Lỗi ${state.filesFailed}", color = Color(0xFF8892B0), fontSize = 10.sp)
+                    Text(
+                        "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.copySpeedBps)}/s • ETA ${usbEtaLabel(state.etaSeconds)}",
+                        color = Color(0xFF8892B0),
+                        fontSize = 10.sp
+                    )
+                }
+                if (state.lastError.isNotBlank()) {
+                    Text(state.lastError, color = Color(0xFFEF5350), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Tự động phát hiện", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Tự mount ổ USB", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Switch(checked = autoMount, onCheckedChange = { autoMount = it })
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Mount read-only", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Switch(checked = mountReadonly, onCheckedChange = { mountReadonly = it })
+            }
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = destFolder,
+                onValueChange = { if (it.length <= 48) destFolder = it },
+                label = { Text("Thư mục đích") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF26A69A),
+                    unfocusedBorderColor = Color(0xFF333344),
+                    focusedLabelColor = Color(0xFF26A69A),
+                    unfocusedLabelColor = Color(0xFF8892B0)
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(
+                    selected = copyMode == "new_only",
+                    onClick = { copyMode = "new_only" },
+                    label = { Text("Chỉ file mới", fontSize = 12.sp) },
+                    leadingIcon = if (copyMode == "new_only") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
+                )
+                FilterChip(
+                    selected = copyMode == "overwrite",
+                    onClick = { copyMode = "overwrite" },
+                    label = { Text("Ghi đè", fontSize = 12.sp) },
+                    leadingIcon = if (copyMode == "overwrite") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
+                )
+            }
+
+            if (viewModel.usbImportMessage.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(viewModel.usbImportMessage, color = Color(0xFF66BB6A), fontSize = 12.sp)
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        viewModel.saveUsbImportSettings(
+                            WebDavViewModel.UsbImportSettings(
+                                enabled = enabled,
+                                destFolder = destFolder,
+                                copyMode = copyMode,
+                                autoMount = autoMount,
+                                mountReadonly = mountReadonly,
+                                pollSeconds = settings.pollSeconds,
+                            )
+                        )
+                    },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26A69A)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Lưu", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { if (isRunning) viewModel.cancelUsbImport() else viewModel.startUsbImportNow() },
+                    modifier = Modifier.weight(1f).height(40.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) Color(0xFFEF5350) else Color(0xFF42A5F5)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isRunning) "Hủy" else "Copy ngay", fontWeight = FontWeight.Bold)
+                }
+            }
             Spacer(Modifier.height(8.dp))
         }
     }
