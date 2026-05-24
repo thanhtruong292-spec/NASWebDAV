@@ -311,6 +311,7 @@ fun MainMenuScreen(
     var showBandwidthDialog by remember { mutableStateOf(false) }
     // STATE CHO USB IMPORT
     var showUsbImportDialog by remember { mutableStateOf(false) }
+    var showNasInsightsDialog by remember { mutableStateOf(false) }
     // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
     LaunchedEffect(Unit) {
         val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
@@ -321,6 +322,7 @@ fun MainMenuScreen(
         viewModel.checkSmartNetwork(mContext)
         viewModel.fetchSmartData()
         viewModel.fetchOmvOverview()
+        viewModel.fetchNasInsights()
         viewModel.syncLivestreamStateWithServer(mContext)
         viewModel.launchDashboardRealtimeScheduler()
     }
@@ -533,6 +535,12 @@ fun MainMenuScreen(
         com.nas.naswebdav.ui.dialogs.UsbImportDialog(
             viewModel = viewModel,
             onDismiss = { showUsbImportDialog = false }
+        )
+    }
+    if (showNasInsightsDialog) {
+        com.nas.naswebdav.ui.dialogs.NasInsightsDialog(
+            viewModel = viewModel,
+            onDismiss = { showNasInsightsDialog = false }
         )
     }
     if (showBandwidthDialog) {
@@ -1002,6 +1010,14 @@ fun MainMenuScreen(
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
         Spacer(Modifier.height(8.dp))
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
+        Spacer(Modifier.height(8.dp))
+        NasInsightsSummaryCard(
+            viewModel = viewModel,
+            onOpen = {
+                viewModel.fetchNasInsights()
+                showNasInsightsDialog = true
+            }
+        )
         Spacer(Modifier.height(4.dp))
         
         SystemStatusCards(
@@ -1288,6 +1304,72 @@ fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color
 }
 
 // ============ COMPONENT: Thẻ đo lớn (CPU / RAM) với gradient ============
+private fun insightRate(bytesPerSec: Long): String {
+    if (bytesPerSec <= 0L) return "0 B/s"
+    val units = arrayOf("B/s", "KB/s", "MB/s", "GB/s")
+    var value = bytesPerSec.toDouble()
+    var idx = 0
+    while (value >= 1024.0 && idx < units.lastIndex) {
+        value /= 1024.0
+        idx++
+    }
+    return if (idx == 0) "${value.toInt()} ${units[idx]}" else "%.1f %s".format(java.util.Locale.US, value, units[idx])
+}
+
+@Composable
+fun NasInsightsSummaryCard(
+    viewModel: WebDavViewModel,
+    onOpen: () -> Unit
+) {
+    val insight = viewModel.nasInsights
+    val modeColor = when (insight.workloadMode) {
+        "protect" -> AccentRed
+        "balanced" -> AccentOrange
+        else -> AccentGreen
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onOpen() },
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(10.dp)
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("NAS INSIGHTS", color = PanelTitleCyan, fontSize = PanelTitleSize, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
+                Spacer(Modifier.weight(1f))
+                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(modeColor.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                    Text(insight.workloadMode.uppercase(), color = modeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
+                InsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
+                InsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+            val summary = insight.maintenanceActions.firstOrNull()?.detail
+                ?: insight.workloadRecommendation.ifBlank { "Đang chờ dữ liệu phân tích NAS." }
+            Text(summary, color = TextSecondary, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (insight.flowTasks.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                val task = insight.flowTasks.first()
+                Text("${task.label}: ${task.file.ifBlank { "đang chạy" }}", color = AccentCyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsightMiniStat(title: String, value: String, sub: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier.background(Color(0xFF171922), RoundedCornerShape(8.dp)).padding(8.dp)) {
+        Text(title, color = TextSecondary, fontSize = 10.sp)
+        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(sub, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 fun GaugeCard(
     title: String,

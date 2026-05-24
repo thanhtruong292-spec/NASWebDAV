@@ -23,6 +23,7 @@ import threading
 import logging
 import re as _re_module
 import shutil
+import hashlib
 from functools import wraps
 import sqlite3
 import base64
@@ -3262,6 +3263,7 @@ def api_disk_health_history():
         days = 7
     days = max(1, min(30, days))
     cutoff = int(time.time()) - (days * 86400)
+    target_device = _target_hdd_device_path()
     items = []
     try:
         if os.path.exists(_DISK_HEALTH_HISTORY_FILE):
@@ -3269,7 +3271,8 @@ def api_disk_health_history():
                 for line in f:
                     try:
                         obj = json.loads(line)
-                        if obj.get("ts", 0) >= cutoff:
+                        obj_device = obj.get("device", "")
+                        if obj.get("ts", 0) >= cutoff and obj_device == target_device:
                             items.append(obj)
                     except Exception:
                         continue
@@ -3289,6 +3292,302 @@ def api_disk_health_history():
 # cach tu dong spindown ngoai gio dung. Khong tat NAS hoan toan (van ping duoc),
 # chi parking head + ngung quay platter.
 # ============================================================================
+_DATA_FLOW_LAST_SAMPLE = {"ts": 0, "io": {}, "net": {}}
+
+
+def _read_disk_health_history(days=7):
+    try:
+        days = max(1, min(30, int(days)))
+    except Exception:
+        days = 7
+    cutoff = int(time.time()) - (days * 86400)
+    target_device = _target_hdd_device_path()
+    items = []
+    try:
+        if os.path.exists(_DISK_HEALTH_HISTORY_FILE):
+            with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        obj = json.loads(line)
+                        obj_device = obj.get("device", "")
+                        if obj.get("ts", 0) >= cutoff and obj_device == target_device:
+                            items.append(obj)
+                    except Exception:
+                        continue
+    except Exception as e:
+        log.warning("[Insights] Read disk history loi: %s", e)
+    return items
+
+
+def _disk_health_trend(days=7):
+    with _disk_health_lock:
+        current = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
+    if not current:
+        try:
+            _disk_health_sample_once()
+            with _disk_health_lock:
+                current = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
+        except Exception:
+            current = {}
+    items = _read_disk_health_history(days)
+    scores = [int(x.get("score", 0) or 0) for x in items if x.get("score") is not None]
+    temps = [int(x.get("temp_c", 0) or 0) for x in items if x.get("temp_c")]
+    first = items[0] if items else current
+    last = items[-1] if items else current
+    trend = {
+        "device": current.get("device", _target_hdd_device_path()),
+        "score": int(current.get("score", 0) or 0),
+        "smart_status": current.get("smart_status", "Unknown"),
+        "temp_c": current.get("temp_c"),
+        "power_on_hours": current.get("power_on_hours"),
+        "sample_count": len(items),
+        "min_score": min(scores) if scores else int(current.get("score", 0) or 0),
+        "max_score": max(scores) if scores else int(current.get("score", 0) or 0),
+        "score_delta": int(last.get("score", 0) or 0) - int(first.get("score", 0) or 0) if first and last else 0,
+        "max_temp_c": max(temps) if temps else current.get("temp_c"),
+        "warnings": current.get("warnings", []) or [],
+        "watch_fields": {
+            "reallocated_sectors": current.get("reallocated_sectors"),
+            "pending_sectors": current.get("pending_sectors"),
+            "offline_uncorrectable": current.get("offline_uncorrectable"),
+            "udma_crc_err": current.get("udma_crc_err"),
+            "command_timeout": current.get("command_timeout"),
+        },
+    }
+    if trend["score"] >= 90 and not trend["warnings"]:
+        trend["status_text"] = "HDD Toshiba dang on dinh."
+    elif trend["score"] >= 70:
+        trend["status_text"] = "HDD can theo doi them."
+    else:
+        trend["status_text"] = "HDD can kiem tra som."
+    return trend
+
+
+def _active_livestream_count():
+    try:
+        with _livestream_lock:
+            return sum(1 for j in _livestream_jobs.values() if j.get("status") == "recording")
+    except Exception:
+        return 0
+
+
+def _workload_coordinator():
+    cpu_pct = 0.0
+    mem_pct = 0.0
+    temp_c = None
+    try:
+        cpu_pct = float(psutil.cpu_percent(interval=0.1))
+        mem_pct = float(psutil.virtual_memory().percent)
+    except Exception:
+        pass
+    try:
+        temp_raw = get_hdd_temp()
+        temp_c = int(_re_module.sub(r"[^0-9]", "", str(temp_raw)) or "0") or None
+    except Exception:
+        pass
+    usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
+    usb_active = str(usb.get("status", "")).lower() in ("copying", "cancelling")
+    live_count = _active_livestream_count()
+    pressure = 0
+    reasons = []
+    if cpu_pct >= 80:
+        pressure += 2; reasons.append("CPU cao")
+    elif cpu_pct >= 60:
+        pressure += 1; reasons.append("CPU dang ban")
+    if mem_pct >= 85:
+        pressure += 2; reasons.append("RAM gan day")
+    elif mem_pct >= 70:
+        pressure += 1; reasons.append("RAM dang cao")
+    if temp_c and temp_c >= 50:
+        pressure += 2; reasons.append("HDD nong")
+    elif temp_c and temp_c >= 45:
+        pressure += 1; reasons.append("HDD am")
+    if live_count > 0:
+        pressure += 1; reasons.append("%d livestream dang ghi" % live_count)
+    if usb_active:
+        pressure += 1; reasons.append("USB import dang copy")
+    if pressure >= 5:
+        mode = "protect"; recommendation = "Nen dung them tac vu moi, uu tien livestream va copy dang chay."
+    elif pressure >= 3:
+        mode = "balanced"; recommendation = "Nen gioi han tac vu nen, tranh scan/copy lon dong thoi."
+    else:
+        mode = "normal"; recommendation = "NAS du tai cho tac vu nen nhe."
+    return {
+        "mode": mode, "pressure": pressure, "cpu_pct": round(cpu_pct, 1),
+        "mem_pct": round(mem_pct, 1), "hdd_temp_c": temp_c,
+        "active_livestreams": live_count, "usb_import_active": usb_active,
+        "reasons": reasons, "recommendation": recommendation,
+    }
+
+
+def _path_usage(path):
+    try:
+        usage = shutil.disk_usage(path)
+        pct = int((usage.used * 100) / max(1, usage.total))
+        return {"path": path, "total": usage.total, "used": usage.used, "free": usage.free, "percent": pct}
+    except Exception:
+        return {"path": path, "total": 0, "used": 0, "free": 0, "percent": 0}
+
+
+def _folder_size_limited(path, max_files=5000):
+    total = 0
+    files = 0
+    try:
+        for root, dirs, names in os.walk(path):
+            for name in names:
+                files += 1
+                if files > max_files:
+                    return total, files, True
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return total, files, False
+
+
+def _emmc_guard():
+    root = _path_usage("/")
+    log_usage = _path_usage("/var/log")
+    state_size, state_files, state_partial = _folder_size_limited("/etc/nas/state")
+    meta_size, meta_files, meta_partial = _folder_size_limited(os.path.join(WEBDAV_FILE_ROOT, ".nas_meta"))
+    warnings = []
+    recommendations = []
+    if root.get("percent", 0) >= 85:
+        warnings.append("eMMC root gan day")
+        recommendations.append("Don package cache/log cu va chuyen cache lon sang HDD.")
+    if log_usage.get("percent", 0) >= 80:
+        warnings.append("log2ram/zram log gan day")
+        recommendations.append("Giam muc log hoac prune log thuong xuyen.")
+    if state_size > 100 * 1024 * 1024:
+        warnings.append("state tren eMMC lon")
+        recommendations.append("Rut gon history hoac chuyen history dai ngay sang HDD.")
+    if not recommendations:
+        recommendations.append("eMMC dang an toan; tiep tuc tranh ghi log/cache lon vao root.")
+    return {
+        "root": root, "log": log_usage, "state_bytes": state_size,
+        "state_files": state_files, "state_partial": state_partial,
+        "meta_bytes": meta_size, "meta_files": meta_files,
+        "meta_partial": meta_partial, "warnings": warnings,
+        "recommendations": recommendations,
+    }
+
+
+def _data_flow_snapshot():
+    global _DATA_FLOW_LAST_SAMPLE
+    now = time.time()
+    devname = _target_hdd_devname()
+    io = _read_io_stats(devname)
+    try:
+        net = psutil.net_io_counters()._asdict()
+    except Exception:
+        net = {}
+    last = _DATA_FLOW_LAST_SAMPLE or {}
+    dt = max(0.001, now - float(last.get("ts") or 0))
+    last_io = last.get("io") or {}
+    last_net = last.get("net") or {}
+    read_bps = write_bps = rx_bps = tx_bps = 0
+    try:
+        read_bps = int(max(0, io.get("sectors_read", 0) - last_io.get("sectors_read", 0)) * 512 / dt)
+        write_bps = int(max(0, io.get("sectors_written", 0) - last_io.get("sectors_written", 0)) * 512 / dt)
+        rx_bps = int(max(0, net.get("bytes_recv", 0) - last_net.get("bytes_recv", 0)) / dt)
+        tx_bps = int(max(0, net.get("bytes_sent", 0) - last_net.get("bytes_sent", 0)) / dt)
+    except Exception:
+        pass
+    _DATA_FLOW_LAST_SAMPLE = {"ts": now, "io": io, "net": net}
+    usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
+    current_tasks = []
+    if str(usb.get("status", "")).lower() == "copying":
+        current_tasks.append({
+            "type": "usb_import", "label": "USB Import",
+            "file": usb.get("current_file", ""), "source": usb.get("current_source", ""),
+            "dest": usb.get("current_dest", ""), "speed_bps": usb.get("copy_speed_bps", 0),
+            "progress": int((usb.get("bytes_processed", 0) or 0) * 100 / max(1, usb.get("bytes_total", 0) or 0)),
+        })
+    try:
+        with _livestream_lock:
+            for job_id, job in list(_livestream_jobs.items())[:5]:
+                if job.get("status") == "recording":
+                    current_tasks.append({
+                        "type": "livestream", "label": "Livestream",
+                        "file": job.get("filename") or job.get("output") or job_id,
+                        "source": job.get("url", ""), "dest": job.get("output", ""),
+                        "speed_bps": 0, "progress": 0,
+                    })
+    except Exception:
+        pass
+    return {
+        "ts": int(now), "device": "/dev/%s" % devname,
+        "disk_read_bps": read_bps, "disk_write_bps": write_bps,
+        "net_rx_bps": rx_bps, "net_tx_bps": tx_bps,
+        "io_in_progress": io.get("ios_in_progress", 0),
+        "current_tasks": current_tasks,
+    }
+
+
+def _maintenance_advisor():
+    health = _disk_health_trend(7)
+    workload = _workload_coordinator()
+    emmc = _emmc_guard()
+    usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
+    actions = []
+    if health.get("score", 0) < 80 or health.get("warnings"):
+        actions.append({"priority": "high", "title": "Kiem tra HDD Toshiba", "detail": health.get("status_text", "")})
+    if workload.get("mode") == "protect":
+        actions.append({"priority": "high", "title": "Giam tai tac vu nen", "detail": workload.get("recommendation", "")})
+    if emmc.get("warnings"):
+        actions.append({"priority": "medium", "title": "Bao ve eMMC", "detail": "; ".join(emmc.get("recommendations", [])[:2])})
+    if str(usb.get("status", "")).lower() in ("done", "cancelled", "error") and usb.get("last_error"):
+        actions.append({"priority": "medium", "title": "Kiem tra USB Import", "detail": str(usb.get("last_error", ""))[:180]})
+    if not actions:
+        actions.append({"priority": "low", "title": "Bao tri nhe", "detail": "Co the chay backup cau hinh va don rac khi NAS nhan roi."})
+    return {"generated_at": int(time.time()), "summary": actions[0]["detail"] if actions else "", "actions": actions[:8]}
+
+
+@app.route('/api/disk/health/trend', methods=['GET'])
+@requires_auth
+def api_disk_health_trend():
+    return jsonify(_disk_health_trend(request.args.get("days", "7")))
+
+
+@app.route('/api/system/workload', methods=['GET'])
+@requires_auth
+def api_system_workload():
+    return jsonify(_workload_coordinator())
+
+
+@app.route('/api/system/emmc_guard', methods=['GET'])
+@requires_auth
+def api_system_emmc_guard():
+    return jsonify(_emmc_guard())
+
+
+@app.route('/api/system/data_flow', methods=['GET'])
+@requires_auth
+def api_system_data_flow():
+    return jsonify(_data_flow_snapshot())
+
+
+@app.route('/api/system/maintenance_advisor', methods=['GET'])
+@requires_auth
+def api_system_maintenance_advisor():
+    return jsonify(_maintenance_advisor())
+
+
+@app.route('/api/system/insights', methods=['GET'])
+@requires_auth
+def api_system_insights():
+    return jsonify({
+        "health_trend": _disk_health_trend(7),
+        "workload": _workload_coordinator(),
+        "usb_import": _usb_import_public_state() if "_usb_import_public_state" in globals() else {},
+        "emmc_guard": _emmc_guard(),
+        "data_flow": _data_flow_snapshot(),
+        "maintenance": _maintenance_advisor(),
+    })
+
+
 _SLEEP_SCHEDULE_FILE = "/etc/nas/state/sleep_schedule.json"
 _SLEEP_SCHEDULE_DEFAULT = {
     "enabled": False,
@@ -3657,6 +3956,7 @@ def _scheduled_backup_worker():
 # ============================================================================
 _USB_IMPORT_SETTINGS_FILE = "/etc/nas/state/usb_import_settings.json"
 _USB_IMPORT_STATE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "usb_import_state.json")
+_USB_IMPORT_HISTORY_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "usb_import_history.json")
 _USB_IMPORT_ALLOWED_FS = set(["exfat", "ntfs", "ntfs3", "vfat", "fat32", "ext2", "ext3", "ext4"])
 _USB_IMPORT_SKIP_MOUNT_PREFIXES = (
     "/boot", "/dev", "/proc", "/run", "/sys", "/tmp", "/var",
@@ -3690,6 +3990,9 @@ _usb_import_state = {
     "eta_seconds": 0,
     "last_progress_at": 0,
     "last_error": "",
+    "active_id": "",
+    "session_id": "",
+    "resume_enabled": True,
     "detected_devices": [],
     "seen_devices": [],
 }
@@ -3703,6 +4006,8 @@ def _usb_import_load_settings():
         "auto_mount": True,
         "mount_readonly": True,
         "poll_seconds": 15,
+        "resume_enabled": True,
+        "verify_checksum": False,
     }
     try:
         if os.path.exists(_USB_IMPORT_SETTINGS_FILE):
@@ -3715,6 +4020,8 @@ def _usb_import_load_settings():
     settings["enabled"] = bool(settings.get("enabled", True))
     settings["auto_mount"] = bool(settings.get("auto_mount", True))
     settings["mount_readonly"] = bool(settings.get("mount_readonly", True))
+    settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
+    settings["verify_checksum"] = bool(settings.get("verify_checksum", False))
     settings["dest_folder"] = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(settings.get("dest_folder") or "USB Import")).strip() or "USB Import"
     if settings.get("copy_mode") not in ("new_only", "overwrite"):
         settings["copy_mode"] = "new_only"
@@ -3751,6 +4058,31 @@ def _usb_import_save_state():
         log.warning("[USBImport] Save state loi: %s", e)
 
 
+def _usb_import_load_history():
+    try:
+        if os.path.exists(_USB_IMPORT_HISTORY_FILE):
+            with open(_USB_IMPORT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data[-50:]
+    except Exception as e:
+        log.warning("[USBImport] Load history loi: %s", e)
+    return []
+
+
+def _usb_import_add_history(record):
+    try:
+        os.makedirs(os.path.dirname(_USB_IMPORT_HISTORY_FILE), exist_ok=True)
+        items = _usb_import_load_history()
+        items.append(record)
+        tmp = _USB_IMPORT_HISTORY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(items[-50:], f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _USB_IMPORT_HISTORY_FILE)
+    except Exception as e:
+        log.warning("[USBImport] Save history loi: %s", e)
+
+
 def _usb_import_set_state(**kwargs):
     with _usb_import_lock:
         _usb_import_state.update(kwargs)
@@ -3761,8 +4093,12 @@ def _usb_import_public_state():
     settings = _usb_import_load_settings()
     with _usb_import_lock:
         state = dict(_usb_import_state)
+    actual_dest = state.get("dest_dir", "")
     state["settings"] = settings
+    state["history"] = _usb_import_load_history()[-10:]
     state["dest_dir"] = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"))
+    if state.get("status") in ("copying", "cancelled", "error", "done") and actual_dest:
+        state["dest_dir"] = actual_dest
     return state
 
 
@@ -4025,6 +4361,7 @@ def _usb_import_copy_file_with_progress(src, dst, totals):
         last_progress_at=int(time.time()),
     )
     last_emit = time.monotonic()
+    digest = hashlib.sha256() if totals.get("verify_checksum") else None
     with open(src, "rb") as fin, open(dst, "wb") as fout:
         while True:
             if _usb_import_cancel.is_set():
@@ -4033,6 +4370,8 @@ def _usb_import_copy_file_with_progress(src, dst, totals):
             if not chunk:
                 break
             fout.write(chunk)
+            if digest is not None:
+                digest.update(chunk)
             n = len(chunk)
             totals["bytes_done"] += n
             totals["bytes_processed"] += n
@@ -4065,19 +4404,28 @@ def _usb_import_copy_file_with_progress(src, dst, totals):
         bytes_processed=totals["bytes_processed"],
         last_progress_at=int(time.time()),
     )
+    return digest.hexdigest() if digest is not None else ""
 
 
 def _usb_import_copy_tree(candidate, settings):
     global _usb_import_running
     src_root = candidate["mountpoint"]
+    ident = candidate.get("id") or candidate.get("path") or src_root
     label = candidate.get("label") or os.path.basename(src_root.rstrip("/")) or "USB"
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_label = _re_module.sub(r"[^A-Za-z0-9_. -]+", "_", label).strip() or "USB"
-    dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), "%s_%s" % (safe_label, stamp))
+    with _usb_import_lock:
+        prev_dest = _usb_import_state.get("dest_dir", "")
+        prev_id = _usb_import_state.get("active_id", "")
+        prev_status = _usb_import_state.get("status", "")
+    can_resume = bool(settings.get("resume_enabled", True) and prev_id == ident and prev_status in ("copying", "cancelled", "error") and prev_dest and os.path.isdir(prev_dest))
+    dest_base = prev_dest if can_resume else os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), "%s_%s" % (safe_label, stamp))
+    session_id = hashlib.sha1(("%s|%s" % (ident, dest_base)).encode("utf-8", errors="ignore")).hexdigest()[:12]
     files_total, bytes_total = _usb_import_scan_files(src_root)
     _usb_import_set_state(
-        status="copying", message="Dang copy du lieu tu USB.",
+        status="copying", message="Dang copy tiep du lieu tu USB." if can_resume else "Dang copy du lieu tu USB.",
         active_device=candidate.get("path", ""), active_mount=src_root, dest_dir=dest_base,
+        active_id=ident, session_id=session_id, resume_enabled=bool(settings.get("resume_enabled", True)),
         started_at=int(time.time()), finished_at=0, files_total=files_total,
         files_done=0, files_skipped=0, files_failed=0, bytes_done=0,
         bytes_processed=0, bytes_total=bytes_total,
@@ -4098,6 +4446,7 @@ def _usb_import_copy_tree(candidate, settings):
         "current_file_done": 0,
         "speed_started_at": time.monotonic(),
         "speed_start_bytes": 0,
+        "verify_checksum": bool(settings.get("verify_checksum", False)),
     }
     try:
         for root, dirs, files in os.walk(src_root):
@@ -4138,11 +4487,22 @@ def _usb_import_copy_tree(candidate, settings):
                             except Exception:
                                 pass
                             dst = _usb_import_unique_dest(dst)
-                    _usb_import_copy_file_with_progress(src, dst, totals)
+                    checksum = _usb_import_copy_file_with_progress(src, dst, totals)
                     done += 1
                     bytes_done = totals["bytes_done"]
                     bytes_processed = totals["bytes_processed"]
                     totals["done"] = done
+                    if checksum:
+                        try:
+                            with open(os.path.join(dest_base, ".usb_import_manifest.jsonl"), "a", encoding="utf-8") as mf:
+                                mf.write(json.dumps({
+                                    "rel": os.path.relpath(dst, dest_base),
+                                    "size": src_size,
+                                    "sha256": checksum,
+                                    "ts": int(time.time())
+                                }, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
                 except InterruptedError:
                     raise
                 except Exception as e:
@@ -4167,7 +4527,39 @@ def _usb_import_copy_tree(candidate, settings):
             copy_speed_bps=0, eta_seconds=0,
             finished_at=int(time.time())
         )
+        _usb_import_add_history({
+            "id": ident,
+            "label": label,
+            "device": candidate.get("path", ""),
+            "dest_dir": dest_base,
+            "status": "done",
+            "started_at": _usb_import_state.get("started_at", 0),
+            "finished_at": int(time.time()),
+            "files_done": done,
+            "files_skipped": skipped,
+            "files_failed": failed,
+            "bytes_done": bytes_done,
+            "resumed": can_resume,
+            "checksum": bool(settings.get("verify_checksum", False)),
+        })
         _add_system_log("SUCCESS", "USBImport", "Da copy USB vao %s: %d file, skip %d, loi %d" % (dest_base, done, skipped, failed))
+    except InterruptedError:
+        _usb_import_set_state(status="cancelled", message="Da huy copy USB.", finished_at=int(time.time()))
+        _usb_import_add_history({
+            "id": ident,
+            "label": label,
+            "device": candidate.get("path", ""),
+            "dest_dir": dest_base,
+            "status": "cancelled",
+            "started_at": _usb_import_state.get("started_at", 0),
+            "finished_at": int(time.time()),
+            "files_done": done,
+            "files_skipped": skipped,
+            "files_failed": failed,
+            "bytes_done": bytes_done,
+            "resumed": can_resume,
+            "checksum": bool(settings.get("verify_checksum", False)),
+        })
     finally:
         if candidate.get("mounted_by_us"):
             try:
@@ -4227,7 +4619,7 @@ def api_usb_import_status():
 def api_usb_import_settings():
     current = _usb_import_load_settings()
     body = request.get_json(silent=True) or {}
-    for key in ("enabled", "auto_mount", "mount_readonly"):
+    for key in ("enabled", "auto_mount", "mount_readonly", "resume_enabled", "verify_checksum"):
         if key in body:
             current[key] = bool(body.get(key))
     if "dest_folder" in body:

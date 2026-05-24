@@ -408,6 +408,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val autoMount: Boolean = true,
         val mountReadonly: Boolean = true,
         val pollSeconds: Int = 15,
+        val resumeEnabled: Boolean = true,
+        val verifyChecksum: Boolean = false,
     )
     data class UsbImportState(
         val enabled: Boolean = true,
@@ -439,6 +441,42 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var usbImportState by mutableStateOf(UsbImportState())
     var usbImportMessage by mutableStateOf("")
     var isUsbImportLoading by mutableStateOf(false)
+
+    data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
+    data class InsightFlowTask(
+        val type: String = "",
+        val label: String = "",
+        val file: String = "",
+        val source: String = "",
+        val dest: String = "",
+        val speedBps: Long = 0L,
+        val progress: Int = 0,
+    )
+    data class NasInsights(
+        val hddScore: Int = 0,
+        val hddStatusText: String = "",
+        val hddTempC: Int = 0,
+        val hddMinScore: Int = 0,
+        val hddScoreDelta: Int = 0,
+        val workloadMode: String = "normal",
+        val workloadPressure: Int = 0,
+        val workloadRecommendation: String = "",
+        val workloadReasons: List<String> = emptyList(),
+        val emmcRootPercent: Int = 0,
+        val emmcLogPercent: Int = 0,
+        val emmcWarnings: List<String> = emptyList(),
+        val emmcRecommendations: List<String> = emptyList(),
+        val diskReadBps: Long = 0L,
+        val diskWriteBps: Long = 0L,
+        val netRxBps: Long = 0L,
+        val netTxBps: Long = 0L,
+        val flowTasks: List<InsightFlowTask> = emptyList(),
+        val maintenanceActions: List<InsightAction> = emptyList(),
+        val usbHistoryCount: Int = 0,
+        val updatedAt: Long = 0L,
+    )
+    var nasInsights by mutableStateOf(NasInsights())
+    var isFetchingNasInsights by mutableStateOf(false)
 
     // Sleep Schedule (HDD spindown / suspend) state
     data class SleepSchedule(
@@ -1958,6 +1996,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchUsbImportStatus()
                 fetchSmartData()
                 fetchDiskHealth()
+                fetchNasInsights()
                 fetchOmvOverview()
                 fetchStorageUsage()
                 loadSystemLogs()
@@ -3259,6 +3298,94 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
+    private fun jsonStringList(arr: org.json.JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = mutableListOf<String>()
+        for (i in 0 until arr.length()) out.add(arr.optString(i))
+        return out
+    }
+
+    fun fetchNasInsights() {
+        if (isFetchingNasInsights) return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isFetchingNasInsights = true }
+            try {
+                val base = currentUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/system/insights")
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val root = org.json.JSONObject(body)
+                    val health = root.optJSONObject("health_trend") ?: org.json.JSONObject()
+                    val workload = root.optJSONObject("workload") ?: org.json.JSONObject()
+                    val emmc = root.optJSONObject("emmc_guard") ?: org.json.JSONObject()
+                    val dataFlow = root.optJSONObject("data_flow") ?: org.json.JSONObject()
+                    val maintenance = root.optJSONObject("maintenance") ?: org.json.JSONObject()
+                    val usb = root.optJSONObject("usb_import") ?: org.json.JSONObject()
+                    val rootUsage = emmc.optJSONObject("root") ?: org.json.JSONObject()
+                    val logUsage = emmc.optJSONObject("log") ?: org.json.JSONObject()
+                    val tasksArr = dataFlow.optJSONArray("current_tasks")
+                    val tasks = mutableListOf<InsightFlowTask>()
+                    if (tasksArr != null) {
+                        for (i in 0 until tasksArr.length()) {
+                            val o = tasksArr.optJSONObject(i) ?: continue
+                            tasks.add(
+                                InsightFlowTask(
+                                    type = o.optString("type"),
+                                    label = o.optString("label"),
+                                    file = o.optString("file"),
+                                    source = o.optString("source"),
+                                    dest = o.optString("dest"),
+                                    speedBps = o.optLong("speed_bps", 0L),
+                                    progress = o.optInt("progress", 0)
+                                )
+                            )
+                        }
+                    }
+                    val actionsArr = maintenance.optJSONArray("actions")
+                    val actions = mutableListOf<InsightAction>()
+                    if (actionsArr != null) {
+                        for (i in 0 until actionsArr.length()) {
+                            val o = actionsArr.optJSONObject(i) ?: continue
+                            actions.add(InsightAction(o.optString("priority"), o.optString("title"), o.optString("detail")))
+                        }
+                    }
+                    val insights = NasInsights(
+                        hddScore = health.optInt("score", 0),
+                        hddStatusText = health.optString("status_text", ""),
+                        hddTempC = health.optInt("temp_c", 0),
+                        hddMinScore = health.optInt("min_score", 0),
+                        hddScoreDelta = health.optInt("score_delta", 0),
+                        workloadMode = workload.optString("mode", "normal"),
+                        workloadPressure = workload.optInt("pressure", 0),
+                        workloadRecommendation = workload.optString("recommendation", ""),
+                        workloadReasons = jsonStringList(workload.optJSONArray("reasons")),
+                        emmcRootPercent = rootUsage.optInt("percent", 0),
+                        emmcLogPercent = logUsage.optInt("percent", 0),
+                        emmcWarnings = jsonStringList(emmc.optJSONArray("warnings")),
+                        emmcRecommendations = jsonStringList(emmc.optJSONArray("recommendations")),
+                        diskReadBps = dataFlow.optLong("disk_read_bps", 0L),
+                        diskWriteBps = dataFlow.optLong("disk_write_bps", 0L),
+                        netRxBps = dataFlow.optLong("net_rx_bps", 0L),
+                        netTxBps = dataFlow.optLong("net_tx_bps", 0L),
+                        flowTasks = tasks,
+                        maintenanceActions = actions,
+                        usbHistoryCount = usb.optJSONArray("history")?.length() ?: 0,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    withContext(Dispatchers.Main) { nasInsights = insights }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("NasInsights", "fetch err: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingNasInsights = false }
+            }
+        }
+    }
+
     fun launchDashboardRealtimeScheduler() {
         dashboardRealtimeJob?.cancel()
         dashboardRealtimeJob = viewModelScope.launch(Dispatchers.IO) {
@@ -3271,6 +3398,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             var lastStorageRefresh = 0L
             var lastLogRefresh = 0L
             var lastSmartRefresh = 0L
+            var lastInsightsRefresh = 0L
             while (isActive) {
                 val hasUrl = webDavManager.currentBaseUrl.isNotEmpty()
                 if (hasUrl) {
@@ -3292,6 +3420,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         fetchSmartData()
                         fetchDiskHealth()
                         lastSmartRefresh = now
+                    }
+                    if (now - lastInsightsRefresh >= if (AppConfig.IS_APP_FOREGROUND) 15_000L else 60_000L) {
+                        fetchNasInsights()
+                        lastInsightsRefresh = now
                     }
                 }
                 delay(if (AppConfig.IS_APP_FOREGROUND) 2_000L else 10_000L)
@@ -3419,6 +3551,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             autoMount = settingsJson.optBoolean("auto_mount", true),
             mountReadonly = settingsJson.optBoolean("mount_readonly", true),
             pollSeconds = settingsJson.optInt("poll_seconds", 15),
+            resumeEnabled = settingsJson.optBoolean("resume_enabled", true),
+            verifyChecksum = settingsJson.optBoolean("verify_checksum", false),
         )
         return UsbImportState(
             enabled = o.optBoolean("enabled", settings.enabled),
@@ -3489,6 +3623,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     put("auto_mount", settings.autoMount)
                     put("mount_readonly", settings.mountReadonly)
                     put("poll_seconds", settings.pollSeconds)
+                    put("resume_enabled", settings.resumeEnabled)
+                    put("verify_checksum", settings.verifyChecksum)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/settings")
