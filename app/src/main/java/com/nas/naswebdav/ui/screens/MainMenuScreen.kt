@@ -1304,7 +1304,8 @@ fun MainMenuScreen(
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
             showUsbImportDialog = { viewModel.fetchUsbImportStatus(); showUsbImportDialog = true },
-            showDownloadDialog = { showDownloadDialog = true }
+            showDownloadDialog = { showDownloadDialog = true },
+            showSmbDialog = { viewModel.fetchSmbStatus(); showSmbDialog = true }
         )
     }
 }
@@ -1883,7 +1884,8 @@ fun ToolboxDialog(
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
     showUsbImportDialog: () -> Unit = {},
-    showDownloadDialog: () -> Unit = {}
+    showDownloadDialog: () -> Unit = {},
+    showSmbDialog: () -> Unit = {}
 ) {
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
@@ -2070,7 +2072,15 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
                 )
-                Spacer(Modifier.weight(1f))
+                SettingsMenuCard(
+                    title = "Ổ đĩa LAN (SMB)",
+                    subtitle = if (viewModel.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
+                    icon = Icons.Default.Dns,
+                    color = Color(0xFFFF9800),
+                    modifier = Modifier.weight(1f),
+                    checked = viewModel.isSmbEnabled,
+                    onClick = { onDismiss(); showSmbDialog() }
+                )
             }
             Spacer(Modifier.height(16.dp))
         }
