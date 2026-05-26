@@ -4075,6 +4075,9 @@ _usb_import_state = {
     "resume_enabled": True,
     "detected_devices": [],
     "seen_devices": [],
+    "pending_conflicts": [],
+    "pending_errors": [],
+    "needs_action": False,
 }
 
 
@@ -4202,8 +4205,16 @@ def _usb_import_public_state():
     actual_dest = state.get("dest_dir", "")
     state["settings"] = settings
     state["history"] = _usb_import_load_history()[-10:]
+    pending_conflicts = state.get("pending_conflicts") or []
+    pending_errors = state.get("pending_errors") or []
+    state["pending_conflicts_count"] = len(pending_conflicts) if isinstance(pending_conflicts, list) else 0
+    state["pending_errors_count"] = len(pending_errors) if isinstance(pending_errors, list) else 0
+    if isinstance(pending_conflicts, list) and len(pending_conflicts) > 200:
+        state["pending_conflicts"] = pending_conflicts[:200]
+    if isinstance(pending_errors, list) and len(pending_errors) > 200:
+        state["pending_errors"] = pending_errors[:200]
     state["dest_dir"] = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"))
-    if state.get("status") in ("copying", "cancelled", "error", "done") and actual_dest:
+    if state.get("status") in ("copying", "cancelled", "error", "done", "needs_action") and actual_dest:
         state["dest_dir"] = actual_dest
     return state
 
@@ -4438,6 +4449,66 @@ def _usb_import_unique_dest(path):
     return "%s_copy_%s%s" % (base, uuid.uuid4().hex[:8], ext)
 
 
+def _usb_import_file_size(path):
+    try:
+        return os.path.getsize(path)
+    except Exception:
+        return 0
+
+
+def _usb_import_rel(path, base):
+    try:
+        return os.path.relpath(path, base)
+    except Exception:
+        return os.path.basename(path)
+
+
+def _usb_import_conflict_item(src, dst, dest_base, source_size=None):
+    if source_size is None:
+        source_size = _usb_import_file_size(src)
+    dest_size = _usb_import_file_size(dst)
+    return {
+        "source": src,
+        "dest": dst,
+        "rel": _usb_import_rel(dst, dest_base),
+        "source_name": os.path.basename(src),
+        "dest_name": os.path.basename(dst),
+        "source_size": int(source_size or 0),
+        "dest_size": int(dest_size or 0),
+    }
+
+
+def _usb_import_error_item(src, dst, dest_base, err, source_size=None):
+    if source_size is None:
+        source_size = _usb_import_file_size(src)
+    return {
+        "source": src,
+        "dest": dst,
+        "rel": _usb_import_rel(dst, dest_base),
+        "source_name": os.path.basename(src),
+        "dest_name": os.path.basename(dst),
+        "source_size": int(source_size or 0),
+        "error": str(err)[:300],
+    }
+
+
+def _usb_import_move_partial(dst):
+    try:
+        if dst and os.path.exists(dst):
+            bad_path = dst + ".partial"
+            if os.path.exists(bad_path):
+                bad_path = bad_path + "." + str(int(time.time()))
+            os.rename(dst, bad_path)
+    except Exception:
+        pass
+
+
+def _usb_import_copy_error_message(err, src):
+    if getattr(err, "errno", None) == 5:
+        return "I/O error khi đọc USB. Kernel đang báo lỗi đọc thiết bị, thường là sector lỗi/ổ USB hỏng hoặc box/cáp rớt kết nối. File sẽ được thử lại sau: %s" % os.path.basename(src)
+    return str(err)
+
+
 def _usb_import_copy_file_with_progress(src, dst, totals):
     buf_size = 8 * 1024 * 1024  # 8MB buffer — tối ưu cho USB 3.0 sequential read
     file_size = 0
@@ -4554,7 +4625,7 @@ def _usb_import_copy_tree(candidate, settings):
         current_file="", current_source="", current_dest="",
         current_file_bytes_done=0, current_file_bytes_total=0,
         copy_speed_bps=0, eta_seconds=0, last_progress_at=int(time.time()),
-        last_error=""
+        last_error="", pending_conflicts=[], pending_errors=[], needs_action=False
     )
     os.makedirs(dest_base, exist_ok=True)
     # Block thumbnail generator trong lúc copy USB để tránh tranh giành CPU/IO
@@ -4576,6 +4647,9 @@ def _usb_import_copy_tree(candidate, settings):
         "verify_checksum": bool(settings.get("verify_checksum", False)),
     }
     manifest_handle = None
+    pending_conflicts = []
+    pending_errors = []
+    retry_queue = []
     try:
         if totals["verify_checksum"]:
             manifest_handle = open(os.path.join(dest_base, ".usb_import_manifest.jsonl"), "a", encoding="utf-8", buffering=1024 * 1024)
@@ -4606,17 +4680,19 @@ def _usb_import_copy_tree(candidate, settings):
                         pass
                     dst = os.path.join(target_dir, name)
                     if os.path.exists(dst):
-                        if settings.get("copy_mode") != "overwrite":
-                            try:
-                                if src_size == os.path.getsize(dst):
-                                    skipped += 1
-                                    bytes_processed += src_size
-                                    totals["skipped"] = skipped
-                                    totals["bytes_processed"] = bytes_processed
-                                    continue
-                            except Exception:
-                                pass
-                            dst = _usb_import_unique_dest(dst)
+                        pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
+                        skipped += 1
+                        bytes_processed += src_size
+                        totals["skipped"] = skipped
+                        totals["bytes_processed"] = bytes_processed
+                        _usb_import_set_state(
+                            files_skipped=skipped,
+                            bytes_processed=bytes_processed,
+                            pending_conflicts=pending_conflicts[-200:],
+                            needs_action=True,
+                            last_error="File trùng tên được để lại xử lý sau: %s" % os.path.basename(dst),
+                        )
+                        continue
                     checksum = _usb_import_copy_file_with_progress(src, dst, totals)
                     done += 1
                     bytes_done = totals["bytes_done"]
@@ -4635,27 +4711,70 @@ def _usb_import_copy_tree(candidate, settings):
                 except InterruptedError:
                     raise
                 except Exception as e:
-                    failed += 1
-                    totals["failed"] = failed
-                    try:
-                        partial = dst if "dst" in locals() else ""
-                        if partial and os.path.exists(partial):
-                            bad_path = partial + ".partial"
-                            if os.path.exists(bad_path):
-                                bad_path = bad_path + "." + str(int(time.time()))
-                            os.rename(partial, bad_path)
-                    except Exception:
-                        pass
-                    if getattr(e, "errno", None) == 5:
-                        last_error = "I/O error khi đọc USB. Kernel đang báo critical medium error trên /dev/sdc, thường là sector lỗi/ổ USB hỏng hoặc box/cáp rớt kết nối. File bị bỏ qua: %s" % os.path.basename(src)
-                    else:
-                        last_error = str(e)
-                    _usb_import_set_state(last_error=last_error[:240])
+                    dst_for_error = dst if "dst" in locals() else os.path.join(target_dir, name)
+                    _usb_import_move_partial(dst_for_error)
+                    retry_item = _usb_import_error_item(src, dst_for_error, dest_base, e, src_size if "src_size" in locals() else None)
+                    retry_queue.append(retry_item)
+                    _usb_import_set_state(
+                        last_error=_usb_import_copy_error_message(e, src)[:240],
+                        pending_errors=retry_queue[-200:],
+                    )
                 if (done + skipped + failed) % 20 == 0:
                     _usb_import_set_state(
                         files_done=done, files_skipped=skipped, files_failed=failed,
                         bytes_done=bytes_done, bytes_processed=bytes_processed
                     )
+        if retry_queue and not _usb_import_cancel.is_set():
+            _usb_import_set_state(
+                message="Đang thử lại các file lỗi sau khi copy xong lượt đầu.",
+                pending_errors=retry_queue[-200:],
+                last_error="Đang thử lại %d file lỗi." % len(retry_queue),
+            )
+            for item in list(retry_queue):
+                if _usb_import_cancel.is_set():
+                    _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.", finished_at=int(time.time()))
+                    return
+                src = item.get("source") or ""
+                dst = item.get("dest") or ""
+                src_size = int(item.get("source_size") or 0)
+                try:
+                    if not src or not os.path.exists(src):
+                        raise FileNotFoundError(src or item.get("source_name") or "source")
+                    if os.path.exists(dst):
+                        pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
+                        skipped += 1
+                        totals["skipped"] = skipped
+                        continue
+                    checksum = _usb_import_copy_file_with_progress(src, dst, totals)
+                    done += 1
+                    bytes_done = totals["bytes_done"]
+                    bytes_processed = totals["bytes_processed"]
+                    totals["done"] = done
+                    if checksum and manifest_handle is not None:
+                        try:
+                            manifest_handle.write(json.dumps({
+                                "rel": os.path.relpath(dst, dest_base),
+                                "size": src_size,
+                                "sha256": checksum,
+                                "ts": int(time.time())
+                            }, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                except InterruptedError:
+                    raise
+                except Exception as e:
+                    _usb_import_move_partial(dst)
+                    failed += 1
+                    totals["failed"] = failed
+                    pending_errors.append(_usb_import_error_item(src, dst, dest_base, e, src_size))
+                    _usb_import_set_state(last_error=_usb_import_copy_error_message(e, src)[:240])
+                _usb_import_set_state(
+                    files_done=done, files_skipped=skipped, files_failed=failed,
+                    bytes_done=bytes_done, bytes_processed=totals["bytes_processed"],
+                    pending_conflicts=pending_conflicts[-200:],
+                    pending_errors=pending_errors[-200:],
+                    needs_action=bool(pending_conflicts),
+                )
         if manifest_handle is not None:
             manifest_handle.flush()
             os.fsync(manifest_handle.fileno())
@@ -4667,13 +4786,24 @@ def _usb_import_copy_tree(candidate, settings):
             subprocess.run(["chmod", "-R", "2775", dest_base])
         except Exception:
             pass
+        bytes_done = totals["bytes_done"]
+        bytes_processed = totals["bytes_processed"]
+        final_status = "needs_action" if pending_conflicts else "done"
+        final_message = (
+            "Đã copy xong phần không trùng. Cần xử lý %d file trùng tên." % len(pending_conflicts)
+            if pending_conflicts else
+            ("Đã copy xong USB, còn %d file lỗi sau khi thử lại." % len(pending_errors) if pending_errors else "Đã copy xong USB.")
+        )
         _usb_import_set_state(
-            status="done", message="Đã copy xong USB.",
+            status=final_status, message=final_message,
             files_done=done, files_skipped=skipped, files_failed=failed,
             bytes_done=bytes_done, bytes_processed=bytes_processed,
             current_file="", current_source="", current_dest="",
             current_file_bytes_done=0, current_file_bytes_total=0,
             copy_speed_bps=0, eta_seconds=0,
+            pending_conflicts=pending_conflicts,
+            pending_errors=pending_errors,
+            needs_action=bool(pending_conflicts),
             finished_at=int(time.time())
         )
         _usb_import_add_history({
@@ -4681,7 +4811,7 @@ def _usb_import_copy_tree(candidate, settings):
             "label": label,
             "device": candidate.get("path", ""),
             "dest_dir": dest_base,
-            "status": "done",
+            "status": final_status,
             "started_at": _usb_import_state.get("started_at", 0),
             "finished_at": int(time.time()),
             "files_done": done,
@@ -4691,7 +4821,7 @@ def _usb_import_copy_tree(candidate, settings):
             "resumed": can_resume,
             "checksum": bool(settings.get("verify_checksum", False)),
         })
-        _add_system_log("SUCCESS", "USBImport", "Đã copy USB vào %s: %d file, skip %d, lỗi %d" % (dest_base, done, skipped, failed))
+        _add_system_log("SUCCESS", "USBImport", "Đã copy USB vào %s: %d file, skip %d, lỗi %d, trùng %d" % (dest_base, done, skipped, failed, len(pending_conflicts)))
     except InterruptedError:
         _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.", finished_at=int(time.time()))
         _usb_import_add_history({
@@ -4717,7 +4847,8 @@ def _usb_import_copy_tree(candidate, settings):
                 pass
         if candidate.get("mounted_by_us"):
             try:
-                subprocess.run(["umount", src_root], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                if not pending_conflicts:
+                    subprocess.run(["umount", src_root], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             except Exception:
                 pass
         with _usb_import_lock:
@@ -4731,6 +4862,107 @@ def _usb_import_copy_tree(candidate, settings):
         # Mở khoá thumbnail generator sau khi copy USB xong
         _set_thumbnail_auto_block("usb_import", False)
         log.info("[USBImport] Đã mở khoá thumbnail generator sau khi copy USB.")
+
+
+def _usb_import_path_under(path, root):
+    try:
+        path_real = os.path.realpath(path)
+        root_real = os.path.realpath(root)
+        return path_real == root_real or path_real.startswith(root_real.rstrip(os.sep) + os.sep)
+    except Exception:
+        return False
+
+
+def _usb_import_resolve_conflicts_worker(action, selected_keys):
+    global _usb_import_running
+    selected = set(selected_keys or [])
+    with _usb_import_lock:
+        conflicts = list(_usb_import_state.get("pending_conflicts") or [])
+        active_mount = _usb_import_state.get("active_mount", "")
+        dest_base = _usb_import_state.get("dest_dir", "")
+    remaining_conflicts = []
+    resolved = 0
+    failed = 0
+    errors = []
+    totals = {
+        "done": int(_usb_import_state.get("files_done") or 0),
+        "skipped": int(_usb_import_state.get("files_skipped") or 0),
+        "failed": int(_usb_import_state.get("files_failed") or 0),
+        "bytes_done": int(_usb_import_state.get("bytes_done") or 0),
+        "bytes_processed": int(_usb_import_state.get("bytes_processed") or 0),
+        "bytes_total": int(_usb_import_state.get("bytes_total") or 0),
+        "current_file_done": 0,
+        "bytes_since_sync": 0,
+        "verify_checksum": False,
+    }
+    try:
+        _set_thumbnail_auto_block("usb_import", True)
+        _usb_import_set_state(status="copying", message="Đang xử lý file trùng tên.", last_error="")
+        for item in conflicts:
+            key = item.get("rel") or item.get("dest") or item.get("source")
+            if selected and key not in selected and item.get("dest") not in selected and item.get("source") not in selected:
+                remaining_conflicts.append(item)
+                continue
+            src = item.get("source") or ""
+            dst = item.get("dest") or ""
+            try:
+                if not _usb_import_path_under(src, active_mount) or not _usb_import_path_under(dst, dest_base):
+                    raise ValueError("Đường dẫn file trùng không hợp lệ.")
+                if action == "skip":
+                    resolved += 1
+                    continue
+                final_dst = dst
+                if action == "rename":
+                    final_dst = _usb_import_unique_dest(dst)
+                elif action != "overwrite":
+                    raise ValueError("Hành động không hợp lệ.")
+                os.makedirs(os.path.dirname(final_dst), exist_ok=True)
+                _usb_import_copy_file_with_progress(src, final_dst, totals)
+                totals["done"] += 1
+                resolved += 1
+            except InterruptedError:
+                raise
+            except Exception as e:
+                failed += 1
+                totals["failed"] += 1
+                errors.append(_usb_import_error_item(src, dst, dest_base, e, item.get("source_size")))
+                _usb_import_set_state(last_error=_usb_import_copy_error_message(e, src)[:240])
+        status = "needs_action" if remaining_conflicts else "done"
+        message = (
+            "Còn %d file trùng tên chưa xử lý." % len(remaining_conflicts)
+            if remaining_conflicts else
+            "Đã xử lý xong %d file trùng tên." % resolved
+        )
+        if errors:
+            message += " Còn %d file lỗi." % len(errors)
+        _usb_import_set_state(
+            status=status,
+            message=message,
+            files_done=totals["done"],
+            files_failed=totals["failed"],
+            bytes_done=totals["bytes_done"],
+            bytes_processed=totals["bytes_processed"],
+            current_file="", current_source="", current_dest="",
+            current_file_bytes_done=0, current_file_bytes_total=0,
+            copy_speed_bps=0, eta_seconds=0,
+            pending_conflicts=remaining_conflicts,
+            pending_errors=errors,
+            needs_action=bool(remaining_conflicts),
+            finished_at=int(time.time()),
+        )
+        try:
+            subprocess.run(["sync"], timeout=120)
+            if dest_base:
+                subprocess.run(["chown", "-R", "daica:webdav-users", dest_base])
+                subprocess.run(["chmod", "-R", "2775", dest_base])
+        except Exception:
+            pass
+    except InterruptedError:
+        _usb_import_set_state(status="cancelled", message="Đã huỷ xử lý file trùng.", finished_at=int(time.time()))
+    finally:
+        _usb_import_running = False
+        _set_thumbnail_auto_block("usb_import", False)
+        _usb_import_save_state()
 
 
 def _usb_import_watchdog():
@@ -4823,6 +5055,34 @@ def api_usb_import_cancel():
     else:
         _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.")
     return jsonify({"ok": True, "state": _usb_import_public_state()})
+
+
+@app.route("/api/usb_import/resolve_conflicts", methods=["POST"])
+@requires_auth
+def api_usb_import_resolve_conflicts():
+    global _usb_import_running
+    if _usb_import_running:
+        return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
+    body = request.get_json(silent=True) or {}
+    action = str(body.get("action") or "").strip().lower()
+    if action not in ("overwrite", "rename", "skip"):
+        return jsonify({"ok": False, "message": "action phải là overwrite, rename hoặc skip", "state": _usb_import_public_state()}), 400
+    with _usb_import_lock:
+        conflicts = list(_usb_import_state.get("pending_conflicts") or [])
+    if not conflicts:
+        return jsonify({"ok": False, "message": "Không có file trùng tên cần xử lý", "state": _usb_import_public_state()}), 404
+    selected = body.get("items")
+    if selected is not None and not isinstance(selected, list):
+        return jsonify({"ok": False, "message": "items phải là danh sách rel/dest/source", "state": _usb_import_public_state()}), 400
+    _usb_import_cancel.clear()
+    _usb_import_running = True
+    threading.Thread(
+        target=_usb_import_resolve_conflicts_worker,
+        args=(action, selected or []),
+        daemon=True,
+        name="USBImportResolveConflicts",
+    ).start()
+    return jsonify({"ok": True, "message": "Đã bắt đầu xử lý file trùng tên", "state": _usb_import_public_state()})
 
 
 @app.route('/api/backup/schedule', methods=['GET'])
