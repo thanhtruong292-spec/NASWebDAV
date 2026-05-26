@@ -2334,9 +2334,9 @@ private fun DiskProfileBottomSheet(
         livestreamReady == "Không nên ghi" || livestreamReady == "SMART cảnh báo" || ramLoad >= 90f || cpuLoad >= 90f -> "Không nên ghi thêm"
         else -> "Cần theo dõi"
     }
-    val quietWindowAdvice = if (heavyWriteTasks > 0) "Nên tránh chạy quét file/thumbnail khi đang ghi." else "Có thể chạy tác vụ bảo trì nhẹ."
+    val quietWindowAdvice = if (heavyWriteTasks > 0) "Khuyến nghị tạm ngưng quét dữ liệu/ảnh thu nhỏ." else "Hệ thống sẵn sàng cho các tác vụ bảo trì định kỳ."
     val ramGuardAdvice = when {
-        ramLoad >= 90f -> "RAM rất cao, nên giảm tác vụ nền."
+        ramLoad >= 90f -> "Mức sử dụng RAM ở ngưỡng nguy hiểm, yêu cầu tinh giản tác vụ nền."
         ramLoad >= 80f -> "RAM cao, theo dõi trước khi mở thêm tác vụ."
         else -> "RAM phù hợp cho vận hành hiện tại."
     }
@@ -2515,7 +2515,7 @@ private fun DiskProfileBottomSheet(
                 HardwareMetricCell(
                     title = "Livestream",
                     value = "$livestreamSessionsToday phiên",
-                    subtitle = if (isTrackingNewDisk) "Đang ghi $activeRecordings • xong hôm nay $completedLivestreamSessionsToday" else "Chưa tính theo ổ mới",
+                    subtitle = if (isTrackingNewDisk) "Đang ghi hình: $activeRecordings luồng • Đã hoàn tất: $completedLivestreamSessionsToday phiên" else "Chưa phân tích trên phân vùng mới",
                     icon = Icons.Default.Videocam,
                     color = AccentPink,
                     modifier = Modifier.weight(1f)
@@ -2541,8 +2541,8 @@ private fun DiskProfileBottomSheet(
                 )
                 HardwareMetricCell(
                     title = "Tác vụ ghi nặng",
-                    value = "$heavyWriteTasks tác vụ",
-                    subtitle = "Live $activeRecordings • Tải $downloadTasks",
+                    value = "$heavyWriteTasks tiến trình",
+                    subtitle = "Ghi hình: $activeRecordings luồng • Tải xuống: $downloadTasks phiên",
                     icon = Icons.Default.VerifiedUser,
                     color = Color(0xFF66BB6A),
                     modifier = Modifier.weight(1f)
@@ -2741,7 +2741,7 @@ private fun DiskProfileBottomSheet(
                         Icon(Icons.Default.EditNote, null, tint = AccentOrange, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Column {
-                            Text("Tác vụ đang ghi vào ổ", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Tiến trình phân bổ dữ liệu", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             Text(writeRiskLabel, color = TextSecondary, fontSize = 10.sp)
                         }
                     }

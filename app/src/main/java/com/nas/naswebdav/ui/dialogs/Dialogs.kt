@@ -391,8 +391,8 @@ fun SmartDiskDialog(
 
 // ====================================================================
 // EXCLUSIVE PANEL STATE cho 3 section trong LivestreamRecordDialog:
-// "watchlist" (THEO DOI TIKTOK LIVE) | "exclude" (Thoi gian loai tru) | "active" (Dang ghi hinh)
-// Chi 1 section mo cung luc -> toi uu dien tich man hinh.
+// "watchlist" (THEO DÕI TIKTOK LIVE) | "exclude" (Thoi gian loai tru) | "active" (Dang ghi hinh)
+// Chỉ 1 section mở cùng lúc -> tối ưu diện tích màn hình.
 // ====================================================================
 object LivestreamPanelState {
     val current: androidx.compose.runtime.MutableState<String?> =
@@ -458,7 +458,7 @@ private fun TikTokLiveWatchSection(
     var expandedUserName by remember { mutableStateOf<String?>(null) }
     var pendingDeleteUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
     val snackbarScope = rememberCoroutineScope()
-    // Cac panel theo doi tiktok / thoi gian loai tru / dang ghi hinh — chi 1 panel mo
+    // Các panel theo dõi TikTok / thời gian loại trừ / đang ghi hình — chi 1 panel mo
     // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).
     val listExpanded = LivestreamPanelState.current.value == "watchlist"
     val excludeExpanded = LivestreamPanelState.current.value == "exclude"
