@@ -3908,7 +3908,7 @@ fun ProcessListBottomSheet(
             }
 
             androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.85f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(viewModel.systemProcesses.size) { index ->
@@ -4057,7 +4057,7 @@ fun SmartDetailBottomSheet(
             }
 
             androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.85f),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 items(attrLines.size) { index ->
