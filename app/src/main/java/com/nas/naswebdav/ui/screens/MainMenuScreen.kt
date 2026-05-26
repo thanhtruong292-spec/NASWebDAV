@@ -3981,7 +3981,8 @@ fun SmartDetailBottomSheet(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .fillMaxHeight(0.94f)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             // Title
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
@@ -4003,7 +4004,7 @@ fun SmartDetailBottomSheet(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
 
             // Device info header
             val labelMap = mapOf(
@@ -4037,14 +4038,14 @@ fun SmartDetailBottomSheet(
                         else -> Color.White
                     }
                     
-                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
                         Text(label, color = TextSecondary, fontSize = 11.sp, modifier = Modifier.width(140.dp))
-                        Text(rawValue, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(rawValue, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
             Spacer(Modifier.height(4.dp))
 
@@ -4057,7 +4058,7 @@ fun SmartDetailBottomSheet(
             }
 
             androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 items(attrLines.size) { index ->
