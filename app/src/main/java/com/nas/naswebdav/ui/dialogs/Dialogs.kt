@@ -3612,7 +3612,7 @@ fun UsbImportDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.94f)
+                .heightIn(max = 820.dp)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
@@ -3740,7 +3740,7 @@ fun UsbImportDialog(
                 if (state.lastError.isNotBlank()) {
                     Text(state.lastError, color = Color(0xFFEF5350), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-                if (state.pendingConflictsCount > 0 || state.needsAction) {
+                if (state.status == "needs_action" && state.needsAction && state.pendingConflictsCount > 0) {
                     Spacer(Modifier.height(8.dp))
                     Column(
                         modifier = Modifier

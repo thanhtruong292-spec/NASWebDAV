@@ -4076,7 +4076,9 @@ _usb_import_state = {
     "detected_devices": [],
     "seen_devices": [],
     "pending_conflicts": [],
+    "pending_conflicts_count": 0,
     "pending_errors": [],
+    "pending_errors_count": 0,
     "needs_action": False,
 }
 
@@ -4207,8 +4209,8 @@ def _usb_import_public_state():
     state["history"] = _usb_import_load_history()[-10:]
     pending_conflicts = state.get("pending_conflicts") or []
     pending_errors = state.get("pending_errors") or []
-    state["pending_conflicts_count"] = len(pending_conflicts) if isinstance(pending_conflicts, list) else 0
-    state["pending_errors_count"] = len(pending_errors) if isinstance(pending_errors, list) else 0
+    state["pending_conflicts_count"] = int(state.get("pending_conflicts_count") or (len(pending_conflicts) if isinstance(pending_conflicts, list) else 0))
+    state["pending_errors_count"] = int(state.get("pending_errors_count") or (len(pending_errors) if isinstance(pending_errors, list) else 0))
     if isinstance(pending_conflicts, list) and len(pending_conflicts) > 200:
         state["pending_conflicts"] = pending_conflicts[:200]
     if isinstance(pending_errors, list) and len(pending_errors) > 200:
@@ -4625,7 +4627,8 @@ def _usb_import_copy_tree(candidate, settings):
         current_file="", current_source="", current_dest="",
         current_file_bytes_done=0, current_file_bytes_total=0,
         copy_speed_bps=0, eta_seconds=0, last_progress_at=int(time.time()),
-        last_error="", pending_conflicts=[], pending_errors=[], needs_action=False
+        last_error="", pending_conflicts=[], pending_conflicts_count=0,
+        pending_errors=[], pending_errors_count=0, needs_action=False
     )
     os.makedirs(dest_base, exist_ok=True)
     # Block thumbnail generator trong lúc copy USB để tránh tranh giành CPU/IO
@@ -4688,9 +4691,9 @@ def _usb_import_copy_tree(candidate, settings):
                         _usb_import_set_state(
                             files_skipped=skipped,
                             bytes_processed=bytes_processed,
-                            pending_conflicts=pending_conflicts[-200:],
-                            needs_action=True,
-                            last_error="File trùng tên được để lại xử lý sau: %s" % os.path.basename(dst),
+                            pending_conflicts=[],
+                            pending_conflicts_count=len(pending_conflicts),
+                            needs_action=False,
                         )
                         continue
                     checksum = _usb_import_copy_file_with_progress(src, dst, totals)
@@ -4717,7 +4720,8 @@ def _usb_import_copy_tree(candidate, settings):
                     retry_queue.append(retry_item)
                     _usb_import_set_state(
                         last_error=_usb_import_copy_error_message(e, src)[:240],
-                        pending_errors=retry_queue[-200:],
+                        pending_errors=[],
+                        pending_errors_count=len(retry_queue),
                     )
                 if (done + skipped + failed) % 20 == 0:
                     _usb_import_set_state(
@@ -4771,9 +4775,11 @@ def _usb_import_copy_tree(candidate, settings):
                 _usb_import_set_state(
                     files_done=done, files_skipped=skipped, files_failed=failed,
                     bytes_done=bytes_done, bytes_processed=totals["bytes_processed"],
-                    pending_conflicts=pending_conflicts[-200:],
+                    pending_conflicts=[],
+                    pending_conflicts_count=len(pending_conflicts),
                     pending_errors=pending_errors[-200:],
-                    needs_action=bool(pending_conflicts),
+                    pending_errors_count=len(pending_errors),
+                    needs_action=False,
                 )
         if manifest_handle is not None:
             manifest_handle.flush()
@@ -4802,7 +4808,9 @@ def _usb_import_copy_tree(candidate, settings):
             current_file_bytes_done=0, current_file_bytes_total=0,
             copy_speed_bps=0, eta_seconds=0,
             pending_conflicts=pending_conflicts,
+            pending_conflicts_count=len(pending_conflicts),
             pending_errors=pending_errors,
+            pending_errors_count=len(pending_errors),
             needs_action=bool(pending_conflicts),
             finished_at=int(time.time())
         )
@@ -4946,7 +4954,9 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
             current_file_bytes_done=0, current_file_bytes_total=0,
             copy_speed_bps=0, eta_seconds=0,
             pending_conflicts=remaining_conflicts,
+            pending_conflicts_count=len(remaining_conflicts),
             pending_errors=errors,
+            pending_errors_count=len(errors),
             needs_action=bool(remaining_conflicts),
             finished_at=int(time.time()),
         )
