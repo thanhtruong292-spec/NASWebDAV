@@ -6827,11 +6827,7 @@ def _create_placeholder_thumb(dst_path):
     try:
         from PIL import Image, ImageDraw
         img = Image.new('RGB', (THUMB_MAX_SIZE, int(THUMB_MAX_SIZE * 9 / 16)), (45, 45, 48))
-        draw = ImageDraw.Draw(img)
-        # Ve icon pl?y tam gia
-        cx, cy = THUMB_MAX_SIZE // 2, int(THUMB_MAX_SIZE * 9 / 32)
-        s = 30
-        draw.polygon([(cx - s, cy - s), (cx - s, cy + s), (cx + s, cy)], fill=(180, 180, 180))
+        # Không vẽ tam giác Play nữa vì Android đã tự phủ lớp Icon riêng
         img.save(dst_path, 'JPEG', quality=60) 
     except Exception:
         # Fallback: tao 1x1 pixel JPEG
@@ -6923,9 +6919,11 @@ def _thumbnail_generator():
                     if now.hour == 3 and now.minute < 5:
                         break
                         
-                    # 2. Xử lý tải nhẹ (Rảnh): Mỗi 30 phút một lần, nếu NAS cực rảnh -> Thức dậy làm bù
-                    # Điều kiện CPU < 15.0 giúp giảm nguy cơ giật lác hệ thống
-                    if now.minute % 30 == 0:
+                    # 2. Xử lý tải nhẹ (Rảnh): Kiểm tra mỗi phút, nếu không có tiến trình nền (sync, livestream) và CPU < 15.0 -> Thức dậy
+                    with _thumb_gate_lock:
+                        is_idle = len(_thumb_auto_block_reasons) == 0
+                        
+                    if is_idle:
                         cpu = psutil.cpu_percent(interval=1)
                         if cpu < 15.0:
                             break
@@ -8843,6 +8841,12 @@ def _tiktok_live_watchdog():
 @app.route("/api/tiktok/live_watch", methods=["GET"])
 @requires_auth
 def api_tiktok_live_watch_get():
+    # Pre-fetch livestream info to avoid nested locks (deadlock prevention)
+    active_livestreams = {}
+    with _livestream_lock:
+        for k, v in _livestream_jobs.items():
+            active_livestreams[k] = (v.get("status"), v.get("pid"))
+
     with _tiktok_watch_lock:
         _load_tiktok_watch_state()
         changed = False
@@ -8851,14 +8855,13 @@ def api_tiktok_live_watch_get():
                 jid = user.get("job_id", "")
                 active = False
                 if jid:
-                    with _livestream_lock:
-                        info = _livestream_jobs.get(jid)
-                        if info and info.get("status") == "recording":
-                            try:
-                                os.kill(info.get("pid"), 0)
-                                active = True
-                            except Exception:
-                                active = False
+                    l_status, l_pid = active_livestreams.get(jid, (None, None))
+                    if l_status == "recording" and l_pid is not None:
+                        try:
+                            os.kill(l_pid, 0)
+                            active = True
+                        except Exception:
+                            active = False
                 if not active:
                     if user.get("live_session_recorded", False):
                         user["status"] = "recorded"
@@ -9822,6 +9825,32 @@ def api_ytdlp_status():
 
 
 # ============ KHOI CHAY ============
+def _deadlock_watchdog():
+    """Giám sát các lock quan trọng để tự động restart nếu bị deadlock."""
+    import time
+    import os
+    while True:
+        time.sleep(60)
+        
+        # Test livestream lock
+        ok = _livestream_lock.acquire(timeout=30.0)
+        if ok:
+            _livestream_lock.release()
+        else:
+            log.error("[Deadlock] Phát hiện kẹt _livestream_lock quá 30s! Tự khởi động lại server...")
+            os.system("nohup python3 /root/nas_api_server.py > /tmp/nas_api.log 2>&1 &")
+            os._exit(1)
+            
+        # Test tiktok watch lock
+        ok = _tiktok_watch_lock.acquire(timeout=30.0)
+        if ok:
+            _tiktok_watch_lock.release()
+        else:
+            log.error("[Deadlock] Phát hiện kẹt _tiktok_watch_lock quá 30s! Tự khởi động lại server...")
+            os.system("nohup python3 /root/nas_api_server.py > /tmp/nas_api.log 2>&1 &")
+            os._exit(1)
+
+
 if __name__ == "__main__":
     # Initialize main IO loop here so it's bound to the main thread
     main_loop = tornado.ioloop.IOLoop.current()
@@ -9914,8 +9943,12 @@ if __name__ == "__main__":
 
     # Thread dò TikTok live chạy hoàn toàn trên NAS. App Android chỉ cấu hình và
     # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
-    threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
+        threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
+    
+    # Thread chong deadlock
+    threading.Thread(target=_deadlock_watchdog, daemon=True, name="DeadlockWatchdog").start()
+    log.info("[DeadlockWatchdog] Trình giám sát Deadlock tự động đã khởi động.")
     # ============ DON PORT TRUOC KHI BIND (FIX ZOMBIE PROCESS GIU PORT) ============
     import socket as _socket
     def _force_free_port(port):
