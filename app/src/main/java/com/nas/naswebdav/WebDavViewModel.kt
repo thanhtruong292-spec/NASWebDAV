@@ -411,6 +411,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val resumeEnabled: Boolean = true,
         val verifyChecksum: Boolean = false,
     )
+    data class UsbImportConflict(
+        val rel: String = "",
+        val sourceName: String = "",
+        val destName: String = "",
+        val sourceSize: Long = 0L,
+        val destSize: Long = 0L,
+    )
     data class UsbImportState(
         val enabled: Boolean = true,
         val status: String = "idle",
@@ -438,6 +445,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val lastError: String = "",
         val settings: UsbImportSettings = UsbImportSettings(),
         val detectedDevicesInfo: String = "",
+        val needsAction: Boolean = false,
+        val pendingConflictsCount: Int = 0,
+        val pendingErrorsCount: Int = 0,
+        val pendingConflicts: List<UsbImportConflict> = emptyList(),
     )
     var usbImportState by mutableStateOf(UsbImportState())
     var usbImportMessage by mutableStateOf("")
@@ -3641,8 +3652,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             lastProgressAt = o.optLong("last_progress_at", 0L),
             lastError = o.optString("last_error", ""),
             settings = settings,
-            detectedDevicesInfo = parseDetectedDevicesInfo(o.optJSONArray("detected_devices"))
+            detectedDevicesInfo = parseDetectedDevicesInfo(o.optJSONArray("detected_devices")),
+            needsAction = o.optBoolean("needs_action", false),
+            pendingConflictsCount = o.optInt("pending_conflicts_count", 0),
+            pendingErrorsCount = o.optInt("pending_errors_count", 0),
+            pendingConflicts = parseUsbImportConflicts(o.optJSONArray("pending_conflicts")),
         )
+    }
+
+    private fun parseUsbImportConflicts(arr: org.json.JSONArray?): List<UsbImportConflict> {
+        if (arr == null) return emptyList()
+        val out = mutableListOf<UsbImportConflict>()
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            out.add(
+                UsbImportConflict(
+                    rel = item.optString("rel", ""),
+                    sourceName = item.optString("source_name", ""),
+                    destName = item.optString("dest_name", ""),
+                    sourceSize = item.optLong("source_size", 0L),
+                    destSize = item.optLong("dest_size", 0L),
+                )
+            )
+        }
+        return out
     }
 
     private fun parseDetectedDevicesInfo(arr: org.json.JSONArray?): String {
@@ -3805,6 +3838,44 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchUsbImportStatus()
             } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isUsbImportLoading = false }
+            }
+        }
+    }
+
+    fun resolveUsbImportConflicts(action: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) { isUsbImportLoading = true }
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                val body = org.json.JSONObject().apply {
+                    put("action", action)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$base/api/usb_import/resolve_conflicts")
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    val raw = resp.body?.string() ?: "{}"
+                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val stateJson = o.optJSONObject("state")
+                    repository.addSystemLog(
+                        if (resp.isSuccessful) "INFO" else "WARNING",
+                        "USBImport",
+                        "Người dùng: xử lý file trùng USB Import bằng $action (${o.optString("message", "không có phản hồi")})."
+                    )
+                    withContext(Dispatchers.Main) {
+                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
+                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã gửi lệnh xử lý file trùng" else "Không xử lý được file trùng")
+                    }
+                }
+                fetchUsbImportStatus()
+            } catch (e: Exception) {
+                repository.addSystemLog("WARNING", "USBImport", "Người dùng: xử lý file trùng USB Import thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }

@@ -3713,6 +3713,52 @@ fun UsbImportDialog(
                 if (state.lastError.isNotBlank()) {
                     Text(state.lastError, color = Color(0xFFEF5350), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
+                if (state.pendingConflictsCount > 0 || state.needsAction) {
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF211A12), RoundedCornerShape(8.dp))
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            "Có ${state.pendingConflictsCount} file trùng tên cần xử lý",
+                            color = Color(0xFFFFB74D),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        state.pendingConflicts.take(3).forEach { item ->
+                            val oldSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(item.destSize)
+                            val newSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(item.sourceSize)
+                            Text(
+                                "${item.destName.ifBlank { item.rel }} • cũ $oldSize / mới $newSize",
+                                color = Color(0xFFE8E8E8),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = { viewModel.resolveUsbImportConflicts("skip") },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) { Text("Bỏ qua", fontSize = 11.sp) }
+                            Button(
+                                onClick = { viewModel.resolveUsbImportConflicts("rename") },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) { Text("Đổi tên", fontSize = 11.sp) }
+                            Button(
+                                onClick = { viewModel.resolveUsbImportConflicts("overwrite") },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) { Text("Ghi đè", fontSize = 11.sp) }
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(8.dp))
