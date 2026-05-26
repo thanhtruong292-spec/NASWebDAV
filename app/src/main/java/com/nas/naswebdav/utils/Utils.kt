@@ -40,7 +40,11 @@ object FormatUtils {
         if (kb < 1024) return "%.1f KB".format(kb)
         val mb = kb / 1024.0
         if (mb < 1024) return "%.1f MB".format(mb)
-        return "%.2f GB".format(mb / 1024.0)
+        val gb = mb / 1024.0
+        if (gb < 1024) return "%.2f GB".format(gb)
+        val tb = gb / 1024.0
+        if (tb < 1024) return "%.2f TB".format(tb)
+        return "%.2f PB".format(tb / 1024.0)
     }
 
     fun ensureTrailingSlash(url: String): String = if (url.endsWith("/")) url else "$url/"
