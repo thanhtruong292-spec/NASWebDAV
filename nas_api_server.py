@@ -3214,7 +3214,7 @@ _disk_health_lock = threading.Lock()
 
 
 def _read_dmesg_recent(seconds=300):
-    """Dem so EXT4 error va SATA reset trong dmesg trong N giay gần ??y."""
+    """Dem so EXT4 error va SATA reset trong dmesg trong N giay gần đầy."""
     try:
         out = safe_run_cmd(["dmesg", "--time-format=raw"], timeout=8)
         if not out:
@@ -3514,7 +3514,7 @@ def api_disk_health():
 @app.route('/api/disk/health/history', methods=['GET'])
 @requires_auth
 def api_disk_health_history():
-    """Time-series suc khoe HDD trong N ngay gần ??y (default 7)."""
+    """Time-series suc khoe HDD trong N ngay gần đầy (default 7)."""
     try:
         days = int(request.args.get("days", "7"))
     except Exception:
@@ -3613,11 +3613,11 @@ def _disk_health_trend(days=7):
         },
     }
     if trend["score"] >= 90 and not trend["warnings"]:
-        trend["status_text"] = "HDD Toshiba đang hoạt động ổn định."
+        trend["status_text"] = "Trạng thái HDD: Hoạt động ổn định."
     elif trend["score"] >= 70:
-        trend["status_text"] = "HDD cần theo dõi thêm."
+        trend["status_text"] = "Trạng thái HDD: Khuyến nghị giám sát thêm."
     else:
-        trend["status_text"] = "HDD cần kiểm tra sớm."
+        trend["status_text"] = "Trạng thái HDD: Yêu cầu kiểm tra chẩn đoán."
     return trend
 
 
@@ -3649,27 +3649,27 @@ def _workload_coordinator():
     pressure = 0
     reasons = []
     if cpu_pct >= 80:
-        pressure += 2; reasons.append("CPU cao")
+        pressure += 2; reasons.append("Tải CPU hệ thống cao")
     elif cpu_pct >= 60:
-        pressure += 1; reasons.append("CPU đang bận")
+        pressure += 1; reasons.append("Mức sử dụng CPU ở ngưỡng cảnh báo")
     if mem_pct >= 85:
-        pressure += 2; reasons.append("RAM gần đầy")
+        pressure += 2; reasons.append("Mức sử dụng RAM ở ngưỡng nguy hiểm")
     elif mem_pct >= 70:
-        pressure += 1; reasons.append("RAM đang cao")
+        pressure += 1; reasons.append("Mức sử dụng RAM ở ngưỡng cảnh báo")
     if temp_c and temp_c >= 50:
-        pressure += 2; reasons.append("HDD nóng")
+        pressure += 2; reasons.append("Nhiệt độ HDD vượt ngưỡng an toàn")
     elif temp_c and temp_c >= 45:
-        pressure += 1; reasons.append("HDD ấm")
+        pressure += 1; reasons.append("Nhiệt độ HDD ở ngưỡng cảnh báo")
     if live_count > 0:
-        pressure += 1; reasons.append("%d livestream đang ghi" % live_count)
+        pressure += 1; reasons.append("%d luồng ghi hình trực tiếp đang hoạt động" % live_count)
     if usb_active:
-        pressure += 1; reasons.append("USB import đang copy")
+        pressure += 1; reasons.append("Tác vụ nhập dữ liệu USB đang thực thi")
     if pressure >= 5:
-        mode = "protect"; recommendation = "Nên dừng thêm tác vụ mới, ưu tiên livestream và copy đang chạy."
+        mode = "protect"; recommendation = "Khuyến nghị tạm ngưng cấp phát tác vụ mới; ưu tiên duy trì luồng ghi hình và sao chép dữ liệu hiện hành."
     elif pressure >= 3:
-        mode = "balanced"; recommendation = "Nên giới hạn tác vụ nền, tránh scan/copy lớn đồng thời."
+        mode = "balanced"; recommendation = "Khuyến nghị giới hạn số lượng tác vụ nền; tránh thực thi đồng thời quét hoặc sao chép dữ liệu dung lượng lớn."
     else:
-        mode = "normal"; recommendation = "NAS đủ tải cho tác vụ nền nhẹ."
+        mode = "normal"; recommendation = "Tài nguyên hệ thống ở ngưỡng an toàn, đáp ứng tốt các phiên làm việc nền cơ bản."
     return {
         "mode": mode, "pressure": pressure, "cpu_pct": round(cpu_pct, 1),
         "mem_pct": round(mem_pct, 1), "hdd_temp_c": temp_c,
@@ -3713,7 +3713,7 @@ def _emmc_guard():
     warnings = []
     recommendations = []
     if root.get("percent", 0) >= 85:
-        warnings.append("eMMC root gần ??y")
+        warnings.append("eMMC root gần đầy")
         recommendations.append("Dọn package cache/log cũ và chuyển cache lớn sang HDD.")
     if log_usage.get("percent", 0) >= 80:
         warnings.append("log2ram/zram log gần đầy")
@@ -3793,9 +3793,9 @@ def _maintenance_advisor():
     if health.get("score", 0) < 80 or health.get("warnings"):
         actions.append({"priority": "high", "title": "Kiểm tra HDD Toshiba", "detail": health.get("status_text", "")})
     if workload.get("mode") == "protect":
-        actions.append({"priority": "high", "title": "Giảm tải tác vụ nền", "detail": workload.get("recommendation", "")})
+        actions.append({"priority": "high", "title": "Tối ưu hoá tải hệ thống", "detail": workload.get("recommendation", "")})
     if emmc.get("warnings"):
-        actions.append({"priority": "medium", "title": "Bảo vệ eMMC", "detail": "; ".join(emmc.get("recommendations", [])[:2])})
+        actions.append({"priority": "medium", "title": "Tối ưu hoá tuổi thọ eMMC", "detail": "; ".join(emmc.get("recommendations", [])[:2])})
     if str(usb.get("status", "")).lower() in ("done", "cancelled", "error") and usb.get("last_error"):
         actions.append({"priority": "medium", "title": "Kiểm tra USB Import", "detail": str(usb.get("last_error", ""))[:180]})
     if not actions:
