@@ -4082,6 +4082,7 @@ _usb_import_state = {
     "needs_action": False,
     "plan_file": "",
     "plan_index": 0,
+    "conflict_file": "",
 }
 
 
@@ -4190,6 +4191,17 @@ def _usb_import_add_history(record):
 
 
 def _usb_import_set_state(**kwargs):
+    # Không bao giờ giữ toàn bộ danh sách trùng/lỗi trong state runtime.
+    # USB import có thể gặp hàng chục nghìn file trùng; nếu nhét hết vào state rồi
+    # JSON dump mỗi vài giây thì Python ăn CPU/RAM và các API status bị timeout.
+    conflicts = kwargs.get("pending_conflicts")
+    if isinstance(conflicts, list):
+        kwargs["pending_conflicts_count"] = int(kwargs.get("pending_conflicts_count") or len(conflicts))
+        kwargs["pending_conflicts"] = conflicts[:200]
+    errors = kwargs.get("pending_errors")
+    if isinstance(errors, list):
+        kwargs["pending_errors_count"] = int(kwargs.get("pending_errors_count") or len(errors))
+        kwargs["pending_errors"] = errors[-200:]
     with _usb_import_lock:
         _usb_import_state.update(kwargs)
     _usb_import_save_state()
@@ -4453,6 +4465,45 @@ def _usb_import_write_json_file(path, payload):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _usb_import_append_jsonl(path, payload):
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8", buffering=1024 * 1024) as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _usb_import_load_jsonl(path, limit=0):
+    items = []
+    if not path or not os.path.exists(path):
+        return items
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    item = json.loads(line)
+                    if isinstance(item, dict):
+                        items.append(item)
+                        if limit and len(items) >= limit:
+                            break
+                except Exception:
+                    continue
+    except Exception:
+        return items
+    return items
+
+
+def _usb_import_write_jsonl(path, items):
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", buffering=1024 * 1024) as f:
+        for item in items or []:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
     os.replace(tmp, path)
 
 
@@ -4787,9 +4838,17 @@ def _usb_import_copy_tree(candidate, settings):
     dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), safe_label)
     session_id = hashlib.sha1(("%s|%s" % (ident, dest_base)).encode("utf-8", errors="ignore")).hexdigest()[:12]
     plan_file, plan_meta_file, files_total, bytes_total, plan_reused = _usb_import_build_or_reuse_plan(src_root, dest_base, session_id, can_resume)
+    conflict_file = os.path.join(dest_base, ".usb_import_conflicts_%s.jsonl" % session_id)
+    if not plan_reused:
+        try:
+            if os.path.exists(conflict_file):
+                os.remove(conflict_file)
+        except Exception:
+            pass
     start_index = prev_plan_index if plan_reused else 0
     resume_files_done, resume_bytes_done = _usb_import_plan_prefix_stats(plan_file, start_index)
     pending_conflicts = prev_pending_conflicts if plan_reused else []
+    conflict_count = int(_usb_import_state.get("pending_conflicts_count") or len(pending_conflicts)) if plan_reused else len(pending_conflicts)
     pending_errors = prev_pending_errors if plan_reused else []
     _usb_import_set_state(
         status="copying", message="Đang copy tiếp dữ liệu từ USB." if can_resume else "Đang copy dữ liệu từ USB.",
@@ -4801,9 +4860,9 @@ def _usb_import_copy_tree(candidate, settings):
         current_file="", current_source="", current_dest="",
         current_file_bytes_done=0, current_file_bytes_total=0,
         copy_speed_bps=0, eta_seconds=0, last_progress_at=int(time.time()),
-        last_error="", pending_conflicts=pending_conflicts, pending_conflicts_count=len(pending_conflicts),
+        last_error="", pending_conflicts=pending_conflicts, pending_conflicts_count=conflict_count,
         pending_errors=pending_errors, pending_errors_count=len(pending_errors), needs_action=False,
-        plan_file=plan_file, plan_index=start_index
+        plan_file=plan_file, plan_index=start_index, conflict_file=conflict_file
     )
     os.makedirs(dest_base, exist_ok=True)
     # Block thumbnail generator trong lúc copy USB để tránh tranh giành CPU/IO
@@ -4839,7 +4898,11 @@ def _usb_import_copy_tree(candidate, settings):
             try:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 if os.path.exists(dst):
-                    pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
+                    conflict_item = _usb_import_conflict_item(src, dst, dest_base, src_size)
+                    _usb_import_append_jsonl(conflict_file, conflict_item)
+                    conflict_count += 1
+                    if len(pending_conflicts) < 200:
+                        pending_conflicts.append(conflict_item)
                     skipped += 1
                     bytes_processed += src_size
                     totals["skipped"] = skipped
@@ -4848,7 +4911,7 @@ def _usb_import_copy_tree(candidate, settings):
                         files_skipped=skipped,
                         bytes_processed=bytes_processed,
                         pending_conflicts=pending_conflicts,
-                        pending_conflicts_count=len(pending_conflicts),
+                        pending_conflicts_count=conflict_count,
                         needs_action=False,
                         plan_index=plan_idx + 1,
                     )
@@ -4903,7 +4966,11 @@ def _usb_import_copy_tree(candidate, settings):
                     if not src or not os.path.exists(src):
                         raise FileNotFoundError(src or item.get("source_name") or "source")
                     if os.path.exists(dst):
-                        pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
+                        conflict_item = _usb_import_conflict_item(src, dst, dest_base, src_size)
+                        _usb_import_append_jsonl(conflict_file, conflict_item)
+                        conflict_count += 1
+                        if len(pending_conflicts) < 200:
+                            pending_conflicts.append(conflict_item)
                         skipped += 1
                         totals["skipped"] = skipped
                         continue
@@ -4934,7 +5001,7 @@ def _usb_import_copy_tree(candidate, settings):
                     files_done=done, files_skipped=skipped, files_failed=failed,
                     bytes_done=bytes_done, bytes_processed=totals["bytes_processed"],
                     pending_conflicts=pending_conflicts,
-                    pending_conflicts_count=len(pending_conflicts),
+                    pending_conflicts_count=conflict_count,
                     pending_errors=pending_errors[-200:],
                     pending_errors_count=len(pending_errors),
                     needs_action=False,
@@ -4967,10 +5034,10 @@ def _usb_import_copy_tree(candidate, settings):
             })
             failed += files_total - processed_total
             totals["failed"] = failed
-        final_status = "needs_action" if pending_conflicts else "done"
+        final_status = "needs_action" if conflict_count > 0 else "done"
         final_message = (
-            "Đã copy xong phần không trùng. Cần xử lý %d file trùng tên." % len(pending_conflicts)
-            if pending_conflicts else
+            "Đã copy xong phần không trùng. Cần xử lý %d file trùng tên." % conflict_count
+            if conflict_count > 0 else
             ("Đã copy xong USB, còn %d file lỗi sau khi thử lại." % len(pending_errors) if pending_errors else "Đã copy xong USB.")
         )
         _usb_import_remove_plan_files(plan_file)
@@ -4982,12 +5049,12 @@ def _usb_import_copy_tree(candidate, settings):
             current_file_bytes_done=0, current_file_bytes_total=0,
             copy_speed_bps=0, eta_seconds=0,
             pending_conflicts=pending_conflicts,
-            pending_conflicts_count=len(pending_conflicts),
+            pending_conflicts_count=conflict_count,
             pending_errors=pending_errors,
             pending_errors_count=len(pending_errors),
-            needs_action=bool(pending_conflicts),
+            needs_action=bool(conflict_count > 0),
             last_error=plan_check_error[:240],
-            plan_file="", plan_index=0,
+            plan_file="", plan_index=0, conflict_file=conflict_file if conflict_count > 0 else "",
             finished_at=int(time.time())
         )
         _usb_import_add_history({
@@ -5005,7 +5072,7 @@ def _usb_import_copy_tree(candidate, settings):
             "resumed": can_resume,
             "checksum": bool(settings.get("verify_checksum", False)),
         })
-        _add_system_log("SUCCESS", "USBImport", "Đã copy USB vào %s: %d file, skip %d, lỗi %d, trùng %d" % (dest_base, done, skipped, failed, len(pending_conflicts)))
+        _add_system_log("SUCCESS", "USBImport", "Đã copy USB vào %s: %d file, skip %d, lỗi %d, trùng %d" % (dest_base, done, skipped, failed, conflict_count))
     except InterruptedError:
         _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.", finished_at=int(time.time()))
         _usb_import_add_history({
@@ -5031,7 +5098,7 @@ def _usb_import_copy_tree(candidate, settings):
                 pass
         if candidate.get("mounted_by_us"):
             try:
-                if not pending_conflicts:
+                if conflict_count <= 0:
                     subprocess.run(["umount", src_root], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
             except Exception:
                 pass
@@ -5062,8 +5129,12 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
     selected = set(selected_keys or [])
     with _usb_import_lock:
         conflicts = list(_usb_import_state.get("pending_conflicts") or [])
+        conflict_file = _usb_import_state.get("conflict_file", "")
         active_mount = _usb_import_state.get("active_mount", "")
         dest_base = _usb_import_state.get("dest_dir", "")
+    file_conflicts = _usb_import_load_jsonl(conflict_file)
+    if file_conflicts:
+        conflicts = file_conflicts
     remaining_conflicts = []
     resolved = 0
     failed = 0
@@ -5119,6 +5190,14 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
         )
         if errors:
             message += " Còn %d file lỗi." % len(errors)
+        try:
+            if conflict_file:
+                if remaining_conflicts:
+                    _usb_import_write_jsonl(conflict_file, remaining_conflicts)
+                elif os.path.exists(conflict_file):
+                    os.remove(conflict_file)
+        except Exception:
+            pass
         _usb_import_set_state(
             status=status,
             message=message,
@@ -5129,11 +5208,12 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
             current_file="", current_source="", current_dest="",
             current_file_bytes_done=0, current_file_bytes_total=0,
             copy_speed_bps=0, eta_seconds=0,
-            pending_conflicts=remaining_conflicts,
+            pending_conflicts=remaining_conflicts[:200],
             pending_conflicts_count=len(remaining_conflicts),
             pending_errors=errors,
             pending_errors_count=len(errors),
             needs_action=bool(remaining_conflicts),
+            conflict_file=conflict_file if remaining_conflicts else "",
             finished_at=int(time.time()),
         )
         try:
