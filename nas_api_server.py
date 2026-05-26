@@ -678,10 +678,21 @@ AUTH_CONFIG_PATH = "/etc/nas/auth.conf"
 
 # Chi l?y S.M.A.R.T cua o dữ liệu NAS. Khong quet /dev/sdb vi day co the la
 # o USB import, lam nhieu dashboard bang trạng thái cua o ngoai.
-SMART_DISKS = ["/dev/sda"]
+TARGET_HDD_DEVICE = os.environ.get("NAS_TARGET_HDD_DEVICE", "/dev/sda")
+SMART_DISKS = [TARGET_HDD_DEVICE]
 TARGET_HDD_MOUNTPOINTS = ("/srv/dev-disk-by-label-data", "/sharedfolders/Data")
 TARGET_HDD_MODEL_HINTS = ("TOSHIBA", "MG04", "N300")
 TARGET_HDD_SERIAL_HINTS = ("X6N7KALWFVLC",)
+
+def _read_first_existing_text(paths):
+    for path in paths:
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    return f.read().strip()
+        except Exception:
+            continue
+    return ""
 
 def _parent_disk_from_device(device):
     device = str(device or "").strip()
@@ -695,26 +706,32 @@ def _parent_disk_from_device(device):
     return "/dev/" + parent if parent else ""
 
 def _target_hdd_device_path():
-    try:
-        with open("/proc/mounts", "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                source, mountpoint = parts[0], parts[1]
-                if mountpoint in TARGET_HDD_MOUNTPOINTS or mountpoint.startswith("/srv/dev-disk-by-label-data/"):
-                    parent = _parent_disk_from_device(source)
-                    if parent and os.path.exists(parent):
-                        return parent
-    except Exception:
-        pass
-    for disk_path in SMART_DISKS:
-        if os.path.exists(disk_path):
-            return disk_path
-    return SMART_DISKS[0]
+    dev = TARGET_HDD_DEVICE
+    if not _validate_disk_path(dev) or not os.path.exists(dev):
+        return ""
+    name = os.path.basename(dev)
+    model = _read_first_existing_text(("/sys/block/%s/device/model" % name,))
+    serial = _read_first_existing_text((
+        "/sys/block/%s/device/serial" % name,
+        "/sys/block/%s/device/wwid" % name,
+    ))
+    blob = ("%s %s" % (model, serial)).upper()
+    if any(h in blob for h in TARGET_HDD_MODEL_HINTS) or any(h in blob for h in TARGET_HDD_SERIAL_HINTS):
+        return dev
+    log.warning("[DiskTarget] %s khong phai HDD N300 chinh (model=%s serial=%s), bo qua.", dev, model, serial)
+    return ""
 
 def _target_hdd_devname():
-    return os.path.basename(_target_hdd_device_path())
+    return os.path.basename(_target_hdd_device_path() or "")
+
+def _target_hdd_mountpoint():
+    for mountpoint in TARGET_HDD_MOUNTPOINTS:
+        try:
+            if os.path.ismount(mountpoint) or os.path.isdir(mountpoint):
+                return mountpoint
+        except Exception:
+            continue
+    return TARGET_HDD_MOUNTPOINTS[0]
 
 def _is_target_hdd_omv_device(dev):
     if not isinstance(dev, dict):
@@ -2526,7 +2543,7 @@ def api_omv_overview():
 
     # 4. Filesystems
     try:
-        fs_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "FileSystemMgmt", "enumerateFilesystems", "{}"], timeout=10)
+        fs_out = ""
         if fs_out:
             fs_data = json.loads(fs_out)
             filesystems = []
@@ -2551,7 +2568,7 @@ def api_omv_overview():
 
     # 5. Disk Devices
     try:
-        disk_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "DiskMgmt", "enumerateDevices", "{}"], timeout=10)
+        disk_out = ""
         if disk_out:
             disk_data = json.loads(disk_out)
             disks = []
@@ -2574,6 +2591,43 @@ def api_omv_overview():
             result["disks"] = disks
     except Exception:
         result["disks"] = []
+
+    if not result.get("filesystems"):
+        try:
+            mp = _target_hdd_mountpoint()
+            st = os.statvfs(mp)
+            size = int(st.f_blocks * st.f_frsize)
+            free = int(st.f_bavail * st.f_frsize)
+            used = max(0, size - free)
+            result["filesystems"] = [{
+                "device": _target_hdd_device_path(),
+                "label": "data",
+                "type": "",
+                "mountpoint": mp,
+                "used": used,
+                "size_bytes": size,
+                "percentage": round((used * 100.0 / size), 1) if size else 0,
+                "description": "HDD chinh NAS N300"
+            }]
+        except Exception:
+            result["filesystems"] = []
+    if not result.get("disks"):
+        try:
+            dev = _target_hdd_device_path()
+            name = os.path.basename(dev) if dev else ""
+            result["disks"] = [{
+                "name": name,
+                "device": dev,
+                "model": _read_first_existing_text(("/sys/block/%s/device/model" % name,)) if name else "",
+                "serial": _read_first_existing_text(("/sys/block/%s/device/serial" % name, "/sys/block/%s/device/wwid" % name)) if name else "",
+                "size": _read_first_existing_text(("/sys/block/%s/size" % name,)) if name else "0",
+                "description": "HDD chinh NAS N300",
+                "is_root": False,
+                "is_target_hdd": bool(dev),
+                "is_usb_import": False
+            }]
+        except Exception:
+            result["disks"] = []
 
     # 6. Shared Folders
     try:
@@ -3791,7 +3845,10 @@ def _system_is_idle():
 def _hdd_spindown():
     """Spindown ổ dữ liệu NAS bằng hdparm -y. Trả (ok, msg)."""
     try:
-        r = subprocess.run(["hdparm", "-y", _target_hdd_device_path()], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        dev = _target_hdd_device_path()
+        if not dev:
+            return False, "Không xác nhận được HDD N300 chính"
+        r = subprocess.run(["hdparm", "-y", dev], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
         if r.returncode == 0:
             return True, "spundown OK"
         return False, (r.stderr or b"").decode("utf-8", errors="ignore")[:200]
@@ -3802,7 +3859,10 @@ def _hdd_spindown():
 def _hdd_get_power_state():
     """Đọc hdparm -C ổ dữ liệu NAS → 'active/idle', 'standby', 'sleeping'."""
     try:
-        r = subprocess.run(["hdparm", "-C", _target_hdd_device_path()], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        dev = _target_hdd_device_path()
+        if not dev:
+            return "unknown"
+        r = subprocess.run(["hdparm", "-C", dev], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         if r.returncode == 0:
             out = (r.stdout or b"").decode("utf-8", errors="ignore")
             for line in out.splitlines():
@@ -7587,7 +7647,9 @@ def _system_health_watchdog():
     # THIẾT LẬP TỐI ƯU CƠ HỌC CHO Ổ SEAGATE SKYHAWK ST4000VX (SURVEILLANCE): 
     # CẤM APM VÀ CẤM STANDBY CHỐNG HAO MÒN KHỞI ĐỘNG MOTOR (SPIN-DOWN)
     try:
-        run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", _target_hdd_device_path()], merge_stderr=True)
+        dev = _target_hdd_device_path()
+        if dev:
+            run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", dev], merge_stderr=True)
     except Exception:
         pass
 
