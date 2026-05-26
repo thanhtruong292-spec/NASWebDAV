@@ -2615,12 +2615,31 @@ def api_omv_overview():
         try:
             dev = _target_hdd_device_path()
             name = os.path.basename(dev) if dev else ""
+            # Dùng lsblk để lấy dung lượng (bytes) và serial chính xác
+            model, serial, size_bytes = "", "", "0"
+            if name:
+                try:
+                    lsblk_out = run_cmd(["lsblk", "-J", "-b", "-d", "-o", "NAME,SIZE,SERIAL,MODEL", dev], timeout=5)
+                    if lsblk_out:
+                        lsblk_data = json.loads(lsblk_out)
+                        bdev = lsblk_data.get("blockdevices", [])[0]
+                        model = str(bdev.get("model") or "").strip()
+                        serial = str(bdev.get("serial") or "").strip()
+                        size_bytes = str(bdev.get("size") or "0")
+                except Exception:
+                    # Fallback cuối cùng dùng sysfs (size sysfs trả về số blocks 512-byte)
+                    model = _read_first_existing_text(("/sys/block/%s/device/model" % name,))
+                    serial = _read_first_existing_text(("/sys/block/%s/device/serial" % name, "/sys/block/%s/device/wwid" % name))
+                    size_blocks = _read_first_existing_text(("/sys/block/%s/size" % name,))
+                    if size_blocks.isdigit():
+                        size_bytes = str(int(size_blocks) * 512)
+
             result["disks"] = [{
                 "name": name,
                 "device": dev,
-                "model": _read_first_existing_text(("/sys/block/%s/device/model" % name,)) if name else "",
-                "serial": _read_first_existing_text(("/sys/block/%s/device/serial" % name, "/sys/block/%s/device/wwid" % name)) if name else "",
-                "size": _read_first_existing_text(("/sys/block/%s/size" % name,)) if name else "0",
+                "model": model,
+                "serial": serial,
+                "size": size_bytes,
                 "description": "HDD chinh NAS N300",
                 "is_root": False,
                 "is_target_hdd": bool(dev),
