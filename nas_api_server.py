@@ -4080,6 +4080,8 @@ _usb_import_state = {
     "pending_errors": [],
     "pending_errors_count": 0,
     "needs_action": False,
+    "plan_file": "",
+    "plan_index": 0,
 }
 
 
@@ -4440,6 +4442,171 @@ def _usb_import_scan_files(src_root):
     return 0, 0
 
 
+def _usb_import_plan_paths(dest_base, session_id):
+    return (
+        os.path.join(dest_base, ".usb_import_plan_%s.jsonl" % session_id),
+        os.path.join(dest_base, ".usb_import_plan_%s.meta.json" % session_id),
+    )
+
+
+def _usb_import_write_json_file(path, payload):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _usb_import_load_plan_meta(meta_file):
+    try:
+        if os.path.exists(meta_file):
+            with open(meta_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return int(data.get("files_total") or 0), int(data.get("bytes_total") or 0)
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _usb_import_format_bytes(value):
+    try:
+        n = float(value or 0)
+    except Exception:
+        n = 0.0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024.0 or unit == "TB":
+            return "%.1f %s" % (n, unit) if unit != "B" else "%d B" % int(n)
+        n /= 1024.0
+    return "%d B" % int(value or 0)
+
+
+def _usb_import_build_or_reuse_plan(src_root, dest_base, session_id, can_resume):
+    plan_file, meta_file = _usb_import_plan_paths(dest_base, session_id)
+    if can_resume and os.path.exists(plan_file):
+        files_total, bytes_total = _usb_import_load_plan_meta(meta_file)
+        if files_total <= 0:
+            with open(plan_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        item = json.loads(line)
+                        files_total += 1
+                        bytes_total += int(item.get("size") or 0)
+                    except Exception:
+                        pass
+            _usb_import_write_json_file(meta_file, {
+                "files_total": files_total,
+                "bytes_total": bytes_total,
+                "created_at": int(time.time()),
+            })
+        return plan_file, meta_file, files_total, bytes_total, True
+
+    os.makedirs(dest_base, exist_ok=True)
+    tmp = plan_file + ".tmp"
+    files_total = 0
+    bytes_total = 0
+    _usb_import_set_state(
+        status="copying",
+        message="Đang rà soát toàn bộ file USB lần đầu để tạo danh sách copy.",
+        files_total=0,
+        bytes_total=0,
+        copy_speed_bps=0,
+        eta_seconds=0,
+        last_progress_at=int(time.time()),
+    )
+    last_emit = time.monotonic()
+    with open(tmp, "w", encoding="utf-8") as f:
+        for root, dirs, files in os.walk(src_root):
+            if _usb_import_cancel.is_set():
+                raise InterruptedError("USB import cancelled")
+            dirs[:] = [d for d in dirs if d not in (".Trash-1000", "$RECYCLE.BIN", "System Volume Information")]
+            rel_dir = os.path.relpath(root, src_root)
+            if rel_dir == ".":
+                rel_dir = ""
+            for name in files:
+                if _usb_import_cancel.is_set():
+                    raise InterruptedError("USB import cancelled")
+                src = os.path.join(root, name)
+                try:
+                    if os.path.islink(src):
+                        continue
+                    size = os.path.getsize(src)
+                except Exception:
+                    size = 0
+                rel = os.path.join(rel_dir, name) if rel_dir else name
+                f.write(json.dumps({"rel": rel, "size": int(size or 0)}, ensure_ascii=False) + "\n")
+                files_total += 1
+                bytes_total += int(size or 0)
+                now = time.monotonic()
+                if now - last_emit >= 1.0:
+                    _usb_import_set_state(
+                        message="Đang rà soát USB: %d file, %s." % (files_total, _usb_import_format_bytes(bytes_total)),
+                        files_total=files_total,
+                        bytes_total=bytes_total,
+                        last_progress_at=int(time.time()),
+                    )
+                    last_emit = now
+    os.replace(tmp, plan_file)
+    _usb_import_write_json_file(meta_file, {
+        "files_total": files_total,
+        "bytes_total": bytes_total,
+        "created_at": int(time.time()),
+    })
+    return plan_file, meta_file, files_total, bytes_total, False
+
+
+def _usb_import_iter_plan(plan_file, src_root, dest_base, start_index=0):
+    with open(plan_file, "r", encoding="utf-8") as f:
+        for idx, line in enumerate(f):
+            if idx < start_index:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            rel = str(item.get("rel") or "").strip()
+            if not rel:
+                continue
+            size = int(item.get("size") or 0)
+            yield idx, os.path.join(src_root, rel), os.path.join(dest_base, rel), rel, size
+
+
+def _usb_import_plan_prefix_stats(plan_file, stop_index):
+    files_done = 0
+    bytes_done = 0
+    if stop_index <= 0:
+        return 0, 0
+    try:
+        with open(plan_file, "r", encoding="utf-8") as f:
+            for idx, line in enumerate(f):
+                if idx >= stop_index:
+                    break
+                try:
+                    item = json.loads(line)
+                    bytes_done += int(item.get("size") or 0)
+                except Exception:
+                    pass
+                files_done += 1
+    except Exception:
+        pass
+    return files_done, bytes_done
+
+
+def _usb_import_remove_plan_files(plan_file):
+    for path in (plan_file, plan_file + ".tmp"):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+    if plan_file.endswith(".jsonl"):
+        meta_file = plan_file[:-6] + ".meta.json"
+        try:
+            if os.path.exists(meta_file):
+                os.remove(meta_file)
+        except Exception:
+            pass
+
+
 def _usb_import_unique_dest(path):
     if not os.path.exists(path):
         return path
@@ -4613,35 +4780,46 @@ def _usb_import_copy_tree(candidate, settings):
         prev_dest = _usb_import_state.get("dest_dir", "")
         prev_id = _usb_import_state.get("active_id", "")
         prev_status = _usb_import_state.get("status", "")
+        prev_plan_index = int(_usb_import_state.get("plan_index") or 0)
+        prev_pending_conflicts = list(_usb_import_state.get("pending_conflicts") or [])
+        prev_pending_errors = list(_usb_import_state.get("pending_errors") or [])
     can_resume = bool(settings.get("resume_enabled", True) and prev_id == ident and prev_status in ("copying", "cancelled", "error") and prev_dest and os.path.isdir(prev_dest))
     dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), safe_label)
     session_id = hashlib.sha1(("%s|%s" % (ident, dest_base)).encode("utf-8", errors="ignore")).hexdigest()[:12]
-    files_total, bytes_total = _usb_import_scan_files(src_root)
+    plan_file, plan_meta_file, files_total, bytes_total, plan_reused = _usb_import_build_or_reuse_plan(src_root, dest_base, session_id, can_resume)
+    start_index = prev_plan_index if plan_reused else 0
+    resume_files_done, resume_bytes_done = _usb_import_plan_prefix_stats(plan_file, start_index)
+    pending_conflicts = prev_pending_conflicts if plan_reused else []
+    pending_errors = prev_pending_errors if plan_reused else []
     _usb_import_set_state(
         status="copying", message="Đang copy tiếp dữ liệu từ USB." if can_resume else "Đang copy dữ liệu từ USB.",
         active_device=candidate.get("path", ""), active_mount=src_root, dest_dir=dest_base,
         active_id=ident, session_id=session_id, resume_enabled=bool(settings.get("resume_enabled", True)),
         started_at=int(time.time()), finished_at=0, files_total=files_total,
-        files_done=0, files_skipped=0, files_failed=0, bytes_done=0,
-        bytes_processed=0, bytes_total=bytes_total,
+        files_done=resume_files_done, files_skipped=0, files_failed=0, bytes_done=resume_bytes_done,
+        bytes_processed=resume_bytes_done, bytes_total=bytes_total,
         current_file="", current_source="", current_dest="",
         current_file_bytes_done=0, current_file_bytes_total=0,
         copy_speed_bps=0, eta_seconds=0, last_progress_at=int(time.time()),
-        last_error="", pending_conflicts=[], pending_conflicts_count=0,
-        pending_errors=[], pending_errors_count=0, needs_action=False
+        last_error="", pending_conflicts=pending_conflicts, pending_conflicts_count=len(pending_conflicts),
+        pending_errors=pending_errors, pending_errors_count=len(pending_errors), needs_action=False,
+        plan_file=plan_file, plan_index=start_index
     )
     os.makedirs(dest_base, exist_ok=True)
     # Block thumbnail generator trong lúc copy USB để tránh tranh giành CPU/IO
     # (ffmpeg tạo thumbnail cũng đọc file vừa được copy → copy chậm như rùa)
     _set_thumbnail_auto_block("usb_import", True)
     log.info("[USBImport] Đã tạm dừng thumbnail generator trong lúc copy USB.")
-    done = skipped = failed = bytes_done = bytes_processed = 0
+    done = resume_files_done
+    skipped = failed = 0
+    bytes_done = resume_bytes_done
+    bytes_processed = resume_bytes_done
     totals = {
-        "done": 0,
+        "done": done,
         "skipped": 0,
         "failed": 0,
-        "bytes_done": 0,
-        "bytes_processed": 0,
+        "bytes_done": bytes_done,
+        "bytes_processed": bytes_processed,
         "bytes_total": bytes_total,
         "current_file_done": 0,
         "speed_started_at": time.monotonic(),
@@ -4650,84 +4828,64 @@ def _usb_import_copy_tree(candidate, settings):
         "verify_checksum": bool(settings.get("verify_checksum", False)),
     }
     manifest_handle = None
-    pending_conflicts = []
-    pending_errors = []
     retry_queue = []
     try:
         if totals["verify_checksum"]:
             manifest_handle = open(os.path.join(dest_base, ".usb_import_manifest.jsonl"), "a", encoding="utf-8", buffering=1024 * 1024)
-        for root, dirs, files in os.walk(src_root):
+        for plan_idx, src, dst, rel, src_size in _usb_import_iter_plan(plan_file, src_root, dest_base, start_index):
             if _usb_import_cancel.is_set():
                 _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.", finished_at=int(time.time()))
                 return
-            dirs[:] = [d for d in dirs if d not in (".Trash-1000", "$RECYCLE.BIN", "System Volume Information")]
-            rel_dir = os.path.relpath(root, src_root)
-            if rel_dir == ".":
-                rel_dir = ""
-            target_dir = os.path.join(dest_base, rel_dir)
-            os.makedirs(target_dir, exist_ok=True)
-            for name in files:
-                if _usb_import_cancel.is_set():
-                    _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.", finished_at=int(time.time()))
-                    return
-                src = os.path.join(root, name)
-                try:
-                    if os.path.islink(src):
-                        skipped += 1
-                        totals["skipped"] = skipped
-                        continue
-                    src_size = 0
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                if os.path.exists(dst):
+                    pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
+                    skipped += 1
+                    bytes_processed += src_size
+                    totals["skipped"] = skipped
+                    totals["bytes_processed"] = bytes_processed
+                    _usb_import_set_state(
+                        files_skipped=skipped,
+                        bytes_processed=bytes_processed,
+                        pending_conflicts=pending_conflicts,
+                        pending_conflicts_count=len(pending_conflicts),
+                        needs_action=False,
+                        plan_index=plan_idx + 1,
+                    )
+                    continue
+                checksum = _usb_import_copy_file_with_progress(src, dst, totals)
+                done += 1
+                bytes_done = totals["bytes_done"]
+                bytes_processed = totals["bytes_processed"]
+                totals["done"] = done
+                if checksum and manifest_handle is not None:
                     try:
-                        src_size = os.path.getsize(src)
+                        manifest_handle.write(json.dumps({
+                            "rel": os.path.relpath(dst, dest_base),
+                            "size": src_size,
+                            "sha256": checksum,
+                            "ts": int(time.time())
+                        }, ensure_ascii=False) + "\n")
                     except Exception:
                         pass
-                    dst = os.path.join(target_dir, name)
-                    if os.path.exists(dst):
-                        pending_conflicts.append(_usb_import_conflict_item(src, dst, dest_base, src_size))
-                        skipped += 1
-                        bytes_processed += src_size
-                        totals["skipped"] = skipped
-                        totals["bytes_processed"] = bytes_processed
-                        _usb_import_set_state(
-                            files_skipped=skipped,
-                            bytes_processed=bytes_processed,
-                            pending_conflicts=[],
-                            pending_conflicts_count=len(pending_conflicts),
-                            needs_action=False,
-                        )
-                        continue
-                    checksum = _usb_import_copy_file_with_progress(src, dst, totals)
-                    done += 1
-                    bytes_done = totals["bytes_done"]
-                    bytes_processed = totals["bytes_processed"]
-                    totals["done"] = done
-                    if checksum and manifest_handle is not None:
-                        try:
-                            manifest_handle.write(json.dumps({
-                                "rel": os.path.relpath(dst, dest_base),
-                                "size": src_size,
-                                "sha256": checksum,
-                                "ts": int(time.time())
-                            }, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
-                except InterruptedError:
-                    raise
-                except Exception as e:
-                    dst_for_error = dst if "dst" in locals() else os.path.join(target_dir, name)
-                    _usb_import_move_partial(dst_for_error)
-                    retry_item = _usb_import_error_item(src, dst_for_error, dest_base, e, src_size if "src_size" in locals() else None)
-                    retry_queue.append(retry_item)
-                    _usb_import_set_state(
-                        last_error=_usb_import_copy_error_message(e, src)[:240],
-                        pending_errors=[],
-                        pending_errors_count=len(retry_queue),
-                    )
-                if (done + skipped + failed) % 20 == 0:
-                    _usb_import_set_state(
-                        files_done=done, files_skipped=skipped, files_failed=failed,
-                        bytes_done=bytes_done, bytes_processed=bytes_processed
-                    )
+                _usb_import_set_state(plan_index=plan_idx + 1)
+            except InterruptedError:
+                raise
+            except Exception as e:
+                _usb_import_move_partial(dst)
+                retry_item = _usb_import_error_item(src, dst, dest_base, e, src_size)
+                retry_queue.append(retry_item)
+                _usb_import_set_state(
+                    last_error=_usb_import_copy_error_message(e, src)[:240],
+                    pending_errors=[],
+                    pending_errors_count=len(retry_queue),
+                    plan_index=plan_idx + 1,
+                )
+            if (done + skipped + failed) % 20 == 0:
+                _usb_import_set_state(
+                    files_done=done, files_skipped=skipped, files_failed=failed,
+                    bytes_done=bytes_done, bytes_processed=bytes_processed
+                )
         if retry_queue and not _usb_import_cancel.is_set():
             _usb_import_set_state(
                 message="Đang thử lại các file lỗi sau khi copy xong lượt đầu.",
@@ -4775,7 +4933,7 @@ def _usb_import_copy_tree(candidate, settings):
                 _usb_import_set_state(
                     files_done=done, files_skipped=skipped, files_failed=failed,
                     bytes_done=bytes_done, bytes_processed=totals["bytes_processed"],
-                    pending_conflicts=[],
+                    pending_conflicts=pending_conflicts,
                     pending_conflicts_count=len(pending_conflicts),
                     pending_errors=pending_errors[-200:],
                     pending_errors_count=len(pending_errors),
@@ -4794,12 +4952,28 @@ def _usb_import_copy_tree(candidate, settings):
             pass
         bytes_done = totals["bytes_done"]
         bytes_processed = totals["bytes_processed"]
+        processed_total = done + skipped + failed
+        plan_check_error = ""
+        if files_total > 0 and processed_total < files_total:
+            plan_check_error = "Soát lại theo danh sách ban đầu: còn thiếu %d file chưa xử lý." % (files_total - processed_total)
+            pending_errors.append({
+                "source": "",
+                "dest": "",
+                "rel": "",
+                "source_name": "usb_import_plan",
+                "dest_name": "",
+                "source_size": 0,
+                "error": plan_check_error,
+            })
+            failed += files_total - processed_total
+            totals["failed"] = failed
         final_status = "needs_action" if pending_conflicts else "done"
         final_message = (
             "Đã copy xong phần không trùng. Cần xử lý %d file trùng tên." % len(pending_conflicts)
             if pending_conflicts else
             ("Đã copy xong USB, còn %d file lỗi sau khi thử lại." % len(pending_errors) if pending_errors else "Đã copy xong USB.")
         )
+        _usb_import_remove_plan_files(plan_file)
         _usb_import_set_state(
             status=final_status, message=final_message,
             files_done=done, files_skipped=skipped, files_failed=failed,
@@ -4812,6 +4986,8 @@ def _usb_import_copy_tree(candidate, settings):
             pending_errors=pending_errors,
             pending_errors_count=len(pending_errors),
             needs_action=bool(pending_conflicts),
+            last_error=plan_check_error[:240],
+            plan_file="", plan_index=0,
             finished_at=int(time.time())
         )
         _usb_import_add_history({
