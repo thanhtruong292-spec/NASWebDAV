@@ -2706,7 +2706,7 @@ fun BiometricSettingsDialog(
                             .putBoolean("biometric_enabled", true)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "khoa ung dung ngay bang sinh trac.")
+                        viewModel.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
                         viewModel.lockNowRequested = true
                         onDismiss()
                     },
@@ -2818,7 +2818,7 @@ fun BandwidthThrottleDialog(
                     sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
-                    viewModel.logUserAction("Bandwidth", "dat gioi han upload dien thoai: $selectedLabel.")
+                    viewModel.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),

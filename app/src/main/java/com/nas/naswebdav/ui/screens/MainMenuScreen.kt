@@ -2409,7 +2409,7 @@ private fun DiskProfileBottomSheet(
                         .putString("${activeDiskKey}_model", diskModel)
                         .putString("${activeDiskKey}_serial", diskSerial)
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "dat moc theo doi o $diskModel ($diskSerial).")
+                    viewModel.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
                     installedAt = now
                     showTrackingConfirm = false
                 }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
@@ -2438,7 +2438,7 @@ private fun DiskProfileBottomSheet(
                         .remove("${activeDiskKey}_model")
                         .remove("${activeDiskKey}_serial")
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "dat lai moc theo doi o $diskModel ($diskSerial).", "WARNING")
+                    viewModel.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
                     installedAt = 0L
                     showResetTrackingConfirm = false
                 }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
@@ -2642,15 +2642,15 @@ private fun DiskProfileBottomSheet(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OperationModeChip("stream", "Ghi live", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     OperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "doi che do van hanh ho so o cung sang $it.")
+                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                 }
             }

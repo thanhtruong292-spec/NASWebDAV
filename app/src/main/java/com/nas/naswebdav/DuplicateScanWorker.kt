@@ -330,17 +330,17 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
                                 isFastPathSuccess = true
                                 progressPercent.set(0.5f) // Stage 1 hoàn tất: 50%
-                                SystemLogger.log("SUCCESS", "IndexEngine", "Quét hoàn tất ${totalFilesIndexed.get()} tệp qua Local API.")
+                                SystemLogger.log("SUCCESS", "IndexEngine", "Hoàn tất phân tích ${totalFilesIndexed.get()} tập tin thông qua Local API.")
                             } catch (e: java.io.EOFException) {
-                                SystemLogger.log("WARNING", "IndexEngine", "API stream bị cắt ngang: ${e.message}")
+                                SystemLogger.log("WARNING", "IndexEngine", "Luồng dữ liệu API bị ngắt kết nối: ${e.message}")
                                 if (totalFilesIndexed.get() > 100) isFastPathSuccess = true // Vẫn dùng data đã nhận
                             } catch (e: Exception) {
-                                SystemLogger.log("WARNING", "IndexEngine", "Lỗi JSON stream: ${e.message}")
+                                SystemLogger.log("WARNING", "IndexEngine", "Lỗi giải mã luồng JSON: ${e.message}")
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    SystemLogger.log("WARNING", "IndexEngine", "Không có Fast-Path, lùi về WebDAV: ${e.message}")
+                    SystemLogger.log("WARNING", "IndexEngine", "Phương thức Fast-Path không khả dụng, chuyển sang dự phòng WebDAV: ${e.message}")
                 }
 
                 // ═══════════════════════════════════════════════════
@@ -356,7 +356,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     if (checkpoint != null && !forceRestart) {
                         folderQueue.put(checkpoint.lastProcessedFolder)
                         totalFilesIndexed.set(checkpoint.scannedCount)
-                        SystemLogger.log("INFO", "DuplicateScan", "Phục hồi quét từ: ${checkpoint.lastProcessedFolder}")
+                        SystemLogger.log("INFO", "DuplicateScan", "Khôi phục phiên quét dữ liệu từ đường dẫn: ${checkpoint.lastProcessedFolder}")
                     } else {
                         folderQueue.put(currentUrl)
                         db.checkpointDao().clearCheckpoint("DuplicateScan")
@@ -687,7 +687,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     currentStagePercent.set(1f)
                     progressPercent.set(0.95f)
                     if (isLightningMode) {
-                        SystemLogger.log("INFO", "HashEngine", "Lightning Mode: Xử lý hash nhanh cho ${actualDuplicatesCount} tệp.")
+                        SystemLogger.log("INFO", "HashEngine", "Chế độ tối ưu (Lightning Mode): Phân tích băm (hash) tốc độ cao cho ${actualDuplicatesCount} tệp.")
                     }
                 }
 
@@ -750,7 +750,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
         } catch (e: Exception) {
             try {
-                SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét rác: ${e.message}")
+                SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             } catch (ex: Exception) {}
             return@withContext Result.failure()
         } finally {
@@ -983,7 +983,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             return@withContext Result.failure()
         }
         if (runAttemptCount >= 3) {
-            SystemLogger.log("ERROR", "AutoBackup", "Đã thử $runAttemptCount lần thất bại.")
+            SystemLogger.log("ERROR", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
             // FIX leak: tra wakelock truoc khi return som khi het quota retry.
             if (wakeLock.isHeld) wakeLock.release()
             return@withContext Result.failure()
@@ -1165,14 +1165,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             backupCount++
                         } catch (e: Exception) { 
                             failedCount++
-                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải tệp $fileName: ${e.message}") 
+                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}") 
                         }
                         // Nhường luồng cho CPU để tránh văng app do tác vụ I/O nặng
                         kotlinx.coroutines.yield()
                     }
                 }
             }
-            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp trùng, Thất bại: $failedCount tệp."
+            val logMessage = "Đồng bộ khép kín: Thành công $backupCount tệp, Bỏ qua $skippedCount tệp tập tin trùng lặp, Thất bại: $failedCount tệp."
             if (backupCount > 0 || failedCount > 0) {
                 SystemLogger.log(if (failedCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
             } else {
@@ -1187,7 +1187,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             
             return@withContext Result.success()
         } catch (e: Exception) {
-            SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng AutoBackup: ${e.message}")
+            SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
@@ -1204,8 +1204,8 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         try {
             val filesToProcess = db.fileDao().getFilesWithoutFingerprint()
-            if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không có tệp nào cần tạo vân tay."); return@withContext Result.success() }
-            SystemLogger.log("INFO", "FingerprintWorker", "Bắt đầu tạo vân tay cho ${filesToProcess.size} tệp...")
+            if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không phát hiện tập tin yêu cầu tạo chữ ký số (fingerprint)."); return@withContext Result.success() }
+            SystemLogger.log("INFO", "FingerprintWorker", "Khởi tạo quá trình cấp phát chữ ký số cho ${filesToProcess.size} tập tin...")
             var successCount = 0; var failCount = 0
             // FIX D2c: Đã trong withContext(IO) → gọi suspend fun trực tiếp
             val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
@@ -1240,7 +1240,7 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                     delay(200)
                 } catch (_: Exception) { failCount++; delay(1000) }
             }
-            SystemLogger.log("SUCCESS", "FingerprintWorker", "Hoàn tất mồi vân tay. Thành công: $successCount, Thất bại: $failCount")
+            SystemLogger.log("SUCCESS", "FingerprintWorker", "Hoàn tất quá trình cấp phát chữ ký số. Thành công: $successCount, Thất bại: $failCount")
             return@withContext Result.success()
         } catch (e: Exception) { SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}"); return@withContext Result.failure() }
     }
@@ -1264,7 +1264,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         // -> retry sau ~1h. NAS user dang ngu, network/CPU thuong ranh.
         val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         if (nowHour !in 2..5) {
-            SystemLogger.log("INFO", "AutoClean", "Bỏ qua: ngoài khung 2h-5h sáng (hiện ${nowHour}h). Sẽ thử lại sau.")
+            SystemLogger.log("INFO", "AutoClean", "Tạm hoãn: Ngoài khung giờ bảo trì 2h-5h sáng (hiện tại ${nowHour}h). Sẽ thử lại sau.")
             return@withContext Result.retry()
         }
 
@@ -1289,15 +1289,15 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     idleOk = true; break
                 }
                 val reason = idleJson.optString("reason", "không rõ")
-                SystemLogger.log("INFO", "AutoClean", "NAS đang bận (${reason}) — chờ 5 phút rồi check lại (attempt $attempts/5)")
+                SystemLogger.log("INFO", "AutoClean", "Hệ thống đang chịu tải (${reason}) — tạm hoãn 5 phút, tiến hành kiểm tra lại (lần thứ $attempts/5)")
                 kotlinx.coroutines.delay(5 * 60 * 1000L)
             } catch (e: Exception) {
-                SystemLogger.log("WARNING", "AutoClean", "Không check được /api/system/idle: ${e.message}")
+                SystemLogger.log("WARNING", "AutoClean", "Lỗi kết nối /api/system/idle: ${e.message}")
                 break
             }
         }
         if (!idleOk) {
-            SystemLogger.log("INFO", "AutoClean", "NAS không rảnh sau 25 phút chờ — bỏ qua lần này, retry lần sau.")
+            SystemLogger.log("INFO", "AutoClean", "Hệ thống không đạt trạng thái rảnh sau 25 phút chờ — phiên bảo trì bị huỷ bỏ, sẽ thực thi ở chu kỳ kế tiếp.")
             return@withContext Result.retry()
         }
 
@@ -1325,11 +1325,11 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         if (!isIdle && !DuplicateProgressState.isPaused.value) {
                             DuplicateProgressState.isPaused.value = true
                             wasAutoPaused = true
-                            SystemLogger.log("INFO", "AutoClean", "NAS đang bận — tạm dừng quét tự động")
+                            SystemLogger.log("INFO", "AutoClean", "Hệ thống đang chịu tải — tạm dừng tiến trình quét tự động")
                         } else if (isIdle && DuplicateProgressState.isPaused.value && wasAutoPaused) {
                             DuplicateProgressState.isPaused.value = false
                             wasAutoPaused = false
-                            SystemLogger.log("INFO", "AutoClean", "NAS đã rảnh — tiếp tục quét")
+                            SystemLogger.log("INFO", "AutoClean", "Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét")
                         }
                     }
                 } catch (_: Exception) {}
@@ -1338,7 +1338,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
 
         try {
-            SystemLogger.log("INFO", "AutoClean", "Bắt đầu tiến trình tự động dọn dẹp tệp trùng lặp định kỳ.")
+            SystemLogger.log("INFO", "AutoClean", "Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.")
             db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
             // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
             // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.
@@ -1403,12 +1403,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 }
             }
             val durationMin = (System.currentTimeMillis() - startTime) / 60000
-            SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất Dọn Rác: $totalDuplicatesFound trùng, $movedCount xử lý, ${com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes)} giải phóng, $durationMin phút.")
+            SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất bảo trì: Phát hiện $totalDuplicatesFound tập tin trùng lặp, $movedCount đã được xử lý, ${com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes)} dung lượng được giải phóng, hoàn tất trong $durationMin phút.")
             throttleJob.cancel()
             Result.success()
         } catch (e: Exception) {
             throttleJob.cancel()
-            SystemLogger.log("ERROR", "AutoClean", "Lỗi dọn rác: ${e.message}"); Result.retry()
+            SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}"); Result.retry()
         }
     }
     private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
@@ -1457,7 +1457,7 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                     return@withContext Result.success()
                 }
             }
-        } catch (e: Exception) { SystemLogger.log("WARNING", "SpeedTest", "Không thể đo tốc độ đĩa ngầm: ${e.message}") }
+        } catch (e: Exception) { SystemLogger.log("WARNING", "SpeedTest", "Không thể thực thi tiến trình chẩn đoán tốc độ ổ đĩa nền: ${e.message}") }
         return@withContext Result.failure()
     }
 }

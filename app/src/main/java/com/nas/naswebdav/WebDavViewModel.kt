@@ -3107,7 +3107,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val newState = !AutoBackupState.isPaused.value
         AutoBackupState.isPaused.value = newState
         autoBackupIsPaused = newState
-        logUserAction("AutoBackup", if (newState) "tam dung Auto-Backup." else "tiep tuc Auto-Backup.")
+        logUserAction("AutoBackup", if (newState) "tam dung Auto-Backup." else "Tiếp tục Đồng bộ tự động.")
     }
 
     // ==========================================
