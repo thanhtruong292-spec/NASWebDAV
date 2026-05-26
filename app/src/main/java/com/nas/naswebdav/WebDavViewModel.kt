@@ -385,6 +385,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var storageFolderUsage by mutableStateOf<List<StorageFolderUsage>>(emptyList())
     var isFetchingStorageUsage by mutableStateOf(false)
 
+    // TÍNH NĂNG SMB
+    var isSmbEnabled by mutableStateOf(false)
+    var isLoadingSmb by mutableStateOf(false)
+
     // Scheduled backup state
     data class BackupSchedule(
         val enabled: Boolean = false,
@@ -5367,3 +5371,56 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
     }
 }
 
+fun WebDavViewModel.fetchSmbStatus() {
+    viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val apiBaseUrl = currentUrl.toApiBaseUrl()
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/smb/status").build()
+            localApiClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (body != null) {
+                        val obj = org.json.JSONObject(body)
+                        val enabled = obj.optBoolean("enabled", false)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            isSmbEnabled = enabled
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+
+fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) -> Unit) {
+    if (isLoadingSmb) return
+    isLoadingSmb = true
+    viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val apiBaseUrl = currentUrl.toApiBaseUrl()
+            val json = org.json.JSONObject().put("enable", enable)
+            val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/smb/toggle").post(body).build()
+            localApiClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string() ?: ""
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    isLoadingSmb = false
+                    if (response.isSuccessful) {
+                        isSmbEnabled = enable
+                        onResult(true, if (enable) "Đã bật chia sẻ SMB" else "Đã tắt chia sẻ SMB")
+                    } else {
+                        onResult(false, "Lỗi: $responseBody")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                isLoadingSmb = false
+                onResult(false, "Lỗi kết nối: ${e.message}")
+            }
+        }
+    }
+}

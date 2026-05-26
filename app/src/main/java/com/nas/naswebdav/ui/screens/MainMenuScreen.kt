@@ -299,6 +299,7 @@ fun MainMenuScreen(
 
     // STATE CHO LIVESTREAM RECORD
     var showLivestreamDialog by remember { mutableStateOf(false) }
+    var showSmbDialog by remember { mutableStateOf(false) }
 
     // STATE CHO NAS CONFIG BACKUP/RESTORE
     var showNasBackupDialog by remember { mutableStateOf(false) }
@@ -501,6 +502,12 @@ fun MainMenuScreen(
             onDismiss = { showLanWhitelistDialog = false }
         )
     }
+    if (showSmbDialog) {
+        SmbBottomSheet(
+            viewModel = viewModel,
+            onDismiss = { showSmbDialog = false }
+        )
+    }
     if (showLivestreamDialog) {
         LivestreamRecordDialog(
             viewModel = viewModel,
@@ -580,6 +587,7 @@ fun MainMenuScreen(
             "guest" -> onOpenGuestPass()
             "log" -> { viewModel.loadSystemLogs(); viewModel.showLogDialog = true }
             "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
+            "smb" -> { viewModel.fetchSmbStatus(); showSmbDialog = true }
         }
     }
 
@@ -3699,7 +3707,8 @@ val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
     QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
     QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
-    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C)))
+    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C))),
+    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00)))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -3898,7 +3907,11 @@ fun ProcessListBottomSheet(
             }
             androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
-            if (viewModel.systemProcesses.isEmpty() && !viewModel.isLoadingProcesses) {
+            val displayProcesses = viewModel.systemProcesses.filter {
+                if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
+            }
+
+            if (displayProcesses.isEmpty() && !viewModel.isLoadingProcesses) {
                 Text(
                     "Không có dữ liệu tiến trình.",
                     color = TextSecondary,
@@ -3911,8 +3924,8 @@ fun ProcessListBottomSheet(
                 modifier = Modifier.fillMaxWidth().heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.85f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(viewModel.systemProcesses.size) { index ->
-                    val proc = viewModel.systemProcesses[index]
+                items(displayProcesses.size) { index ->
+                    val proc = displayProcesses[index]
                     val statusColor = when (proc.status) {
                         "running" -> Color(0xFF66BB6A)
                         "sleeping" -> Color(0xFF9E9E9E)
@@ -4089,6 +4102,141 @@ fun SmartDetailBottomSheet(
                     }
                 }
             }
+        }
+    }
+}
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun SmbBottomSheet(
+    viewModel: WebDavViewModel,
+    onDismiss: () -> Unit
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = DarkCard,
+        dragHandle = { DashboardCompactBottomSheetHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Ổ Đĩa Mạng (SMB)",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Text(
+                        "Map Network Drive cho PC",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                }
+
+                if (viewModel.isLoadingSmb) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = AccentCyan,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    androidx.compose.material3.Switch(
+                        checked = viewModel.isSmbEnabled,
+                        onCheckedChange = { isChecked ->
+                            viewModel.toggleSmbShare(isChecked) { success, msg ->
+                                // Optional toast
+                            }
+                        },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = AccentCyan,
+                            uncheckedThumbColor = Color.LightGray,
+                            uncheckedTrackColor = Color.Gray
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (viewModel.isSmbEnabled) {
+                Text(
+                    "Truy cập qua máy tính (LAN):",
+                    color = AccentCyan,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Dành cho Windows:", color = TextSecondary, fontSize = 11.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("\\\\192.168.100.254\\NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { 
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("\\\\192.168.100.254\\NAS_Data"))
+                            }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = AccentCyan, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Dành cho MacOS:", color = TextSecondary, fontSize = 11.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("smb://192.168.100.254/NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { 
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("smb://192.168.100.254/NAS_Data"))
+                            }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = AccentCyan, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Person, contentDescription = "User", tint = TextSecondary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Tài khoản:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
+                            Text("daica", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Lock, contentDescription = "Password", tint = TextSecondary, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Mật khẩu:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
+                            Text("(Mật khẩu của App NAS)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    "Bật tính năng này để sử dụng NAS như một ổ cứng mạng nội bộ trên máy tính. Tốc độ copy sẽ đạt mức tối đa của mạng LAN mà không qua server trung gian.",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }

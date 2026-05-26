@@ -2729,6 +2729,70 @@ def api_processes():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/smb/status", methods=["GET"])
+@requires_auth
+def api_smb_status():
+    try:
+        smb_active = False
+        try:
+            import subprocess
+            status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+            if status_out == "active":
+                smb_active = True
+        except Exception:
+            pass
+        
+        is_enabled = False
+        try:
+            with open("/etc/samba/smb.conf", "r") as f:
+                if "# --- BEGIN NASWEBDAV SMB ---" in f.read():
+                    is_enabled = True
+        except Exception:
+            pass
+
+        return jsonify({"status": "success", "enabled": is_enabled, "active": smb_active, "share": "NAS_Data", "user": "daica"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/smb/toggle", methods=["POST"])
+@requires_auth
+def api_smb_toggle():
+    try:
+        data = request.get_json() or {}
+        enable = data.get("enable", False)
+        
+        conf_path = "/etc/samba/smb.conf"
+        try:
+            with open(conf_path, "r") as f:
+                content = f.read()
+        except Exception:
+            content = ""
+            
+        marker_start = "# --- BEGIN NASWEBDAV SMB ---"
+        marker_end = "# --- END NASWEBDAV SMB ---"
+        
+        if marker_start in content and marker_end in content:
+            before = content.split(marker_start)[0]
+            after = content.split(marker_end)[1]
+            content = before + after
+            
+        if enable:
+            block = "\n{0}\n[NAS_Data]\n   path = /srv/dev-disk-by-label-data\n   read only = no\n   guest ok = no\n   valid users = daica\n   force user = root\n   force group = root\n{1}\n".format(marker_start, marker_end)
+            content = content.rstrip() + block
+            
+        with open(conf_path, "w") as f:
+            f.write(content)
+            
+        import subprocess
+        subprocess.run(["systemctl", "restart", "smbd"], check=False)
+        if enable:
+            subprocess.run(["systemctl", "enable", "smbd"], check=False)
+            
+        return jsonify({"status": "success", "enabled": enable})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
 def api_speedtest():
