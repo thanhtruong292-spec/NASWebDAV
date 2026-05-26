@@ -1357,10 +1357,16 @@ fun NasInsightsSummaryCard(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("NAS INSIGHTS", color = PanelTitleCyan, fontSize = PanelTitleSize, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
+                Text("PHÂN TÍCH HỆ THỐNG", color = PanelTitleCyan, fontSize = PanelTitleSize, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.weight(1f))
                 Box(Modifier.clip(RoundedCornerShape(6.dp)).background(modeColor.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
-                    Text(insight.workloadMode.uppercase(), color = modeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    val displayMode = when(insight.workloadMode.lowercase()) {
+                        "normal" -> "BÌNH THƯỜNG"
+                        "balanced" -> "CÂN BẰNG TẢI"
+                        "protect" -> "BẢO VỆ HỆ THỐNG"
+                        else -> insight.workloadMode.uppercase()
+                    }
+                    Text(displayMode, color = modeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(Modifier.height(8.dp))
