@@ -3562,6 +3562,7 @@ fun UsbImportDialog(
     var copyMode by remember(settings) { mutableStateOf(settings.copyMode) }
     var destFolder by remember(settings) { mutableStateOf(settings.destFolder) }
     var settingsExpanded by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(Unit) { viewModel.fetchUsbImportStatus() }
     val isPollingStatus = state.status == "copying" || state.status == "cancelling"
@@ -3603,6 +3604,7 @@ fun UsbImportDialog(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { CompactBottomSheetHandle() }
@@ -3610,7 +3612,7 @@ fun UsbImportDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 720.dp)
+                .fillMaxHeight(0.94f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
@@ -3648,11 +3650,37 @@ fun UsbImportDialog(
                 if (state.detectedDevicesInfo.isNotBlank()) {
                     Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
-                if (state.activeDevice.isNotBlank()) {
-                    Text(state.activeDevice, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (state.destDir.isNotBlank()) {
-                    Text(state.destDir, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (state.activeDevice.isNotBlank() || state.destDir.isNotBlank()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (state.activeDevice.isNotBlank()) {
+                            Text(
+                                state.activeDevice,
+                                color = Color(0xFF8892B0),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(0.32f)
+                            )
+                        }
+                        if (state.activeDevice.isNotBlank() && state.destDir.isNotBlank()) {
+                            Icon(
+                                Icons.Default.ArrowForward,
+                                null,
+                                tint = Color(0xFF42A5F5),
+                                modifier = Modifier.size(14.dp).padding(horizontal = 2.dp)
+                            )
+                        }
+                        if (state.destDir.isNotBlank()) {
+                            Text(
+                                state.destDir,
+                                color = Color(0xFF8892B0),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(0.68f)
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 if (state.currentFile.isNotBlank()) {
@@ -3660,9 +3688,6 @@ fun UsbImportDialog(
                     Text(state.currentFile, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (state.currentSource.isNotBlank()) {
                         Text("Từ: ${state.currentSource}", color = Color(0xFF8892B0), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    if (state.currentDest.isNotBlank()) {
-                        Text("Đến: ${state.currentDest}", color = Color(0xFF8892B0), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(
