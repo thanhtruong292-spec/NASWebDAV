@@ -9896,6 +9896,27 @@ def api_livestream_status():
 
         # 2. Kiểm tra process con chay khong va set status dua vao file_size
         if status == "recording":
+            now_time = __import__('time').time()
+            last_size = info.get("last_size", -1)
+            last_size_time = info.get("last_size_time", 0)
+            
+            if jid not in updates:
+                updates[jid] = {}
+                
+            if last_size_time == 0:
+                updates[jid]["last_size"] = file_size
+                updates[jid]["last_size_time"] = now_time
+            elif file_size != last_size:
+                updates[jid]["last_size"] = file_size
+                updates[jid]["last_size_time"] = now_time
+            elif now_time - last_size_time > 240:
+                # File khong tang size qua 4 phut -> stream bi treo
+                try:
+                    import signal
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+
             is_running = False
             try:
                 os.kill(pid, 0)
@@ -9904,12 +9925,12 @@ def api_livestream_status():
                 pass
                 
             if not is_running:
-                # Neu file be hon 150KB
-                if file_size < 150 * 1024:
+                if file_size < 150 * 1024 or (last_size_time > 0 and file_size == last_size and now_time - last_size_time > 240):
                     status = "error"
                 else:
                     status = "finished"
-                updates[jid] = {"status": status, "finished_at": __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")}
+                updates[jid]["status"] = status
+                updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
