@@ -4062,15 +4062,16 @@ fun SmartDetailBottomSheet(
             ) {
                 items(attrLines.size) { index ->
                     val line = attrLines[index]
-                    val tokens = line.split(Regex("\\s+"), limit = 6)
-                    if (tokens.size >= 5) {
+                    val tokens = line.split(Regex("\\s+"))
+                    if (tokens.size >= 10 && tokens[0].toIntOrNull() != null) {
                         val id = tokens[0]
                         val attr = tokens[1]
-                        val value = tokens[2]
-                        val raw = if (tokens.size >= 6) tokens[5] else tokens.last()
+                        val value = tokens[3]
+                        val raw = tokens.drop(9).joinToString(" ")
                         
                         // Highlight attributes that may indicate problems
-                        val isCritical = id in listOf("5", "187", "197", "198", "10") && raw != "0"
+                        val rawNumber = raw.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() ?: 0L
+                        val isCritical = id in listOf("5", "187", "197", "198", "10") && rawNumber > 0L
                         val rowColor = if (isCritical) Color(0xFFEF5350).copy(alpha = 0.15f) else Color(0xFF1E1E1E)
                         val textColor = if (isCritical) Color(0xFFEF5350) else Color.White
 

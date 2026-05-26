@@ -4330,6 +4330,12 @@ def _usb_import_public_state():
         state["pending_conflicts"] = pending_conflicts[:200]
     if isinstance(pending_errors, list) and len(pending_errors) > 200:
         state["pending_errors"] = pending_errors[:200]
+    detected_devices = state.get("detected_devices")
+    if isinstance(detected_devices, list):
+        state["detected_devices"] = [
+            d for d in detected_devices
+            if isinstance(d, dict) and not _usb_import_is_target_hdd_node(d)
+        ][:12]
     state["dest_dir"] = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"))
     if state.get("status") in ("copying", "cancelled", "error", "done", "needs_action") and actual_dest:
         state["dest_dir"] = actual_dest
@@ -4438,9 +4444,20 @@ def _usb_import_node_has_usb_signal(node, parent_usb=False):
     )
 
 
+def _usb_import_is_target_hdd_node(node):
+    path = str(node.get("path") or "")
+    name = str(node.get("name") or os.path.basename(path) or "")
+    dev_path = path or ("/dev/%s" % name if name else "")
+    parent = _parent_disk_from_device(dev_path)
+    target = _target_hdd_device_path()
+    return bool(target and (dev_path == target or parent == target))
+
+
 def _usb_import_flatten_devices(nodes, parent_usb=False):
     out = []
     for node in nodes or []:
+        if _usb_import_is_target_hdd_node(node):
+            continue
         is_usb = _usb_import_node_has_usb_signal(node, parent_usb)
         if node.get("type") in ("part", "disk") and is_usb:
             out.append(node)
@@ -5487,7 +5504,7 @@ def api_usb_import_settings():
 def api_usb_import_start():
     global _usb_import_running
     if _usb_import_running:
-        return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
+        return jsonify({"ok": True, "already_running": True, "message": "USB Import đang chạy, không khởi tạo phiên trùng.", "state": _usb_import_public_state()})
     settings = _usb_import_load_settings()
     candidates = _usb_import_find_candidates(settings)
     if not candidates:
@@ -7931,6 +7948,7 @@ def api_guest_revoke():
 _livestream_jobs = {}  # {job_id: {url, platform, pid, output_file, started_at, status}}
 _livestream_lock = threading.Lock()
 _livestream_starting_claims = {}
+_livestream_recent_error_cooldown_sec = 300
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
 
@@ -7996,6 +8014,26 @@ def _livestream_active_job_for_key_locked(recording_key):
         info["status"] = "error"
         info["error_reason"] = "Tiến trình ghi đã chết trước khi cập nhật trạng thái."
     return "", None
+
+def _livestream_recent_job_for_key_locked(recording_key, max_age_sec=None):
+    if not recording_key:
+        return "", None
+    max_age_sec = max_age_sec or _livestream_recent_error_cooldown_sec
+    now = time.time()
+    best_job_id = ""
+    best_info = None
+    best_started = 0.0
+    for jid, info in list(_livestream_jobs.items()):
+        if info.get("recording_key", "") != recording_key:
+            continue
+        started_ts = float(info.get("started_ts", 0) or 0)
+        if now - started_ts > max_age_sec:
+            continue
+        if started_ts >= best_started:
+            best_job_id = jid
+            best_info = info
+            best_started = started_ts
+    return best_job_id, best_info
 
 _ytdlp_bin_cache = {"path": "", "checked_at": 0.0}
 
@@ -9711,6 +9749,21 @@ def api_livestream_record():
                     "duplicate": True,
                     "message": "Phiên ghi của user này đang chạy, không tạo phiên trùng."
                 })
+            recent_job_id, recent_info = _livestream_recent_job_for_key_locked(recording_key)
+            if recent_job_id:
+                recent_status = recent_info.get("status", "")
+                recent_size = int(recent_info.get("file_size", 0) or 0)
+                if recent_status in ("recording", "starting") or recent_size < 1000:
+                    return jsonify({
+                        "job_id": recent_job_id,
+                        "pid": recent_info.get("pid"),
+                        "platform": recent_info.get("platform", platform),
+                        "save_folder": "Livestream/",
+                        "status": recent_status or "cooldown",
+                        "duplicate": True,
+                        "reason": "same_live_session_cooldown",
+                        "message": "Phiên live của user này vừa được xử lý, không tạo thêm phiên 0B trùng lặp. Watcher sẽ thử lại sau."
+                    })
             claim = _livestream_starting_claims.get(recording_key)
             if claim and time.time() - float(claim.get("ts", 0) or 0) < 180:
                 return jsonify({
