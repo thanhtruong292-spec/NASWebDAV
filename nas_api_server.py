@@ -4142,7 +4142,7 @@ def _usb_import_load_state():
                 saved = json.load(f)
                 with _usb_import_lock:
                     _usb_import_state.update(saved)
-            log.info("[USBImport] Loaded state tu %s", _USB_IMPORT_STATE_FILE)
+            log.info("[USBImport] Đã tải trạng thái từ %s", _USB_IMPORT_STATE_FILE)
     except Exception as e:
         log.warning("[USBImport] Không thể đọc state: %s", e)
 
@@ -8155,7 +8155,7 @@ def _load_tiktok_watch_state():
                     data = json.load(f)
                 if isinstance(data, dict):
                     _tiktok_watch_state.update(data)
-                    log.info("[TikTokWatch] Loaded state tu %s (mtime=%s)", path, _mtime)
+                    log.info("[TikTokWatch] Đã tải trạng thái từ %s (mtime=%s)", path, _mtime)
                     break
             except Exception as e:
                 log.warning("[TikTokWatch] Skip file %s: %s", path, e)
@@ -9825,32 +9825,6 @@ def api_ytdlp_status():
 
 
 # ============ KHOI CHAY ============
-def _deadlock_watchdog():
-    """Giám sát các lock quan trọng để tự động restart nếu bị deadlock."""
-    import time
-    import os
-    while True:
-        time.sleep(60)
-        
-        # Test livestream lock
-        ok = _livestream_lock.acquire(timeout=30.0)
-        if ok:
-            _livestream_lock.release()
-        else:
-            log.error("[Deadlock] Phát hiện kẹt _livestream_lock quá 30s! Tự khởi động lại server...")
-            os.system("nohup python3 /root/nas_api_server.py > /tmp/nas_api.log 2>&1 &")
-            os._exit(1)
-            
-        # Test tiktok watch lock
-        ok = _tiktok_watch_lock.acquire(timeout=30.0)
-        if ok:
-            _tiktok_watch_lock.release()
-        else:
-            log.error("[Deadlock] Phát hiện kẹt _tiktok_watch_lock quá 30s! Tự khởi động lại server...")
-            os.system("nohup python3 /root/nas_api_server.py > /tmp/nas_api.log 2>&1 &")
-            os._exit(1)
-
-
 if __name__ == "__main__":
     # Initialize main IO loop here so it's bound to the main thread
     main_loop = tornado.ioloop.IOLoop.current()
@@ -9900,6 +9874,29 @@ if __name__ == "__main__":
     
     bind_host = "0.0.0.0"
 
+    # ============ DỌN PORT TRƯỚC KHI KHỞI ĐỘNG THREAD NỀN ============
+    # Phải giải phóng port trước khi start watcher/worker. Nếu bind fail sau khi
+    # thread nền đã chạy, process mới có thể để lại các job trùng và làm app timeout.
+    import socket as _socket
+    def _force_free_port(port):
+        """Kill bất kỳ process nào đang giữ port này trước khi server mới bind."""
+        try:
+            test_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            test_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+            test_sock.bind(('0.0.0.0', port))
+            test_sock.close()
+        except OSError:
+            log.warning("[Port %d] Đang bị chiếm, thử giải phóng...", port)
+            try:
+                subprocess.run(['fuser', '-k', '%d/tcp' % port], stderr=subprocess.DEVNULL, timeout=10)
+                time.sleep(2)
+            except Exception:
+                pass
+            log.info("[Port %d] Đã giải phóng.", port)
+
+    _force_free_port(5050)
+    _force_free_port(5051)
+
     log.info("=" * 50)
     log.info("NAS API Server - Chainedbox L1 Pro")
     log.info("Port: 5050 (API) | 5051 (WebSocket)")
@@ -9933,7 +9930,7 @@ if __name__ == "__main__":
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
     threading.Thread(target=_usb_import_watchdog, daemon=True, name="USBImportWatchdog").start()
-    log.info("[USBImport] Trinh tu dong phat hien va copy USB da khoi dong.")
+    log.info("[USBImport] Trình tự động phát hiện và copy USB đã khởi động.")
     threading.Thread(target=_sleep_schedule_worker, daemon=True).start()
     log.info("[SleepSchedule] Trình lên lịch HDD spindown đã khởi động.")
 
@@ -9943,41 +9940,8 @@ if __name__ == "__main__":
 
     # Thread dò TikTok live chạy hoàn toàn trên NAS. App Android chỉ cấu hình và
     # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
-        threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
+    threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
-    
-    # Thread chong deadlock
-    threading.Thread(target=_deadlock_watchdog, daemon=True, name="DeadlockWatchdog").start()
-    log.info("[DeadlockWatchdog] Trình giám sát Deadlock tự động đã khởi động.")
-    # ============ DON PORT TRUOC KHI BIND (FIX ZOMBIE PROCESS GIU PORT) ============
-    import socket as _socket
-    def _force_free_port(port):
-        """Kill bat ky process/thread nao dang giu port nay (bao gom zombie threads)."""
-        try:
-            test_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-            test_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
-            test_sock.bind(('0.0.0.0', port))
-            test_sock.close()
-        except OSError:
-            log.warning("[Port %d] Đang bị chiếm, thử giải phóng...", port)
-            try:
-                subprocess.run(['fuser', '-k', '%d/tcp' % port], stderr=subprocess.DEVNULL)
-                time.sleep(2)
-            except Exception: pass
-            try:
-                result = subprocess.run(['fuser', '%d/tcp' % port], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                pids = result.stdout.decode('utf-8', errors='ignore').strip().split()
-                for pid in pids:
-                    pid = pid.strip()
-                    if pid.isdigit():
-                        subprocess.run(['kill', '-9', pid], stderr=subprocess.DEVNULL)
-                time.sleep(1)
-            except Exception: pass
-            log.info("[Port %d] Đã giải phóng.", port)
-
-    _force_free_port(5050)
-    _force_free_port(5051)
-
     # ============ TOI UU HOA CUC DAI: WAITRESS MULTI-THREAD ============
     def run_flask():
         try:
