@@ -4121,7 +4121,7 @@ fun NasInsightsDialog(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.AutoGraph, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("NAS Insights", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Tổng quan hệ thống NAS", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { viewModel.fetchNasInsights() }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
@@ -4139,7 +4139,13 @@ fun NasInsightsDialog(
             }
 
             InsightSection("Bộ điều phối tải nền", Icons.Default.Tune, Color(0xFFFFA726)) {
-                InsightRow("Chế độ", insight.workloadMode.uppercase())
+                val displayMode = when(insight.workloadMode.lowercase()) {
+                    "normal" -> "BÌNH THƯỜNG"
+                    "balanced" -> "CÂN BẰNG TẢI"
+                    "protect" -> "BẢO VỆ HỆ THỐNG"
+                    else -> insight.workloadMode.uppercase()
+                }
+                InsightRow("Chế độ", displayMode)
                 InsightRow("Áp lực tải", "${insight.workloadPressure}")
                 Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = Color(0xFFE8E8E8), fontSize = 12.sp)
                 if (insight.workloadReasons.isNotEmpty()) {

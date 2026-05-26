@@ -1174,8 +1174,12 @@ def format_bytes(b):
         return "%.1f KB" % (b / 1024.0)
     elif b < 1024 ** 3:
         return "%.1f MB" % (b / (1024.0 ** 2))
-    else:
+    elif b < 1024 ** 4:
         return "%.2f GB" % (b / (1024.0 ** 3))
+    elif b < 1024 ** 5:
+        return "%.2f TB" % (b / (1024.0 ** 4))
+    else:
+        return "%.2f PB" % (b / (1024.0 ** 5))
 
 
 def format_speed(bps):
@@ -3799,7 +3803,7 @@ def _maintenance_advisor():
     if str(usb.get("status", "")).lower() in ("done", "cancelled", "error") and usb.get("last_error"):
         actions.append({"priority": "medium", "title": "Kiểm tra USB Import", "detail": str(usb.get("last_error", ""))[:180]})
     if not actions:
-        actions.append({"priority": "low", "title": "Bảo trì nhẹ", "detail": "Có thể chạy backup cấu hình và dọn rác khi NAS nhàn rỗi."})
+        actions.append({"priority": "low", "title": "Bảo trì định kỳ", "detail": "Có thể chạy backup cấu hình và dọn rác khi NAS nhàn rỗi."})
     return {"generated_at": int(time.time()), "summary": actions[0]["detail"] if actions else "", "actions": actions[:8]}
 
 
@@ -9782,6 +9786,17 @@ def api_livestream_record():
                 direct_output_file = ""
 
         if direct_tiktok_flv:
+            ffmpeg_headers = "Referer: https://www.tiktok.com/\r\n"
+            if os.path.exists(cookies_path) and "tiktokcdn" not in live_url.lower():
+                try:
+                    with open(cookies_path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    cookie_str = "; ".join([line.split("\t")[-1].strip() + "=" + line.split("\t")[-2].strip() for line in lines if not line.startswith("#") and len(line.split("\t")) >= 7])
+                    if cookie_str:
+                        ffmpeg_headers += "Cookie: %s\r\n" % cookie_str
+                except Exception:
+                    pass
+
             cmd = [
                 "/usr/bin/ffmpeg", "-y",
                 "-loglevel", "warning",
@@ -9790,8 +9805,10 @@ def api_livestream_record():
                 "-reconnect_streamed", "1",
                 "-reconnect_at_eof", "1",
                 "-reconnect_delay_max", "10",
+                "-reconnect_on_network_error", "1",
+                "-reconnect_on_http_error", "4xx,5xx",
                 "-user_agent", tiktok_user_agent,
-                "-headers", "Referer: https://www.tiktok.com/\r\n",
+                "-headers", ffmpeg_headers,
                 "-i", live_url,
                 "-c", "copy",
                 "-bsf:a", "aac_adtstoasc",
