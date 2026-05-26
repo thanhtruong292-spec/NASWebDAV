@@ -164,7 +164,7 @@ class NasApplication : Application(), ImageLoaderFactory {
                 "Uncaught exception trong applicationScope (job=${ctx[kotlinx.coroutines.CoroutineName]?.name ?: "?"}): ${throwable.message}",
                 throwable
             )
-            // Khong cho exception loi tan nat di vao crash handler — chi log
+            // Không cho exception lỗi tàn nát đi vào crash handler — chỉ log
         }
         val applicationScope = CoroutineScope(
             SupervisorJob() + Dispatchers.Default + applicationExceptionHandler
@@ -293,7 +293,10 @@ object AppConfig {
 }
 
 fun String.toApiBaseUrl(): String {
-    val p = try { java.net.URL(this) } catch (e: Exception) { return this }
+    val raw = trim().trimEnd('/')
+    if (raw.isEmpty() || raw.startsWith("/")) return ""
+    val normalized = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
+    val p = try { java.net.URL(normalized) } catch (e: Exception) { return "" }
     return "${p.protocol}://${p.host}:${AppConfig.API_PORT}"
 }
 

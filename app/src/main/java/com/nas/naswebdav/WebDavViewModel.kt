@@ -437,6 +437,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val lastProgressAt: Long = 0L,
         val lastError: String = "",
         val settings: UsbImportSettings = UsbImportSettings(),
+        val detectedDevicesInfo: String = "",
     )
     var usbImportState by mutableStateOf(UsbImportState())
     var usbImportMessage by mutableStateOf("")
@@ -638,7 +639,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun logUserAction(module: String, message: String, type: String = "INFO") {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                repository.addSystemLog(type, module, "Nguoi dung: $message")
+                repository.addSystemLog(type, module, "Người dùng: $message")
                 withContext(Dispatchers.Main) { loadSystemLogs() }
             } catch (e: Exception) {
                 android.util.Log.w("UserActionLog", "log failed: ${e.message}")
@@ -1187,7 +1188,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/add", org.json.JSONObject().put("username", clean))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
                 repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: thêm tài khoản theo dõi live @$clean.")
-                // Bat job ngay neu user vua them dang live - khong cho 15p chu ky Discovery.
+                // Bắt job ngay nếu user vừa thêm đang live - không chờ 15p chu kỳ Discovery.
                 syncLivestreamStateWithServer(context)
             } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: thêm tài khoản @$clean thất bại: ${e.message?.take(120)}")
@@ -1252,8 +1253,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (tiktokUsername.isNotBlank()) put("watch_username", tiktokUsername)
                 }.toString().toRequestBody(jsonMediaType)
 
+                val apiBaseUrl = webDavManager.currentBaseUrl.toApiBaseUrl()
+                    .ifBlank { currentUrl.toApiBaseUrl() }
+                if (apiBaseUrl.isBlank()) {
+                    throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                }
                 val requestBuilder = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/livestream/record")
+                    .url("$apiBaseUrl/api/livestream/record")
                     .post(body)
 
                 val user = SecurePrefsHelper.getUser(context)
@@ -1262,12 +1268,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
                 }
 
-                // FIX: dung client co timeout dai hon (60s) chi rieng cho call nay —
-                // preflight check TikTok co the ton 20-30s (curl HTML + probe FLV).
-                // Khong tang timeout cua client mac dinh vi cac endpoint khac phai
-                // tra ket qua nhanh.
+                // FIX: dùng client có timeout dài hơn (60s) chỉ riêng cho call này —
+                // preflight check TikTok có thể tốn 20-30s (curl HTML + probe FLV).
+                // Không tăng timeout của client mặc định vì các endpoint khác phải
+                // trả kết quả nhanh.
                 val recordClient = localApiClient.newBuilder()
-                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                    .callTimeout(150, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
                 recordClient.newCall(requestBuilder.build()).execute().use { response ->
                     val rawBody = response.body?.string() ?: "{}"
@@ -1275,7 +1284,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
                         val platform = json.optString("platform", "")
-                        repository.addSystemLog("INFO", "Livestream", "Nguoi dung: bat dau ghi livestream ${tiktokUsername.ifBlank { url.take(80) }} chat luong $quality.")
+                        repository.addSystemLog("INFO", "Livestream", "Người dùng: bắt đầu ghi livestream ${tiktokUsername.ifBlank { url.take(80) }} chất lượng $quality.")
 
                         // Thêm vào danh sách active (mặc định trạng thái recording)
                         withContext(Dispatchers.Main) {
@@ -1291,10 +1300,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         // Observe tiến trình từ Worker để cập nhật UI
                         observeLivestreamWorker(context)
 
-                        // FIX: Tu dong them username vao watcher list neu chua co —
-                        // dam bao moi luc user ghi 1 live moi qua link, lan sau watcher
-                        // se tu phat hien va auto-record. Khong dua vao logic o Dialog
-                        // (de robust trong moi flow goi startLivestreamRecord).
+                        // FIX: Tự động thêm username vào watcher list nếu chưa có —
+                        // đảm bảo mỗi lúc user ghi 1 live mới qua link, lần sau watcher
+                        // sẽ tự phát hiện và auto-record. Không dựa vào logic ở Dialog
+                        // (để robust trong mọi flow gọi startLivestreamRecord).
                         if (tiktokUsername.isNotBlank() &&
                             tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
                             addTikTokLiveWatchUser(context, tiktokUsername)
@@ -1311,17 +1320,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             commonDialogMessage = errMsg
                             showCommonDialog    = true
                         }
-                        repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: bat dau ghi livestream that bai: ${errMsg.take(120)}")
+                        repository.addSystemLog("WARNING", "Livestream", "Người dùng: bắt đầu ghi livestream thất bại: ${errMsg.take(120)}")
                     }
                 }
             } catch (e: Exception) {
                 // FIX: phan loai exception cu the thay vi "Lỗi kết nối NAS: null"
                 val errMsg = when (e) {
                     is java.net.SocketTimeoutException ->
-                        "NAS không phản hồi trong 30 giây. Có thể: " +
-                        "(1) Cookies TikTok hết hạn — cần cập nhật cookies.txt trên NAS. " +
-                        "(2) User TikTok này không live — thử URL khác. " +
-                        "(3) TikTok CDN chặn vùng — đổi mạng/VPN."
+                        "NAS chưa trả kết quả kịp khi phân tích link TikTok. Không tạo thêm phiên trùng; hãy chờ trạng thái ghi cập nhật rồi thử lại nếu chưa thấy chạy."
                     is java.net.ConnectException ->
                         "Không kết nối được NAS. Kiểm tra: NAS có đang chạy không? Tailscale có bật không?"
                     is java.net.UnknownHostException ->
@@ -1340,7 +1346,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     commonDialogMessage = errMsg
                     showCommonDialog    = true
                 }
-                repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: bat dau ghi livestream that bai: ${errMsg.take(120)}")
+                repository.addSystemLog("WARNING", "Livestream", "Người dùng: bắt đầu ghi livestream thất bại: ${errMsg.take(120)}")
             } finally {
                 withContext(Dispatchers.Main) {
                     isStartingLivestream = false
@@ -1573,13 +1579,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
 
                 localApiClient.newCall(request).execute().use { }
-                repository.addSystemLog("INFO", "Livestream", "Nguoi dung: dung ghi livestream job $jobId.")
+                repository.addSystemLog("INFO", "Livestream", "Người dùng: dừng ghi livestream job $jobId.")
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
                     livestreamMessage   = "⏹ Đã dừng ghi hình. File đang được xử lý..."
                 }
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "Livestream", "Nguoi dung: dung ghi livestream job $jobId that bai: ${e.message?.take(120)}")
+                repository.addSystemLog("WARNING", "Livestream", "Người dùng: dừng ghi livestream job $jobId thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }
             }
         }
@@ -1693,14 +1699,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // BÓC TÁCH: Đẩy việc liên lạc mạng NAS (chậm) vào luồng ngầm I/O, giải phóng luồng màn hình UI
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
+                // 1. Tìm đường dẫn gốc của ổ đĩa (VD: /Data N300/)
+                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
+                val driveName = relativePath.substringBefore('/')
+                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
 
-                // CHẶN XOÁ VĨNH VIỄN: Chỉ cho phép di chuyển vào thùng rác
+                // 2. Chặn xoá vĩnh viễn nếu chưa nằm trong thùng rác
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) {}
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    webDavManager.renameFile(file.path, trashUrl + encodedName)
-                    repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác.")
+                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+                    webDavManager.renameFile(file.path, targetUrl)
+                    repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác ổ $driveName.")
                 } else {
                     webDavManager.deleteFile(file.path)
                     repository.addSystemLog("WARNING", "File Ops", "Đã XÓA VĨNH VIỄN tệp '${file.name}'.")
@@ -1712,10 +1723,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 
                 // TÍNH NĂNG 5.I: Bẫy lỗi và tống vào Hàng Đợi Offline
                 repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
-                val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
+                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
+                val driveName = relativePath.substringBefore('/')
+                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
+                
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    enqueueOfflineAction(context, "RENAME", file.path, trashUrl + encodedName)
+                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+                    enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
                 } else {
                     enqueueOfflineAction(context, "DELETE", file.path)
                 }
@@ -2042,64 +2058,113 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             var result = false
 
             val result2 = withContext(Dispatchers.IO) {
-                for (activeUrl in urlList) {
-                    if (activeUrl.isBlank()) continue
+                if (urlList.isEmpty()) {
+                    lastErrorDetail = "Không có URL để kết nối"
+                    return@withContext false
+                }
 
-                    val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
-
-                    withContext(Dispatchers.Main) {
-                        currentUrl = safeUrl
-                        connectionStatus = "Đang kết nối: $safeUrl"
-                        isOnLan = !isTailscaleUrl(safeUrl)
-                    }
-
-                    try {
-                        webDavManager.connect(safeUrl, user, pass)
-
-                        // BƯỚC 1: XÁC THỰC BẰNG CHÍNH WEBDAV (CỔNG CHÍNH 8822/80)
-                        val pingResult = webDavManager.checkPingServer()
-                        if (pingResult == null || pingResult < 0) {
-                            errorDetails.add("$activeUrl: WebDAV quá hạn hoặc chưa xác thực")
-                            continue
+                val channel = kotlinx.coroutines.channels.Channel<Pair<Boolean, String>>()
+                val jobs = urlList.map { activeUrl ->
+                    launch(Dispatchers.IO) {
+                        if (activeUrl.isBlank()) {
+                            channel.send(Pair(false, ""))
+                            return@launch
                         }
 
-                        // ✅ Kết nối thành công! Ghi nhận và thoát khỏi vòng lặp
-                        SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
-                        repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $activeUrl")
+                        val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
 
-                        connectedUrl = activeUrl
+                        withContext(Dispatchers.Main) {
+                            connectionStatus = "Đang kết nối: $safeUrl"
+                        }
 
-                        // BƯỚC 2: XÁC THỰC API PHỤ (Port 5050 cho System Stats)
-                        val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
-                        val host = parsedUrl?.host
-                        if (!host.isNullOrEmpty()) {
-                            NasApplication.applicationScope.launch(Dispatchers.IO) {
-                                try {
-                                    val authHeader = okhttp3.Credentials.basic(user, pass)
-                                    val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
-                                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                        .build()
-                                    val request = okhttp3.Request.Builder()
-                                        .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
-                                        .header("Authorization", authHeader)
-                                        .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                        .build()
-                                    cleanClient.newCall(request).execute().use { }
-                                } catch (e: Exception) {
-                                    android.util.Log.w("NAS_AUTH", "API Phụ ${AppConfig.API_PORT} Warning: ${e.message}")
+                        try {
+                            val isTailscale = isTailscaleUrl(safeUrl)
+                            val timeoutMs = if (isTailscale) 2500L else 800L
+                            val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
+                                .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                .build()
+
+                            val request = okhttp3.Request.Builder()
+                                .url("${safeUrl.toApiBaseUrl()}/api/ping")
+                                .head()
+                                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                                .build()
+
+                            pingClient.newCall(request).execute().use { response ->
+                                if (response.isSuccessful) {
+                                    channel.send(Pair(true, safeUrl))
+                                } else {
+                                    channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
                                 }
                             }
+                        } catch (e: Exception) {
+                            android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
+                            channel.send(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
                         }
-                        return@withContext true
-                    } catch (e: Exception) {
-                        android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
-                        errorDetails.add("$activeUrl: ${e.message ?: "Mạng quá hạn"}")
                     }
                 }
-                // Tất cả URL đều thất bại
-                lastErrorDetail = buildLoginFailureMessage(urlList, errorDetails)
-                false
+
+                var successUrl = ""
+                var failCount = 0
+                val totalJobs = urlList.size
+
+                while (failCount < totalJobs) {
+                    val res = channel.receive()
+                    if (res.first) {
+                        successUrl = res.second
+                        break
+                    } else {
+                        if (res.second.isNotEmpty()) {
+                            errorDetails.add(res.second)
+                        }
+                        failCount++
+                    }
+                }
+
+                jobs.forEach { it.cancel() }
+                channel.close()
+
+                if (successUrl.isNotEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        currentUrl = successUrl
+                        connectionStatus = "Đã kết nối: $successUrl"
+                        isOnLan = !isTailscaleUrl(successUrl)
+                    }
+
+                    webDavManager.connect(successUrl, user, pass)
+                    SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
+                    repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
+
+                    connectedUrl = successUrl
+
+                    val parsedUrl = try { java.net.URL(successUrl) } catch (_: Exception) { null }
+                    val host = parsedUrl?.host
+                    if (!host.isNullOrEmpty()) {
+                        NasApplication.applicationScope.launch(Dispatchers.IO) {
+                            try {
+                                val authHeader = okhttp3.Credentials.basic(user, pass)
+                                val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
+                                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                                    .build()
+                                val request = okhttp3.Request.Builder()
+                                    .url("${successUrl.toApiBaseUrl()}/api/auth/authorize")
+                                    .header("Authorization", authHeader)
+                                    .post(ByteArray(0).toRequestBody(null, 0, 0))
+                                    .build()
+                                cleanClient.newCall(request).execute().use { }
+                            } catch (e: Exception) {
+                                android.util.Log.w("NAS_AUTH", "API Phụ Warning: ${e.message}")
+                            }
+                        }
+                    }
+                    true
+                } else {
+                    lastErrorDetail = buildLoginFailureMessage(urlList, errorDetails)
+                    false
+                }
             }
 
             withContext(Dispatchers.Main) {
@@ -2124,27 +2189,23 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 async(Dispatchers.IO) {
                     url to try {
                         val isTailscale = isTailscaleUrl(url)
-                        val timeoutMs = if (isTailscale) 2500L else 800L
-                        val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                            .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                            .build()
+                        val timeoutMs = if (isTailscale) 2500 else 800
 
                         val safeUrl = if (url.endsWith("/")) url else "$url/"
+                        val uri = java.net.URI(safeUrl)
+                        val host = uri.host ?: return@async url to -1L
+                        val port = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
+
                         var best = Long.MAX_VALUE
                         repeat(if (isTailscale) 1 else 3) {
                             val start = android.os.SystemClock.elapsedRealtime()
-                            val request = okhttp3.Request.Builder()
-                                .url("${safeUrl.toApiBaseUrl()}/api/ping")
-                                .head()
-                                .header("Authorization", okhttp3.Credentials.basic(user, pass))
-                                .build()
-
-                            pingClient.newCall(request).execute().use { response ->
-                                if (response.isSuccessful) {
-                                    best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
-                                }
+                            try {
+                                val socket = java.net.Socket()
+                                socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+                                socket.close()
+                                best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
+                            } catch (e: Exception) {
+                                // Ignore individual failures
                             }
                         }
                         if (best == Long.MAX_VALUE) -1L else best
@@ -2237,7 +2298,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 DuplicateProgressState.elapsedTime
             ) { stage, folderUrl, percent, scanned, elapsed ->
                 // Trả về tuple để trigger collector khi BẤT KỲ field nào thay đổi
-                arrayOf(stage, folderUrl, percent, scanned, elapsed)
+                arrayOf<Any?>(stage, folderUrl, percent, scanned, elapsed)
             }.collect {
                 // Đồng bộ toàn bộ state từ DuplicateProgressState → ViewModel state
                 scanDuplicatesCurrentFolderUrl = DuplicateProgressState.currentFolderUrl.value
@@ -2254,11 +2315,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 scanDuplicatesElapsedTime      = DuplicateProgressState.elapsedTime.value
                 scanDuplicatesEstimatedTimeRemaining = DuplicateProgressState.estimatedTimeRemaining.value
 
-                // FIX (BUG: dialog tu pop-up lai khi user bam Thu nho):
-                // Chi cap nhat isWorkerRunning — KHONG tu dong set isScanningDuplicates = true.
-                // Dialog hien thi do user chu dong mo (qua nut Quet hoac chip "Thu nho").
-                // Truoc day, moi tick progress collector dat isScanningDuplicates=true ->
-                // user khong the Thu nho/Huy/Tam dung duoc vi dialog tu bat lai 30ms sau.
+                // FIX (BUG: dialog tự pop-up lại khi user bấm Thu nhỏ):
+                // Chỉ cập nhật isWorkerRunning — KHÔNG tự động set isScanningDuplicates = true.
+                // Dialog hiển thị do user chủ động mở (qua nút Quét hoặc chip "Thu nhỏ").
+                // Trước đây, mỗi tick progress collector đặt isScanningDuplicates=true ->
+                // user không thể Thu nhỏ/Hủy/Tạm dừng được vì dialog tự bật lại 30ms sau.
                 val stage = scanDuplicatesStage
                 if (stage != "Hoàn tất" && stage.isNotEmpty() && stage != "Khởi động...") {
                     isWorkerRunning = true
@@ -3580,14 +3641,32 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             lastProgressAt = o.optLong("last_progress_at", 0L),
             lastError = o.optString("last_error", ""),
             settings = settings,
+            detectedDevicesInfo = parseDetectedDevicesInfo(o.optJSONArray("detected_devices"))
         )
     }
 
-    fun fetchUsbImportStatus() {
-        viewModelScope.launch(Dispatchers.IO) {
+    private fun parseDetectedDevicesInfo(arr: org.json.JSONArray?): String {
+        if (arr == null) return ""
+        val devices = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+            val dev = arr.optJSONObject(i) ?: continue
+            val reason = dev.optString("reason", "")
+            if (reason == "hop le" || reason.startsWith("hop le")) {
+                val label = dev.optString("label", "")
+                val path = dev.optString("path", "")
+                val name = label.ifBlank { path }.ifBlank { "USB Không tên" }
+                devices.add(name)
+            }
+        }
+        return devices.joinToString(", ")
+    }
+
+    internal suspend fun fetchUsbImportStatusSuspend() {
+        withContext(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isUsbImportLoading = true }
-                val base = currentUrl.toApiBaseUrl()
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/status")
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
@@ -3612,10 +3691,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
+    fun fetchUsbImportStatus() {
+        viewModelScope.launch { fetchUsbImportStatusSuspend() }
+    }
+
     fun saveUsbImportSettings(settings: UsbImportSettings) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val base = currentUrl.toApiBaseUrl()
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
                 val body = org.json.JSONObject().apply {
                     put("enabled", settings.enabled)
                     put("dest_folder", settings.destFolder)
@@ -3661,7 +3745,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun startUsbImportNow() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val base = currentUrl.toApiBaseUrl()
+                withContext(Dispatchers.Main) { isUsbImportLoading = true }
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/start")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
@@ -3685,6 +3771,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
         }
     }
@@ -3692,7 +3780,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun cancelUsbImport() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val base = currentUrl.toApiBaseUrl()
+                withContext(Dispatchers.Main) { isUsbImportLoading = true }
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/cancel")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
@@ -3716,6 +3806,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
         }
     }
@@ -3802,12 +3894,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val o = org.json.JSONObject(body)
                     val ok = o.optBoolean("ok", false)
                     val msg = o.optString("msg", "")
-                    repository.addSystemLog(if (ok) "INFO" else "WARNING", "SleepSchedule", "Nguoi dung: yeu cau HDD spindown ngay (${if (ok) "thanh cong" else "that bai"}: $msg).")
+                    repository.addSystemLog(if (ok) "INFO" else "WARNING", "SleepSchedule", "Người dùng: yêu cầu HDD spindown ngay (${if (ok) "thành công" else "thất bại"}: $msg).")
                     withContext(Dispatchers.Main) { onDone(ok, msg) }
                 }
                 fetchSleepSchedule()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "SleepSchedule", "Nguoi dung: yeu cau HDD spindown ngay that bai: ${e.message?.take(120)}")
+                repository.addSystemLog("WARNING", "SleepSchedule", "Người dùng: yêu cầu HDD spindown ngay thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { onDone(false, e.message ?: "error") }
             }
         }
@@ -3952,7 +4044,9 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
-                val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
+                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
+                val driveName = relativePath.substringBefore('/')
+                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
 
                 // 1. Kiểm tra nếu file đang ở trong thùng rác rồi thì xoá vĩnh viễn
                 if (file.path.contains(TRASH_FOLDER_NAME)) {
@@ -3962,7 +4056,8 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* Đã tồn tại */ }
 
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    val targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
                     webDavManager.renameFile(file.path, targetUrl)
                 }
 
@@ -3985,15 +4080,20 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
-                val trashUrl = webDavManager.currentBaseUrl + TRASH_FOLDER_NAME
-                try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
-
                 var processed = 0
                 for (file in filesToDelete) {
+                    val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
+                    val driveName = relativePath.substringBefore('/')
+                    val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
+                    
+                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
+                    
                     if (file.path.contains(TRASH_FOLDER_NAME)) {
                         webDavManager.deleteFile(file.path)
                     } else {
-                        val targetUrl = trashUrl + file.name
+                        val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
+                        var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                        if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
                         webDavManager.renameFile(file.path, targetUrl)
                     }
                     processed++
@@ -5025,18 +5125,16 @@ object PerformanceMonitor {
     val metricsFlow: StateFlow<SystemMetrics> = _metricsFlow
     private var previousRx = 0L; private var previousTx = 0L
     private var lastDiskCacheSizeMb = 0; private var diskCacheCheckCounter = 0
+    private val isMonitoring = java.util.concurrent.atomic.AtomicBoolean(false)
 
     suspend fun startMonitoring(context: Context) = withContext(Dispatchers.IO) {
-        // FIX: dung applicationContext de tranh giu Activity context trong singleton object
-        // qua nhieu lifecycle. Truoc day moi lan ham nay duoc goi tu MainMenuScreen LaunchedEffect,
-        // tham chieu Activity duoc cap qua `am` chi duoc cleanup khi loop bi cancel — neu
-        // process song lau hon Activity, am giu ref den Activity da huy -> leak.
+        if (!isMonitoring.compareAndSet(false, true)) return@withContext
         val appContext = context.applicationContext ?: context
         val am = appContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo()
         val uid = Process.myUid()
         try {
-            while (isActive) {
+            while (isActive && isMonitoring.get()) {
                 try {
                     am.getMemoryInfo(memoryInfo)
                     val totalRam = (memoryInfo.totalMem / 1048576L).toInt(); val freeRam = (memoryInfo.availMem / 1048576L).toInt()
@@ -5055,7 +5153,10 @@ object PerformanceMonitor {
                 // -> giam CPU/battery dang ke khi user khong xem panel debug.
                 delay(if (AppConfig.IS_APP_FOREGROUND) 1000L else 5000L)
             }
-        } finally { previousRx = 0L; previousTx = 0L }
+        } finally { 
+            previousRx = 0L; previousTx = 0L
+            isMonitoring.set(false)
+        }
     }
 
     private fun getFolderSize(dir: File): Long { var size = 0L; dir.listFiles()?.forEach { size += if (it.isDirectory) getFolderSize(it) else it.length() }; return size }

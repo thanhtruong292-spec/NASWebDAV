@@ -1,4 +1,4 @@
-﻿package com.nas.naswebdav.ui.dialogs
+package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
@@ -405,10 +405,10 @@ object LivestreamPanelState {
 private fun normalizeTikTokWatchMessage(message: String): String {
     if (message.isBlank()) return ""
     return message
-        .replace("Da ghi phien live nay; khong tao file thu hai cho toi khi user offline.", "Đã ghi phiên live này; không tạo tệp thứ hai cho tới khi người dùng ngoại tuyến.")
-        .replace("Chua xac nhan offline:", "Chưa xác nhận ngoại tuyến:")
-        .replace("da offline", "đã ngoại tuyến")
-        .replace("mo khoa phien live tiep theo", "mở khoá phiên live tiếp theo")
+        .replace("Đã ghi phiên live này; không tạo file thứ hai cho tới khi user offline.", "Đã ghi phiên live này; không tạo tệp thứ hai cho tới khi người dùng ngoại tuyến.")
+        .replace("Chưa xác nhận offline:", "Chưa xác nhận ngoại tuyến:")
+        .replace("đã offline", "đã ngoại tuyến")
+        .replace("mở khoá phiên live tiếp theo", "mở khoá phiên live tiếp theo")
         .replace("khong", "không")
         .replace("Khong", "Không")
         .replace("chua", "chưa")
@@ -2352,9 +2352,9 @@ fun LivestreamRecordDialog(
                                 onDismiss()
                             } else {
                                 viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality)
-                                // Sau khi bat dau ghi mot user TikTok bang URL truc tiep, them luon vao
-                                // danh sach theo doi (NAS deduplicate theo username). Khong lam neu user
-                                // da co san trong list de tranh log spam.
+                                // Sau khi bắt đầu ghi một user TikTok bằng URL trực tiếp, thêm luôn vào
+                                // danh sách theo dõi (NAS deduplicate theo username). Không làm nếu user
+                                // đã có sẵn trong list để tránh log spam.
                                 if (!tiktokUsername.isNullOrBlank() &&
                                     viewModel.tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
                                     viewModel.addTikTokLiveWatchUser(context, tiktokUsername)
@@ -2377,8 +2377,8 @@ fun LivestreamRecordDialog(
             Spacer(Modifier.height(6.dp))
 
             // --- PHẦN 2: DANH SÁCH CÁC JOB ĐANG GHI ---
-            // An mac dinh, bam header de mo (toggle "active" panel). Khi mo se tu
-            // dong dong cac panel khac (watchlist + exclude) thong qua LivestreamPanelState.
+            // Ẩn mặc định, bấm header để mở (toggle "active" panel). Khi mở sẽ tự
+            // động đóng các panel khác (watchlist + exclude) thông qua LivestreamPanelState.
             val activeExpanded = LivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
                 HorizontalDivider(color = Color.DarkGray)
@@ -2691,7 +2691,7 @@ fun BiometricSettingsDialog(
                             .putBoolean("biometric_enabled", enabled)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "cap nhat khoa sinh trac (${if (enabled) "bat" else "tat"}, tre ${delaySec}s).")
+                        viewModel.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
@@ -3543,7 +3543,7 @@ fun NasConfigBackupDialog(
 }
 
 // ====================================================================
-// USB IMPORT - quan ly daemon copy o USB gan ngoai vao NAS
+// USB IMPORT - quản lý daemon copy ổ USB gắn ngoài vào NAS
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3562,10 +3562,11 @@ fun UsbImportDialog(
     var destFolder by remember(settings) { mutableStateOf(settings.destFolder) }
 
     LaunchedEffect(Unit) { viewModel.fetchUsbImportStatus() }
-    LaunchedEffect(state.status) {
-        while (state.status == "copying" || state.status == "cancelling") {
-            delay(1000)
-            viewModel.fetchUsbImportStatus()
+    val isPollingStatus = state.status == "copying" || state.status == "cancelling"
+    LaunchedEffect(isPollingStatus) {
+        while (isPollingStatus) {
+            delay(1500)
+            viewModel.fetchUsbImportStatusSuspend()
         }
     }
 
@@ -3642,6 +3643,9 @@ fun UsbImportDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(state.message.ifBlank { "Đang chờ trạng thái từ NAS" }, color = Color.White, fontSize = 13.sp)
+                if (state.detectedDevicesInfo.isNotBlank()) {
+                    Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
                 if (state.activeDevice.isNotBlank()) {
                     Text(state.activeDevice, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -3963,7 +3967,8 @@ private fun dialogInsightRate(bytesPerSec: Long): String {
 @Composable
 fun NasInsightsDialog(
     viewModel: WebDavViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onTaskClick: (String) -> Unit = {}
 ) {
     LaunchedEffect(Unit) { viewModel.fetchNasInsights() }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -4027,7 +4032,13 @@ fun NasInsightsDialog(
                 if (insight.flowTasks.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
                     insight.flowTasks.take(4).forEach { task ->
-                        Column(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(7.dp)).padding(8.dp)) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF15151D), RoundedCornerShape(7.dp))
+                                .clickable { onTaskClick(task.label) }
+                                .padding(8.dp)
+                        ) {
                             Text("${task.label} • ${task.progress}%", color = Color(0xFF00D2FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Text(task.file.ifBlank { "Đang xử lý" }, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(task.dest, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
