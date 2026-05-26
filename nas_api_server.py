@@ -8351,9 +8351,9 @@ def _livestream_watchdog():
                         try:
                             latest_path = info.get("_latest_output_path", "")
                             direct_path = info.get("direct_output_path", "")
-                            if direct_path and direct_path.lower().endswith(".flv") and os.path.exists(direct_path):
+                            if direct_path and direct_path.lower().endswith((".flv", ".ts")) and os.path.exists(direct_path):
                                 flv_path = direct_path
-                            elif latest_path and latest_path.lower().endswith(".flv") and os.path.exists(latest_path):
+                            elif latest_path and latest_path.lower().endswith((".flv", ".ts")) and os.path.exists(latest_path):
                                 flv_path = latest_path
                             if flv_path and os.path.getsize(flv_path) > 1024:
                                 mp4_path = _remux_flv_to_mp4(flv_path)
@@ -9786,34 +9786,59 @@ def api_livestream_record():
                 direct_output_file = ""
 
         if direct_tiktok_flv:
-            ffmpeg_headers = "Referer: https://www.tiktok.com/\r\n"
-            if os.path.exists(cookies_path) and "tiktokcdn" not in live_url.lower():
-                try:
-                    with open(cookies_path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                    cookie_str = "; ".join([line.split("\t")[-1].strip() + "=" + line.split("\t")[-2].strip() for line in lines if not line.startswith("#") and len(line.split("\t")) >= 7])
-                    if cookie_str:
-                        ffmpeg_headers += "Cookie: %s\r\n" % cookie_str
-                except Exception:
-                    pass
+            loop_script = """import sys, time, subprocess, re, os
+username = sys.argv[1]
+out_file = sys.argv[2]
+cookies = sys.argv[3]
+ua = sys.argv[4]
+
+def get_flv():
+    cmd = ["curl", "-s", "-L", "--max-time", "8", "-A", ua, "-H", "Referer: https://www.tiktok.com/"]
+    if os.path.exists(cookies): cmd.extend(["-b", cookies])
+    cmd.append("https://www.tiktok.com/@%s/live" % username)
+    try:
+        html = subprocess.check_output(cmd, timeout=15).decode('utf-8', errors='ignore')
+        m = re.search(r'\\\\"flv\\\\":\\\\"(https://[^"\\\\\\\\]+)', html)
+        if not m: m = re.search(r'\\"flv\\":\\"(https://[^"\\\\]+)', html)
+        if m: return m.group(1).replace("\\\\u0026", "&")
+    except: pass
+    return ""
+
+fail_count = 0
+while True:
+    flv = get_flv()
+    if not flv:
+        fail_count += 1
+        if fail_count > 3: break
+        time.sleep(10)
+        continue
+    fail_count = 0
+    cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
+    headers = "Referer: https://www.tiktok.com/\\r\\n"
+    if os.path.exists(cookies):
+        try:
+            with open(cookies, "r", encoding="utf-8") as f:
+                c = "; ".join([l.split("\\t")[-1].strip()+"="+l.split("\\t")[-2].strip() for l in f.readlines() if not l.startswith("#") and len(l.split("\\t"))>=7])
+            if c: headers += "Cookie: %s\\r\\n" % c
+        except: pass
+    cmd.extend(["-headers", headers])
+    cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
+    with open(out_file, "ab") as f:
+        subprocess.run(cmd, stdout=f, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+"""
+            wrapper_path = os.path.join(tmp_dir or _LIVESTREAM_DIR, "loop_%s.py" % timestamp_str)
+            with open(wrapper_path, "w", encoding="utf-8") as f:
+                f.write(loop_script)
+
+            direct_output_file = direct_output_file.replace(".mp4", ".ts")
 
             cmd = [
-                "/usr/bin/ffmpeg", "-y",
-                "-loglevel", "warning",
-                "-rw_timeout", "60000000",
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_at_eof", "1",
-                "-reconnect_delay_max", "10",
-                "-reconnect_on_network_error", "1",
-                "-reconnect_on_http_error", "4xx,5xx",
-                "-user_agent", tiktok_user_agent,
-                "-headers", ffmpeg_headers,
-                "-i", live_url,
-                "-c", "copy",
-                "-bsf:a", "aac_adtstoasc",
-                "-movflags", "+faststart",
+                "python3", wrapper_path,
+                watch_username or original_record_url.split("@")[-1].split("/")[0],
                 direct_output_file,
+                cookies_path,
+                tiktok_user_agent
             ]
         else:
             # Truong hop fallback: live_url co the la URL FLV CDN da scrape ra,
