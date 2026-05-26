@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -3560,6 +3561,7 @@ fun UsbImportDialog(
     var verifyChecksum by remember(settings) { mutableStateOf(settings.verifyChecksum) }
     var copyMode by remember(settings) { mutableStateOf(settings.copyMode) }
     var destFolder by remember(settings) { mutableStateOf(settings.destFolder) }
+    var settingsExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.fetchUsbImportStatus() }
     val isPollingStatus = state.status == "copying" || state.status == "cancelling"
@@ -3762,62 +3764,100 @@ fun UsbImportDialog(
             }
 
             Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Tự động phát hiện", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Switch(checked = enabled, onCheckedChange = { enabled = it })
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Tự mount ổ USB", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Switch(checked = autoMount, onCheckedChange = { autoMount = it })
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Mount read-only", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Switch(checked = mountReadonly, onCheckedChange = { mountReadonly = it })
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Resume sau restart", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = Color(0xFF8892B0), fontSize = 10.sp)
-                }
-                Switch(checked = resumeEnabled, onCheckedChange = { resumeEnabled = it })
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Checksum SHA-256", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = Color(0xFF8892B0), fontSize = 10.sp)
-                }
-                Switch(checked = verifyChecksum, onCheckedChange = { verifyChecksum = it })
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = destFolder,
-                onValueChange = { if (it.length <= 48) destFolder = it },
-                label = { Text("Thư mục đích") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
-                    focusedBorderColor = Color(0xFF26A69A),
-                    unfocusedBorderColor = Color(0xFF333344),
-                    focusedLabelColor = Color(0xFF26A69A),
-                    unfocusedLabelColor = Color(0xFF8892B0)
-                )
+            val settingsArrowRotation by animateFloatAsState(
+                targetValue = if (settingsExpanded) 180f else 0f,
+                animationSpec = tween(durationMillis = 220),
+                label = "usbImportSettingsArrow"
             )
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FilterChip(
-                    selected = copyMode == "new_only",
-                    onClick = { copyMode = "new_only" },
-                    label = { Text("Chỉ file mới", fontSize = 12.sp) },
-                    leadingIcon = if (copyMode == "new_only") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
-                )
-                FilterChip(
-                    selected = copyMode == "overwrite",
-                    onClick = { copyMode = "overwrite" },
-                    label = { Text("Ghi đè", fontSize = 12.sp) },
-                    leadingIcon = if (copyMode == "overwrite") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                    .border(1.dp, Color(0xFF242436), RoundedCornerShape(8.dp))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { settingsExpanded = !settingsExpanded }
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Settings, null, tint = Color(0xFF26C6DA), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Cài đặt", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.weight(1f))
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        null,
+                        tint = Color(0xFF8892B0),
+                        modifier = Modifier.size(22.dp).rotate(settingsArrowRotation)
+                    )
+                }
+                AnimatedVisibility(
+                    visible = settingsExpanded,
+                    enter = expandVertically(animationSpec = tween(240)) + fadeIn(animationSpec = tween(180)),
+                    exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(140))
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tự động phát hiện", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(checked = enabled, onCheckedChange = { enabled = it })
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tự mount ổ USB", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(checked = autoMount, onCheckedChange = { autoMount = it })
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Mount read-only", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(checked = mountReadonly, onCheckedChange = { mountReadonly = it })
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Resume sau restart", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = Color(0xFF8892B0), fontSize = 10.sp)
+                            }
+                            Switch(checked = resumeEnabled, onCheckedChange = { resumeEnabled = it })
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Checksum SHA-256", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = Color(0xFF8892B0), fontSize = 10.sp)
+                            }
+                            Switch(checked = verifyChecksum, onCheckedChange = { verifyChecksum = it })
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = destFolder,
+                            onValueChange = { if (it.length <= 48) destFolder = it },
+                            label = { Text("Thư mục đích") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF26A69A),
+                                unfocusedBorderColor = Color(0xFF333344),
+                                focusedLabelColor = Color(0xFF26A69A),
+                                unfocusedLabelColor = Color(0xFF8892B0)
+                            )
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = copyMode == "new_only",
+                                onClick = { copyMode = "new_only" },
+                                label = { Text("Chỉ file mới", fontSize = 12.sp) },
+                                leadingIcon = if (copyMode == "new_only") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
+                            )
+                            FilterChip(
+                                selected = copyMode == "overwrite",
+                                onClick = { copyMode = "overwrite" },
+                                label = { Text("Ghi đè", fontSize = 12.sp) },
+                                leadingIcon = if (copyMode == "overwrite") {{ Icon(Icons.Default.Check, null, modifier = Modifier.size(14.dp)) }} else null
+                            )
+                        }
+                    }
+                }
             }
 
             if (viewModel.usbImportMessage.isNotBlank()) {
