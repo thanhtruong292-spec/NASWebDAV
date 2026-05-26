@@ -9814,14 +9814,7 @@ while True:
         continue
     fail_count = 0
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
-    headers = "Referer: https://www.tiktok.com/\\r\\n"
-    if os.path.exists(cookies):
-        try:
-            with open(cookies, "r", encoding="utf-8") as f:
-                c = "; ".join([l.split("\\t")[-2].strip()+"="+l.split("\\t")[-1].strip() for l in f.readlines() if not l.startswith("#") and len(l.split("\\t"))>=7])
-            if c: headers += "Cookie: %s\\r\\n" % c
-        except: pass
-    cmd.extend(["-headers", headers])
+    cmd.extend(["-headers", "Referer: https://www.tiktok.com/\\r\\n"])
     cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
     with open(out_file, "ab") as f:
         import sys
