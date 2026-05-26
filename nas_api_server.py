@@ -8678,7 +8678,7 @@ def _parse_cookies_sessionid_expiry(path):
 def _ping_tiktok_cookies(path):
     """Goi 1 endpoint can dang nhap; tr? v? (is_valid, detail)."""
     curl_cmd = [
-        "curl", "-s", "-L",
+        "curl", "-4", "-s", "-L",
         "--max-time", "12",
         "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "-H", "Referer: https://www.tiktok.com/",
@@ -8902,7 +8902,7 @@ def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
     use_cookies = bool(cookies_path and os.path.exists(cookies_path) and "tiktokcdn" not in stream_lower)
 
     def _run_probe(extra_args):
-        cmd = ["curl", "-s", "-L"] + common + extra_args + [
+        cmd = ["curl", "-4", "-s", "-L"] + common + extra_args + [
             "-o", "/dev/null",
             "-w", "%{http_code}|%{content_type}|%{size_download}",
         ]
@@ -8972,7 +8972,7 @@ def _check_tiktok_user_live(username):
     # voi "page tr? v? nhung khong co stream" (200 nhung empty / not-live).
     sentinel = "\n__HTTP_STATUS__:"
     curl_cmd = [
-        "curl", "-s", "-L",
+        "curl", "-4", "-s", "-L",
         "--max-time", "6",
         "--connect-timeout", "4",
         "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -9647,7 +9647,7 @@ def api_livestream_record():
         # truc tiep thảnh MP4. Khong l?u FLV ra NAS.
         if "tiktok" in live_url.lower():
             curl_cmd = [
-                "curl", "-s", "-L",
+                "curl", "-4", "-s", "-L",
                 "--max-time", "20",
                 "-A", tiktok_user_agent,
                 "-H", "Referer: https://www.tiktok.com/",
@@ -9702,7 +9702,7 @@ def api_livestream_record():
             # neu URL FLV da 404/403/expired. HEAD chi ton ~1-3s nen khong gay
             # timeout 35s o local urlopen ben watcher.
             head_cmd = [
-                "curl", "-s", "-I", "-L", "--http1.1",
+                "curl", "-4", "-s", "-I", "-L", "--http1.1",
                 "--max-time", "6",
                 "--connect-timeout", "4",
                 "-A", tiktok_user_agent,
@@ -9732,7 +9732,7 @@ def api_livestream_record():
                 original_user_url = body.get("url", "").strip()
                 if original_user_url and "tiktok.com" in original_user_url and not original_user_url.startswith(live_url[:30]):
                     rescrape_cmd = [
-                        "curl", "-s", "-L", "--max-time", "8",
+                        "curl", "-4", "-s", "-L", "--max-time", "8",
                         "-A", tiktok_user_agent,
                         "-H", "Referer: https://www.tiktok.com/",
                     ]
@@ -9793,7 +9793,7 @@ cookies = sys.argv[3]
 ua = sys.argv[4]
 
 def get_flv():
-    cmd = ["curl", "-s", "-L", "--max-time", "8", "-A", ua, "-H", "Referer: https://www.tiktok.com/"]
+    cmd = ["curl", "-4", "-s", "-L", "--max-time", "8", "-A", ua, "-H", "Referer: https://www.tiktok.com/"]
     if os.path.exists(cookies): cmd.extend(["-b", cookies])
     cmd.append("https://www.tiktok.com/@%s/live" % username)
     try:
@@ -9827,7 +9827,7 @@ while True:
         subprocess.run(cmd, stdout=f, stderr=subprocess.DEVNULL)
     time.sleep(3)
 """
-            wrapper_path = os.path.join(tmp_dir or _LIVESTREAM_DIR, "loop_%s.py" % timestamp_str)
+            wrapper_path = os.path.join(_LIVESTREAM_DIR, "loop_%s.py" % timestamp_str)
             with open(wrapper_path, "w", encoding="utf-8") as f:
                 f.write(loop_script)
 
