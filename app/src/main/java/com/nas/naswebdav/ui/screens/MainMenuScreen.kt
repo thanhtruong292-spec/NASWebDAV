@@ -216,11 +216,11 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
 }
 
 // ============================================================================
-// EXCLUSIVE PANEL STATE — chi cho phep 1 panel inline mo cung luc trong
-// MainMenuScreen (OMV, Tasks, Chart). Mo panel nay -> tu cup panel kia.
-// Singleton object de cac panel rai rac qua nhieu Composable van chia chung
-// 1 state khong can pass qua 2 hop param.
-// Reset ve null khi user logout (xu ly trong MainMenuScreen.onLogout neu can).
+// EXCLUSIVE PANEL STATE — chỉ cho phép 1 panel inline mở cùng lúc trong
+// MainMenuScreen (OMV, Tasks, Chart). Mở panel này -> tự cụp panel kia.
+// Singleton object để các panel rải rác qua nhiều Composable vẫn chia chung
+// 1 state không cần pass qua 2 hộp param.
+// Reset về null khi user logout (xử lý trong MainMenuScreen.onLogout nếu cần).
 // ============================================================================
 object ExclusivePanelState {
     val current: androidx.compose.runtime.MutableState<String?> =
@@ -540,7 +540,19 @@ fun MainMenuScreen(
     if (showNasInsightsDialog) {
         com.nas.naswebdav.ui.dialogs.NasInsightsDialog(
             viewModel = viewModel,
-            onDismiss = { showNasInsightsDialog = false }
+            onDismiss = { showNasInsightsDialog = false },
+            onTaskClick = { taskLabel ->
+                showNasInsightsDialog = false
+                val lbl = taskLabel.lowercase()
+                if (lbl.contains("livestream") || lbl.contains("stream")) {
+                    showLivestreamDialog = true
+                } else if (lbl.contains("usb")) {
+                    viewModel.fetchUsbImportStatus()
+                    showUsbImportDialog = true
+                } else {
+                    ExclusivePanelState.current.value = "tasks"
+                }
+            }
         )
     }
     if (showBandwidthDialog) {
@@ -1385,14 +1397,14 @@ fun GaugeCard(
     val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
     val progress = (numericValue / 100f).coerceIn(0f, 1f)
     
-    // Status tu phan tram (CPU%/RAM%/Disk%)
+    // Status từ phần trăm (CPU%/RAM%/Disk%)
     val pctRank = when {
         progress >= 0.90f -> 2
         progress >= 0.70f -> 1
         else -> 0
     }
-    // Status tu nhiet do (neu subValue co °C) — dung cung nguong nhu line chart va text subValue:
-    //   CPU temp: >=80 do, >=60 vang. HDD/SMART temp: >=55 do, >=45 vang.
+    // Status từ nhiệt độ (nếu subValue có °C) — dùng cùng ngưỡng như line chart và text subValue:
+    //   CPU temp: >=80 đỏ, >=60 vàng. HDD/SMART temp: >=55 đỏ, >=45 vàng.
     val tempRank: Int = if (!subValue.isNullOrBlank() && (subValue.contains("°C") || subValue.contains("°C") || subValue.contains("°"))) {
         val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
         val isDisk = title == "S.M.A.R.T" || title == "HDD"
@@ -2867,8 +2879,17 @@ fun SystemStatusCards(
     val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
     val autoBackupIsActive = viewModel.isAutoBackupRunning
     
-    // 4. Livestream
+    // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
     val activeStreams = viewModel.activeLivestreams
+    LaunchedEffect(Unit) {
+        // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
+        viewModel.syncLivestreamStateWithServer(mContext)
+        while (true) {
+            kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
+            viewModel.fetchLivestreamStatusOnly(mContext)
+            viewModel.fetchTikTokLiveWatch(mContext)
+        }
+    }
     val usbImport = viewModel.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
     LaunchedEffect(Unit) {
@@ -3094,7 +3115,7 @@ fun SystemStatusCards(
                                 Column(Modifier.weight(1f)) {
                                     Text("USB Import", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text(
-                                        if (usbImport.status == "cancelling") "Đang hủy copy USB" else "Đang copy từ ${usbImport.activeDevice.ifBlank { "ổ USB" }}",
+                                        if (usbImport.status == "cancelling") "Đang hủy copy USB" else "Đang copy từ ${usbImport.detectedDevicesInfo.ifBlank { usbImport.activeDevice.ifBlank { "ổ USB" } }}",
                                         fontSize = 11.sp,
                                         color = Color(0xFF26A69A)
                                     )
@@ -3188,8 +3209,8 @@ fun SystemStatusCards(
                                                 indication = null
                                             ) { onOpenLivestream() }
                                     ) {
-                                        // Hien "@user" neu co watchUsername (tu /api/livestream/status hoac local extract),
-                                        // fallback ve "${platform} • ${jobId.takeLast(6)}" cho cac job khong gan voi user (vd FB/YT).
+                                        // Hiện "@user" nếu có watchUsername (từ /api/livestream/status hoặc local extract),
+                                        // fallback về "${platform} • ${jobId.takeLast(6)}" cho các job không gắn với user (vd FB/YT).
                                         val primaryLabel = if (job.watchUsername.isNotBlank())
                                             "$jobPlatformName • @${job.watchUsername}"
                                         else
@@ -3246,8 +3267,8 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
 
-    // State cho 2 nut khan cap (WoL + Restart) hien tren login screen — dung khi
-    // NAS bi loi khong dang nhap duoc.
+    // State cho 2 nút khẩn cấp (WoL + Restart) hiện trên login screen — dùng khi
+    // NAS bị lỗi không đăng nhập được.
     val sharedPrefs = remember { context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
     var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
     var showWolDialog by remember { mutableStateOf(false) }

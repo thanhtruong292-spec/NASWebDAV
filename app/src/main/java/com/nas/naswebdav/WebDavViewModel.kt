@@ -5340,7 +5340,19 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                     val platform = jobObj.optString("platform", "")
                     val watchUser = jobObj.optString("watch_username", "")
                     if (status == "recording" && jobId.isNotEmpty()) {
-                        newJobs.add(WebDavViewModel.LivestreamJob(jobId, platform, watchUser))
+                        newJobs.add(
+                            WebDavViewModel.LivestreamJob(
+                                jobId = jobId,
+                                platform = platform,
+                                status = status,
+                                watchUsername = watchUser,
+                                durationSeconds = jobObj.optLong("duration_seconds", 0L),
+                                startedTs = jobObj.optLong("started_ts", 0L),
+                                fileSize = jobObj.optString("file_size", "0 B"),
+                                duration = jobObj.optString("duration_display", "0h00m00s"),
+                                speed = jobObj.optString("avg_speed", "—")
+                            )
+                        )
                     }
                 }
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
