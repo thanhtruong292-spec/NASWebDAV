@@ -3916,14 +3916,33 @@ fun UsbImportDialog(
                     Text("Lưu", fontWeight = FontWeight.Bold)
                 }
                 Button(
-                    onClick = { if (isRunning) viewModel.cancelUsbImport() else viewModel.startUsbImportNow() },
+                    onClick = {
+                        if (isRunning) {
+                            enabled = false
+                            viewModel.saveUsbImportSettings(
+                                WebDavViewModel.UsbImportSettings(
+                                    enabled = false,
+                                    destFolder = destFolder,
+                                    copyMode = copyMode,
+                                    autoMount = autoMount,
+                                    mountReadonly = mountReadonly,
+                                    pollSeconds = settings.pollSeconds,
+                                    resumeEnabled = resumeEnabled,
+                                    verifyChecksum = verifyChecksum,
+                                )
+                            )
+                            viewModel.cancelUsbImport()
+                        } else {
+                            viewModel.startUsbImportNow()
+                        }
+                    },
                     modifier = Modifier.weight(1f).height(40.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) Color(0xFFEF5350) else Color(0xFF42A5F5)),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Icon(if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                    Icon(if (isRunning) Icons.Default.PowerSettingsNew else Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(if (isRunning) "Hủy" else "Copy ngay", fontWeight = FontWeight.Bold)
+                    Text(if (isRunning) "Tắt USB Import" else "Copy ngay", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
             Spacer(Modifier.height(8.dp))

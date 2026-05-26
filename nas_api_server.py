@@ -1004,7 +1004,9 @@ def get_hdd_temp():
     import re
     # Phuong phap 0 (uu tien): L?y tu OMV Smart enumerateDevices
     try:
-        omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=10)
+        # Disabled for dashboard path: OMV enumerates every disk and can wedge on
+        # a failing USB import device. Use direct target-HDD probes below instead.
+        omv_out = ""
         if omv_out and omv_out.strip().startswith("{"):
             devs = json.loads(omv_out)
             dev_list = list(devs.values()) if isinstance(devs, dict) else devs
@@ -1715,7 +1717,33 @@ def _scan_photos_lightweight():
         return False
 
 
-def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None):
+_background_heavy_gate_cache = {"time": 0.0, "allowed": True}
+
+def _background_heavy_work_allowed():
+    try:
+        now = time.time()
+        if now - _background_heavy_gate_cache.get("time", 0.0) < 5.0:
+            return bool(_background_heavy_gate_cache.get("allowed", True))
+        allowed = True
+        if bool(globals().get("_usb_import_running", False)):
+            allowed = False
+        lock = globals().get("_livestream_lock")
+        jobs = globals().get("_livestream_jobs", {})
+        if allowed and lock:
+            with lock:
+                if any(j.get("status") == "recording" for j in jobs.values()):
+                    allowed = False
+        if allowed and psutil.virtual_memory().percent > 78:
+            allowed = False
+        if allowed and psutil.cpu_percent(interval=0.1) > 55:
+            allowed = False
+        _background_heavy_gate_cache.update({"time": now, "allowed": allowed})
+        return allowed
+    except Exception:
+        return False
+
+
+def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, max_seconds=15):
     """Don dep tu dong file rong (0-byte), FLV hong cu va thư mục rong duoi root_dir.
     B? qua cac thư mục h? thỏng: .trash, .nas_meta, .thumbnails, .git, .recycle.
 
@@ -1728,8 +1756,13 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None):
     deleted_files = 0
     deleted_dirs = 0
     deleted_broken_flv = 0
+    scanned = 0
+    deadline = time.time() + max_seconds
     # Walk bottom-up de xoá thư mục tu trong ra ngoai
     for dirpath, dirnames, filenames in os.walk(root_dir, topdown=False):
+        if scanned >= max_entries or time.time() >= deadline or not _background_heavy_work_allowed():
+            break
+        scanned += len(filenames) + 1
         # B? qua cac thư mục system
         rel = os.path.relpath(dirpath, root_dir)
         parts = rel.split(os.sep)
@@ -2279,7 +2312,9 @@ def api_smart():
 
     # === Phuong phap 1: L?y tu OMV RPC (chinh xac nhat) ===
     try:
-        omv_out = run_cmd(["sudo", "omv-rpc", "-u", "admin", "Smart", "enumerateDevices", "{}"], timeout=15)
+        # Disabled here for the same reason as get_hdd_temp(): OMV Smart
+        # enumerateDevices scans broken USB devices and makes the API timeout.
+        omv_out = ""
         if omv_out and omv_out.strip():
             raw_parsed = json.loads(omv_out)
             # OMV co the tr? v? object {"1": {...}} hoac array [{...}]
@@ -3072,7 +3107,13 @@ def _read_dmesg_recent(seconds=300):
             ext4 += 1
         if "ata" in low and ("reset" in low or "link is slow" in low or "exception" in low):
             sata += 1
-        if "i/o error" in low:
+        if (
+            "i/o error" in low
+            or "critical target error" in low
+            or "critical medium error" in low
+            or "uas_eh_device_reset_handler" in low
+            or ("usb" in low and "reset" in low)
+        ):
             ioerr += 1
     return {"ext4_errors": ext4, "sata_resets": sata, "io_errors": ioerr}
 
@@ -4756,7 +4797,7 @@ def _usb_import_ensure_dir(path):
 
 def _usb_import_copy_error_message(err, src):
     if getattr(err, "errno", None) == 5:
-        return "I/O error khi đọc USB. Kernel đang báo lỗi đọc thiết bị, thường là sector lỗi/ổ USB hỏng hoặc box/cáp rớt kết nối. File sẽ được thử lại sau: %s" % os.path.basename(src)
+        return "I/O error khi đọc USB. Kernel đang báo lỗi đọc thiết bị, thường là sector lỗi/ổ USB hỏng hoặc box/cáp rớt kết nối. File đã được bỏ qua: %s" % os.path.basename(src)
     return str(err)
 
 
@@ -5355,8 +5396,10 @@ def api_usb_import_status():
 @app.route("/api/usb_import/settings", methods=["POST"])
 @requires_auth
 def api_usb_import_settings():
+    global _usb_import_running
     current = _usb_import_load_settings()
     body = request.get_json(silent=True) or {}
+    requested_disable = ("enabled" in body and not bool(body.get("enabled")))
     for key in ("enabled", "auto_mount", "mount_readonly", "resume_enabled", "verify_checksum"):
         if key in body:
             current[key] = bool(body.get(key))
@@ -5370,6 +5413,12 @@ def api_usb_import_settings():
         except Exception:
             pass
     saved = _usb_import_save_settings(current)
+    if requested_disable:
+        _usb_import_cancel.set()
+        if _usb_import_running:
+            _usb_import_set_state(enabled=False, status="cancelling", message="Đang tắt USB Import và huỷ phiên copy hiện tại.")
+        else:
+            _usb_import_set_state(enabled=False, status="disabled", message="USB Import đang tắt.")
     return jsonify({"saved": saved, "settings": current, "state": _usb_import_public_state()})
 
 
@@ -7012,6 +7061,12 @@ def _thumbnail_generator():
     
     while True:
         try:
+            if not _background_heavy_work_allowed():
+                with _thumb_stats_lock:
+                    _thumb_stats["running"] = False
+                    _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
+                time.sleep(300)
+                continue
             if not _thumb_paused.is_set():
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
@@ -7029,11 +7084,18 @@ def _thumbnail_generator():
             pending = []
             total = 0
             already_done = 0
-            MAX_BATCH = 5000  # Batch lon hon vi cpu/ram con nhieu
+            MAX_BATCH = 200
+            scan_deadline = time.time() + 20
+            scanned_entries = 0
             
             for root, dirs, files in os.walk(base_dir):
+                if scanned_entries >= 15000 or time.time() >= scan_deadline or not _background_heavy_work_allowed():
+                    break
                 dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
                 for name in files:
+                    scanned_entries += 1
+                    if scanned_entries >= 15000 or time.time() >= scan_deadline:
+                        break
                     if name.startswith('.'): continue
                     ext = os.path.splitext(name)[1].lower()
                     if ext not in MEDIA_ALL_EXTS: continue
@@ -7052,6 +7114,10 @@ def _thumbnail_generator():
                         continue
                     if len(pending) < MAX_BATCH:
                         pending.append((full_path, thumb_path, ext))
+                    else:
+                        break
+                if len(pending) >= MAX_BATCH:
+                    break
             
             with _thumb_stats_lock:
                 _thumb_stats["total_media"] = total
@@ -7232,7 +7298,7 @@ def _thumbnail_generator():
                 _thumb_stats["running"] = False
                 _thumb_stats["last_file"] = "Lỗi: %s" % str(e)
         
-        time.sleep(30)  # Quet lai sau 30 giay
+        time.sleep(300)  # Quet nền nhẹ, không quét toàn bộ HDD liên tục
 
 
 @app.route("/api/thumb")
@@ -7869,18 +7935,28 @@ def _livestream_active_job_for_key_locked(recording_key):
         info["error_reason"] = "Tiến trình ghi đã chết trước khi cập nhật trạng thái."
     return "", None
 
+_ytdlp_bin_cache = {"path": "", "checked_at": 0.0}
+
 def _find_ytdlp_bin():
     """Tim yt-dlp binary tren h? thỏng."""
+    now = time.time()
+    cached = _ytdlp_bin_cache.get("path", "")
+    if cached and now - float(_ytdlp_bin_cache.get("checked_at", 0.0) or 0.0) < 3600:
+        return cached
     for candidate in ["/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp", "yt-dlp", 
                        "/opt/yt-dlp", "/root/yt-dlp", "/usr/local/bin/yt-dlp_linux_aarch64"]:
         try:
-            result = subprocess.run([candidate, "--version"],
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
-            if result.returncode == 0:
-                return candidate
+            found = candidate
+            if not os.path.isabs(candidate):
+                found = shutil.which(candidate) or ""
+            if found and os.path.exists(found) and os.access(found, os.X_OK):
+                _ytdlp_bin_cache["path"] = found
+                _ytdlp_bin_cache["checked_at"] = now
+                return found
         except Exception:
             continue
+    _ytdlp_bin_cache["path"] = ""
+    _ytdlp_bin_cache["checked_at"] = now
     return None
 
 def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
@@ -8576,7 +8652,9 @@ def _extract_tiktok_live_media_urls(html):
     if not html or (".flv" not in html and ".m3u8" not in html):
         return []
     urls = []
-    text = html or ""
+    # TikTok HTML can be several MB. Parsing the whole blob for 30+ watched users
+    # pins CPU on RK3328 and makes dashboard requests timeout.
+    text = (html or "")[:786432]
     n = len(text)
     pos = 0
     while pos < n and len(urls) < 80:
@@ -8730,6 +8808,8 @@ def _check_tiktok_user_live(username):
         else:
             html = raw
             http_code = "?"
+        if len(html) > 786432:
+            html = html[:786432]
         if not html.strip():
             # Trang trong thuong la TikTok bot-block tam thoi — không ph?i lỗi that su.
             # Coi la offline de watcher tiep tuc kiểm tra lan sau (không l?u last_error).
@@ -8847,7 +8927,9 @@ def _tiktok_live_watchdog():
                     continue
                 pending_checks.append((user, username, now_str))
 
-            max_workers = min(6, max(1, len(pending_checks)))
+            # TikTok checks are network/HTML heavy on this ARM NAS. Keep concurrency low
+            # so a 30+ user watch list cannot starve API/status requests.
+            max_workers = 1 if pending_checks else 0
             check_results = {}
             if pending_checks:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
