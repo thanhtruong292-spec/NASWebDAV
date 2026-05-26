@@ -9818,13 +9818,14 @@ while True:
     if os.path.exists(cookies):
         try:
             with open(cookies, "r", encoding="utf-8") as f:
-                c = "; ".join([l.split("\\t")[-1].strip()+"="+l.split("\\t")[-2].strip() for l in f.readlines() if not l.startswith("#") and len(l.split("\\t"))>=7])
+                c = "; ".join([l.split("\\t")[-2].strip()+"="+l.split("\\t")[-1].strip() for l in f.readlines() if not l.startswith("#") and len(l.split("\\t"))>=7])
             if c: headers += "Cookie: %s\\r\\n" % c
         except: pass
     cmd.extend(["-headers", headers])
     cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
     with open(out_file, "ab") as f:
-        subprocess.run(cmd, stdout=f, stderr=subprocess.DEVNULL)
+        import sys
+        subprocess.run(cmd, stdout=f, stderr=sys.stderr)
     time.sleep(3)
 """
             wrapper_path = os.path.join(_LIVESTREAM_DIR, "loop_%s.py" % timestamp_str)
