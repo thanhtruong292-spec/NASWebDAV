@@ -64,7 +64,7 @@ class LivestreamDiscoveryWorker(
             }
             Result.success()
         } catch (e: Exception) {
-            // Khong retry dam dam neu network loi - cho tick sau (15p).
+            // Không retry đám đám nếu network lỗi - cho tick sau (15p).
             Result.success()
         }
     }

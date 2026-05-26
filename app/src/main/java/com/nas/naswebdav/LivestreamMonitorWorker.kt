@@ -344,9 +344,9 @@ class LivestreamMonitorWorker(
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
-        // Tu Android 10 (Q) tro len bat buoc khai bao foregroundServiceType khop
-        // manifest, neu khong se nem MissingForegroundServiceTypeException -> crash
-        // worker khi NAS chua ghi xong livestream.
+        // Từ Android 10 (Q) trở lên bắt buộc khai báo foregroundServiceType khớp
+        // manifest, nếu không sẽ ném MissingForegroundServiceTypeException -> crash
+        // worker khi NAS chưa ghi xong livestream.
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ForegroundInfo(
                 notifId, notification,

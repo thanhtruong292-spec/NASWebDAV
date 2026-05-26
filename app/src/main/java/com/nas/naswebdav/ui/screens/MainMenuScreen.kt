@@ -3981,7 +3981,6 @@ fun SmartDetailBottomSheet(
         Column(
             Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.94f)
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             // Title
@@ -4058,7 +4057,7 @@ fun SmartDetailBottomSheet(
             }
 
             androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 items(attrLines.size) { index ->

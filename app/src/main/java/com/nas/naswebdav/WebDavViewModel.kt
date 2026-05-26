@@ -1414,10 +1414,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         ?: continue
                     
                     // Xây dựng lại data class
+                    val workerStatus = progress.getString(LivestreamMonitorWorker.OUT_STATUS)
                     val job = LivestreamJob(
                         jobId = jobId,
                         platform = "", // Platform worker không trả ra (trừ khi format lại), nhưng UI sẽ có thể hiện placeholder icon
-                        status = progress.getString(LivestreamMonitorWorker.OUT_STATUS) ?: "recording",
+                        status = workerStatus ?: "pending",
                         fileSize = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE) ?: "0 B",
                         duration = progress.getString(LivestreamMonitorWorker.OUT_DURATION) ?: "0h00m00s",
                         durationSeconds = progress.getLong(LivestreamMonitorWorker.OUT_DURATION_SECONDS, 0L),

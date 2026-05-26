@@ -440,11 +440,11 @@ fun BrowserScreen(
     if (viewModel.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         androidx.compose.material3.ModalBottomSheet(
-            // Onclick scrim KHONG dong sheet — user phai bam nut "Thu nho" / "Huy" explicit.
-            // Cach lam: onDismissRequest -> mac dinh ban dau dong sheet -> ta set
-            // isScanningDuplicates = false neu user thu nho thu cong.
-            // Voi behavior "khong dong khi click ngoai", dismissRequest cua sheet phai
-            // skip-action: chi log + thu nho (= behavior cua nut Thu nho).
+            // Onclick scrim KHÔNG đóng sheet — user phải bấm nút "Thu nhỏ" / "Huỷ" explicit.
+            // Cách làm: onDismissRequest -> mặc định ban đầu đóng sheet -> ta set
+            // isScanningDuplicates = false nếu user thu nhỏ thủ công.
+            // Với behavior "không đóng khi click ngoài", dismissRequest của sheet phải
+            // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
             onDismissRequest = { viewModel.isScanningDuplicates = false },
             sheetState = scanSheetState,
             containerColor = Color(0xFF0F0F0F),
@@ -655,7 +655,7 @@ fun BrowserScreen(
                         }
                     }
                 }
-                // ── ACTION ROW: Tam dung / Huy / Thu nho ──
+                // ── ACTION ROW: Tạm dừng / Huỷ / Thu nhỏ ──
                 Spacer(Modifier.height(12.dp))
                 if (viewModel.isWorkerRunning) {
                     val isPaused by DuplicateProgressState.isPaused.collectAsState()
@@ -1454,7 +1454,7 @@ fun BrowserScreen(
                         modifier = Modifier.padding(start = 8.dp)
                     )
 
-                    // Nút Sắp xếp file — hien ben canh nut "Chon file" de user de tim
+                    // Nút Sắp xếp file — hiện bên cạnh nút "Chọn file" để user dễ tìm
                     if (!selectionMode && viewModel.fileList.isNotEmpty()) {
                         Box {
                             IconButton(
@@ -1828,7 +1828,7 @@ fun FileItemGridCell(
                 },
                 onLongClick = {
                     // Long-press LUON mo menu cho ca file va folder. Selection mode
-                    // entry duoc thuc hien qua nut "Chon file" o toolbar.
+                    // entry được thực hiện qua nút "Chọn file" ở toolbar.
                     if (selectionMode) {
                         // Trong selection mode -> long-press toggle select (giu logic cu).
                         onLongClick()

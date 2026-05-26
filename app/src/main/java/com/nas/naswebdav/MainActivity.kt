@@ -229,7 +229,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                 val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
                                 contentResolver.openInputStream(uri)?.use { inputStream ->
                                     val tempFile = java.io.File(cacheDir, fileName)
-                                    // Phong ho them: dam bao path cuoi cung nam trong cacheDir
+                                    // Phòng hộ thêm: đảm bảo path cuối cùng nằm trong cacheDir
                                     if (!tempFile.canonicalPath.startsWith(cacheDir.canonicalPath)) {
                                         throw SecurityException("Tên file độc hại: $rawName")
                                     }
@@ -328,7 +328,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 androidx.compose.material3.lightColorScheme()
             }
 
-            MaterialTheme(colorScheme = colorScheme) {
+            MaterialTheme(colorScheme = colorScheme, typography = com.nas.naswebdav.ui.theme.AppTypography) {
                 CompositionLocalProvider(
                     androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
                 ) {

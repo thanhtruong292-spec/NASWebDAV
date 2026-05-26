@@ -9050,8 +9050,8 @@ def _tiktok_live_watchdog():
                 user["last_check"] = now_str
                 if is_live:
                     if started_count >= 2:
-                        user["status"] = "watching"
-                        user["last_error"] = "Đang xếp hàng, watcher sẽ bắt ở vòng kế tiếp."
+                        user["status"] = "queued"
+                        user["last_error"] = "Dang xep hang, watcher se bat o vong ke tiep."
                         changed = True
                         continue
                     job_id, msg = _start_tiktok_watch_record(username)
@@ -9949,6 +9949,16 @@ def api_livestream_status():
             for jid, up in updates.items():
                 if jid in _livestream_jobs:
                     _livestream_jobs[jid].update(up)
+        # Cap nhat lai last_summary trong watchdog runtime khi phat hien recording chet
+        try:
+            live_count = sum(1 for j in result_jobs if j["status"] == "recording")
+            total_users = len(_tiktok_watch_state.get("users", []))
+            if total_users > 0:
+                _tiktok_watch_runtime["last_summary"] = (
+                    "Đã kiểm tra %d user, %d đang ghi, 0 vừa mới bắt đầu." % (total_users, live_count)
+                )
+        except Exception:
+            pass
 
     return jsonify({"jobs": result_jobs})
 

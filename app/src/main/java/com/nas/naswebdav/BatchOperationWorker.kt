@@ -126,8 +126,8 @@ class BatchOperationWorker(
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         try {
-            // Tu Android 10 (Q) tro len bat buoc khai bao foregroundServiceType
-            // khop manifest, neu khong se nem MissingForegroundServiceTypeException.
+            // Từ Android 10 (Q) trở lên bắt buộc khai báo foregroundServiceType
+            // khớp manifest, nếu không sẽ ném MissingForegroundServiceTypeException.
             setForeground(
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                     ForegroundInfo(
@@ -150,14 +150,8 @@ class BatchOperationWorker(
         var failCount = 0
         val trashFolderName = ".trash/"
 
-        // Chuẩn bị Thùng rác (chỉ cho DELETE)
-        if (operation == "DELETE" && baseUrl.isNotEmpty()) {
-            val trashUrl = baseUrl + trashFolderName
-            if (filePaths.any { !it.contains(trashFolderName) }) {
-                try { webDavManager.createFolder(trashUrl) } catch (_: Exception) {}
-            }
-        }
-
+        // Bỏ việc chuẩn bị Thùng rác dùng chung ở đây vì Trash giờ phụ thuộc từng ổ đĩa
+        
         var lastNotifyUpdate = 0L
 
         for ((index, filePath) in filePaths.withIndex()) {
@@ -207,10 +201,19 @@ class BatchOperationWorker(
                     }
                     "DELETE" -> {
                         if (!filePath.contains(trashFolderName)) {
-                            // Di chuyển vào Thùng rác
-                            val trashUrl = baseUrl + trashFolderName
+                            // Di chuyển vào Thùng rác của đúng ổ đĩa
+                            val relativePath = filePath.removePrefix(baseUrl).trimStart('/')
+                            val driveName = relativePath.substringBefore('/')
+                            val trashUrl = baseUrl + driveName + "/" + trashFolderName
+                            
+                            try { webDavManager.createFolder(trashUrl) } catch (_: Exception) {}
+                            
                             val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                            webDavManager.renameFile(filePath, trashUrl + encodedName)
+                            var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
+                            // Nếu file gốc là thư mục (có dấu / cuối), đích cũng phải có /
+                            if (filePath.endsWith("/") && !targetUrl.endsWith("/")) targetUrl += "/"
+                            
+                            webDavManager.renameFile(filePath, targetUrl)
                         } else {
                             // Đã ở trong Thùng rác → Xóa vĩnh viễn
                             webDavManager.deleteFile(filePath)
@@ -219,8 +222,17 @@ class BatchOperationWorker(
                     }
                     "RESTORE" -> {
                         val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        val targetUrl = baseUrl + encodedName
-                        webDavManager.renameFile(filePath, targetUrl)
+                        
+                        // Tìm thư mục gốc bằng cách parse filePath
+                        // VD: .../webdav/USB Import/.trash/TestDir/ -> .../webdav/USB Import/TestDir/
+                        val relativePath = filePath.removePrefix(baseUrl).trimStart('/')
+                        val driveName = relativePath.substringBefore('/')
+                        
+                        val targetUrl = baseUrl + driveName + "/" + encodedName
+                        var finalTarget = targetUrl
+                        if (filePath.endsWith("/") && !finalTarget.endsWith("/")) finalTarget += "/"
+                        
+                        webDavManager.renameFile(filePath, finalTarget)
                         successCount++
                     }
                 }
@@ -228,6 +240,9 @@ class BatchOperationWorker(
                 android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
                 failCount++
             }
+            
+            // UX-01: Delay 100ms to prevent NAS WebDAV daemon from hanging during mass I/O
+            kotlinx.coroutines.delay(100L)
         }
 
         // Báo cáo kết quả cuối cùng cho UI

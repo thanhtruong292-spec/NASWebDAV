@@ -80,8 +80,8 @@ class LongRunningApiWorker(
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         try {
-            // Tu Android 10 (Q) tro len bat buoc khai bao foregroundServiceType
-            // khop manifest, neu khong se nem MissingForegroundServiceTypeException.
+            // Từ Android 10 (Q) trở lên bắt buộc khai báo foregroundServiceType
+            // khớp manifest, nếu không sẽ ném MissingForegroundServiceTypeException.
             setForeground(
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                     ForegroundInfo(

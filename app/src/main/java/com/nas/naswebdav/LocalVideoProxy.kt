@@ -47,7 +47,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
      * @return URL localhost dạng http://127.0.0.1:<port>/ mà VLC sẽ mở
      */
     fun start(nasUrl: String): String {
-        // FIX: dong proxy cu (neu co) truoc khi tao moi de tranh leak
+        // FIX: đóng proxy cũ (nếu có) trước khi tạo mới để tránh leak
         // thread/socket khi caller goi start() nhieu lan tren cung instance.
         stop()
         // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)

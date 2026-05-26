@@ -355,8 +355,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
     Column {
         // Chú thích màu — Legend
-        // Mau theo gia tri DANG HIEN THI: neu user dang cham thi mau cua diem do,
-        // neu khong thi mau cua gia tri cuoi (dong bo voi GaugeCard tron).
+        // Màu theo giá trị ĐANG HIỂN THỊ: nếu user đang chạm thì màu của điểm đó,
+        // nếu không thì màu của giá trị cuối (đồng bộ với GaugeCard tròn).
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 series.forEach { s ->
