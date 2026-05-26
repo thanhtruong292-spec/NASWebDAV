@@ -3096,7 +3096,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
-        logUserAction("AutoBackup", "chay dong bo anh thu cong len NAS.")
+        logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
         // Cập nhật Toast hoặc Trạng thái UI để User biết
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
         commonDialogMessage = "Đã ra lệnh đồng bộ ảnh lên NAS!"

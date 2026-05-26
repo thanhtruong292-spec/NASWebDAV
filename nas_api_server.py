@@ -3613,11 +3613,11 @@ def _disk_health_trend(days=7):
         },
     }
     if trend["score"] >= 90 and not trend["warnings"]:
-        trend["status_text"] = "HDD Toshiba dang on dinh."
+        trend["status_text"] = "HDD Toshiba đang hoạt động ổn định."
     elif trend["score"] >= 70:
-        trend["status_text"] = "HDD can theo doi them."
+        trend["status_text"] = "HDD cần theo dõi thêm."
     else:
-        trend["status_text"] = "HDD can kiểm tra som."
+        trend["status_text"] = "HDD cần kiểm tra sớm."
     return trend
 
 
@@ -3651,23 +3651,23 @@ def _workload_coordinator():
     if cpu_pct >= 80:
         pressure += 2; reasons.append("CPU cao")
     elif cpu_pct >= 60:
-        pressure += 1; reasons.append("CPU dang ban")
+        pressure += 1; reasons.append("CPU đang bận")
     if mem_pct >= 85:
-        pressure += 2; reasons.append("RAM gần ??y")
+        pressure += 2; reasons.append("RAM gần đầy")
     elif mem_pct >= 70:
-        pressure += 1; reasons.append("RAM dang cao")
+        pressure += 1; reasons.append("RAM đang cao")
     if temp_c and temp_c >= 50:
-        pressure += 2; reasons.append("HDD nong")
+        pressure += 2; reasons.append("HDD nóng")
     elif temp_c and temp_c >= 45:
-        pressure += 1; reasons.append("HDD am")
+        pressure += 1; reasons.append("HDD ấm")
     if live_count > 0:
-        pressure += 1; reasons.append("%d livestream dang ghi" % live_count)
+        pressure += 1; reasons.append("%d livestream đang ghi" % live_count)
     if usb_active:
         pressure += 1; reasons.append("USB import đang copy")
     if pressure >= 5:
         mode = "protect"; recommendation = "Nên dừng thêm tác vụ mới, ưu tiên livestream và copy đang chạy."
     elif pressure >= 3:
-        mode = "balanced"; recommendation = "Nen gioi han tac vu nen, trảnh scan/copy lon dong thoi."
+        mode = "balanced"; recommendation = "Nên giới hạn tác vụ nền, tránh scan/copy lớn đồng thời."
     else:
         mode = "normal"; recommendation = "NAS đủ tải cho tác vụ nền nhẹ."
     return {
@@ -3716,13 +3716,13 @@ def _emmc_guard():
         warnings.append("eMMC root gần ??y")
         recommendations.append("Dọn package cache/log cũ và chuyển cache lớn sang HDD.")
     if log_usage.get("percent", 0) >= 80:
-        warnings.append("log2ram/zram log gần ??y")
-        recommendations.append("Giam muc log hoac prune log thuong xuyen.")
+        warnings.append("log2ram/zram log gần đầy")
+        recommendations.append("Giảm mức log hoặc prune log thường xuyên.")
     if state_size > 100 * 1024 * 1024:
-        warnings.append("state tren eMMC lon")
+        warnings.append("state trên eMMC lớn")
         recommendations.append("Rút gọn history hoặc chuyển history dài ngày sang HDD.")
     if not recommendations:
-        recommendations.append("eMMC dang an toan; tiep tuc trảnh ghi log/cache lon vao root.")
+        recommendations.append("eMMC đang an toàn; tiếp tục tránh ghi log/cache lớn vào root.")
     return {
         "root": root, "log": log_usage, "state_bytes": state_size,
         "state_files": state_files, "state_partial": state_partial,
@@ -3793,9 +3793,9 @@ def _maintenance_advisor():
     if health.get("score", 0) < 80 or health.get("warnings"):
         actions.append({"priority": "high", "title": "Kiểm tra HDD Toshiba", "detail": health.get("status_text", "")})
     if workload.get("mode") == "protect":
-        actions.append({"priority": "high", "title": "Giam tai tac vu nen", "detail": workload.get("recommendation", "")})
+        actions.append({"priority": "high", "title": "Giảm tải tác vụ nền", "detail": workload.get("recommendation", "")})
     if emmc.get("warnings"):
-        actions.append({"priority": "medium", "title": "Bao ve eMMC", "detail": "; ".join(emmc.get("recommendations", [])[:2])})
+        actions.append({"priority": "medium", "title": "Bảo vệ eMMC", "detail": "; ".join(emmc.get("recommendations", [])[:2])})
     if str(usb.get("status", "")).lower() in ("done", "cancelled", "error") and usb.get("last_error"):
         actions.append({"priority": "medium", "title": "Kiểm tra USB Import", "detail": str(usb.get("last_error", ""))[:180]})
     if not actions:
@@ -4637,7 +4637,7 @@ def _usb_import_find_candidates(settings):
     if not candidates:
         all_count = len(nodes or [])
         usb_count = len(flattened or [])
-        msg = "lsblk thay %d block device, %d co dau hieu USB/hotplug/removable." % (all_count, usb_count)
+        msg = "lsblk thấy %d block device, %d có dấu hiệu USB/hotplug/removable." % (all_count, usb_count)
         if detected:
             msg += " " + "; ".join(
                 "%s %s %s" % (d.get("path") or "?", d.get("fstype") or "no-fs", d.get("reason") or "")

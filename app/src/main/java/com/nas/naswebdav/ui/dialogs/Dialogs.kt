@@ -2496,7 +2496,7 @@ fun LivestreamRecordDialog(
                 }
             }
             if (activeLivestreams.isEmpty()) {
-                // Khi khong co luong nao dang ghi -> them spacer cho UI khong bi sat day.
+                // Khi không có luồng nào đang ghi -> thêm spacer cho UI không bị sát đáy.
                 Spacer(Modifier.height(12.dp))
             }
         }
