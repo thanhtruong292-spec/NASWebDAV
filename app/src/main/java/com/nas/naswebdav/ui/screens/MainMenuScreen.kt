@@ -951,7 +951,7 @@ fun MainMenuScreen(
                                         } else if (onT > offT) {
                                             displayPercent = 20 + ((cpuVal - offT) / (onT - offT) * 80).toInt()
                                         }
-                                        displayStatusStr = "Đang chạy $displayPercent%"
+                                        displayStatusStr = "Đang thực thi $displayPercent%"
                                     }
                                     
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
@@ -1382,7 +1382,7 @@ fun NasInsightsSummaryCard(
             if (insight.flowTasks.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 val task = insight.flowTasks.first()
-                Text("${task.label}: ${task.file.ifBlank { "đang chạy" }}", color = AccentCyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${task.label}: ${task.file.ifBlank { "đang thực thi" }}", color = AccentCyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2018,7 +2018,7 @@ fun ToolboxDialog(
                 androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
                 SettingsMenuCard(
                     title = "Docker / qBittorrent",
-                    subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang chạy" else "Đã tắt",
+                    subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang thực thi" else "Đã ngắt",
                     icon = Icons.Default.ViewInAr,
                     color = Color(0xFF1E88E5),
                     modifier = Modifier.weight(1f),
@@ -2259,7 +2259,7 @@ private fun DiskProfileBottomSheet(
     val healthScore = diskHealth?.score
     val trialStatus = when {
         isTrackingNewDisk && healthScore != null && healthScore < 60 -> "Cần kiểm tra"
-        !isTrackingNewDisk -> "Chưa theo dõi"
+        !isTrackingNewDisk -> "Chưa phân tích"
         smartStatus.contains("PASSED", ignoreCase = true) || smartStatus.equals("OK", ignoreCase = true) -> "Ổn định"
         smartStatus.contains("Đang tải", ignoreCase = true) -> "Đang cập nhật"
         smartStatus.contains("Không", ignoreCase = true) || smartStatus.contains("Lỗi", ignoreCase = true) -> "Cần kiểm tra"
@@ -2298,11 +2298,11 @@ private fun DiskProfileBottomSheet(
     val monthlyBudgetTb = enduranceTbPerYear?.let { it / 12 } ?: 0
     val backupTasks = if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
     val writeRiskLabel = when {
-        !isTrackingNewDisk -> "Chưa theo dõi"
-        heavyWriteTasks >= 4 -> "Tải ghi cao"
-        heavyWriteTasks >= 2 -> "Tải ghi vừa"
-        heavyWriteTasks == 1 -> "Tải ghi nhẹ"
-        else -> "Không có tác vụ ghi"
+        !isTrackingNewDisk -> "Chưa phân tích"
+        heavyWriteTasks >= 4 -> "Khối lượng ghi cao"
+        heavyWriteTasks >= 2 -> "Khối lượng ghi trung bình"
+        heavyWriteTasks == 1 -> "Khối lượng ghi thấp"
+        else -> "Trạng thái rảnh (Không ghi)"
     }
     val cpuLoad = profilePercent(viewModel.systemStatus.cpu)
     val ramLoad = profilePercent(viewModel.systemStatus.ramPercent)
@@ -2310,32 +2310,32 @@ private fun DiskProfileBottomSheet(
     val trashUsage = storageUsage.firstOrNull { it.path == ".trash" }
     val trashWarning = if ((trashUsage?.sizeBytes ?: 0L) > 50L * 1024L * 1024L * 1024L) "Nên dọn thùng rác" else "Thùng rác ổn"
     val fillWarning = when {
-        !isTrackingNewDisk -> "Chưa theo dõi"
+        !isTrackingNewDisk -> "Chưa phân tích"
         actualForecastDays != null && actualForecastDays in 1..7 -> "Cảnh báo 7 ngày"
         actualForecastDays != null && actualForecastDays in 8..14 -> "Cảnh báo 14 ngày"
         actualForecastDays != null && actualForecastDays in 15..30 -> "Cảnh báo 30 ngày"
         else -> "Dung lượng ổn"
     }
     val livestreamReady = when {
-        !isTrackingNewDisk -> "Chưa theo dõi"
+        !isTrackingNewDisk -> "Chưa phân tích"
         healthScore != null && healthScore < 60 -> "SMART cảnh báo"
         remainingPercent < 5f -> "Không nên ghi"
         tempValue != null && tempValue >= 50f -> "Nhiệt độ cao"
-        heavyWriteTasks >= 4 -> "Đang tải cao"
+        heavyWriteTasks >= 4 -> "Tải hệ thống cao"
         cpuLoad >= 85f || ramLoad >= 90f -> "Hệ thống tải cao"
         else -> "Sẵn sàng ghi"
     }
     val operationAdvice = when (livestreamReady) {
         "Sẵn sàng ghi" -> "NAS đủ điều kiện ghi livestream theo dữ liệu hiện tại."
-        "Chưa theo dõi" -> "Hãy đặt mốc theo dõi cho ổ dữ liệu hiện tại: $diskModel."
+        "Chưa phân tích" -> "Hãy đặt mốc theo dõi cho ổ dữ liệu hiện tại: $diskModel."
         "Không nên ghi" -> "Dung lượng trống thấp, nên dọn dữ liệu trước khi ghi thêm."
         "Nhiệt độ cao" -> "Nên bật quạt hoặc giảm tác vụ ghi cho đến khi ổ mát hơn."
-        "Đang tải cao" -> "Nên tránh chạy thêm livestream khi nhiều tác vụ ghi đang hoạt động."
+        "Tải hệ thống cao" -> "Khuyến nghị hạn chế khởi tạo luồng ghi hình mới khi có nhiều tiến trình phân bổ dữ liệu."
         "SMART cảnh báo" -> "SMART/disk health đang cảnh báo, nên kiểm tra ổ trước khi ghi thêm."
         else -> "Nên chờ CPU/RAM ổn định trước khi bắt đầu ghi livestream."
     }
     val nasHealthState = when {
-        !isTrackingNewDisk -> "Chưa theo dõi ổ"
+        !isTrackingNewDisk -> "Chưa phân tích ổ"
         livestreamReady == "Sẵn sàng ghi" && ramLoad < 80f && cpuLoad < 75f -> "Ổn định"
         livestreamReady == "Không nên ghi" || livestreamReady == "SMART cảnh báo" || ramLoad >= 90f || cpuLoad >= 90f -> "Không nên ghi thêm"
         else -> "Cần theo dõi"
@@ -2352,12 +2352,12 @@ private fun DiskProfileBottomSheet(
         else -> "Cân bằng"
     }
     val realWriteDataLabel = when {
-        !isTrackingNewDisk -> "Chưa theo dõi"
+        !isTrackingNewDisk -> "Chưa phân tích"
         estimatedActualWriteGb > 0 -> "~$estimatedActualWriteGb GB/ngày"
         else -> "Đang nhàn rỗi"
     }
     val actualForecastLabel = when {
-        !isTrackingNewDisk -> "Chưa theo dõi"
+        !isTrackingNewDisk -> "Chưa phân tích"
         actualForecastDays != null -> "~$actualForecastDays ngày"
         estimatedActualWriteGb == 0 -> "Không có tải ghi"
         else -> "Chưa rõ"
@@ -2504,7 +2504,7 @@ private fun DiskProfileBottomSheet(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 HardwareMetricCell(
                     title = "Dung lượng",
-                    value = if (isTrackingNewDisk) profileSizeLabel(totalBytes) else "Chưa theo dõi",
+                    value = if (isTrackingNewDisk) profileSizeLabel(totalBytes) else "Chưa phân tích",
                     subtitle = if (isTrackingNewDisk) "Trống ~%.2f TiB • dùng %.0f%%".format(java.util.Locale.US, estimatedFreeTiB, usedPercent) else "Nhấn đặt mốc để bắt đầu",
                     icon = Icons.Default.Inventory2,
                     color = AccentCyan,
@@ -2532,7 +2532,7 @@ private fun DiskProfileBottomSheet(
                 HardwareMetricCell(
                     title = "Ngày lắp ổ",
                     value = installedDate,
-                    subtitle = "Chạy rà: $trialLabel",
+                    subtitle = "Tiến trình thử nghiệm: $trialLabel",
                     icon = Icons.Default.HealthAndSafety,
                     color = AccentGreen,
                     modifier = Modifier.weight(1f)
@@ -2540,13 +2540,13 @@ private fun DiskProfileBottomSheet(
                 HardwareMetricCell(
                     title = "Nhiệt độ ổ",
                     value = tempStatus,
-                    subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Chưa theo dõi",
+                    subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Chưa phân tích",
                     icon = Icons.Default.EventAvailable,
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
                 )
                 HardwareMetricCell(
-                    title = "Tác vụ ghi nặng",
+                    title = "Ghi dữ liệu cường độ cao",
                     value = "$heavyWriteTasks tiến trình",
                     subtitle = "Ghi hình: $activeRecordings luồng • Tải xuống: $downloadTasks phiên",
                     icon = Icons.Default.VerifiedUser,
@@ -2979,7 +2979,7 @@ fun SystemStatusCards(
                         Box(
                             Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
-                            Text("$activeCount đang chạy", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
+                            Text("$activeCount đang thực thi", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(4.dp))
                         Icon(
@@ -3008,7 +3008,7 @@ fun SystemStatusCards(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Tạo ảnh thu nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text(when { viewModel.thumbPaused -> "Đã tạm dừng"; viewModel.thumbRunning -> "🟢 Đang chạy"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
+                                    Text(when { viewModel.thumbPaused -> "Đã tạm dừng"; viewModel.thumbRunning -> "🟢 Đang thực thi"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
                                 }
                                 if (viewModel.thumbRunning || viewModel.thumbPaused) {
                                     IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
