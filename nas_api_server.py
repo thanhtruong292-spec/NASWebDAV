@@ -9828,7 +9828,7 @@ while True:
         subprocess.run(cmd, stdout=f, stderr=sys.stderr)
     time.sleep(3)
 """
-            wrapper_path = os.path.join(_LIVESTREAM_DIR, "loop_%s.py" % timestamp_str)
+            wrapper_path = os.path.join("/tmp", "loop_%s.py" % timestamp_str)
             with open(wrapper_path, "w", encoding="utf-8") as f:
                 f.write(loop_script)
 
