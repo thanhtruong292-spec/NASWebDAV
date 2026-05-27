@@ -268,6 +268,48 @@ def _cleanup_stale_job_tmp(max_age_hours=24):
     except Exception:
         return 0
 
+
+def _cleanup_livestream_junk():
+    """Xoa file rac trong Livestream: .tmpchunk va .ts 0B"""
+    try:
+        if not os.path.isdir(_LIVESTREAM_DIR):
+            return
+        active_paths = set()
+        try:
+            with _livestream_lock:
+                for info in _livestream_jobs.values():
+                    if info.get("status") == "recording":
+                        dp = info.get("direct_output_path", "")
+                        if dp:
+                            active_paths.add(dp)
+                            active_paths.add(dp + ".tmpchunk")
+        except Exception:
+            pass
+        removed = 0
+        for fname in os.listdir(_LIVESTREAM_DIR):
+            fpath = os.path.join(_LIVESTREAM_DIR, fname)
+            if not os.path.isfile(fpath):
+                continue
+            if fname.endswith(".tmpchunk"):
+                if fpath not in active_paths:
+                    try:
+                        os.remove(fpath)
+                        removed += 1
+                    except Exception:
+                        pass
+                continue
+            if fname.endswith(".ts") and fpath not in active_paths:
+                try:
+                    if os.path.getsize(fpath) == 0:
+                        os.remove(fpath)
+                        removed += 1
+                except Exception:
+                    pass
+        if removed:
+            log.info("[Livestream] Don %d file rac trong Livestream.", removed)
+    except Exception as e:
+        log.warning("[Livestream] Loi don file rac: %s", e)
+
 def _cleanup_runtime_tmp_artifacts(max_age_minutes=30):
     """Dọn rác tmp do PyInstaller/ffmpeg để lại, không đụng vào socket hệ thống."""
     deleted = 0
@@ -8312,6 +8354,7 @@ def _livestream_watchdog():
             ytdlp_active = False
             _cleanup_stale_job_tmp(max_age_hours=24)
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
+            _cleanup_livestream_junk()
             with _livestream_lock:
                 for jid, info in list(_livestream_jobs.items()):
                     pid = info.get("pid")
