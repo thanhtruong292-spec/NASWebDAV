@@ -602,6 +602,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         scanDuplicatesIsPaused = false
         androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
         isWorkerRunning = false
+        isScanningDuplicates = false // Đóng panel tiến trình
+        duplicateFilesList = emptyList() // Xoá danh sách kết quả (nếu có) để ẩn card Tác vụ nền
+        
+        // Reset trạng thái tiến trình
+        DuplicateProgressState.stage.value = "Khởi động..."
+        DuplicateProgressState.percent.value = 0f
     }
     
     // TÍNH NĂNG AUTO-CLEAN DUPLICATES
