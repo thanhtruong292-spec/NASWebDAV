@@ -275,6 +275,7 @@ def _cleanup_livestream_junk():
         if not os.path.isdir(_LIVESTREAM_DIR):
             return
         active_paths = set()
+        active_basenames = set()
         try:
             with _livestream_lock:
                 for info in _livestream_jobs.values():
@@ -282,10 +283,12 @@ def _cleanup_livestream_junk():
                         dp = info.get("direct_output_path", "")
                         if dp:
                             active_paths.add(dp)
-                            active_paths.add(dp + ".tmpchunk")
+                            active_basenames.add(os.path.basename(dp))
         except Exception:
             pass
         removed = 0
+        
+        # Don file rac trong thu muc Livestream
         for fname in os.listdir(_LIVESTREAM_DIR):
             fpath = os.path.join(_LIVESTREAM_DIR, fname)
             if not os.path.isfile(fpath):
@@ -306,7 +309,6 @@ def _cleanup_livestream_junk():
                         removed += 1
                     elif fsize > 1024:
                         # Orphaned .ts file (sau khi restart NAS hoac bi bo quen)
-                        # Kiem tra xem file co dang bi ghi boi ffmpeg khac khong
                         mtime = os.path.getmtime(fpath)
                         if time.time() - mtime > 60: # Khong bi sua trong 60s qua
                             mp4_path = _remux_flv_to_mp4(fpath)
@@ -314,8 +316,25 @@ def _cleanup_livestream_junk():
                                 log.info("[Livestream] Remuxed orphaned file: %s", fname)
                 except Exception:
                     pass
+                    
+        # Don file rac trong /tmp/
+        try:
+            if os.path.exists("/tmp"):
+                for fname in os.listdir("/tmp"):
+                    if fname.startswith("livestream_tmp_") and fname.endswith(".tmpchunk"):
+                        fpath = os.path.join("/tmp", fname)
+                        orig_basename = fname.replace("livestream_tmp_", "").replace(".tmpchunk", "")
+                        if orig_basename not in active_basenames:
+                            try:
+                                os.remove(fpath)
+                                removed += 1
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
         if removed:
-            log.info("[Livestream] Don %d file rac trong Livestream.", removed)
+            log.info("[Livestream] Don %d file rac trong Livestream va /tmp.", removed)
     except Exception as e:
         log.warning("[Livestream] Loi don file rac: %s", e)
 

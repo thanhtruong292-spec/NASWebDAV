@@ -758,16 +758,30 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
         // 1. LOAD CONTROL — Chống OOM (Tràn RAM) khi Stream Video dung lượng khủng
         // Gốc (250s) gây crash Out Of Memory lập tức với video 4K/bluray. Giữ mức tối đa 50s.
+        // TÍNH TOÁN RAM ĐỘNG CHO EXO PLAYER
+        val activityManager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val memoryInfo = android.app.ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memoryInfo)
+        
+        // Dành 15% RAM trống hiện tại làm bộ đệm video. Tối thiểu 50MB, tối đa 500MB để tránh OOM.
+        val dynamicBufferBytes = (memoryInfo.availMem * 0.15).toLong()
+            .coerceIn(50L * 1024 * 1024, 500L * 1024 * 1024).toInt()
+            
+        android.util.Log.i("VideoPlayer", "Dynamic Buffer allocated: ${dynamicBufferBytes / 1024 / 1024} MB")
+
+        val allocator = androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE)
+
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setAllocator(allocator)
             .setBufferDurationsMs(
-                30_000,   // Giữ luôn trong đệm 30s
-                50_000,   // Khóa tối đa nạp trước 50s (chống tràn JVM Heap RAM)
-                250,      // Ngưỡng mồi play cực thấp (0.25s) để phát ngay lập tức
-                500       // Ngưỡng re-buffer cực thấp (0.5s)
+                10_000,   // Min buffer: nạp 10s là đủ để duy trì mượt
+                120_000,  // Max buffer: nạp trước tối đa 2 phút (đủ xem xuyên qua mạng chập chờn)
+                250,      // Ngưỡng mới play cực thấp (0.25s) để play ngay lập tức
+                500       // Ngưỡng re-buffer cực thấp
             )
-            .setTargetBufferBytes(32 * 1024 * 1024) // Khóa cứng max 32MB vào RAM đệm, chống crash mọi cấu hình
-            .setBackBuffer(15_000, true)  // Giữ 15s đệm lui (thay vì 60s gây OOM)
-            .setPrioritizeTimeOverSizeThresholds(false) // TUYỆT ĐỐI bắt buộc false để tôn trọng giới hạn 32MB
+            .setTargetBufferBytes(dynamicBufferBytes) // Dùng cấp phát RAM động
+            .setBackBuffer(30_000, true)  // Giữ 30s lui để tua lại mượt hơn
+            .setPrioritizeTimeOverSizeThresholds(false)
             .build()
 
         // 2. RENDERERS
