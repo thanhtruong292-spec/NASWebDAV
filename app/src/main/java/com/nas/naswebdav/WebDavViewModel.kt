@@ -92,6 +92,7 @@ data class SmartInfo(val status: String, val temperature: String, val rawLog: St
 data class SpeedTestResult(val writeSpeed: String, val readSpeed: String)
 
 // DATA CLASS CHO OMV OVERVIEW
+data class ThumbnailAuditData(val total: Int = 0, val thumbnailed: Int = 0, val missing: Int = 0, val running: Boolean = false, val paused: Boolean = false, val errors: Int = 0)
 data class OmvServiceInfo(val name: String, val title: String, val enabled: Boolean, val running: Boolean)
 data class OmvNetworkInfo(val name: String, val address: String, val mac: String, val speed: Int, val state: String, val gateway: String, val wol: Boolean)
 data class OmvFilesystem(val device: String, val label: String, val mountpoint: String, val used: String, val sizeBytes: Long, val percentage: Int, val description: String)
@@ -526,6 +527,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
 
+    private val _thumbnailAudit = MutableStateFlow<ThumbnailAuditData?>(null)
+    val thumbnailAudit = _thumbnailAudit.asStateFlow()
+
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
     var connectionStatus by mutableStateOf("Đang kết nối...")
@@ -937,7 +941,54 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .post(requestBody)
                     .build()
                 localApiClient.newCall(request).execute().use { }
-            } catch(e: Exception) {}
+            }
+
+    fun fetchThumbnailAudit() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val port = 5050
+                val apiUrl = "http://$host:$port/api/thumbnail/audit"
+                val request = okhttp3.Request.Builder()
+                    .url(apiUrl)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPassword))
+                    .build()
+                webDavManager.client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: "{}"
+                        val obj = org.json.JSONObject(body)
+                        _thumbnailAudit.value = ThumbnailAuditData(
+                            total = obj.optInt("total", 0),
+                            thumbnailed = obj.optInt("thumbnailed", 0),
+                            missing = obj.optInt("missing", 0),
+                            running = obj.optBoolean("running", false),
+                            paused = obj.optBoolean("paused", false),
+                            errors = obj.optInt("errors", 0)
+                        )
+                    }
+                }
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    fun triggerThumbnailScan() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val port = 5050
+                val apiUrl = "http://$host:$port/api/thumbnail/trigger"
+                val body = okhttp3.RequestBody.create(null, ByteArray(0))
+                val request = okhttp3.Request.Builder()
+                    .url(apiUrl)
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPassword))
+                    .build()
+                webDavManager.client.newCall(request).execute().close()
+                kotlinx.coroutines.delay(1000)
+                fetchThumbnailAudit()
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    } catch(e: Exception) {}
         }
     }
 

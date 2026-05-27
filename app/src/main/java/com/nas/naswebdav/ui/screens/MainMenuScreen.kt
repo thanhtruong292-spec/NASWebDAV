@@ -2088,6 +2088,29 @@ fun ToolboxDialog(
                     onClick = { onDismiss(); showSmbDialog() }
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.fetchThumbnailAudit() }
+                val thumbAudit by viewModel.thumbnailAudit.collectAsState()
+                SettingsMenuCard(
+                    title = "Kiểm tra Thumbnail",
+                    subtitle = if (thumbAudit != null) {
+                        if (thumbAudit!!.running) "Đang quét..." else "Thiếu ${thumbAudit!!.missing} / Tổng ${thumbAudit!!.total}"
+                    } else "Thống kê & Quét",
+                    icon = Icons.Default.PhotoLibrary,
+                    color = Color(0xFFAB47BC),
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        if (thumbAudit == null || (!thumbAudit!!.running && thumbAudit!!.missing > 0)) {
+                            viewModel.triggerThumbnailScan()
+                            android.widget.Toast.makeText(context, "Đã gửi lệnh quét Thumbnail vào hệ thống ngầm!", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.fetchThumbnailAudit()
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.weight(1f))
+            }
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -2944,8 +2967,8 @@ fun SystemStatusCards(
 
     // Thumbnail generator is an internal maintenance job. Keep it out of the
     // user-facing background task panel so livestream/sync progress stays clean.
-    val showThumbTask = false
-    val hasAnyTasks = dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty()
+    val showThumbTask = true
+    val hasAnyTasks = dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty() || (showThumbTask && thumbIsActive)
 
     if (!hasAnyTasks) return
 
