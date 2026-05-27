@@ -300,9 +300,18 @@ def _cleanup_livestream_junk():
                 continue
             if fname.endswith(".ts") and fpath not in active_paths:
                 try:
-                    if os.path.getsize(fpath) == 0:
+                    fsize = os.path.getsize(fpath)
+                    if fsize == 0:
                         os.remove(fpath)
                         removed += 1
+                    elif fsize > 1024:
+                        # Orphaned .ts file (sau khi restart NAS hoac bi bo quen)
+                        # Kiem tra xem file co dang bi ghi boi ffmpeg khac khong
+                        mtime = os.path.getmtime(fpath)
+                        if time.time() - mtime > 60: # Khong bi sua trong 60s qua
+                            mp4_path = _remux_flv_to_mp4(fpath)
+                            if mp4_path:
+                                log.info("[Livestream] Remuxed orphaned file: %s", fname)
                 except Exception:
                     pass
         if removed:
@@ -9870,7 +9879,7 @@ while True:
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
     cmd.extend(["-headers", "Referer: https://www.tiktok.com/\\r\\n"])
     cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
-    tmp_chunk = out_file + ".tmpchunk"
+    tmp_chunk = "/tmp/livestream_tmp_" + os.path.basename(out_file) + ".tmpchunk"
     try:
         with open(tmp_chunk, "wb") as f:
             subprocess.run(cmd, stdout=f, stderr=sys.stderr)
