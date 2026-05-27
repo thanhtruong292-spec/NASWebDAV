@@ -4836,7 +4836,7 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                         }
                     }
 
-                    Column(Modifier.fillMaxWidth().heightIn(max = 450.dp)) {
+                    Column(Modifier.fillMaxWidth().weight(1f)) {
                         // ═══ FILTER CHIP ROW ═══
                         Row(
                             Modifier.fillMaxWidth().padding(bottom = 8.dp),

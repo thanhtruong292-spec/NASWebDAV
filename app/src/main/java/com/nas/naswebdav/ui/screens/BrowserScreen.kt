@@ -1521,8 +1521,8 @@ private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(8)
 
 private val mediaThumbClient by lazy {
     NasApplication.instance.sharedHttpClient.newBuilder()
-        .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
         .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 20; maxRequestsPerHost = 4 })
         .build()
 }
