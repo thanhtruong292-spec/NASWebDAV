@@ -10092,6 +10092,9 @@ def api_livestream_status():
             if jid not in updates: updates[jid] = {}
             updates[jid]["error_reason"] = error_reason
 
+        # Chi dua vao danh sach hien thi neu: khong phai "recording", hoac da co file > 0B
+        if status == "recording" and file_size == 0:
+            continue
         result_jobs.append({
             "job_id": jid,
             "url": info.get("url", ""),
