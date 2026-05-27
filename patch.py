@@ -1,48 +1,86 @@
-import sys
+﻿import sys, re
 
-with open(r'app\src\main\java\com\nas\naswebdav\WebDavViewModel.kt', 'r', encoding='utf-8') as f:
-    content = f.read()
+with open('nas_api_server.py', 'r', encoding='utf-8') as f:
+    text = f.read()
 
-target = 'thumbEtaFmt = json.optString("eta_fmt", "--:--")\n\n                        }                    }\n                }\n            } catch (_: Exception) {}\n        }\n    }'
-target_cr = target.replace('\n', '\r\n')
-
-if target in content or target_cr in content:
-    actual_target = target if target in content else target_cr
+start = text.find('def generate_fast_index():')
+if start == -1:
+    print('start not found')
+    sys.exit(1)
     
-    replacement = '''thumbEtaFmt = json.optString("eta_fmt", "--:--")
+end = text.find('def api_hash_batch():', start)
+if end == -1:
+    print('end not found')
+    sys.exit(1)
 
-                        val appContext = NasApplication.instance.applicationContext
-                        if (thumbRunning && thumbTotal > 0) {
-                            val percent = if (thumbTotal > 0) (thumbGenerated * 100 / thumbTotal) else 0
-                            showSystemNotification(appContext, 9011, "Đang tạo Thumbnail (" + thumbGenerated + " / " + thumbTotal + ")", "File hiện tại: " + thumbLastFile, percent)
-                        } else {
-                            cancelSystemNotification(appContext, 9011)
-                        }
-                        }                    }
-                }
-            } catch (_: Exception) {}
-        }
-    }
+# Find the @app.route preceeding api_hash_batch
+end = text.rfind('@app.route', start, end)
 
-    private fun showSystemNotification(context: android.content.Context, id: Int, title: String, content: String, progress: Int? = null) {
-        val channelId = "nas_background_tasks"
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(channelId, "Tiến trình ngầm NAS", android.app.NotificationManager.IMPORTANCE_LOW)
-            channel.setShowBadge(false)
-            context.getSystemService(android.app.NotificationManager::class.java)?.createNotificationChannel(channel)
-        }
-        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId).setSmallIcon(android.R.drawable.stat_sys_download).setContentTitle(title).setContentText(content).setOngoing(true).setSilent(true).setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
-        if (progress != null) { builder.setProgress(100, progress, false) } else { builder.setProgress(0, 0, true) }
-        try { androidx.core.app.NotificationManagerCompat.from(context).notify(id, builder.build()) } catch (_: SecurityException) {}
-    }
+new_code = '''CACHE_FILE = "/tmp/nas_fast_index_cache.json"
+
+def generate_fast_index(force=False):
+    import time
+    if not force and os.path.exists(CACHE_FILE):
+        if time.time() - os.path.getmtime(CACHE_FILE) < 86400: # 24 hours
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk: break
+                    yield chunk
+            return
+
+    base_dir = get_webdav_root()
+    media_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mkv", ".mov", ".avi"}
+    base_len = len(base_dir)
+
+    try:
+        cache_f = open(CACHE_FILE, "w", encoding="utf-8")
+    except Exception:
+        cache_f = None
+
+    yield '{"files":['
+    if cache_f: cache_f.write('{"files":[')
+
+    total = 0
+    first = True
+    for root, dirs, files in os.walk(base_dir):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
+        for name in files:
+            if name.startswith('.'): continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in media_exts: continue
+            full_path = os.path.join(root, name)
+            try:
+                st = os.stat(full_path)
+                rel_path = full_path[base_len:]
+                if not rel_path.startswith("/"): rel_path = "/" + rel_path
+                
+                s = json.dumps({"name": name, "path": "/webdav" + rel_path, "size": st.st_size, "mtime": int(st.st_mtime * 1000)})
+                if not first:
+                    yield ','
+                    if cache_f: cache_f.write(',')
+                first = False
+                
+                yield s
+                if cache_f: cache_f.write(s)
+                total += 1
+            except Exception: pass
+
+    tail = '], "total": %d}' % total
+    yield tail
+    if cache_f:
+        cache_f.write(tail)
+        cache_f.close()
+
+@app.route("/api/disk/fast_index")
+@requires_auth
+def api_fast_index():
+    force = request.args.get("force", "0") == "1"
+    return Response(generate_fast_index(force), mimetype='application/json')
+
+'''
+
+with open('nas_api_server.py', 'w', encoding='utf-8') as f:
+    f.write(text[:start] + new_code + text[end:])
     
-    private fun cancelSystemNotification(context: android.content.Context, id: Int) {
-        try { androidx.core.app.NotificationManagerCompat.from(context).cancel(id) } catch (_: SecurityException) {}
-    }'''
-
-    content = content.replace(actual_target, replacement)
-    with open(r'app\src\main\java\com\nas\naswebdav\WebDavViewModel.kt', 'w', encoding='utf-8', newline='') as f:
-        f.write(content)
-    print('SUCCESS')
-else:
-    print('TARGET NOT FOUND')
+print("Patched successfully")

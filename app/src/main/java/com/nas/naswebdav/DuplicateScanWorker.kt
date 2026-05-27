@@ -215,9 +215,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 val apiBaseUrl = currentUrl.toApiBaseUrl()
 
                 try {
-                    // FIX #13: Thêm Authorization header — NAS bật auth sẽ trả 401 nếu không có
+                    val forceParam = if (forceRestart) "1" else "0"
                     val request = okhttp3.Request.Builder()
-                        .url("$apiBaseUrl/api/disk/fast_index")
+                        .url("$apiBaseUrl/api/disk/fast_index?force=$forceParam")
                         .header("Authorization", okhttp3.Credentials.basic(user, pass))
                         .build()
                     val client = NasApplication.instance.sharedHttpClient

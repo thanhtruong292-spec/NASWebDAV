@@ -1,13 +1,9 @@
-import json
-import os
+with open('app/src/main/java/com/nas/naswebdav/ui/screens/MainMenuScreen.kt', 'r', encoding='utf-8') as f:
+    lines = f.readlines()
 
-state_file = '/srv/dev-disk-by-label-data/New folder/.nas_meta/usb_import_state.json'
-if os.path.exists(state_file):
-    with open(state_file, 'r', encoding='utf-8') as f:
-        state = json.load(f)
-    if state.get('status') == 'cancelling':
-        state['status'] = 'cancelled'
-        state['message'] = 'Đã huỷ'
-    with open(state_file, 'w', encoding='utf-8') as f:
-        json.dump(state, f)
-        print("Fixed state")
+for i, line in enumerate(lines):
+    if 'viewModel.thumbLastFile.substringAfterLast' in line:
+        lines[i] = '                                    "Tệp: " + viewModel.thumbLastFile.substringAfterLast("/"),\n'
+
+with open('app/src/main/java/com/nas/naswebdav/ui/screens/MainMenuScreen.kt', 'w', encoding='utf-8') as f:
+    f.writelines(lines)

@@ -7237,15 +7237,33 @@ def get_webdav_root():
     _cached_webdav_root = best_path.rstrip('/')
     return _cached_webdav_root
 
-def generate_fast_index():
-    """Single-pass os.walk: Thu thap + stream trong 1 lan duyet duy nhat.
-    Dung buffer de ghi total chinh xac vao header JSON."""
+CACHE_FILE = "/tmp/nas_fast_index_cache.json"
+
+def generate_fast_index(force=False):
+    import time
+    if not force and os.path.exists(CACHE_FILE):
+        if time.time() - os.path.getmtime(CACHE_FILE) < 86400: # 24 hours
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk: break
+                    yield chunk
+            return
+
     base_dir = get_webdav_root()
     media_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mkv", ".mov", ".avi"}
     base_len = len(base_dir)
 
-    # Single-pass: Thu thap tất c? entries trong 1 lan walk
-    entries = []
+    try:
+        cache_f = open(CACHE_FILE, "w", encoding="utf-8")
+    except Exception:
+        cache_f = None
+
+    yield '{"files":['
+    if cache_f: cache_f.write('{"files":[')
+
+    total = 0
+    first = True
     for root, dirs, files in os.walk(base_dir):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
         for name in files:
@@ -7257,20 +7275,29 @@ def generate_fast_index():
                 st = os.stat(full_path)
                 rel_path = full_path[base_len:]
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
-                entries.append((name, "/webdav" + rel_path, st.st_size, int(st.st_mtime * 1000)))
+                
+                s = json.dumps({"name": name, "path": "/webdav" + rel_path, "size": st.st_size, "mtime": int(st.st_mtime * 1000)})
+                if not first:
+                    yield ','
+                    if cache_f: cache_f.write(',')
+                first = False
+                
+                yield s
+                if cache_f: cache_f.write(s)
+                total += 1
             except Exception: pass
 
-    yield '{"total": %d, "files":[' % len(entries)
-    for i, (name, webdav_path, size, mtime) in enumerate(entries):
-        if i > 0: yield ','
-        yield json.dumps({"name": name, "path": webdav_path, "size": size, "mtime": mtime})
-    yield ']}'
+    tail = '], "total": %d}' % total
+    yield tail
+    if cache_f:
+        cache_f.write(tail)
+        cache_f.close()
 
 @app.route("/api/disk/fast_index")
 @requires_auth
 def api_fast_index():
-    """Quet thư mục toc do cao bang OS thuan, stream JSON generator de không tr?n RAM."""
-    return Response(generate_fast_index(), mimetype='application/json')
+    force = request.args.get("force", "0") == "1"
+    return Response(generate_fast_index(force), mimetype='application/json')
 
 @app.route("/api/disk/hash_batch", methods=["POST"])
 @requires_auth
