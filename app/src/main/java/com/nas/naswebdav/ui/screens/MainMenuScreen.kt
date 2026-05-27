@@ -3024,7 +3024,7 @@ fun SystemStatusCards(
     val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
     val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
     val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
-    val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..."
+    val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || viewModel.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
@@ -3216,8 +3216,18 @@ fun SystemStatusCards(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    val dupStatusLabel = if (dupIsPaused) "⏸ Đã tạm dừng" else if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét — Bước $dupStageNum/${dupTotalStages}"
-                                    Text(dupStatusLabel, fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
+                                    val dupStatusLabel = when {
+                                        viewModel.duplicateFilesList.isNotEmpty() -> "✅ Đã tìm thấy ${viewModel.duplicateFilesList.size} nhóm trùng"
+                                        dupIsPaused -> "⏸ Đã tạm dừng"
+                                        !dupIsRunning -> "Chuẩn bị..."
+                                        else -> "🟢 Đang quét — Bước $dupStageNum/${dupTotalStages}"
+                                    }
+                                    val dupStatusColor = when {
+                                        viewModel.duplicateFilesList.isNotEmpty() -> Color(0xFF64B5F6) // Xanh dương
+                                        dupIsPaused -> Color(0xFFFFA726) // Cam
+                                        else -> Color(0xFF66BB6A) // Xanh lá
+                                    }
+                                    Text(dupStatusLabel, fontSize = 11.sp, color = dupStatusColor)
                                 }
                                 if (dupIsRunning || dupIsPaused) {
                                     IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
