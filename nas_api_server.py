@@ -284,6 +284,10 @@ def _cleanup_livestream_junk():
                         if dp:
                             active_paths.add(dp)
                             active_basenames.add(os.path.basename(dp))
+                        out_file = info.get("output_file", "")
+                        if out_file:
+                            active_basenames.add(out_file)
+                            active_paths.add(os.path.join(info.get("output_dir", _LIVESTREAM_DIR), out_file))
         except Exception:
             pass
         removed = 0
@@ -1625,6 +1629,23 @@ def _update_status_cache():
             }
             with _cache_lock:
                 _status_cache = data
+            if loop_count % 6 == 0:
+                _update_process_state(
+                    "hardware",
+                    cpu_percent=round(float(cpu_percent or 0), 1),
+                    cpu_temp=data.get("cpu_temp"),
+                    hdd_temp=cached_hdd_temp,
+                    ram_percent=int(round(mem.percent)),
+                    ram_used=ram_used,
+                    ram_total=ram_total,
+                    net_rx=net_rx,
+                    net_tx=net_tx,
+                    uptime=data.get("uptime"),
+                    fan=cached_fan,
+                    disk=cached_disk,
+                    disk_parts=cached_disk_parts,
+                    top_processes=cached_top,
+                )
             
             loop_count = (loop_count + 1) % 600
         except Exception as e:
@@ -1810,6 +1831,34 @@ def _scan_photos_lightweight():
 
 _background_heavy_gate_cache = {"time": 0.0, "allowed": True}
 
+def _heavy_background_processes():
+    """Detect heavy jobs that may outlive NAS API in-memory state after restart."""
+    heavy = []
+    own_pid = os.getpid()
+    tokens = ("yt-dlp", "rsync", "rclone", "scp")
+    try:
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            try:
+                pid = int(proc.info.get("pid") or 0)
+                if pid == own_pid:
+                    continue
+                name = (proc.info.get("name") or "").lower()
+                cmdline = " ".join(proc.info.get("cmdline") or [])
+                cmd = cmdline.lower()
+                if "/tmp/loop_" in cmd and "livestream" in cmd:
+                    heavy.append({"pid": pid, "name": name or "python", "reason": "livestream"})
+                elif name == "ffmpeg" or "/ffmpeg" in cmd:
+                    heavy.append({"pid": pid, "name": "ffmpeg", "reason": "ffmpeg"})
+                elif any(t in name or t in cmd for t in tokens):
+                    heavy.append({"pid": pid, "name": name or "process", "reason": "transfer"})
+                if len(heavy) >= 8:
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return heavy
+
 def _background_heavy_work_allowed():
     try:
         now = time.time()
@@ -1824,6 +1873,8 @@ def _background_heavy_work_allowed():
             with lock:
                 if any(j.get("status") == "recording" for j in jobs.values()):
                     allowed = False
+        if allowed and _heavy_background_processes():
+            allowed = False
         if allowed and psutil.virtual_memory().percent > 78:
             allowed = False
         if allowed and psutil.cpu_percent(interval=0.1) > 55:
@@ -1999,6 +2050,18 @@ def _cron_worker():
                     cur.execute("DELETE FROM system_temperature_history WHERE timestamp <= datetime('now', '-30 days')")
                 conn.commit()
                 conn.close()
+                _update_process_state(
+                    "metrics_history",
+                    db_path=DB_PATH,
+                    retention_days=30,
+                    last_insert_at=int(time.time()),
+                    cpu_percent=round(cpu_pct, 1),
+                    ram_percent=round(ram_pct, 1),
+                    cpu_temp_c=cpu_t,
+                    hdd_temp_c=hdd_t,
+                    net_rx_kbps=round(rx_kbps, 1),
+                    net_tx_kbps=round(tx_kbps, 1),
+                )
             except Exception:
                 pass
 
@@ -2013,6 +2076,11 @@ def _cron_worker():
                     _push_alert("TRASH_CLEANED", msg, "INFO")
                 with _alert_state_lock:
                     _alert_states["trash_last_clean"] = now_ts
+                _update_process_state(
+                    "maintenance",
+                    trash_last_clean=now_ts,
+                    trash_deleted_last=int(deleted or 0),
+                )
 
             # --- 4b. Don dep file rong (0-byte), FLV hong cu + thư mục rong (mới 24h) ---
             # Quet WEBDAV_FILE_ROOT, b? qua .trash/.nas_meta/.thumbnails va dotfile.
@@ -2032,6 +2100,13 @@ def _cron_worker():
                     log.warning("[Cron] Lỗi dọn tệp rỗng/thư mục rỗng: %s", e)
                 with _alert_state_lock:
                     _alert_states["empty_last_clean"] = now_ts
+                _update_process_state(
+                    "maintenance",
+                    empty_last_clean=now_ts,
+                    empty_files_deleted_last=int(df or 0) if "df" in locals() else 0,
+                    empty_dirs_deleted_last=int(dd or 0) if "dd" in locals() else 0,
+                    broken_flv_deleted_last=int(db or 0) if "db" in locals() else 0,
+                )
 
             # --- 5. Quet phan loai ảnh nh? luc 3h sang ---
             with _alert_state_lock:
@@ -2041,6 +2116,7 @@ def _cron_worker():
                 started = _scan_photos_lightweight()
                 if started:
                     _push_alert("AI_SCAN_STARTED", "Smart Gallery: Đã phân loại ảnh theo thư mục.", "INFO")
+                    _update_process_state("smart_gallery", ai_last_scan=now_ts, ai_scan_started=True)
 
             # --- 6. Tạo Báo Cáo Hàng Ngày lúc 6h sáng ---
             is_6am = (now_dt.hour == 6 and now_dt.minute < 2)
@@ -3488,6 +3564,14 @@ def _disk_health_sample_once():
 
         with _disk_health_lock:
             _disk_health_last_sample = sample
+        _update_process_state(
+            "disk_health",
+            current=sample,
+            score=score,
+            warnings=normalized_warnings,
+            history_file=_DISK_HEALTH_HISTORY_FILE,
+            sample_interval_sec=_DISK_HEALTH_SAMPLE_INTERVAL_SEC,
+        )
 
         # Append vao .jsonl tren eMMC
         try:
@@ -3566,6 +3650,127 @@ def _add_system_log(level, module, message):
         conn.close()
     except Exception:
         pass
+
+_system_log_once_cache = {}
+
+def _add_system_log_once(key, level, module, message, cooldown_sec=300):
+    """Log important repeated events without flooding system_logs."""
+    now = time.time()
+    last = float(_system_log_once_cache.get(key, 0) or 0)
+    if now - last < cooldown_sec:
+        return
+    _system_log_once_cache[key] = now
+    _add_system_log(level, module, message)
+
+_PROCESS_STATE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "process_state.json")
+_process_state_lock = threading.Lock()
+_process_state_cache = None
+
+def _load_process_state():
+    global _process_state_cache
+    with _process_state_lock:
+        if _process_state_cache is not None:
+            return dict(_process_state_cache)
+        try:
+            with open(_PROCESS_STATE_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+        _process_state_cache = data
+        return dict(data)
+
+def _save_process_state_locked(data):
+    try:
+        os.makedirs(os.path.dirname(_PROCESS_STATE_FILE), exist_ok=True)
+        tmp = _PROCESS_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, _PROCESS_STATE_FILE)
+        return True
+    except Exception as e:
+        log.warning("[ProcessState] Khong ghi duoc %s: %s", _PROCESS_STATE_FILE, e)
+        return False
+
+def _update_process_state(name, **kwargs):
+    """Persist lightweight progress for long-running background workers."""
+    global _process_state_cache
+    now = int(time.time())
+    with _process_state_lock:
+        data = _process_state_cache
+        if data is None:
+            try:
+                with open(_PROCESS_STATE_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+            except Exception:
+                data = {}
+        item = data.get(name)
+        if not isinstance(item, dict):
+            item = {}
+        item.update(kwargs)
+        item["updated_at"] = now
+        data[name] = item
+        _process_state_cache = data
+        _save_process_state_locked(data)
+        return dict(item)
+
+def _get_process_state(name, default=None):
+    data = _load_process_state()
+    item = data.get(name, default if default is not None else {})
+    return dict(item) if isinstance(item, dict) else item
+
+def _livestream_job_label(jid, info):
+    user = info.get("watch_username", "") or ""
+    src = ("@%s" % user) if user else (info.get("original_url") or info.get("url") or "")
+    out = info.get("output_file", "") or "chua co file"
+    return "%s pid=%s src=%s file=%s" % (jid, info.get("pid"), src, out)
+
+def _log_livestream_event(level, jid, info, message, once_key=""):
+    detail = "%s | %s" % (_livestream_job_label(jid, info), message)
+    if once_key:
+        _add_system_log_once("livestream:%s:%s" % (jid, once_key), level, "Livestream", detail, 600)
+    else:
+        _add_system_log(level, "Livestream", detail)
+
+def _restart_nas_api(reason):
+    """Restart this NAS API process via exec so the same PID becomes fresh code."""
+    reason = normalize_vietnamese_message(str(reason))[:240]
+    _add_system_log("CRITICAL", "NasAPI", "Tu khoi dong lai /opt/nas_api_server.py: %s" % reason)
+    log.critical("[NasAPI] Tu khoi dong lai /opt/nas_api_server.py: %s", reason)
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os.execv(sys.executable, [sys.executable, "/opt/nas_api_server.py"])
+
+@app.errorhandler(Exception)
+def _log_unhandled_flask_error(e):
+    try:
+        path = getattr(request, "path", "")
+        _add_system_log_once(
+            "flask_error:%s:%s" % (path, type(e).__name__),
+            "ERROR",
+            "NasAPI",
+            "Unhandled API error path=%s type=%s detail=%s" % (
+                path,
+                type(e).__name__,
+                normalize_vietnamese_message(str(e))[:220]
+            ),
+            60
+        )
+    except Exception:
+        pass
+    try:
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+    except Exception:
+        pass
+    return jsonify({"error": "Loi NAS API: %s" % normalize_vietnamese_message(str(e))[:200]}), 500
 
 
 @app.route('/api/disk/health', methods=['GET'])
@@ -4478,7 +4683,29 @@ def _usb_import_set_state(**kwargs):
         kwargs["pending_errors"] = errors[-200:]
     with _usb_import_lock:
         _usb_import_state.update(kwargs)
+        state_summary = {
+            "status": _usb_import_state.get("status", ""),
+            "message": _usb_import_state.get("message", ""),
+            "active_device": _usb_import_state.get("active_device", ""),
+            "active_mount": _usb_import_state.get("active_mount", ""),
+            "dest_dir": _usb_import_state.get("dest_dir", ""),
+            "files_done": int(_usb_import_state.get("files_done") or 0),
+            "files_total": int(_usb_import_state.get("files_total") or 0),
+            "files_failed": int(_usb_import_state.get("files_failed") or 0),
+            "files_skipped": int(_usb_import_state.get("files_skipped") or 0),
+            "bytes_done": int(_usb_import_state.get("bytes_done") or 0),
+            "bytes_total": int(_usb_import_state.get("bytes_total") or 0),
+            "copy_speed_bps": int(_usb_import_state.get("copy_speed_bps") or 0),
+            "pending_conflicts_count": int(_usb_import_state.get("pending_conflicts_count") or 0),
+            "pending_errors_count": int(_usb_import_state.get("pending_errors_count") or 0),
+            "last_error": _usb_import_state.get("last_error", ""),
+            "last_progress_at": int(_usb_import_state.get("last_progress_at") or 0),
+        }
     _usb_import_save_state()
+    try:
+        _update_process_state("usb_import", **state_summary)
+    except Exception:
+        pass
 
 
 def _usb_import_public_state():
@@ -7292,7 +7519,7 @@ def _create_placeholder_thumb(dst_path):
         img.save(dst_path, 'JPEG')
 
 def _process_one_thumb(args):
-    full_path, thumb_path, ext = args
+    full_path, thumb_path, ext = args[:3]
     try:
         if ext in MEDIA_IMAGE_EXTS:
             return _generate_image_thumb(full_path, thumb_path)
@@ -7325,6 +7552,10 @@ def _thumbnail_generator():
             base_dir = get_webdav_root()
             thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
             os.makedirs(thumb_dir, exist_ok=True)
+            thumb_state = _get_process_state("thumbnail", {})
+            cursor_rel = str(thumb_state.get("cursor_rel", "") or "")
+            cursor_seen = False if cursor_rel else True
+            scan_last_rel = ""
             
             with _thumb_stats_lock:
                 _thumb_stats["running"] = True
@@ -7341,8 +7572,8 @@ def _thumbnail_generator():
             for root, dirs, files in os.walk(base_dir):
                 if scanned_entries >= 15000 or time.time() >= scan_deadline or not _background_heavy_work_allowed():
                     break
-                dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
-                for name in files:
+                dirs[:] = sorted([d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle'])
+                for name in sorted(files):
                     scanned_entries += 1
                     if scanned_entries >= 15000 or time.time() >= scan_deadline:
                         break
@@ -7351,6 +7582,11 @@ def _thumbnail_generator():
                     if ext not in MEDIA_ALL_EXTS: continue
                     total += 1
                     full_path = os.path.join(root, name)
+                    rel_file = os.path.relpath(full_path, base_dir).replace(os.sep, "/")
+                    if not cursor_seen:
+                        if rel_file <= cursor_rel:
+                            continue
+                        cursor_seen = True
                     thumb_path = _get_thumb_path(base_dir, full_path)
                     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
                         # REVERT: KHONG retry placeholder nua. Threshold 2200 truoc
@@ -7363,11 +7599,34 @@ def _thumbnail_generator():
                         already_done += 1
                         continue
                     if len(pending) < MAX_BATCH:
-                        pending.append((full_path, thumb_path, ext))
+                        pending.append((full_path, thumb_path, ext, rel_file))
+                        scan_last_rel = rel_file
                     else:
                         break
                 if len(pending) >= MAX_BATCH:
                     break
+
+            if cursor_rel and not cursor_seen:
+                _update_process_state(
+                    "thumbnail",
+                    cursor_rel="",
+                    last_scan_note="cursor reached end; next pass starts from root",
+                    scanned_entries=scanned_entries,
+                    total_media_seen=total,
+                    already_done_seen=already_done,
+                )
+                time.sleep(10)
+                continue
+            if scan_last_rel:
+                _update_process_state(
+                    "thumbnail",
+                    cursor_rel=scan_last_rel,
+                    scanned_entries=scanned_entries,
+                    total_media_seen=total,
+                    already_done_seen=already_done,
+                    pending_found=len(pending),
+                    last_scan_at=int(time.time()),
+                )
             
             with _thumb_stats_lock:
                 _thumb_stats["total_media"] = total
@@ -7378,6 +7637,16 @@ def _thumbnail_generator():
             # SMART SLEEP (Ngu dong): Chi chay neu co Media moi, hoac CPU rảnh, hoac 3:00 AM
             if len(pending) == 0:
                 import datetime
+                _update_process_state(
+                    "thumbnail",
+                    cursor_rel="",
+                    scanned_entries=scanned_entries,
+                    total_media_seen=total,
+                    already_done_seen=already_done,
+                    pending_found=0,
+                    last_idle_at=int(time.time()),
+                    last_scan_note="no_pending",
+                )
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
                     _thumb_stats["last_file"] = "Ngủ đông: Chờ 3:00 AM hoặc Rảnh"
@@ -7464,11 +7733,19 @@ def _thumbnail_generator():
                         _thumb_stats["running"] = True
                         _thumb_stats["start_time"] = time.time() - (_counters["generated"] - already_done) * 0.5
                 
-                full_path, thumb_path, ext = item
+                full_path, thumb_path, ext = item[:3]
+                rel_file = item[3] if len(item) > 3 else os.path.basename(full_path)
                 name = os.path.basename(full_path)
                 
                 with _thumb_stats_lock:
                     _thumb_stats["last_file"] = name
+                
+                if not _background_heavy_work_allowed():
+                    abort_batch = True
+                    with _thumb_stats_lock:
+                        _thumb_stats["running"] = False
+                        _thumb_stats["last_file"] = "Tam dung: NAS dang ban"
+                    return
                 
                 try:
                     success = _process_one_thumb(item)
@@ -7490,6 +7767,13 @@ def _thumbnail_generator():
                     _thumb_stats["errors"] = _counters["errors"]
                 # Kiểm tra tai nguyen mới 20 file
                 if bc % 20 == 0:
+                    prev = _get_process_state("thumbnail", {})
+                    _update_process_state(
+                        "thumbnail",
+                        last_processed_rel=rel_file,
+                        cursor_rel=rel_file,
+                        batch_done=bc,
+                    )
                     _check_resources_and_throttle()
             
             # === XU LY ANH: Song song voi ThreadPoolExecutor ===
@@ -7527,12 +7811,26 @@ def _thumbnail_generator():
             
             generated = _counters["generated"]
             errors = _counters["errors"]
+            prev_thumb_state = _get_process_state("thumbnail", {})
+            new_generated = max(0, generated - already_done)
             
             with _thumb_stats_lock:
                 _thumb_stats["generated"] = generated
                 _thumb_stats["total_media"] = total
                 _thumb_stats["running"] = False
                 _thumb_stats["last_file"] = "Hoàn tất! %d/%d (lỗi: %d)" % (generated, total, errors)
+            _update_process_state(
+                "thumbnail",
+                cursor_rel=(pending[-1][3] if pending and not abort_batch else ""),
+                last_processed_rel=(pending[-1][3] if pending else prev_thumb_state.get("last_processed_rel", "")),
+                generated_lifetime=int(prev_thumb_state.get("generated_lifetime", 0) or 0) + new_generated,
+                error_lifetime=int(prev_thumb_state.get("error_lifetime", 0) or 0) + int(errors or 0),
+                last_batch_generated=new_generated,
+                last_batch_errors=int(errors or 0),
+                last_batch_total=len(pending),
+                last_scan_completed_at=int(time.time()),
+                last_scan_note=("aborted_busy" if abort_batch else "batch_complete"),
+            )
             
             try:
                 conn = sqlite3.connect(DB_PATH, timeout=20.0)
@@ -7574,6 +7872,17 @@ def api_thumb():
     thumb_path = _get_thumb_path(base_dir, real_path)
     
     if not os.path.exists(thumb_path) or os.path.getsize(thumb_path) == 0:
+        if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
+            with _thumb_stats_lock:
+                _thumb_stats["paused"] = True
+                if not _thumb_stats.get("last_file"):
+                    _thumb_stats["last_file"] = "Tam dung: NAS dang ban"
+            return jsonify({
+                "error": "NAS dang ban, tam hoan tao thumbnail.",
+                "retry_later": True,
+                "block_reasons": sorted(_thumb_auto_block_reasons),
+                "heavy_processes": _heavy_background_processes()[:5],
+            }), 503
         thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
         os.makedirs(thumb_dir, exist_ok=True)
         ext = os.path.splitext(real_path)[1].lower()
@@ -7625,6 +7934,19 @@ def api_thumb_status():
         data["eta_fmt"] = "%02d:%02d" % (et // 3600, (et % 3600) // 60) if et > 0 else "--:--"
         
         return jsonify(data)
+
+@app.route("/api/process_state", methods=["GET"])
+@requires_auth
+def api_process_state():
+    """Return persisted progress/cursors for background workers."""
+    data = _load_process_state()
+    data["_meta"] = {
+        "file": _PROCESS_STATE_FILE,
+        "schema": 1,
+        "namespaces": sorted([k for k in data.keys() if not str(k).startswith("_")]),
+        "updated_at": int(time.time()),
+    }
+    return jsonify(data)
 
 @app.route("/api/thumb/control", methods=["POST"])
 @requires_auth
@@ -8463,9 +8785,23 @@ def _livestream_watchdog():
                             info["status"] = "error"
                             info["error_reason"] = _livestream_error_from_log(info) or "Không tạo được tệp video hợp lệ."
                             log.error("[Livestream] Job %s (PID %d) đã kết thúc với lỗi (tệp < 1KB).", jid, pid)
+                            _log_livestream_event(
+                                "ERROR", jid, info,
+                                "Ghi live loi: %s; dung luong=%s; log=%s" % (
+                                    info.get("error_reason", ""),
+                                    format_bytes(int(info.get("file_size", 0) or 0)),
+                                    info.get("log_file", "")
+                                ),
+                                "final_error"
+                            )
                         else:
                             info["status"] = "finished"
                             log.info("[Livestream] Job %s (PID %d) đã kết thúc tự nhiên.", jid, pid)
+                            _log_livestream_event(
+                                "SUCCESS", jid, info,
+                                "Ghi live hoan tat; dung luong=%s" % format_bytes(int(info.get("file_size", 0) or 0)),
+                                "finished"
+                            )
 
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                         _cleanup_job_tmp(info.get("tmp_dir", ""))
@@ -8495,6 +8831,7 @@ def _livestream_watchdog():
                     started = info.get("started_ts", 0)
                     if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
                         log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
+                        _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
                         try:
                             os.kill(pid, signal.SIGTERM)
                         except Exception:
@@ -8523,6 +8860,7 @@ def _livestream_watchdog():
             _set_thumbnail_auto_block("ytdlp", ytdlp_active)
         except Exception as e:
             log.error("[Livestream] Lỗi watchdog: %s", e)
+            _add_system_log_once("livestream_watchdog_exception", "ERROR", "Livestream", "Watchdog livestream loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
 
 def _fan_controller_watchdog():
     """Tien trinh ngam dieu khien quat theo che do tuy chinh (Hysteresis)"""
@@ -9093,7 +9431,7 @@ def _check_tiktok_user_live(username):
         live_title = " is live - tiktok live" in lowered or " is live | tiktok" in lowered
         title_has_user = ("(@%s) is live" % username.lower()) in lowered
         live_room = "\"room_id\"" in lowered and "\"stream_data\"" in lowered
-        if title_has_user and (live_title or media_urls or live_room):
+        if media_urls or (title_has_user and (live_title or live_room)):
             return True, ""
         challenge_signals = (
             "captcha",
@@ -9170,6 +9508,7 @@ def _tiktok_live_watchdog():
     log.info("[TikTokWatch] Watcher TikTok chạy trên NAS, không phụ thuộc app Android.")
     while True:
         try:
+            loop_started_ts = time.time()
             with _tiktok_watch_lock:
                 users_snapshot = [dict(u) for u in _tiktok_watch_state.get("users", [])]
                 excluded = _is_tiktok_watch_excluded()
@@ -9239,6 +9578,13 @@ def _tiktok_live_watchdog():
                         log.info("[TikTokWatch] @%s đang live, NAS đã tự bắt đầu ghi job %s.", username, job_id)
                     else:
                         log.warning("[TikTokWatch] @%s đang live nhưng không bắt đầu ghi được: %s", username, msg)
+                        _add_system_log_once(
+                            "tiktok_start_fail:%s" % username.lower(),
+                            "ERROR",
+                            "TikTokWatch",
+                            "@%s dang live nhung khong bat dau ghi duoc: %s" % (username, normalize_vietnamese_message(msg)[:220]),
+                            180
+                        )
                 else:
                     if err == "offline":
                         if user.get("live_session_recorded", False):
@@ -9327,6 +9673,21 @@ def _tiktok_live_watchdog():
                             # reference de khong dut tham chieu trong RAM khac).
                             cur.update(upd)
                     _save_tiktok_watch_state()
+            try:
+                with _livestream_lock:
+                    active_jobs = [
+                        dict(j)
+                        for j in _livestream_jobs.values()
+                        if j.get("status") == "recording"
+                    ]
+                recording_count = len(active_jobs)
+                started_count = sum(
+                    1 for j in active_jobs
+                    if float(j.get("started_ts", 0) or 0) >= loop_started_ts
+                )
+            except Exception:
+                pass
+
             _tiktok_watch_runtime.update({
                 "running": True,
                 "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
@@ -9341,6 +9702,7 @@ def _tiktok_live_watchdog():
                 "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             })
             log.error("[TikTokWatch] Lỗi watchdog: %s", e)
+            _add_system_log_once("tiktok_watchdog_exception", "ERROR", "TikTokWatch", "Watchdog TikTok loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
         wait_seconds = _tiktok_watch_interval()
         try:
             with _tiktok_watch_lock:
@@ -9350,6 +9712,57 @@ def _tiktok_live_watchdog():
             pass
         _tiktok_watch_wake.wait(wait_seconds)
         _tiktok_watch_wake.clear()
+
+def _nas_api_self_watchdog():
+    """Watch critical background loops and restart this process if they stall."""
+    time.sleep(180)
+    stale_cycles = 0
+    lock_fail_cycles = 0
+    while True:
+        try:
+            now = time.time()
+            last_tick = _tiktok_watch_runtime.get("last_tick", "")
+            tick_age = 0
+            if last_tick:
+                try:
+                    tick_age = now - datetime.datetime.strptime(last_tick, "%d/%m/%Y %H:%M:%S").timestamp()
+                except Exception:
+                    tick_age = 0
+            if tick_age and tick_age > max(600, _tiktok_watch_interval() * 6):
+                stale_cycles += 1
+                _add_system_log_once(
+                    "nasapi_tiktok_watch_stale",
+                    "ERROR",
+                    "NasAPI",
+                    "TikTok watcher khong cap nhat %d giay; stale_cycles=%d" % (int(tick_age), stale_cycles),
+                    120
+                )
+            else:
+                stale_cycles = 0
+
+            got_live_lock = _livestream_lock.acquire(timeout=5.0)
+            if got_live_lock:
+                try:
+                    lock_fail_cycles = 0
+                finally:
+                    _livestream_lock.release()
+            else:
+                lock_fail_cycles += 1
+                _add_system_log_once(
+                    "nasapi_livestream_lock_stuck",
+                    "ERROR",
+                    "NasAPI",
+                    "Livestream lock bi ket qua 5 giay; lock_fail_cycles=%d" % lock_fail_cycles,
+                    120
+                )
+
+            if stale_cycles >= 3:
+                _restart_nas_api("TikTok watcher bi ket, last_tick cach %d giay" % int(tick_age))
+            if lock_fail_cycles >= 3:
+                _restart_nas_api("Livestream lock bi ket lien tiep")
+        except Exception as e:
+            _add_system_log_once("nasapi_self_watchdog_exception", "ERROR", "NasAPI", "Self-watchdog loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
+        time.sleep(60)
 
 @app.route("/api/tiktok/live_watch", methods=["GET"])
 @requires_auth
@@ -9684,6 +10097,7 @@ def api_livestream_record():
         direct_tiktok_flv = False
         direct_output_file = ""
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        original_record_url = body.get("url", "").strip() or live_url
 
         # Xay dung lenh yt-dlp cho livestream
         format_str = "best"
@@ -9878,20 +10292,51 @@ username = sys.argv[1]
 out_file = sys.argv[2]
 cookies = sys.argv[3]
 ua = sys.argv[4]
+initial_url = sys.argv[5] if len(sys.argv) > 5 else ""
 
-def get_flv():
+def extract_media_urls(html):
+    urls = []
+    text = (html or "")[:786432]
+    for pat in (
+        r'\\\\"flv\\\\":\\\\"(https://[^"\\\\\\\\]+)',
+        r'\\"flv\\":\\"(https://[^"\\\\]+)',
+        r'\\\\"hls_pull_url\\\\":\\\\"(https://[^"\\\\\\\\]+)',
+        r'\\"hls_pull_url\\":\\"(https://[^"\\\\]+)',
+        r'https:\\\\/\\\\/[^"\\\\]{1,2000}?\\.m3u8[^"\\\\]{0,2000}',
+        r'https://[^"\\\\<>\\s]{1,2000}?\\.m3u8[^"\\\\<>\\s]{0,2000}',
+        r'https:\\\\/\\\\/[^"\\\\]{1,2000}?\\.flv[^"\\\\]{0,2000}',
+        r'https://[^"\\\\<>\\s]{1,2000}?\\.flv[^"\\\\<>\\s]{0,2000}',
+    ):
+        for u in re.findall(pat, text):
+            u = u.replace("\\\\u0026", "&").replace("\\\\/", "/")
+            if "only_audio=1" not in u and u not in urls:
+                urls.append(u)
+    def rank(u):
+        ul = u.lower()
+        if "_hd.flv" in ul: return 0
+        if "_ld.flv" in ul: return 1
+        if ".m3u8" in ul: return 2
+        if "_sd.flv" in ul: return 3
+        return 9
+    return sorted(urls, key=rank)
+
+def get_media_url():
+    global initial_url
+    if initial_url:
+        url = initial_url
+        initial_url = ""
+        return url
     cmd = ["curl", "-4", "-s", "-L", "--max-time", "8", "-A", ua, "-H", "Referer: https://www.tiktok.com/"]
     if os.path.exists(cookies): cmd.extend(["-b", cookies])
     cmd.append("https://www.tiktok.com/@%s/live" % username)
     try:
         html = subprocess.check_output(cmd, timeout=15).decode('utf-8', errors='ignore')
-        m = re.search(r'\\\\"flv\\\\":\\\\"(https://[^"\\\\\\\\]+)', html)
-        if not m: m = re.search(r'\\"flv\\":\\"(https://[^"\\\\]+)', html)
-        if m: return m.group(1).replace("\\\\u0026", "&")
+        urls = extract_media_urls(html)
+        if urls: return urls[0]
     except: pass
     return ""
 
-MAX_WAIT_NO_DATA = 120
+MAX_WAIT_NO_DATA = 45
 START_TIME = time.time()
 
 fail_count = 0
@@ -9904,32 +10349,41 @@ while True:
         except Exception:
             pass
         break
-    flv = get_flv()
-    if not flv:
+    media_url = get_media_url()
+    if not media_url:
         fail_count += 1
-        if fail_count > 3: break
+        if fail_count > 2: break
         time.sleep(10)
         continue
     fail_count = 0
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
-    cmd.extend(["-headers", "Referer: https://www.tiktok.com/\\r\\n"])
-    cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
-    tmp_chunk = "/tmp/livestream_tmp_" + os.path.basename(out_file) + ".tmpchunk"
-    try:
-        with open(tmp_chunk, "wb") as f:
-            subprocess.run(cmd, stdout=f, stderr=sys.stderr)
-        chunk_size = os.path.getsize(tmp_chunk) if os.path.exists(tmp_chunk) else 0
-        if chunk_size > 0:
-            has_data = True
-            with open(out_file, "ab") as fout:
-                with open(tmp_chunk, "rb") as fin:
-                    shutil.copyfileobj(fin, fout)
-    finally:
+    cookie_header = ""
+    if os.path.exists(cookies):
         try:
-            if os.path.exists(tmp_chunk):
-                os.remove(tmp_chunk)
-        except Exception:
-            pass
+            with open(cookies, "r") as cf:
+                for line in cf:
+                    if not line.startswith("#") and line.strip():
+                        parts = line.strip().split("\t")
+                        if len(parts) >= 7 and parts[5] == "ttwid":
+                            cookie_header = "Cookie: ttwid=%s" % parts[6] + chr(13) + chr(10)
+                            break
+        except Exception: pass
+    crlf = chr(13) + chr(10)
+    cmd.extend(["-headers", "Referer: https://www.tiktok.com/" + crlf + cookie_header])
+    cmd.extend(["-i", media_url, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
+    try:
+        before_size = os.path.getsize(out_file) if os.path.exists(out_file) else 0
+        with open(out_file, "ab") as f:
+            proc = subprocess.run(cmd, stdout=f, stderr=sys.stderr)
+        after_size = os.path.getsize(out_file) if os.path.exists(out_file) else 0
+        if after_size > before_size:
+            has_data = True
+        else:
+            fail_count += 1
+            if (not has_data) and (proc.returncode != 0 or fail_count > 2):
+                break
+    finally:
+        pass
     time.sleep(3)
 """
             wrapper_path = os.path.join("/tmp", "loop_%s.py" % timestamp_str)
@@ -9943,7 +10397,8 @@ while True:
                 watch_username or original_record_url.split("@")[-1].split("/")[0],
                 direct_output_file,
                 cookies_path,
-                tiktok_user_agent
+                tiktok_user_agent,
+                live_url
             ]
         else:
             # Truong hop fallback: live_url co the la URL FLV CDN da scrape ra,
@@ -9965,7 +10420,6 @@ while True:
         if tmp_dir and cmd and cmd[0] == ytdlp_bin:
             cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
 
-        original_record_url = body.get("url", "").strip() or live_url
         recording_key = _livestream_recording_key(platform, original_record_url, stable_id or watch_username)
         with _livestream_lock:
             existing_job_id, existing_info = _livestream_active_job_for_key_locked(recording_key)
@@ -10042,10 +10496,17 @@ while True:
             }
             _livestream_starting_claims.pop(recording_key, None)
             claimed_recording_key = ""
+            start_info = dict(_livestream_jobs[job_id])
 
         # T?m dùng thumbnail generator de nhuong CPU/IO cho viec ghi livestream.
         # Watchdog se tu dong bo chan khi không cần luồng nao dang ghi.
         _set_thumbnail_auto_block("livestream", True)
+        display_source = "@%s" % watch_username if watch_username else (stable_id or platform)
+        _log_livestream_event(
+            "INFO", job_id, start_info,
+            "Bat dau ghi livestream %s cho %s; quality=%s; log=%s" % (platform, display_source, quality, log_file),
+            "start"
+        )
 
         # Ghi log h? thỏng
         try:
@@ -10082,6 +10543,7 @@ while True:
             except Exception:
                 pass
         log.error("[Livestream] Lỗi bắt đầu ghi hình: %s", e)
+        _add_system_log("ERROR", "Livestream", "Khong bat dau duoc ghi livestream: %s" % normalize_vietnamese_message(str(e))[:240])
         return jsonify({"error": "Không bắt đầu được ghi livestream: %s" % normalize_vietnamese_message(str(e))}), 500
 
 
@@ -10161,6 +10623,20 @@ def api_livestream_status():
                     status = "finished"
                 updates[jid]["status"] = status
                 updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                if status == "error":
+                    _log_livestream_event(
+                        "ERROR", jid, info,
+                        "Tien trinh ghi da dung voi file khong hop le; dung luong=%s; log=%s" % (
+                            format_bytes(file_size), info.get("log_file", "")
+                        ),
+                        "status_error"
+                    )
+                else:
+                    _log_livestream_event(
+                        "SUCCESS", jid, info,
+                        "Tien trinh ghi ket thuc; dung luong=%s; file=%s" % (format_bytes(file_size), output_file),
+                        "status_finished"
+                    )
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
@@ -10179,9 +10655,6 @@ def api_livestream_status():
             if jid not in updates: updates[jid] = {}
             updates[jid]["error_reason"] = error_reason
 
-        # Chi dua vao danh sach hien thi neu: khong phai "recording", hoac da co file > 0B
-        if status == "recording" and file_size == 0:
-            continue
         result_jobs.append({
             "job_id": jid,
             "url": info.get("url", ""),
@@ -10195,24 +10668,26 @@ def api_livestream_status():
             "duration_display": "%dh%02dm%02ds" % (duration_sec // 3600, (duration_sec % 3600) // 60, duration_sec % 60),
             "started_ts": started_ts,
             "avg_speed": avg_speed,
-            "error_reason": error_reason
+            "error_reason": error_reason,
+            "watch_username": info.get("watch_username", ""),
+            "recording_key": info.get("recording_key", "")
         })
+
+    try:
+        live_count = sum(1 for j in result_jobs if j["status"] == "recording")
+        total_users = len(_tiktok_watch_state.get("users", []))
+        if total_users > 0:
+            _tiktok_watch_runtime["last_summary"] = (
+                "Đã kiểm tra %d user, %d đang ghi, 0 vừa mới bắt đầu." % (total_users, live_count)
+            )
+    except Exception:
+        pass
 
     if updates:
         with _livestream_lock:
             for jid, up in updates.items():
                 if jid in _livestream_jobs:
                     _livestream_jobs[jid].update(up)
-        # Cap nhat lai last_summary trong watchdog runtime khi phat hien recording chet
-        try:
-            live_count = sum(1 for j in result_jobs if j["status"] == "recording")
-            total_users = len(_tiktok_watch_state.get("users", []))
-            if total_users > 0:
-                _tiktok_watch_runtime["last_summary"] = (
-                    "Đã kiểm tra %d user, %d đang ghi, 0 vừa mới bắt đầu." % (total_users, live_count)
-                )
-        except Exception:
-            pass
 
     return jsonify({"jobs": result_jobs})
 
@@ -10391,6 +10866,7 @@ def api_ytdlp_download():
                 "folder": dest_dir,
                 "pid": proc.pid,
                 "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "log_file": log_file,
                 "tmp_dir": tmp_dir
             }
         _set_thumbnail_auto_block("ytdlp", True)
@@ -10433,6 +10909,26 @@ def api_ytdlp_status():
             except Exception:
                 pass
             if not is_running:
+                reason = ""
+                log_file = info.get("log_file", "")
+                if log_file and os.path.exists(log_file):
+                    try:
+                        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                            reason = "".join(f.readlines()[-8:])[-500:]
+                    except Exception:
+                        reason = ""
+                _add_system_log_once(
+                    "ytdlp_done:%s" % jid,
+                    "INFO" if not reason else "WARNING",
+                    "SocialExtract",
+                    "Tac vu yt-dlp ket thuc pid=%s url=%s folder=%s%s" % (
+                        pid,
+                        info.get("url", "")[:120],
+                        info.get("folder", ""),
+                        ("; log tail=%s" % reason.strip()) if reason else ""
+                    ),
+                    600
+                )
                 _cleanup_job_tmp(info.get("tmp_dir", ""))
                 _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
                 del _ytdlp_jobs[jid]
@@ -10560,6 +11056,8 @@ if __name__ == "__main__":
     # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
     threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
+    threading.Thread(target=_nas_api_self_watchdog, daemon=True, name="NasApiSelfWatchdog").start()
+    log.info("[NasAPI] Self-watchdog tu restart da khoi dong.")
     # ============ TOI UU HOA CUC DAI: WAITRESS MULTI-THREAD ============
     def run_flask():
         try:

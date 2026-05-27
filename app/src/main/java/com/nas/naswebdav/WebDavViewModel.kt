@@ -941,7 +941,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .post(requestBody)
                     .build()
                 localApiClient.newCall(request).execute().use { }
-            }
+            } catch (_: Exception) { }
+        }
+    }
 
     fun fetchThumbnailAudit() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -949,11 +951,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val port = 5050
                 val apiUrl = "http://$host:$port/api/thumbnail/audit"
+                
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
+                
                 val request = okhttp3.Request.Builder()
                     .url(apiUrl)
-                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPassword))
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
                     .build()
-                webDavManager.client.newCall(request).execute().use { response ->
+                localApiClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val body = response.body?.string() ?: "{}"
                         val obj = org.json.JSONObject(body)
@@ -977,18 +983,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val port = 5050
                 val apiUrl = "http://$host:$port/api/thumbnail/trigger"
-                val body = okhttp3.RequestBody.create(null, ByteArray(0))
+                
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
+                
+                val body = "".toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
                     .url(apiUrl)
                     .post(body)
-                    .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPassword))
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
                     .build()
-                webDavManager.client.newCall(request).execute().close()
+                localApiClient.newCall(request).execute().use { }
                 kotlinx.coroutines.delay(1000)
                 fetchThumbnailAudit()
             } catch (e: Exception) { e.printStackTrace() }
-        }
-    } catch(e: Exception) {}
         }
     }
 
@@ -1520,6 +1528,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         
                         var hasNewJobs = false
                         var hasRecordingJobs = false
+                        val serverRecordingIds = mutableSetOf<String>()
                         for (i in 0 until jobsArray.length()) {
                             val jobObj = jobsArray.getJSONObject(i)
                             val status = jobObj.optString("status", "")
@@ -1528,6 +1537,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             
                             if (status == "recording" && jobId.isNotEmpty()) {
                                 hasRecordingJobs = true
+                                serverRecordingIds.add(jobId)
                                 val watchUser = jobObj.optString("watch_username", "")
                                 val durationSeconds = jobObj.optLong("duration_seconds", 0L)
                                 val startedTs = jobObj.optLong("started_ts", 0L)
@@ -1565,6 +1575,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             } else if (jobId.isNotEmpty()) {
                                 LivestreamMonitorWorker.cancelJob(context, jobId)
                             }
+                        }
+                        withContext(Dispatchers.Main) {
+                            activeLivestreams.removeAll { it.jobId !in serverRecordingIds }
                         }
                         if (!hasRecordingJobs) {
                             LivestreamMonitorWorker.cancelAll(context)

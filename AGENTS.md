@@ -1,13 +1,13 @@
 <claude-mem-context>
 # Memory Context
 
-# [NASWebDAV] recent context, 2026-05-26 7:17pm GMT+7
+# [NASWebDAV] recent context, 2026-05-27 4:14pm GMT+7
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (17.427t read) | 120.258t work | 86% savings
+Stats: 50 obs (19.672t read) | 720.260t work | 97% savings
 
 ### May 23, 2026
 S27 Continue NASWebDAV work from commit a30fc895558ebb01f995c3ee50cbd731daac80ab (May 23, 6:29 PM)
@@ -21,31 +21,7 @@ S51 Tiếp tục công việc — resume ongoing multi-agent parallel task (May 
 S52 Fix Import USB hang bug + enforce Vietnamese diacritical marks across entire codebase (70+ violations in 13 files) (May 25, 6:18 PM)
 S53 Fix Import USB hang bug + enforce Vietnamese diacritical marks across entire codebase — COMPLETED ✅ (May 25, 6:27 PM)
 ### May 26, 2026
-488 12:16p 🔴 nas_api_server.py: True Conflict/Error Counts Now Written at Every State Update Point
-489 " 🔴 nas_api_server.py: Periodic Batch Flush and Conflict-Resolution Handler Also Fixed for Count/Visibility
-490 12:17p 🔴 Dialogs.kt: Conflict Region Gated on Terminal Status; Layout Height Changed from fillMaxHeight to heightIn
-491 12:21p 🔴 NAS Copy Speed Degradation: Three Root Causes Identified and Fixed
-492 12:22p 🔵 NASWebDAV Android App: Kotlin Build Clean, Numerous Deprecation Warnings Pending
-493 12:23p ✅ NASWebDAV Debug APK Built and Deployed to Device via ADB over Network
-494 " 🔵 Git Diff Confirms Change Scope: nas_api_server.py +21/-10, Dialogs.kt +2/-2
-495 12:24p 🔴 USB Import State: Decouple Count Fields from List Storage to Avoid Large State Payloads During Copy
-496 " ✅ Committed: "Delay USB import conflict actions until completion" on branch codex/c
-497 " ✅ Commit Hash for "Delay USB import conflict actions until completion": 9c58935
-498 " ✅ Pushed to Remote Branch codex/continue-fc44cae
-499 12:25p ✅ nas_api_server.py Deployed to NAS Server via SCP
-500 " 🔵 NAS Server Restart: PID File Not Written After Deployment
-501 12:26p ✅ NAS API Server v9c58935 Running on Chainedbox L1 Pro — All Subsystems Up
-502 12:48p ⚖️ File Copy System: One-Time Full Scan with Checkpoint Resume and Post-Copy Cleanup
-503 12:49p 🔵 USB Import Copy Engine: Existing Implementation in nas_api_server.py
-504 " 🔵 USB Import State Structure: seen_devices, session_id Derivation, and Auto-Trigger Logic
-505 12:50p 🟣 USB Import: Persistent Plan File System for One-Time Scan, Resume, and Post-Copy Cleanup
-506 " 🔴 apply_patch Failed on CRLF+UTF-8 File: Split Into Smaller Patches to Work Around Encoding Mismatch
-507 " 🔴 Plan File Functions Successfully Patched by Anchoring on def Line Instead of Vietnamese Comment
-508 12:51p 🔴 Plan Helper Functions Inserted by Keeping Old Stub Intact, Adding New Functions After It
-509 " 🔵 _format_bytes Function Referenced in New Plan Code But Does Not Exist in nas_api_server.py
-510 12:52p 🔴 Added _usb_import_format_bytes Helper and Fixed NameError in Scan Progress Message
-511 " 🟣 _usb_import_copy_tree Wired to Plan File System: scan_files Replaced, Resume Index Restored
-512 " 🔵 Copy Loop in _usb_import_copy_tree Still Uses os.walk — _usb_import_iter_plan Not Yet Wired In
+512 12:52p 🔵 Copy Loop in _usb_import_copy_tree Still Uses os.walk — _usb_import_iter_plan Not Yet Wired In
 513 12:53p 🟣 Copy Loop Replaced: os.walk Swapped for _usb_import_iter_plan with Per-File plan_index Persistence
 514 " 🔴 os.walk Copy Loop Replacement Patch Failed Again Due to Vietnamese Text Encoding in Cancel Messages
 515 " 🔴 Heredoc Syntax Fails in PowerShell: << Operator Not Supported for Inline Python Scripts
@@ -71,6 +47,31 @@ S53 Fix Import USB hang bug + enforce Vietnamese diacritical marks across entire
 535 1:01p ✅ Second git add Staged 13 Additional Lines — Conflict/Error Preservation Not Included in First Commit
 536 " ✅ Second Commit "Persist USB import scan plan for resume" Finalizes All Plan File Changes to Git
 537 " ✅ USB Import Plan File Feature Pushed to Remote — HEAD a0411f2 on codex/continue-fc44cae
+538 7:19p 🔵 LivestreamMonitorWorker Architecture Review
+539 " 🔵 LivestreamViewModel Dual-Layer Session Tracking Logic
+540 " 🔵 Session Persistence Causes Stale "Recording" State After App Restart
+541 " 🔵 Auto-Requeue Logic in pollNasStatus Found
+542 " 🔵 SMART BottomSheet Has Trailing Spacer at Bottom
+543 7:22p 🔵 SmartDetailContent Full Structure Confirmed for Bottom Spacer Removal
+544 " 🔴 LivestreamViewModel: Fixed Stale "Recording" Sessions on App Restart
+545 " 🔴 SmartScreen: Removed Excess Bottom Whitespace in SMART BottomSheet
+546 7:23p 🔵 LivestreamDiscoveryWorker: 15-Minute Periodic Background Recovery
+547 " 🔵 WebDavViewModel Has Parallel Duplicate Livestream State Tracking
+548 " 🔵 NAS API Status Endpoint Validates Process Liveness on Each Request
+549 " 🔵 SmartDetailBottomSheet in MainMenuScreen Has fillMaxHeight(0.94f) Causing Bottom Whitespace
+550 " 🔵 NAS TikTok Watchdog Summary String Format Matches Android UI Regex
+551 7:25p 🔵 Root Cause Confirmed: "Đang Ghi" Shows Stale TikTok Watchdog Snapshot, Not Live State
+552 " 🔵 SmartDetailBottomSheet fillMaxHeight(0.94f) Confirmed as Bottom Whitespace Cause in MainMenuScreen
+553 " 🔵 syncLivestreamStateWithServer Called From Multiple Entry Points Including LaunchedEffect
+554 7:29p 🔵 TikTok Watch Concurrency Capped at 1 Worker on ARM NAS
+555 " 🔵 TikTok Recording Job Liveness Check Uses os.kill(pid, 0)
+556 " 🔵 Android Livestream State Uses Two-Phase Sync: WorkManager Then NAS API
+557 7:30p 🔴 Removed fillMaxHeight(0.94f) Constraint from SmartDetailBottomSheet Column
+558 " 🔴 SmartDetailBottomSheet LazyColumn Switched from weight(1f) to heightIn(max=500.dp)
+559 7:31p 🔵 Livestream Status API Uses 150KB File Size Threshold to Classify Dead Jobs
+### May 27, 2026
+560 2:24p 🔵 Livestream Recording Bug: Stops After ~10s, No Error, Live Detection Failing
+561 2:25p 🔵 Root Cause Analysis: Livestream Recording Stops After ~10s + Watcher Not Detecting Live Users
 
-Access 120k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 720k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>
