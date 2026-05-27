@@ -486,6 +486,19 @@ fun MainMenuScreen(
                             }
                         }
                     }
+                    
+                    // Nút Lịch sử quét
+                    TextButton(
+                        onClick = {
+                            showDuplicateScanDialog = false
+                            viewModel.loadDuplicateResultsFromCache(mContext)
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    ) {
+                        Icon(Icons.Default.History, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Mở lại kết quả quét gần nhất", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             confirmButton = {

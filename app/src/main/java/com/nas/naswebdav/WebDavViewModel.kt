@@ -602,6 +602,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         scanDuplicatesIsPaused = false
         androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
         isWorkerRunning = false
+        scanJob?.cancel() // Huỷ luồng theo dõi trạng thái Worker
         isScanningDuplicates = false // Đóng panel tiến trình
         duplicateFilesList = emptyList() // Xoá danh sách kết quả (nếu có) để ẩn card Tác vụ nền
         

@@ -112,6 +112,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             try {
                 val trashItems = webDavManager.listFiles(trashUrl)
                 for (item in trashItems) {
+                    if (!isActive) break
                     if (now - item.lastModified > sevenDaysInMillis) {
                         webDavManager.deleteFile(item.path)
                     }
@@ -255,6 +256,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                     } else if (nextKey == "files") {
                                         reader.beginArray()
                                         while (reader.hasNext()) {
+                                            if (!isActive) break // Thoát ngay nếu bị huỷ
                                             reader.beginObject()
                                             var name = ""
                                             var path = ""
@@ -381,6 +383,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         
                         val currentFolders = mutableListOf<String>()
                         while (folderQueue.isNotEmpty()) {
+                        if (!isActive) break
                             folderQueue.poll()?.let { currentFolders.add(it) }
                         }
                         
@@ -399,6 +402,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             val localBatch = mutableListOf<CachedFile>()
                                             
                                             for (file in files) {
+                            if (!isActive) break
                                                 totalFilesIndexed.incrementAndGet()
                                                 currentFileName.set(file.name)
         
@@ -515,6 +519,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     val chunkedSizes = duplicateSizes.chunked(BATCH_SIZE)
                     
                     for (batchSizes in chunkedSizes) {
+                        if (!isActive) break
                         while (DuplicateProgressState.isPaused.value) { delay(500) }
                         
                         // 1. Tải 50 nhóm file trong 1 truy vấn SQL duy nhất (Giảm 50x CSDL)
@@ -534,6 +539,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                             if (anchorFile != null) {
                                 val anchorFP = anchorFile.imageFingerprint ?: continue
                                 for (file in group) {
+                                if (!isActive) break
                                     val cachedHash = db.hashCacheDao().getHash(file.path, file.contentLength, file.lastModified)
                                     if (cachedHash != null) {
                                         pendingHashUpdates.add(Pair(file.path, cachedHash))
@@ -565,6 +571,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         if (filesNeedHash.isNotEmpty()) {
                             if (isLightningMode) {
                                 for (file in filesNeedHash) {
+                            if (!isActive) break
                                     val pseudoHash = "LGH_${file.contentLength}_${file.lastModified}"
                                     pendingHashUpdates.add(Pair(file.path, pseudoHash))
                                 }
