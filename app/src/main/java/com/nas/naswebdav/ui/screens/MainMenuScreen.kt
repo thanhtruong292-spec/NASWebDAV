@@ -1137,7 +1137,13 @@ fun MainMenuScreen(
                 viewModel.fetchUsbImportStatus()
                 showUsbImportDialog = true
             },
-            onOpenDuplicateScan = { if (viewModel.duplicateFilesList.isNotEmpty()) viewModel.isShowingDuplicates = true else showDuplicateScanDialog = true }
+            onOpenDuplicateScan = {
+                when {
+                    viewModel.isWorkerRunning || viewModel.isScanningDuplicates -> viewModel.isScanningDuplicates = true
+                    viewModel.duplicateFilesList.isNotEmpty() -> viewModel.isShowingDuplicates = true
+                    else -> showDuplicateScanDialog = true
+                }
+            }
         )
 
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
