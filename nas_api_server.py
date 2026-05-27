@@ -9786,7 +9786,7 @@ def api_livestream_record():
                 direct_output_file = ""
 
         if direct_tiktok_flv:
-            loop_script = """import sys, time, subprocess, re, os
+            loop_script = """import sys, time, subprocess, re, os, shutil
 username = sys.argv[1]
 out_file = sys.argv[2]
 cookies = sys.argv[3]
@@ -9804,8 +9804,19 @@ def get_flv():
     except: pass
     return ""
 
+MAX_WAIT_NO_DATA = 120
+START_TIME = time.time()
+
 fail_count = 0
+has_data = False
 while True:
+    if not has_data and (time.time() - START_TIME) > MAX_WAIT_NO_DATA:
+        try:
+            if os.path.exists(out_file) and os.path.getsize(out_file) == 0:
+                os.remove(out_file)
+        except Exception:
+            pass
+        break
     flv = get_flv()
     if not flv:
         fail_count += 1
@@ -9816,9 +9827,22 @@ while True:
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
     cmd.extend(["-headers", "Referer: https://www.tiktok.com/\\r\\n"])
     cmd.extend(["-i", flv, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
-    with open(out_file, "ab") as f:
-        import sys
-        subprocess.run(cmd, stdout=f, stderr=sys.stderr)
+    tmp_chunk = out_file + ".tmpchunk"
+    try:
+        with open(tmp_chunk, "wb") as f:
+            subprocess.run(cmd, stdout=f, stderr=sys.stderr)
+        chunk_size = os.path.getsize(tmp_chunk) if os.path.exists(tmp_chunk) else 0
+        if chunk_size > 0:
+            has_data = True
+            with open(out_file, "ab") as fout:
+                with open(tmp_chunk, "rb") as fin:
+                    shutil.copyfileobj(fin, fout)
+    finally:
+        try:
+            if os.path.exists(tmp_chunk):
+                os.remove(tmp_chunk)
+        except Exception:
+            pass
     time.sleep(3)
 """
             wrapper_path = os.path.join("/tmp", "loop_%s.py" % timestamp_str)
