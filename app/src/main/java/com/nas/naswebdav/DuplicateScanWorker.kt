@@ -223,8 +223,15 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         .header("Authorization", okhttp3.Credentials.basic(user, pass))
                         .build()
                     val client = NasApplication.instance.sharedHttpClient
-
-                    client.newCall(request).execute().use { response ->
+                    val call = client.newCall(request)
+                    val cancelJob = launch {
+                        while (isActive) {
+                            if (isStopped) { call.cancel(); break }
+                            kotlinx.coroutines.delay(1000)
+                        }
+                    }
+                    try {
+                        call.execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             try {
                                 val reader = android.util.JsonReader(java.io.InputStreamReader(response.body?.byteStream() ?: return@use, "UTF-8"))
@@ -273,7 +280,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             }
                                             reader.endObject()
 
-                                            val fullUrl = currentUrl.trimEnd('/') + (if (path.startsWith("/")) path else "/$path")
+                                            val parsedCurrentUrl = java.net.URL(currentUrl)
+                                            val webDavBaseUrl = "${parsedCurrentUrl.protocol}://${parsedCurrentUrl.authority}"
+                                            val encodedPath = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+                                            val fullUrl = webDavBaseUrl + (if (encodedPath.startsWith("/")) encodedPath else "/$encodedPath")
                                             val parentUrl = fullUrl.substringBeforeLast("/") + "/"
                                             val parentFolderName = parentUrl.trimEnd('/').substringAfterLast("/")
 
@@ -341,6 +351,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                 SystemLogger.log("WARNING", "IndexEngine", "Lỗi giải mã luồng JSON: ${e.message}")
                             }
                         }
+                    }
+                    } finally {
+                        cancelJob.cancel()
                     }
                 } catch (e: Exception) {
                     SystemLogger.log("WARNING", "IndexEngine", "Phương thức Fast-Path không khả dụng, chuyển sang dự phòng WebDAV: ${e.message}")
@@ -595,7 +608,15 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                         .header("Authorization", okhttp3.Credentials.basic(user, pass))
                                         .post(requestBody)
                                         .build()
-                                    client.newCall(request).execute().use { response ->
+                                    val call = client.newCall(request)
+                                    val cancelJob = launch {
+                                        while (isActive) {
+                                            if (isStopped) { call.cancel(); break }
+                                            kotlinx.coroutines.delay(1000)
+                                        }
+                                    }
+                                    try {
+                                        call.execute().use { response ->
                                         if (response.isSuccessful) {
                                             val responseBody = response.body?.string() ?: "{}"
                                             val resultObj = org.json.JSONObject(responseBody)
@@ -619,6 +640,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                 }.awaitAll()
                                             }
                                         }
+                                    }
+                                    } finally {
+                                        cancelJob.cancel()
                                     }
                                 } catch (e: Exception) {
                                     // SONG SONG HOA fallback

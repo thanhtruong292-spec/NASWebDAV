@@ -4887,7 +4887,7 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                                 ) {
                                     Column(Modifier.padding(12.dp)) {
                                         Text(
-                                            text = "Nhóm ${group.size} tệp trùng lặp (${group.first().contentLength / 1024} KB)",
+                                            text = "Nhóm ${group.size} tệp trùng lặp (${android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, group.first().contentLength)})",
                                             style = MaterialTheme.typography.labelLarge,
                                             color = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.padding(bottom = 8.dp)
