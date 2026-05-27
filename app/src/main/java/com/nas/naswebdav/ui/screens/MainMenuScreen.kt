@@ -4816,7 +4816,7 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                     // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                     // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
                     val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                        viewModel.duplicateFilesList.groupBy { it.contentLength }.values.filter { it.size >= 2 }.toList()
+                        viewModel.duplicateFilesList.groupBy { it.partialHash ?: "${it.contentLength}_${it.name}" }.values.filter { it.size >= 2 }.toList()
                     }
 
                     // ═══ BỘ LỌC NHANH ═══
@@ -4879,7 +4879,7 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                         }
 
                         androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
-                            items(items = filteredGroups, key = { it.first().contentLength }) { group ->
+                            items(items = filteredGroups, key = { it.first().partialHash ?: "${it.first().contentLength}_${it.first().name}" }) { group ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.2f)),
@@ -4955,7 +4955,8 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                                                             overflow = TextOverflow.Ellipsis,
                                                             lineHeight = 10.sp
                                                         )
-                                                        val parentFolder = dupFile.path.substringBeforeLast("/").substringAfterLast('/')
+                                                        val decodedPath = java.net.URLDecoder.decode(dupFile.path, "UTF-8")
+                                                        val parentFolder = decodedPath.substringAfter("/webdav/").substringBeforeLast("/")
                                                         Text(
                                                             text = "📁 $parentFolder",
                                                             fontSize = 7.sp,
