@@ -3830,6 +3830,22 @@ def _data_flow_snapshot():
                     })
     except Exception:
         pass
+    try:
+        with _thumb_stats_lock:
+            if _thumb_stats.get("running"):
+                file_label = _thumb_stats.get("last_file", "")
+                if "/" in file_label:
+                    file_label = file_label.split("/")[-1]
+                prog = 0
+                if _thumb_stats.get("total_in_batch", 0) > 0:
+                    prog = int((_thumb_stats.get("generated", 0) + _thumb_stats.get("errors", 0)) * 100 / _thumb_stats.get("total_in_batch", 1))
+                current_tasks.append({
+                    "type": "thumbnail", "label": "Tạo ảnh thu nhỏ",
+                    "file": file_label, "source": "",
+                    "dest": "", "speed_bps": 0, "progress": prog,
+                })
+    except Exception:
+        pass
     return {
         "ts": int(now), "device": "/dev/%s" % devname,
         "disk_read_bps": read_bps, "disk_write_bps": write_bps,
