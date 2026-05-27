@@ -266,6 +266,11 @@ fun MainMenuScreen(
     // STATE CHO DANH SÁCH TIẾN TRÌNH
     var showProcessDialog by remember { mutableStateOf(false) }
     var processSortType by remember { mutableStateOf("cpu") }
+
+    // STATE CHO QUÉT TRÙNG LẶP (từ màn hình chính)
+    var showDuplicateScanDialog by remember { mutableStateOf(false) }
+    var dupScanLightningMode by remember { mutableStateOf(true) }
+    var dupScanForceRestart by remember { mutableStateOf(false) }
     var showSmartDialog by remember { mutableStateOf(false) }
 
     // STATE CHO WAKE-ON-LAN
@@ -420,6 +425,81 @@ fun MainMenuScreen(
             viewModel = viewModel,
             sortBy = processSortType,
             onDismiss = { showProcessDialog = false }
+        )
+    }
+
+    // DIALOG CẤU HÌNH QUÉT TRÙNG LẶP — từ màn hình chính
+    if (showDuplicateScanDialog) {
+        AlertDialog(
+            onDismissRequest = { showDuplicateScanDialog = false },
+            icon = { Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(36.dp)) },
+            title = { Text("Quét tệp trùng lặp", fontWeight = FontWeight.Bold, color = TextPrimary) },
+            containerColor = Color(0xFF1A1A2E),
+            textContentColor = TextPrimary,
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Hệ thống sẽ quét toàn bộ NAS và phát hiện tệp có nội dung giống nhau.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+
+                    // Option 1: Lightning Mode
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { dupScanLightningMode = !dupScanLightningMode },
+                        color = if (dupScanLightningMode) Color(0xFFFFC107).copy(alpha = 0.1f) else Color(0xFF222233),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = dupScanLightningMode,
+                                onCheckedChange = { dupScanLightningMode = it },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
+                            )
+                            Column(Modifier.padding(start = 6.dp)) {
+                                Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    color = if (dupScanLightningMode) Color(0xFFFFC107) else TextPrimary)
+                                Text("Bỏ qua hash nội dung, dùng ETag. Nhanh hơn 100×, phù hợp 500k+ tệp.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
+                            }
+                        }
+                    }
+
+                    // Option 2: Force Restart
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { dupScanForceRestart = !dupScanForceRestart },
+                        color = if (dupScanForceRestart) Color(0xFFEF5350).copy(alpha = 0.1f) else Color(0xFF222233),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = dupScanForceRestart,
+                                onCheckedChange = { dupScanForceRestart = it },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFEF5350))
+                            )
+                            Column(Modifier.padding(start = 6.dp)) {
+                                Text("Quét lại từ đầu", fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                    color = if (dupScanForceRestart) Color(0xFFEF5350) else TextPrimary)
+                                Text("Bỏ qua lịch sử lưu tạm, thực hiện quét hoàn toàn mới.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDuplicateScanDialog = false
+                        viewModel.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
+                        viewModel.isScanningDuplicates = true
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29B6F6))
+                ) {
+                    Icon(Icons.Default.Search, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Bắt đầu quét", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDuplicateScanDialog = false }) {
+                    Text("Hủy", color = TextSecondary)
+                }
+            }
         )
     }
     if (showSmartDialog) {
@@ -588,6 +668,7 @@ fun MainMenuScreen(
             "log" -> { viewModel.loadSystemLogs(); viewModel.showLogDialog = true }
             "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
             "smb" -> { viewModel.fetchSmbStatus(); showSmbDialog = true }
+            "duplicate" -> showDuplicateScanDialog = true
         }
     }
 
@@ -3019,10 +3100,7 @@ fun SystemStatusCards(
                         if (showThumbTask && thumbIsActive) {
                             Spacer(Modifier.height(10.dp))
                             Row(
-                                modifier = Modifier.fillMaxWidth().clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) { onOpenDuplicateScan() },
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
@@ -3031,18 +3109,62 @@ fun SystemStatusCards(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Tạo ảnh thu nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text(when { viewModel.thumbPaused -> "Đã tạm dừng"; viewModel.thumbRunning -> "🟢 Đang thực thi"; else -> "💤 Tạm nghỉ" }, fontSize = 11.sp, color = when { viewModel.thumbPaused -> Color(0xFFFFA726); viewModel.thumbRunning -> Color(0xFF66BB6A); else -> TextSecondary })
+                                    Text(
+                                        when {
+                                            viewModel.thumbPaused -> "⏸ Tạm dừng"
+                                            viewModel.thumbRunning -> "🟢 Đang tạo thumbnail"
+                                            else -> "💤 Tạm nghỉ"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = when {
+                                            viewModel.thumbPaused -> Color(0xFFFFA726)
+                                            viewModel.thumbRunning -> Color(0xFF66BB6A)
+                                            else -> TextSecondary
+                                        }
+                                    )
                                 }
                                 if (viewModel.thumbRunning || viewModel.thumbPaused) {
-                                    IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) { Icon(if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp)) }
+                                    IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
+                                        Icon(
+                                            if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                            null,
+                                            tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
-                                IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp)) }
+                                IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
+                                    Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                                }
                             }
-                            Spacer(Modifier.height(10.dp))
-                            LinearProgressIndicator(progress = { (thumbPercent / 100f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFFAB47BC), trackColor = Color(0xFF161616))
+                            // Chi tiết thumbnail
+                            if (viewModel.thumbLastFile.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "🖼 Tệp: ${viewModel.thumbLastFile.substringAfterLast("/")}",
+                                    fontSize = 10.sp, color = Color(0xFFAB47BC).copy(alpha = 0.85f),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(start = 50.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { (thumbPercent / 100f).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFFAB47BC), trackColor = Color(0xFF161616)
+                            )
                             Spacer(Modifier.height(6.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("${viewModel.thumbGenerated} / ${viewModel.thumbTotal}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+                                // Số thumbnail đã tạo / tổng
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("✓ Đã tạo:", fontSize = 10.sp, color = TextSecondary)
+                                    Text("${viewModel.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                    Text("/ ${viewModel.thumbTotal}", fontSize = 10.sp, color = TextSecondary)
+                                    val thumbMissing = viewModel.thumbTotal - viewModel.thumbGenerated
+                                    if (thumbMissing > 0) {
+                                        Text("• Còn ${thumbMissing} thiếu", fontSize = 10.sp, color = Color(0xFFFFA726))
+                                    }
+                                }
                                 Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFAB47BC))
                             }
                         }
@@ -3053,6 +3175,13 @@ fun SystemStatusCards(
 
                         // --- DUPLICATE QUÉT ---
                         if (dupIsActive) {
+                            // Helper format time
+                            fun fmtMs(ms: Long): String {
+                                if (ms < 0) return "--:--"
+                                val s = ms / 1000
+                                val m = s / 60; val sec = s % 60
+                                return "%02d:%02d".format(m, sec)
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(38.dp).background(Color(0xFF29B6F6).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
@@ -3060,7 +3189,8 @@ fun SystemStatusCards(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text(if (dupIsPaused) "⏸ Đã tạm dừng" else (if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét"), fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
+                                    val dupStatusLabel = if (dupIsPaused) "⏸ Đã tạm dừng" else if (!dupIsRunning) "Chuẩn bị..." else "🟢 Đang quét — Bước $dupStageNum/${dupTotalStages}"
+                                    Text(dupStatusLabel, fontSize = 11.sp, color = if (dupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
                                 }
                                 if (dupIsRunning || dupIsPaused) {
                                     IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
@@ -3071,12 +3201,62 @@ fun SystemStatusCards(
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(10.dp))
-                            LinearProgressIndicator(progress = { dupPercent.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = Color(0xFF29B6F6), trackColor = Color(0xFF161616))
+                            // Giai đoạn hiện tại
+                            if (dupStage.isNotBlank() && dupStage != "Khởi động...") {
+                                Spacer(Modifier.height(4.dp))
+                                Surface(
+                                    color = Color(0xFF29B6F6).copy(alpha = 0.1f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        dupStage,
+                                        fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF29B6F6),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            // Mô tả giai đoạn chi tiết
+                            if (dupStageDesc.isNotBlank()) {
+                                Text(
+                                    dupStageDesc,
+                                    fontSize = 10.sp, color = TextSecondary.copy(alpha = 0.85f),
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    lineHeight = 13.sp,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { dupPercent.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFF29B6F6), trackColor = Color(0xFF161616)
+                            )
                             Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("$dupStage", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-                                Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                            // Hàng thống kê: số tệp + trùng + thời gian
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("$dupScanned", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                                        Text("Tổng tệp", fontSize = 9.sp, color = TextSecondary)
+                                    }
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("$dupFound", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF5350))
+                                        Text("Trùng lặp", fontSize = 9.sp, color = TextSecondary)
+                                    }
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(fmtMs(dupElapsed), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                        Text("Thời gian", fontSize = 9.sp, color = TextSecondary)
+                                    }
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                                    if (dupEta >= 0) {
+                                        Text("᭠c tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = Color(0xFF4FC3F7))
+                                    }
+                                }
                             }
                         }
 
@@ -3747,7 +3927,8 @@ val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
     QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
     QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C))),
-    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00)))
+    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00))),
+    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(Color(0xFF29B6F6), Color(0xFF0277BD)))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
