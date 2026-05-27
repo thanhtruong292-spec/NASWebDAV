@@ -1137,7 +1137,7 @@ fun MainMenuScreen(
                 viewModel.fetchUsbImportStatus()
                 showUsbImportDialog = true
             },
-            onOpenDuplicateScan = { showProcessDialog = true }
+            onOpenDuplicateScan = { if (viewModel.duplicateFilesList.isNotEmpty()) viewModel.isShowingDuplicates = true else showDuplicateScanDialog = true }
         )
 
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
@@ -1718,7 +1718,7 @@ fun SettingsMenuCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(76.dp)
+            .height(64.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -3195,6 +3195,7 @@ fun SystemStatusCards(
 
                         // --- DUPLICATE QUÉT ---
                         if (dupIsActive) {
+                          Column(modifier = Modifier.fillMaxWidth().clickable { onOpenDuplicateScan() }.padding(vertical = 4.dp)) {
                             // Helper format time
                             fun fmtMs(ms: Long): String {
                                 if (ms < 0) return "--:--"
@@ -3274,11 +3275,12 @@ fun SystemStatusCards(
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
                                     if (dupEta >= 0) {
-                                        Text("᭠c tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = Color(0xFF4FC3F7))
+                                        Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = Color(0xFF4FC3F7))
                                     }
                                 }
                             }
                         }
+                          }
 
                         if (dupIsActive && (autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
                             HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
@@ -4841,31 +4843,45 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
 
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
     if (viewModel.isShowingDuplicates) {
-        AlertDialog(
-            // FIX YEU CAU NGUOI DUNG: Dialog ket qua KHONG DONG khi click ngoai hoac
-            // an app — chi cho dong khi user da xu ly het toan bo file trung lap
-            // (duplicateFilesList.isEmpty()). Tranh user vo tinh dong roi phai quet lai.
-            properties = androidx.compose.ui.window.DialogProperties(
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false
-            ),
-            onDismissRequest = { /* khong dong */ },
-            title = {
-                Column {
-                    Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
-                    // BỔ SUNG: Hiển thị tổng số file rác phát hiện được nếu danh sách không trống
-                    if (viewModel.duplicateFilesList.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Phát hiện ${viewModel.duplicateFilesList.size} tệp trùng lặp",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
+        val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { viewModel.isShowingDuplicates = false },
+            sheetState = sheetState,
+            containerColor = DarkSurface,
+            scrimColor = Color.Black.copy(alpha = 0.6f),
+            dragHandle = { DashboardCompactBottomSheetHandle() }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.92f)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                        if (viewModel.duplicateFilesList.isNotEmpty()) {
+                            Text(
+                                text = "Phát hiện ${viewModel.duplicateFilesList.size} tệp trùng lặp",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    if (viewModel.duplicateFilesList.isEmpty()) {
+                        TextButton(onClick = { viewModel.isShowingDuplicates = false; viewModel.selectedDuplicates.clear() }) { 
+                            Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) 
+                        }
+                    } else {
+                        if (viewModel.selectedDuplicates.isNotEmpty()) {
+                            TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
+                                Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
-            },
-            text = {
                 if (viewModel.duplicateFilesList.isEmpty()) {
                     Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
                 } else {
@@ -5028,36 +5044,10 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                             }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
-                    if (viewModel.selectedDuplicates.isNotEmpty()) {
-                        TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
-                            Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    // FIX YEU CAU: chi cho dong khi user da xu ly het file trung lap.
-                    // Khi list trong: hien "Hoan tat" mau xanh va dong dialog.
-                    if (viewModel.duplicateFilesList.isEmpty()) {
-                        TextButton(onClick = {
-                            viewModel.isShowingDuplicates = false
-                            viewModel.selectedDuplicates.clear()
-                        }) { Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) }
-                    } else {
-                        // Hint cho user biet phai xu ly het truoc khi dong duoc
-                        Text(
-                            "Còn ${viewModel.duplicateFilesList.size} tệp — tick chọn & xóa để đóng",
-                            fontSize = 11.sp,
-                            color = Color(0xFFFFA726),
-                            modifier = Modifier.padding(horizontal = 8.dp).align(Alignment.CenterVertically)
-                        )
-                    }
-                }
             }
-        )
+        }
     }
 
 
+}
 }

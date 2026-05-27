@@ -71,6 +71,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         } catch (_: Exception) {}
 
         val currentUrl = inputData.getString("currentUrl") ?: return@withContext Result.failure()
+        val forceRestart = inputData.getBoolean("forceRestart", false)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
         if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
@@ -350,7 +351,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     currentStage.set("Quét qua WebDAV")
                     stageDescription.set("API nội bộ không khả dụng, quét từng thư mục bằng giao thức Webdav")
                     val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>()
-                    val forceRestart = inputData.getBoolean("forceRestart", false)
                     val checkpoint = db.checkpointDao().getCheckpoint("DuplicateScan")
 
                     if (checkpoint != null && !forceRestart) {
