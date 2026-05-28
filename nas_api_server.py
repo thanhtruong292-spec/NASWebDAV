@@ -3729,7 +3729,9 @@ def _livestream_job_label(jid, info):
     return "%s pid=%s src=%s file=%s" % (jid, info.get("pid"), src, out)
 
 def _log_livestream_event(level, jid, info, message, once_key=""):
-    detail = "%s | %s" % (_livestream_job_label(jid, info), message)
+    user = info.get("watch_username", "") or ""
+    prefix = ("[@" + user + "] ") if user else "[Livestream] "
+    detail = prefix + message
     if once_key:
         _add_system_log_once("livestream:%s:%s" % (jid, once_key), level, "Livestream", detail, 600)
     else:
@@ -6697,6 +6699,19 @@ def api_system_logs():
     except Exception as e:
         return jsonify({"status": "error", "message": "Không tải được nhật ký hệ thống: %s" % normalize_vietnamese_message(str(e))}), 500
 
+@app.route("/api/system_logs/clear", methods=["POST"])
+def api_system_logs_clear():
+    """Xoa toan bo nhat ky he thong tren NAS."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM system_logs")
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "success", "message": "Đã dọn sạch nhật ký trên NAS."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": "Lỗi xóa nhật ký trên NAS: %s" % normalize_vietnamese_message(str(e))}), 500
+
 
 # ============ SMART PHOTOS (GALLERY KHAM PHA) ============
 # Phan loai ảnh nh? theo cau truc thư mục — Python 3.5, KHÔNG cần Docker/TFLite
@@ -7292,6 +7307,67 @@ def generate_fast_index(force=False):
     if cache_f:
         cache_f.write(tail)
         cache_f.close()
+
+@app.route("/api/disk/trash_batch", methods=["POST"])
+@requires_auth
+def api_disk_trash_batch():
+    """Di chuyển hàng loạt tệp vào thùng rác (.trash) cục bộ để tránh sập NAS."""
+    data = request.json or {}
+    files = data.get("files", [])
+    if not isinstance(files, list):
+        return jsonify({"error": "files must be a list"}), 400
+    
+    webdav_root = get_webdav_root()
+    trash_dir = os.path.join(webdav_root, ".trash")
+    try:
+        if not os.path.exists(trash_dir):
+            os.makedirs(trash_dir)
+    except Exception as e:
+        return jsonify({"error": "Cannot create .trash: " + str(e)}), 500
+        
+    success = 0
+    errors = []
+    
+    for webdav_path in files:
+        if not webdav_path.startswith("/webdav/"):
+            continue
+        rel_path = webdav_path[8:]
+        if rel_path.startswith("/"):
+            rel_path = rel_path[1:]
+            
+        local_path = os.path.join(webdav_root, rel_path)
+        if not os.path.exists(local_path):
+            errors.append({"path": webdav_path, "error": "Not found"})
+            continue
+            
+        if not os.path.abspath(local_path).startswith(os.path.abspath(webdav_root)):
+            errors.append({"path": webdav_path, "error": "Path traversal"})
+            continue
+            
+        filename = os.path.basename(local_path)
+        dest_path = os.path.join(trash_dir, filename)
+        
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = os.path.join(trash_dir, "%s_%d%s" % (base, counter, ext))
+            counter += 1
+            
+        try:
+            os.rename(local_path, dest_path)
+            success += 1
+        except Exception as e:
+            errors.append({"path": webdav_path, "error": str(e)})
+            
+    CACHE_FILE = "/tmp/nas_fast_index_cache.json"
+    if os.path.exists(CACHE_FILE):
+        try: os.remove(CACHE_FILE)
+        except: pass
+            
+    return jsonify({
+        "success_count": success,
+        "errors": errors
+    })
 
 @app.route("/api/disk/fast_index")
 @requires_auth
@@ -8812,22 +8888,24 @@ def _livestream_watchdog():
                             info["status"] = "error"
                             info["error_reason"] = _livestream_error_from_log(info) or "Không tạo được tệp video hợp lệ."
                             log.error("[Livestream] Job %s (PID %d) đã kết thúc với lỗi (tệp < 1KB).", jid, pid)
-                            _log_livestream_event(
-                                "ERROR", jid, info,
-                                "Ghi live loi: %s; dung luong=%s; log=%s" % (
-                                    info.get("error_reason", ""),
-                                    format_bytes(int(info.get("file_size", 0) or 0)),
-                                    info.get("log_file", "")
-                                ),
-                                "final_error"
-                            )
+                            reason_str = str(info.get("error_reason", ""))
+                            if "Không tìm thấy nguồn" in reason_str:
+                                log_type = "INFO"
+                                log_msg = "Hiện không live."
+                            else:
+                                log_type = "ERROR"
+                                log_msg = "Lỗi ghi: %s" % reason_str
+                                
+                            if info.get("logged_start"):
+                                _log_livestream_event(
+                                    log_type, jid, info, log_msg, "final_error"
+                                )
                         else:
                             info["status"] = "finished"
                             log.info("[Livestream] Job %s (PID %d) đã kết thúc tự nhiên.", jid, pid)
+                            log_msg = "Đã lưu thành công (%s)." % format_bytes(int(info.get("file_size", 0) or 0))
                             _log_livestream_event(
-                                "SUCCESS", jid, info,
-                                "Ghi live hoan tat; dung luong=%s" % format_bytes(int(info.get("file_size", 0) or 0)),
-                                "finished"
+                                "SUCCESS", jid, info, log_msg, "finished"
                             )
 
                         info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -9605,13 +9683,14 @@ def _tiktok_live_watchdog():
                         log.info("[TikTokWatch] @%s đang live, NAS đã tự bắt đầu ghi job %s.", username, job_id)
                     else:
                         log.warning("[TikTokWatch] @%s đang live nhưng không bắt đầu ghi được: %s", username, msg)
-                        _add_system_log_once(
-                            "tiktok_start_fail:%s" % username.lower(),
-                            "ERROR",
-                            "TikTokWatch",
-                            "@%s dang live nhung khong bat dau ghi duoc: %s" % (username, normalize_vietnamese_message(msg)[:220]),
-                            180
-                        )
+                        if "User đã kết thúc live" not in msg and "offline" not in msg.lower():
+                            _add_system_log_once(
+                                "tiktok_start_fail:%s" % username.lower(),
+                                "ERROR",
+                                "TikTokWatch",
+                                "@%s dang live nhung khong bat dau ghi duoc: %s" % (username, normalize_vietnamese_message(msg)[:220]),
+                                180
+                            )
                 else:
                     if err == "offline":
                         if user.get("live_session_recorded", False):
@@ -10529,11 +10608,8 @@ while True:
         # Watchdog se tu dong bo chan khi không cần luồng nao dang ghi.
         _set_thumbnail_auto_block("livestream", True)
         display_source = "@%s" % watch_username if watch_username else (stable_id or platform)
-        _log_livestream_event(
-            "INFO", job_id, start_info,
-            "Bat dau ghi livestream %s cho %s; quality=%s; log=%s" % (platform, display_source, quality, log_file),
-            "start"
-        )
+        # Khong log "Bat dau ghi..." ngay lap tuc de tranh spam neu file size = 0.
+        # Viec log se duoc thuc hien khi file_size > 0.
 
         # Ghi log h? thỏng
         try:
@@ -10622,6 +10698,17 @@ def api_livestream_status():
             if jid not in updates:
                 updates[jid] = {}
                 
+            if file_size > 0 and not info.get("logged_start"):
+                updates[jid]["logged_start"] = True
+                platform = info.get("platform", "")
+                watch_username = info.get("watch_username", "")
+                display_source = "@%s" % watch_username if watch_username else (info.get("stable_id") or platform)
+                _log_livestream_event(
+                    "INFO", jid, info,
+                    "Bắt đầu ghi video %s cho %s (chất lượng: %s)" % (platform, display_source, info.get("quality", "best")),
+                    "start"
+                )
+                
             if last_size_time == 0:
                 updates[jid]["last_size"] = file_size
                 updates[jid]["last_size_time"] = now_time
@@ -10650,20 +10737,18 @@ def api_livestream_status():
                     status = "finished"
                 updates[jid]["status"] = status
                 updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                if status == "error":
-                    _log_livestream_event(
-                        "ERROR", jid, info,
-                        "Tien trinh ghi da dung voi file khong hop le; dung luong=%s; log=%s" % (
-                            format_bytes(file_size), info.get("log_file", "")
-                        ),
-                        "status_error"
-                    )
-                else:
-                    _log_livestream_event(
-                        "SUCCESS", jid, info,
-                        "Tien trinh ghi ket thuc; dung luong=%s; file=%s" % (format_bytes(file_size), output_file),
-                        "status_finished"
-                    )
+                if info.get("logged_start"):
+                    if status == "error":
+                        msg = "User hiện không live hoặc đã tắt live (dung lượng: %s)" % format_bytes(file_size) if file_size == 0 else "Lỗi ghi hình (dung lượng: %s)" % format_bytes(file_size)
+                        _log_livestream_event(
+                            "ERROR", jid, info, msg, "status_error"
+                        )
+                    else:
+                        _log_livestream_event(
+                            "SUCCESS", jid, info,
+                            "Quá trình ghi kết thúc (dung lượng: %s)" % format_bytes(file_size),
+                            "status_finished"
+                        )
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
