@@ -1158,6 +1158,7 @@ fun MainMenuScreen(
                 }
             }
         )
+        SystemLogsSummaryCard(viewModel)
 
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
@@ -3016,6 +3017,8 @@ fun SystemStatusCards(
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         viewModel.fetchThumbStatus()
+        viewModel.syncLivestreamStateWithServer(mContext)
+        viewModel.fetchUsbImportStatus()
         while (true) {
             val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
@@ -3023,7 +3026,7 @@ fun SystemStatusCards(
         }
     }
     val thumbPercent = if (viewModel.thumbTotal > 0) viewModel.thumbGenerated * 100f / viewModel.thumbTotal else 0f
-    val thumbIsActive = viewModel.thumbRunning || viewModel.thumbPaused || (thumbPercent > 0f && thumbPercent < 100f)
+    val thumbIsActive = (viewModel.thumbRunning || viewModel.thumbPaused) && viewModel.thumbGenerated < viewModel.thumbTotal && viewModel.thumbTotal > 0
 
     // 2. Duplicate Scan
     val dupStage by DuplicateProgressState.stage.collectAsState()

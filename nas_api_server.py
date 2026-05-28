@@ -1877,8 +1877,17 @@ def _background_heavy_work_allowed():
             allowed = False
         if allowed and psutil.virtual_memory().percent > 78:
             allowed = False
-        if allowed and psutil.cpu_percent(interval=0.1) > 55:
-            allowed = False
+        if allowed:
+            try:
+                # Sử dụng Load Average (1 phút) của Linux. RK3328 có 4 nhân.
+                # Nếu tải trung bình 1 phút vượt quá 2.5, tức là máy đang thực sự bận rộn lâu dài.
+                if os.getloadavg()[0] > 2.5:
+                    allowed = False
+            except AttributeError:
+                # Fallback nếu chạy trên Windows (không có getloadavg)
+                if psutil.cpu_percent(interval=1.0) > 75:
+                    allowed = False
+        
         _background_heavy_gate_cache.update({"time": now, "allowed": allowed})
         return allowed
     except Exception:
@@ -7609,25 +7618,53 @@ def _generate_video_thumb(src_path, dst_path):
     return False
 
 def _create_placeholder_thumb(dst_path):
-    """T?o ảnh placeholder nho cho video không decode được (AV1, VP9...)."""
+    """Tạo ảnh placeholder báo lỗi (ERROR) cho video/ảnh không decode được."""
     try:
         from PIL import Image, ImageDraw
         img = Image.new('RGB', (THUMB_MAX_SIZE, int(THUMB_MAX_SIZE * 9 / 16)), (45, 45, 48))
-        # Không vẽ tam giác Play nữa vì Android đã tự phủ lớp Icon riêng
+        draw = ImageDraw.Draw(img)
+        
+        # Vẽ một dấu X màu đỏ ở giữa để báo lỗi
+        w, h = img.size
+        cw, ch = w // 2, h // 2
+        size = 30
+        draw.line((cw - size, ch - size, cw + size, ch + size), fill=(255, 50, 50), width=6)
+        draw.line((cw + size, ch - size, cw - size, ch + size), fill=(255, 50, 50), width=6)
+        
         img.save(dst_path, 'JPEG', quality=60) 
     except Exception:
-        # Fallback: tao 1x1 pixel JPEG
-        from PIL import Image
-        img = Image.new('RGB', (1, 1), (45, 45, 48))
-        img.save(dst_path, 'JPEG')
+        # Fallback: tao ảnh 1x1 pixel màu đỏ
+        try:
+            from PIL import Image
+            img = Image.new('RGB', (1, 1), (255, 50, 50))
+            img.save(dst_path, 'JPEG')
+        except:
+            pass
 
 def _process_one_thumb(args):
     full_path, thumb_path, ext = args[:3]
     try:
         if ext in MEDIA_IMAGE_EXTS:
-            return _generate_image_thumb(full_path, thumb_path)
+            if _generate_image_thumb(full_path, thumb_path):
+                return True
         elif ext in MEDIA_VIDEO_EXTS:
-            return _generate_video_thumb(full_path, thumb_path)
+            if _generate_video_thumb(full_path, thumb_path):
+                return True
+    except Exception as e:
+        log.warning("[Thumb] Lỗi xử lý thumbnail cho %s: %s", os.path.basename(full_path), e)
+    
+    # Ghi log lỗi vào hệ thống (giới hạn 1 ngày/lần/file để tránh spam)
+    _add_system_log_once(
+        "thumb_err:%s" % thumb_path,
+        "ERROR",
+        "Thumbnail",
+        "Không thể tạo ảnh thu nhỏ cho file: %s" % os.path.basename(full_path),
+        86400
+    )
+    
+    # Nếu thất bại (ngoại lệ hoặc hàm trả về False), tạo placeholder icon LỖI
+    try:
+        _create_placeholder_thumb(thumb_path)
     except Exception:
         pass
     return False
@@ -7645,7 +7682,14 @@ def _thumbnail_generator():
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
                     _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
-                time.sleep(300)
+                _add_system_log_once(
+                    "thumb_paused_heavy",
+                    "INFO",
+                    "Thumbnail",
+                    "Tạm dừng quét ảnh thu nhỏ vì NAS đang bận (CPU/RAM cao hoặc đang copy/livestream).",
+                    3600
+                )
+                time.sleep(60)
                 continue
             if not _thumb_paused.is_set():
                 with _thumb_stats_lock:
@@ -7847,7 +7891,7 @@ def _thumbnail_generator():
                     abort_batch = True
                     with _thumb_stats_lock:
                         _thumb_stats["running"] = False
-                        _thumb_stats["last_file"] = "Tam dung: NAS dang ban"
+                        _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
                     return
                 
                 try:
@@ -7979,9 +8023,9 @@ def api_thumb():
             with _thumb_stats_lock:
                 _thumb_stats["paused"] = True
                 if not _thumb_stats.get("last_file"):
-                    _thumb_stats["last_file"] = "Tam dung: NAS dang ban"
+                    _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
             return jsonify({
-                "error": "NAS dang ban, tam hoan tao thumbnail.",
+                "error": "NAS đang bận, tạm hoãn tạo ảnh thu nhỏ.",
                 "retry_later": True,
                 "block_reasons": sorted(_thumb_auto_block_reasons),
                 "heavy_processes": _heavy_background_processes()[:5],
@@ -11169,7 +11213,7 @@ if __name__ == "__main__":
     threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
     threading.Thread(target=_nas_api_self_watchdog, daemon=True, name="NasApiSelfWatchdog").start()
-    log.info("[NasAPI] Self-watchdog tu restart da khoi dong.")
+    log.info("[NasAPI] Self-watchdog tự khởi động lại đã được kích hoạt.")
     # ============ TOI UU HOA CUC DAI: WAITRESS MULTI-THREAD ============
     def run_flask():
         try:
