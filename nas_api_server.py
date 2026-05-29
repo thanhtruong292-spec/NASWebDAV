@@ -6702,7 +6702,7 @@ def api_system_logs():
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
-        logs = [{"id": r[0], "type": r[1], "module": r[2], "message": normalize_vietnamese_message(r[3]), "timestamp": r[4]} for r in cur.fetchall()]
+        logs = [{"id": r[0], "type": r[1], "module": r[2], "message": normalize_vietnamese_message(r[3]), "timestamp": str(r[4])[:19]} for r in cur.fetchall()]
         conn.close()
         return jsonify({"status": "success", "logs": logs})
     except Exception as e:
@@ -9577,10 +9577,9 @@ def _check_tiktok_user_live(username):
             return False, "unknown: TikTok trả trang rỗng hoặc challenge tạm thời"
         lowered = html.lower()
         media_urls = _extract_tiktok_live_media_urls(html)
-        live_title = " is live - tiktok live" in lowered or " is live | tiktok" in lowered
-        title_has_user = ("(@%s) is live" % username.lower()) in lowered
-        live_room = "\"room_id\"" in lowered and "\"stream_data\"" in lowered
-        if media_urls or (title_has_user and (live_title or live_room)):
+        live_title = " is live" in lowered and "tiktok" in lowered
+        live_room = ("\"room_id\"" in lowered or "room_id=" in lowered) and ("\"stream_data\"" in lowered or "flv" in lowered or "m3u8" in lowered)
+        if media_urls or live_room or live_title:
             return True, ""
         challenge_signals = (
             "captcha",
@@ -10065,44 +10064,7 @@ def api_livestream_record():
         # de app khong hien "timeout" chung chung nua.
         # Chi check cho URL TikTok co @user/live; cac URL khac (FB/YT/Shopee) van di
         # qua flow cu vi format URL khac va probe nhanh hon.
-        try:
-            tt_match = _re_module.search(r"tiktok\.com/@([\w.\-]+)", live_url)
-            if tt_match and "/live" in live_url.lower():
-                preflight_user = tt_match.group(1)
-                # Skip preflight neu được goi tu watcher (da check live roi)
-                if not watch_username:
-                    is_live, detail = _check_tiktok_user_live(preflight_user)
-                    if not is_live:
-                        # Xac dinh ly do cu the cho user
-                        if detail == "offline" or detail == "":
-                            return jsonify({
-                                "error": "@%s hiện không live (đã offline hoặc chưa bật stream)" % preflight_user,
-                                "reason": "offline",
-                            }), 404
-                        elif "cookies" in detail.lower() or "cookie" in detail.lower():
-                            return jsonify({
-                                "error": "Cookies TikTok không hợp lệ: %s" % detail,
-                                "reason": "cookies_invalid",
-                            }), 401
-                        elif "giới hạn tốc độ" in detail or "429" in detail:
-                            return jsonify({
-                                "error": "TikTok giới hạn tốc độ — thử lại sau vài phút",
-                                "reason": "rate_limited",
-                            }), 429
-                        elif "từ chối" in detail or "chặn" in detail or "403" in detail:
-                            return jsonify({
-                                "error": "TikTok chặn IP/vùng: %s" % detail,
-                                "reason": "blocked",
-                            }), 403
-                        else:
-                            return jsonify({
-                                "error": "Không thể bắt đầu ghi: %s" % detail,
-                                "reason": "unknown_preflight",
-                            }), 502
-        except Exception as _e:
-            # Preflight lỗi -> di tiep voi flow cu (yt-dlp/ffmpeg se tra error)
-            log.warning("[Livestream] Preflight check ngoai mong doi: %s", _e)
-
+        # Removed pre-flight check due to false negatives. Let yt-dlp try its best.
         # Không gi?i h?n so luồng ghi cung; thay vao do check phan cung de
         # bao ve NAS khoi tinh trang treo. Chap nhan luồng moi neu:
         #   - CPU dang dung < 85%
