@@ -686,11 +686,41 @@ private const val PIP_ACTION_REWIND = "com.nas.naswebdav.PIP_REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.nas.naswebdav.PIP_PLAY_PAUSE"
 private const val PIP_ACTION_FAST_FORWARD = "com.nas.naswebdav.PIP_FAST_FORWARD"
 
+private fun formatPlayerTime(positionMs: Long): String {
+    val safeMs = positionMs.coerceAtLeast(0L)
+    val totalSeconds = safeMs / 1000L
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
+    }
+}
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavViewModel? = null, onBack: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+    val resolvedAuth = remember(user, pass) {
+        if (user.isNotBlank() && pass.isNotBlank()) {
+            user to pass
+        } else {
+            val authData = SecurePrefsHelper.readEncrypted(context.applicationContext)
+            if (authData is SecurePrefsHelper.AuthData.Valid) {
+                val savedUser = String(authData.user)
+                val savedPass = String(authData.pass)
+                authData.clear()
+                savedUser to savedPass
+            } else {
+                user to pass
+            }
+        }
+    }
+    val resolvedUser = resolvedAuth.first
+    val resolvedPass = resolvedAuth.second
 
     // Trạng thái theo dõi chế độ Popup (PiP)
     var isInPiP by remember { mutableStateOf(false) }
@@ -706,6 +736,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
     // Trạng thái mới: Tắt tiếng (Mute) và Lặp lại (Repeat)
     var isMuted by remember { mutableStateOf(false) }
     var isRepeat by remember { mutableStateOf(false) }
+    var playerIsPlaying by remember { mutableStateOf(false) }
+    var playbackPositionMs by remember { mutableStateOf(0L) }
+    var playbackDurationMs by remember { mutableStateOf(0L) }
 
     // Cập nhật trạng thái hiển thị overlay lập tức theo ExoPlayer, bỏ delay
     LaunchedEffect(isControllerVisible) {
@@ -794,7 +827,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         // lúc tua (Seeking) sẽ bị thắt cổ chai vòng quay (Flash memory Write Speed quá thấp). 
         // -> Đọc thẳng luồng stream từ NAS đổ vào RAM hiển thị luôn!
         val dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(app.videoStreamingClient)
-            .setDefaultRequestProperties(mapOf("Authorization" to okhttp3.Credentials.basic(user, pass)))
+            .setDefaultRequestProperties(mapOf("Authorization" to okhttp3.Credentials.basic(resolvedUser, resolvedPass)))
 
         // 4. EXTRACTORS - Tối ưu mạnh mẽ để quét được độ dài (00:00 bug fix)
         val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
@@ -833,14 +866,24 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             .apply {
                 addListener(object : androidx.media3.common.Player.Listener {
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                        android.util.Log.e("VideoPlayer", "Lỗi: ${error.errorCodeName} - ${error.message}")
+                        val invalidResponseCode = generateSequence(error.cause) { it.cause }
+                            .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()
+                            .firstOrNull()
+                            ?.responseCode
+                        android.util.Log.e("VideoPlayer", "Lỗi: ${error.errorCodeName} - ${error.message}, HTTP=$invalidResponseCode")
                         // Bắt lỗi khi phần cứng điện thoại (Hardware Decoder) KHÔNG HỖ TRỢ định dạng 
                         // Ví dụ: Video 4K HDR HEVC trên máy tính bảng cũ, hoặc Âm thanh Dolby AC3 trong file MKV.
                         // Tại đây, ta báo cho giao diện bật Dialog hỏi chuyển sang VLC
                         (activity as? MainActivity)?.runOnUiThread {
                             viewModel?.showCommonDialog = true
                             viewModel?.commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                            viewModel?.commonDialogMessage = "Thiết bị của bạn không hỗ trợ giải mã định dạng phim này (Lỗi: ${error.errorCodeName}).\n\nVui lòng nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC hoặc MX Player."
+                            viewModel?.commonDialogMessage = if (invalidResponseCode == 416) {
+                                "Tệp MP4 này bị hỏng hoặc chưa được hoàn tất metadata (HTTP 416, ${error.errorCodeName}).\n\nNAS sẽ tự ẩn các bản ghi livestream thiếu moov atom sau khi dọn nền. Vui lòng chọn một bản ghi khác hoặc ghi lại livestream."
+                            } else if (invalidResponseCode != null) {
+                                "Không thể tải luồng video từ NAS (HTTP $invalidResponseCode, ${error.errorCodeName}).\n\nVui lòng thử lại sau vài giây hoặc nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC/MX Player qua proxy cục bộ."
+                            } else {
+                                "Thiết bị của bạn không hỗ trợ giải mã định dạng phim này (Lỗi: ${error.errorCodeName}).\n\nVui lòng nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC hoặc MX Player."
+                            }
                         }
                     }
                     
@@ -860,6 +903,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         super.onIsPlayingChanged(isPlaying)
+                        playerIsPlaying = isPlaying
                         // Khóa sáng màn hình khi ĐANG PHÁT, tự động cho ngủ màn hình khi PAUSE
                         if (isPlaying) {
                             activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -915,6 +959,13 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
     }
     LaunchedEffect(isRepeat) {
         exoPlayer.repeatMode = if (isRepeat) androidx.media3.common.Player.REPEAT_MODE_ALL else androidx.media3.common.Player.REPEAT_MODE_OFF
+    }
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            playbackPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            playbackDurationMs = exoPlayer.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET } ?: 0L
+            delay(500)
+        }
     }
 
     // MediaSession đơn giản — chỉ cần cho Android biết đang phát media
@@ -989,7 +1040,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = true
+                    useController = false
                     keepScreenOn = true // NGĂN TẮT MÀN HÌNH KHI PHÁT VIDEO
                     // Ép video scale lấp đầy khung hình (Xóa viền đen 2 bên)
                     resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -997,19 +1048,18 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    
-                    // Lắng nghe sự kiện hiện/ẩn thanh điều khiển để đồng bộ với Compose
-                    setControllerVisibilityListener(androidx.media3.ui.PlayerView.ControllerVisibilityListener { visibility ->
-                        isControllerVisible = (visibility == android.view.View.VISIBLE)
-                    })
+                    post {
+                        findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.apply {
+                            visibility = android.view.View.GONE
+                            background = null
+                        }
+                    }
                     
                     playerViewRef.value = this
                 }
             },
             update = { view ->
-                // Khi vào PiP: ẩn thanh điều khiển gốc (để dùng nút PiP của HĐH)
-                // Khi thoát PiP: hiện lại thanh điều khiển
-                view.useController = !isInPiP
+                view.useController = false
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -1043,7 +1093,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                 ) {
                     IconButton(
                         onClick = onBack,
-                        modifier = Modifier.background(Color.White.copy(alpha = 0.2f), CircleShape)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                     }
@@ -1059,73 +1109,131 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                     )
                 }
 
-                // Nhóm nút tiện ích bên phải (Mở bằng VLC, Thu nhỏ PiP, vv)
-                // Đặt margin top lớn hơn để tránh đè lên Tên video
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 96.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f))
+                        )
+                    )
+                    .padding(start = 10.dp, end = 10.dp, bottom = 12.dp, top = 18.dp)
             ) {
-                // Nút Phát bằng ứng dụng ngoài (VLC/MX Player)
-                IconButton(
-                    onClick = {
-                        exoPlayer.pause()
-                        try {
-                            // Mở bằng ứng dụng ngoài (VLC, MX Player, v.v.)
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                setDataAndType(android.net.Uri.parse(effectiveUrl), "video/*")
-                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            val chooser = android.content.Intent.createChooser(intent, "Chọn trình phát video")
-                            chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(chooser)
-                        } catch (e: Exception) {
-                            android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài: ${e.message}")
+                Slider(
+                    value = if (playbackDurationMs > 0L) {
+                        playbackPositionMs.coerceIn(0L, playbackDurationMs).toFloat()
+                    } else {
+                        0f
+                    },
+                    onValueChange = { value ->
+                        if (playbackDurationMs > 0L) {
+                            exoPlayer.seekTo(value.toLong().coerceIn(0L, playbackDurationMs))
                         }
                     },
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                ) {
-                    Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = Color.White)
-                }
+                    valueRange = 0f..playbackDurationMs.coerceAtLeast(1L).toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color(0xFFFFC7B2),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.42f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                )
 
-                // Nút thu nhỏ thành Popup (PiP) giống YouTube
-                IconButton(
-                    onClick = {
-                        activity?.let { act -> enterPipMode(act, exoPlayer) }
-                    },
-                    modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = Color.White)
-                }
-
-                // Nút Lặp lại (Repeat)
-                IconButton(
-                    onClick = { isRepeat = !isRepeat },
-                    modifier = Modifier.background(if (isRepeat) Color(0xFF00E676).copy(alpha = 0.5f) else Color.Black.copy(alpha = 0.5f), CircleShape)
-                ) {
-                    Icon(Icons.Default.Repeat, "Lặp lại", tint = if (isRepeat) Color.White else Color.White.copy(alpha = 0.7f))
-                }
-
-                // Nút Tắt tiếng (Mute)
-                IconButton(
-                    onClick = { isMuted = !isMuted },
-                    modifier = Modifier.background(if (isMuted) Color(0xFFEF5350).copy(alpha = 0.5f) else Color.Black.copy(alpha = 0.5f), CircleShape)
-                ) {
-                    Icon(
-                        if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, 
-                        "Mute", 
-                        tint = if (isMuted) Color.White else Color.White.copy(alpha = 0.7f)
-                    )
-                }
-
-                // Nút Xóa video
-                if (viewModel != null) {
-                    IconButton(
-                        onClick = { showDeleteDialog = true },
-                        modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350))
+                        IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.SkipPrevious, "Về đầu", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Replay30, "Tua lùi", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(
+                            onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                if (playerIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                "Phát / tạm dừng",
+                                tint = Color.White,
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
+                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Forward30, "Tua tới", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                val duration = exoPlayer.duration
+                                if (duration > 0L && duration != androidx.media3.common.C.TIME_UNSET) {
+                                    exoPlayer.seekTo(duration)
+                                }
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.SkipNext, "Tới cuối", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
+                        }
+                        Text(
+                            text = "${formatPlayerTime(playbackPositionMs)} / ${formatPlayerTime(playbackDurationMs)}",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { isMuted = !isMuted }, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                "Âm lượng",
+                                tint = if (isMuted) Color(0xFFFF8A80) else Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { isRepeat = !isRepeat }, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                Icons.Default.Repeat,
+                                "Lặp lại",
+                                tint = if (isRepeat) Color(0xFF00E676) else Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                exoPlayer.pause()
+                                openExternalVideoPlayer(
+                                    context = context,
+                                    url = effectiveUrl,
+                                    user = resolvedUser,
+                                    pass = resolvedPass,
+                                    onError = { android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài") }
+                                )
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        if (viewModel != null) {
+                            IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
+                            }
+                        }
                     }
                 }
             }
