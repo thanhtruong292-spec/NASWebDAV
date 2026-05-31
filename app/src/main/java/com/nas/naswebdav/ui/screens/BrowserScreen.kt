@@ -112,6 +112,7 @@ fun BrowserScreen(
     // VD: nhan "Chon tat ca" -> mark all viewed -> increment tick -> moi
     // FileItemGridCell remember key bi invalidated -> doc lai prefs.
     var viewedRefreshTick by remember { mutableStateOf(0) }
+    LaunchedEffect(viewModel.currentUrl) { viewedRefreshTick++ }
 
     // SORT — luu trong SharedPreferences de nho cua user qua cac lan vao app.
     // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
@@ -596,7 +597,7 @@ fun BrowserScreen(
                                         val prefs = context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
                                         val cur = prefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
                                         displayedFiles.filter { !it.isDirectory }.forEach { cur.add(it.path) }
-                                        prefs.edit().putStringSet("viewed_files", cur).apply()
+                                        prefs.edit().putStringSet("viewed_files", cur).commit()
                                         // Bump tick de moi FileItemGridCell remember key bi
                                         // invalidated -> doc lai prefs -> red dot bien mat.
                                         viewedRefreshTick++
@@ -1250,7 +1251,7 @@ fun FileItemGridCell(
                     if (!selectionMode && !file.isDirectory && isNewFile) {
                         val current = viewedPrefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
                         current.add(file.path)
-                        viewedPrefs.edit().putStringSet("viewed_files", current).apply()
+                        viewedPrefs.edit().putStringSet("viewed_files", current).commit()
                         isNewFile = false
                     }
                     onClick()
