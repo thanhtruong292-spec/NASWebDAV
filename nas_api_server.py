@@ -3645,16 +3645,24 @@ def _disk_health_watchdog():
         time.sleep(_DISK_HEALTH_SAMPLE_INTERVAL_SEC)
 
 
-def _add_system_log(level, module, message):
+def _add_system_log(level, module, message, timestamp=None):
     """Helper: th?m log vao bang system_logs neu DB available."""
     try:
         message = normalize_vietnamese_message(sanitize_log_input(message))
         conn = sqlite3.connect(DB_PATH, timeout=3.0)
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
-            (level, module, message)
-        )
+        if timestamp is None:
+            cur.execute(
+                "INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
+                (level, module, message)
+            )
+        else:
+            if isinstance(timestamp, (int, float)):
+                timestamp = datetime.datetime.utcfromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+            cur.execute(
+                "INSERT INTO system_logs (type, module, message, timestamp) VALUES (?, ?, ?, ?)",
+                (level, module, message, str(timestamp)[:19])
+            )
         conn.commit()
         conn.close()
     except Exception:
@@ -3662,14 +3670,14 @@ def _add_system_log(level, module, message):
 
 _system_log_once_cache = {}
 
-def _add_system_log_once(key, level, module, message, cooldown_sec=300):
+def _add_system_log_once(key, level, module, message, cooldown_sec=300, timestamp=None):
     """Log important repeated events without flooding system_logs."""
     now = time.time()
     last = float(_system_log_once_cache.get(key, 0) or 0)
     if now - last < cooldown_sec:
         return
     _system_log_once_cache[key] = now
-    _add_system_log(level, module, message)
+    _add_system_log(level, module, message, timestamp=timestamp)
 
 _PROCESS_STATE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "process_state.json")
 _process_state_lock = threading.Lock()
@@ -3737,14 +3745,14 @@ def _livestream_job_label(jid, info):
     out = info.get("output_file", "") or "chua co file"
     return "%s pid=%s src=%s file=%s" % (jid, info.get("pid"), src, out)
 
-def _log_livestream_event(level, jid, info, message, once_key=""):
+def _log_livestream_event(level, jid, info, message, once_key="", timestamp=None):
     user = info.get("watch_username", "") or ""
     prefix = ("[@" + user + "] ") if user else "[Livestream] "
     detail = prefix + message
     if once_key:
-        _add_system_log_once("livestream:%s:%s" % (jid, once_key), level, "Livestream", detail, 600)
+        _add_system_log_once("livestream:%s:%s" % (jid, once_key), level, "Livestream", detail, 600, timestamp=timestamp)
     else:
-        _add_system_log(level, "Livestream", detail)
+        _add_system_log(level, "Livestream", detail, timestamp=timestamp)
 
 def _restart_nas_api(reason):
     """Restart this NAS API process via exec so the same PID becomes fresh code."""
@@ -9447,6 +9455,12 @@ def _extract_tiktok_live_media_urls(html):
         r'https:\\/\\/[^"\\]{1,2000}?\.m3u8[^"\\]{0,2000}',
         r'https://[^"\\]{1,2000}?\.m3u8[^"\\]{0,2000}',
         r'https://[^"\\<>\s]{1,2000}?\.m3u8[^"\\<>\s]{0,2000}',
+        r'"playUrl"\s*:\s*"(https://[^"]+\.flv[^"]*)"',
+        r'"flv_pull_url"\s*:\s*\{[^}]*"(https://[^"]+)"',
+        r'"rtmp_pull_url"\s*:\s*"(https://[^"]+)"',
+        r'"hls_pull_url_map"\s*:\s*\{[^}]*"(https://[^"]+\.m3u8[^"]*)"',
+        r'(https://pull[^"\\<>\s]{10,300}\.flv[^"\\<>\s]{0,500})',
+        r'(https://pull[^"\\<>\s]{10,300}\.m3u8[^"\\<>\s]{0,500})',
     ):
         for u in _re_module.findall(pat, html or ""):
             u = u.replace("\\u0026", "&").replace("\\/", "/")
@@ -9467,8 +9481,8 @@ def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
     stream_lower = stream_url.lower()
     common = [
         "--http1.1",
-        "--max-time", "8",
-        "--connect-timeout", "5",
+        "--max-time", "3",
+        "--connect-timeout", "2",
         "-A", ua,
         "-H", "Referer: https://www.tiktok.com/",
     ]
@@ -9482,7 +9496,7 @@ def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
         if use_cookies:
             cmd.extend(["-b", cookies_path])
         cmd.append(stream_url)
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         out = (proc.stdout or b"").decode("utf-8", errors="ignore").strip()
         parts = out.split("|")
         http_code = parts[0] if len(parts) > 0 else "0"
@@ -9519,7 +9533,7 @@ def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
         # Mot so CDN khong tra HEAD tot. Tai thu toi da 8s vao /dev/null de xem
         # co byte video thuc su khong, khong ghi file tam xuong HDD.
         http_code, content_type, size = _run_probe([
-            "--speed-time", "5",
+            "--speed-time", "2",
             "--speed-limit", "128",
         ])
         if not http_code.startswith(("4", "5")) and size >= 256 and _content_type_ok(content_type):
@@ -9541,6 +9555,7 @@ def _check_tiktok_user_live(username):
     # pattern FLV trong embedded JSON — neu co thi user dang live.
     live_url = "https://www.tiktok.com/@%s/live" % username
     cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+    tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     # In HTTP status code o cuoi response qua --write-out de phan biet bi block (403/429)
     # voi "page tr? v? nhung khong co stream" (200 nhung empty / not-live).
     sentinel = "\n__HTTP_STATUS__:"
@@ -9548,7 +9563,7 @@ def _check_tiktok_user_live(username):
         "curl", "-4", "-s", "-L",
         "--max-time", "6",
         "--connect-timeout", "4",
-        "-A", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-A", tiktok_user_agent,
         "-H", "Referer: https://www.tiktok.com/",
         "-H", "Accept-Language: en-US,en;q=0.9,vi;q=0.8",
         "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -9578,8 +9593,14 @@ def _check_tiktok_user_live(username):
         media_urls = _extract_tiktok_live_media_urls(html)
         live_title = " is live" in lowered and "tiktok" in lowered
         live_room = ("\"room_id\"" in lowered or "room_id=" in lowered) and ("\"stream_data\"" in lowered or "flv" in lowered or "m3u8" in lowered)
-        if media_urls or live_room or live_title:
-            return True, ""
+        if media_urls:
+            for stream_url in media_urls[:2]:
+                ok, detail = _tiktok_stream_url_seems_live(stream_url, cookies_path, tiktok_user_agent)
+                if ok:
+                    return True, ""
+            return False, "unknown: TikTok có URL stream nhưng CDN chưa xác nhận stream còn sống"
+        if live_room or live_title:
+            return False, "unknown: TikTok báo có phòng live nhưng chưa thấy URL stream sống"
         challenge_signals = (
             "captcha",
             "verify to continue",
@@ -9734,63 +9755,42 @@ def _tiktok_live_watchdog():
                                 180
                             )
                 else:
-                    if err == "offline":
-                        if user.get("live_session_recorded", False):
-                            offline_count = int(user.get("offline_confirm_count", 0) or 0) + 1
-                            user["offline_confirm_count"] = offline_count
-                            if offline_count < 3:
-                                user["status"] = "rechecking"
-                                user["job_id"] = user.get("live_session_job_id", "")
-                                user["last_error"] = "Chờ xác nhận user đã dừng live (%d/3)" % offline_count
-                                last_attempt = float(user.get("reconnect_attempt_ts", 0) or 0)
-                                if time.time() - last_attempt >= 45:
-                                    user["reconnect_attempt_ts"] = time.time()
-                                    job_id, msg = _start_tiktok_watch_record(username)
-                                    if job_id:
-                                        user["status"] = "recording"
-                                        user["job_id"] = job_id
-                                        user["last_error"] = ""
-                                        user["reconnect_count"] = int(user.get("reconnect_count", 0) or 0) + 1
-                                        started_count += 1
-                                        recording_count += 1
-                                        _tiktok_watch_mark_session_recorded(user, job_id, now_str)
-                                        log.info("[TikTokWatch] @%s nối lại ghi trong lúc xác nhận offline, job %s.", username, job_id)
-                                    else:
-                                        user["last_error"] = "Chưa nối lại được trong lúc xác nhận offline: %s" % normalize_vietnamese_message(msg)
-                                changed = True
-                                continue
-                        if user.get("live_session_recorded", False):
-                            log.info("[TikTokWatch] @%s đã ngoại tuyến, mở khoá phiên live tiếp theo.", username)
+                    if user.get("live_session_recorded", False):
+                        is_offline = err == "offline"
+                        is_unknown = err.startswith("unknown:")
+                        offline_count = int(user.get("offline_confirm_count", 0) or 0) + 1
+                        user["offline_confirm_count"] = offline_count
+                        max_confirm = 3 if is_offline else 5
+                        if offline_count < max_confirm:
+                            user["status"] = "rechecking" if is_offline else "reconnecting"
+                            user["job_id"] = user.get("live_session_job_id", "")
+                            can_reconnect = is_offline
+                            if is_offline:
+                                user["last_error"] = "Chờ xác nhận user đã dừng live (%d/%d)" % (offline_count, max_confirm)
+                            else:
+                                user["last_error"] = "Chưa xác nhận đã dừng live (%d/%d): %s" % (offline_count, max_confirm, normalize_vietnamese_message(err))
+                            last_attempt = float(user.get("reconnect_attempt_ts", 0) or 0)
+                            if can_reconnect and time.time() - last_attempt >= 45:
+                                user["reconnect_attempt_ts"] = time.time()
+                                job_id, msg = _start_tiktok_watch_record(username)
+                                if job_id:
+                                    user["status"] = "recording"
+                                    user["job_id"] = job_id
+                                    user["last_error"] = ""
+                                    user["reconnect_count"] = int(user.get("reconnect_count", 0) or 0) + 1
+                                    started_count += 1
+                                    recording_count += 1
+                                    _tiktok_watch_mark_session_recorded(user, job_id, now_str)
+                                    log.info("[TikTokWatch] @%s nối lại ghi %s, job %s.", username, "trong lúc xác nhận offline" if is_offline else "sau lỗi tạm thời", job_id)
+                                else:
+                                    user["last_error"] = "Chưa nối lại được (%d/%d): %s" % (offline_count, max_confirm, normalize_vietnamese_message(msg))
+                            changed = True
+                            continue
+                        log.info("[TikTokWatch] @%s đã ngoại tuyến sau %d lần xác nhận, mở khoá phiên live tiếp theo.", username, offline_count)
                         _tiktok_watch_clear_session(user)
                         user["status"] = "watching"
                         user["last_error"] = ""
-                    elif user.get("live_session_recorded", False):
-                        user["status"] = "reconnecting"
-                        user["job_id"] = user.get("live_session_job_id", "")
-                        user["last_error"] = "Chưa xác nhận đã dừng live, sẽ thử nối lại: %s" % normalize_vietnamese_message(err)
-                        last_attempt = float(user.get("reconnect_attempt_ts", 0) or 0)
-                        if time.time() - last_attempt >= 45:
-                            user["reconnect_attempt_ts"] = time.time()
-                            job_id, msg = _start_tiktok_watch_record(username)
-                            if job_id:
-                                user["status"] = "recording"
-                                user["job_id"] = job_id
-                                user["last_error"] = ""
-                                user["reconnect_count"] = int(user.get("reconnect_count", 0) or 0) + 1
-                                started_count += 1
-                                recording_count += 1
-                                _tiktok_watch_mark_session_recorded(user, job_id, now_str)
-                                log.info("[TikTokWatch] @%s nối lại ghi sau lỗi tạm thời/captcha, job %s.", username, job_id)
-                            else:
-                                user["last_error"] = "Chưa nối lại được, sẽ thử tiếp: %s" % normalize_vietnamese_message(msg)
-                        changed = True
-                        continue
-                        user["status"] = "recorded"
-                        user["job_id"] = user.get("live_session_job_id", "")
-                        user["last_error"] = "Chưa xác nhận ngoại tuyến: %s" % normalize_vietnamese_message(err)
                     else:
-                        # Lỗi thật (cookies/rate-limit) — mới ghi last_error
-                        # Các lỗi tạm thời (trang trống, timeout ngắn) đã được đưa về "offline" ở _check_tiktok_user_live
                         is_real_error = any(kw in err.lower() for kw in ("cookies", "rate", "limit", "403", "401", "429", "t\u1eeb ch\u1ed1i"))
                         user["status"] = "watching"
                         user["job_id"] = ""
@@ -10271,38 +10271,86 @@ def api_livestream_record():
             
             try:
                 html = subprocess.check_output(curl_cmd, timeout=25).decode("utf-8", errors="ignore")
+                log.info("[Livestream] TikTok HTML fallback: nhận %d bytes HTML", len(html))
                 media_urls = _extract_tiktok_live_media_urls(html)
-                log.info("[Livestream] TikTok HTML fallback: phát hiện %d URL media ứng viên", len(media_urls))
-                for candidate in media_urls:
-                    log.info("[Livestream] TikTok HTML fallback: probe candidate %s", candidate[:180])
-                    is_hls = ".m3u8" in candidate.lower()
-                    if True:
-                        live_url = candidate
-                        direct_tiktok_flv = True
-                        # FIX: dùng stable_id (username) trong filename, không để "_tiktok"
-                        # cung. Truoc day mới l?c dung direct FLV path, file deu co dang
-                        # tiktok_<ts>_tiktok.mp4 -> mat thong tin user trong ten file.
-                        if stable_id:
-                            direct_output_file = os.path.join(
-                                _LIVESTREAM_DIR,
-                                "%s_%s_%s.mp4" % (platform, stable_id, timestamp_str)
-                            )
+                if not media_urls:
+                    log.warning("[Livestream] TikTok HTML fallback: HTML %d bytes nhưng không extract được URL media nào", len(html))
+                    # Retry 1 lần với UA khác nếu cần
+                    try:
+                        import time as _time_mod
+                        _time_mod.sleep(2)
+                        if len(html) <= 500:
+                            # HTML quá ngắn — thử mobile UA
+                            retry_cmd = list(curl_cmd)
+                            mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+                            for _i, _v in enumerate(retry_cmd):
+                                if _v == "-H" and _i + 1 < len(retry_cmd) and retry_cmd[_i + 1].startswith("User-Agent:"):
+                                    retry_cmd[_i + 1] = "User-Agent: " + mobile_ua
+                                    break
+                            html2 = subprocess.check_output(retry_cmd, timeout=25).decode("utf-8", errors="ignore")
                         else:
-                            direct_output_file = os.path.join(
-                                _LIVESTREAM_DIR,
-                                "%s_%s.mp4" % (platform, timestamp_str)
-                            )
-                        log.info("[Livestream] TikTok HTML fallback: dùng direct media URL để ghi MP4")
+                            html2 = subprocess.check_output(curl_cmd, timeout=25).decode("utf-8", errors="ignore")
+                        log.info("[Livestream] TikTok HTML retry: nhận %d bytes HTML", len(html2))
+                        media_urls = _extract_tiktok_live_media_urls(html2)
+                        if media_urls:
+                            html = html2
+                            log.info("[Livestream] TikTok HTML retry: tìm được %d URL media", len(media_urls))
+                    except Exception as _retry_err:
+                        log.warning("[Livestream] TikTok HTML retry lỗi: %s", _retry_err)
+                log.info("[Livestream] TikTok HTML fallback: phát hiện %d URL media ứng viên", len(media_urls))
+                # FIX: HEAD-check từng candidate theo thứ tự ưu tiên (_hd > _ld > .m3u8 > _sd)
+                # và chọn URL đầu tiên trả về 2xx/3xx. Trước đây luôn lấy candidate[0] (_hd)
+                # rồi break ngay — nếu biến thể HD bị 404 thì job ghi fail (file 0 byte)
+                # dù user vẫn đang live và còn URL chất lượng khác dùng được.
+                # Giới hạn 6 lần probe để bảo vệ CPU ARM khi danh sách candidate dài.
+                chosen_url = ""
+                for candidate in media_urls[:6]:
+                    # TikTok CDN FLV /stage/ KHONG tra loi HEAD (-I) -> luon 000.
+                    # Dung ranged GET (-r 0-1) xin 1-2 byte dau de lay status that:
+                    # 200/206 = stream song, 404 = bien the da chet/het han.
+                    probe_cmd = [
+                        "curl", "-4", "-s", "-L", "--http1.1",
+                        "-r", "0-1",
+                        "--max-time", "6", "--connect-timeout", "4",
+                        "-A", tiktok_user_agent,
+                        "-H", "Referer: https://www.tiktok.com/",
+                        "-o", "/dev/null",
+                        "-w", "%{http_code}",
+                    ]
+                    if os.path.exists(cookies_path) and "tiktokcdn" not in candidate.lower():
+                        probe_cmd.extend(["-b", cookies_path])
+                    probe_cmd.append(candidate)
+                    probe_code = "0"
+                    try:
+                        probe_proc = subprocess.run(probe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+                        probe_code = (probe_proc.stdout or b"").decode("utf-8", errors="ignore").strip() or "0"
+                    except Exception:
+                        probe_code = "0"
+                    log.info("[Livestream] TikTok HTML fallback: probe HTTP %s %s", probe_code, candidate[:160])
+                    if probe_code.startswith(("2", "3")):
+                        chosen_url = candidate
                         break
-                if not direct_tiktok_flv and media_urls:
-                    fallback = media_urls[0]
-                    log.warning("[Livestream] TikTok HTML fallback: probe codec thất bại, vẫn thử ffmpeg trực tiếp với URL đầu tiên")
-                    live_url = fallback
+                # Nếu không URL nào pass HEAD, vẫn thử candidate đầu tiên để logic
+                # HEAD/re-scrape phía dưới xử lý tiếp (giữ hành vi cũ làm lưới an toàn).
+                if not chosen_url and media_urls:
+                    log.warning("[Livestream] TikTok HTML fallback: không URL nào pass probe, bỏ direct FLV để tránh tạo file 0 byte")
+                if chosen_url:
+                    live_url = chosen_url
                     direct_tiktok_flv = True
-                    direct_output_file = os.path.join(
-                        _LIVESTREAM_DIR,
-                        ("%s_%s_%s.mp4" % (platform, stable_id, timestamp_str)) if stable_id else ("%s_%s.mp4" % (platform, timestamp_str))
-                    )
+                    # FIX: dùng stable_id (username) trong filename, không để "_tiktok"
+                    # cung. Truoc day mới l?c dung direct FLV path, file deu co dang
+                    # tiktok_<ts>_tiktok.mp4 -> mat thong tin user trong ten file.
+                    if stable_id:
+                        direct_output_file = os.path.join(
+                            _LIVESTREAM_DIR,
+                            "%s_%s_%s.mp4" % (platform, stable_id, timestamp_str)
+                        )
+                    else:
+                        direct_output_file = os.path.join(
+                            _LIVESTREAM_DIR,
+                            "%s_%s.mp4" % (platform, timestamp_str)
+                        )
+                    log.info("[Livestream] TikTok HTML fallback: dùng direct media URL để ghi MP4")
             except Exception as e:
                 log.warning("[Livestream] Lỗi TikTok HTML fallback: %s", e)
         # --------------------------------
@@ -10314,7 +10362,8 @@ def api_livestream_record():
             # neu URL FLV da 404/403/expired. HEAD chi ton ~1-3s nen khong gay
             # timeout 35s o local urlopen ben watcher.
             head_cmd = [
-                "curl", "-4", "-s", "-I", "-L", "--http1.1",
+                "curl", "-4", "-s", "-L", "--http1.1",
+                "-r", "0-1",
                 "--max-time", "6",
                 "--connect-timeout", "4",
                 "-A", tiktok_user_agent,
@@ -10353,9 +10402,7 @@ def api_livestream_record():
                     rescrape_cmd.append(original_user_url)
                     try:
                         html2 = subprocess.check_output(rescrape_cmd, timeout=10).decode("utf-8", errors="ignore")
-                        m2 = re.search(r'\\"origin\\":\{[^}]*\\"flv\\":\\"(https://[^"\\]+)', html2) or re.search(r'\\"flv\\":\\"(https://[^"\\]+)', html2)
-                        if m2:
-                            new_flv = m2.group(1).replace("\\u0026", "&")
+                        for new_flv in _extract_tiktok_live_media_urls(html2)[:6]:
                             if new_flv != live_url:
                                 live_url = new_flv
                                 head_cmd[-1] = live_url
@@ -10364,6 +10411,9 @@ def api_livestream_record():
                                 parts = head_out.split("|", 1)
                                 http_code = parts[0] or "0"
                                 content_type = (parts[1] if len(parts) > 1 else "").lower().strip()
+                                log.info("[Livestream] TikTok direct fallback: re-probe HTTP %s %s", http_code, live_url[:160])
+                                if http_code.startswith(("2", "3")):
+                                    break
                     except Exception:
                         pass
 
@@ -10404,6 +10454,7 @@ out_file = sys.argv[2]
 cookies = sys.argv[3]
 ua = sys.argv[4]
 initial_url = sys.argv[5] if len(sys.argv) > 5 else ""
+tried_urls = set()
 
 def extract_media_urls(html):
     urls = []
@@ -10433,7 +10484,7 @@ def extract_media_urls(html):
 
 def get_media_url():
     global initial_url
-    if initial_url:
+    if initial_url and initial_url not in tried_urls:
         url = initial_url
         initial_url = ""
         return url
@@ -10443,7 +10494,25 @@ def get_media_url():
     try:
         html = subprocess.check_output(cmd, timeout=15).decode('utf-8', errors='ignore')
         urls = extract_media_urls(html)
-        if urls: return urls[0]
+        for url in urls[:6]:
+            probe = ["curl", "-4", "-s", "-L", "--http1.1", "-r", "0-1", "--max-time", "6", "--connect-timeout", "4", "-A", ua, "-H", "Referer: https://www.tiktok.com/", "-o", "/dev/null", "-w", "%{http_code}"]
+            if os.path.exists(cookies) and "tiktokcdn" not in url.lower():
+                probe.extend(["-b", cookies])
+            probe.append(url)
+            try:
+                code = subprocess.check_output(probe, timeout=8).decode("utf-8", errors="ignore").strip()
+            except Exception:
+                code = "0"
+            if code.startswith(("2", "3")) and url not in tried_urls:
+                return url
+        preferred_unknown = []
+        preferred_unknown.extend([u for u in urls[:6] if "_ld" in u.lower()])
+        preferred_unknown.extend([u for u in urls[:6] if ".m3u8" in u.lower()])
+        preferred_unknown.extend([u for u in urls[:6] if "_hd" not in u.lower()])
+        preferred_unknown.extend(urls[:6])
+        for url in preferred_unknown:
+            if url not in tried_urls:
+                return url
     except: pass
     return ""
 
@@ -10466,6 +10535,7 @@ while True:
         if fail_count > 2: break
         time.sleep(10)
         continue
+    tried_urls.add(media_url)
     fail_count = 0
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
     cookie_header = ""
@@ -10491,7 +10561,7 @@ while True:
             has_data = True
         else:
             fail_count += 1
-            if (not has_data) and (proc.returncode != 0 or fail_count > 2):
+            if (not has_data) and fail_count > 2:
                 break
     finally:
         pass
@@ -10519,6 +10589,25 @@ while True:
             if original_user_url and "tiktok.com" in original_user_url:
                 live_url = original_user_url
             cmd.append(live_url)
+
+            # Pre-check: yt-dlp --dump-json để xác nhận user có đang live không
+            if "tiktok.com" in live_url.lower():
+                try:
+                    precheck_cmd = [ytdlp_bin, "--dump-json", "--no-download", "--socket-timeout", "10", live_url]
+                    if os.path.exists(cookies_path):
+                        precheck_cmd[4:4] = ["--cookies", cookies_path]
+                    precheck_proc = subprocess.run(precheck_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+                    if precheck_proc.returncode != 0:
+                        precheck_err = (precheck_proc.stderr or b"").decode("utf-8", errors="ignore").lower()
+                        if any(sig in precheck_err for sig in ("not currently live", "is offline", "room is currently not available", "this live has ended")):
+                            return jsonify({
+                                "error": "User hiện không đang live — TikTok xác nhận offline. Hãy kiểm tra lại link hoặc thử lại sau.",
+                                "reason": "user_offline",
+                            }), 404
+                except subprocess.TimeoutExpired:
+                    log.warning("[Livestream] yt-dlp pre-check timeout, bỏ qua và tiếp tục ghi")
+                except Exception as e:
+                    log.warning("[Livestream] yt-dlp pre-check lỗi: %s, bỏ qua", e)
 
         # Log file rieng cho debug
         log_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "livestream_logs")
@@ -10711,7 +10800,8 @@ def api_livestream_status():
                 _log_livestream_event(
                     "INFO", jid, info,
                     "Bắt đầu ghi video %s cho %s (chất lượng: %s)" % (platform, display_source, info.get("quality", "best")),
-                    "start"
+                    "start",
+                    timestamp=info.get("started_ts", 0)
                 )
                 
             if last_size_time == 0:
