@@ -348,7 +348,12 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                 SystemLogger.log("WARNING", "IndexEngine", "Luồng dữ liệu API bị ngắt kết nối: ${e.message}")
                                 if (totalFilesIndexed.get() > 100) isFastPathSuccess = true // Vẫn dùng data đã nhận
                             } catch (e: Exception) {
-                                SystemLogger.log("WARNING", "IndexEngine", "Lỗi giải mã luồng JSON: ${e.message}")
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                if (e is java.net.SocketException) {
+                                    SystemLogger.log("WARNING", "IndexEngine", "Luồng dữ liệu API bị ngắt (SocketException): ${e.message}")
+                                } else {
+                                    SystemLogger.log("WARNING", "IndexEngine", "Lỗi giải mã luồng JSON: ${e.message}")
+                                }
                             }
                         }
                     }
@@ -780,9 +785,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             return@withContext Result.success()
 
         } catch (e: Exception) {
-            try {
-                SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
-            } catch (ex: Exception) {}
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             return@withContext Result.failure()
         } finally {
             isUiUpdating.set(false)
@@ -1196,7 +1200,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             backupCount++
                         } catch (e: Exception) { 
                             failedCount++
-                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}") 
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) {
+                                if (e is java.net.ConnectException || e is java.net.SocketTimeoutException || e is java.net.UnknownHostException) {
+                                    SystemLogger.log("INFO", "AutoBackup", "Mạng chập chờn, tải file $fileName lỗi: ${e.message}")
+                                } else {
+                                    SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}") 
+                                }
+                            }
                         }
                         // Nhường luồng cho CPU để tránh văng app do tác vụ I/O nặng
                         kotlinx.coroutines.yield()

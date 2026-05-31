@@ -1183,6 +1183,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // Danh sách các stream đang ghi
     var activeLivestreams = androidx.compose.runtime.mutableStateListOf<LivestreamJob>()
         private set
+    internal var lastLivestreamServerSyncAt = 0L
+    internal var lastLivestreamServerRecordingIds: Set<String> = emptySet()
     var livestreamMessage by mutableStateOf("")
         private set
 
@@ -1241,7 +1243,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         tiktokCookiesMessage = json.optString("cookies_message", "")
         json.optJSONObject("daemon")?.let { daemon ->
             val serverRunning = daemon.optBoolean("running", false)
-            val hasFreshHeartbeat = daemon.optLong("heartbeat_age_seconds", Long.MAX_VALUE) < 240L
+            val hasFreshHeartbeat = daemon.optLong("heartbeat_age_seconds", Long.MAX_VALUE) < 600L
             val hasActiveWatchRecord = tiktokLiveWatchUsers.any { it.status == "recording" || it.jobId.isNotBlank() }
             tiktokWatchDaemonRunning = serverRunning || hasFreshHeartbeat || hasActiveWatchRecord
             tiktokWatchDaemonLastTick = daemon.optString("last_tick", "")
@@ -1467,6 +1469,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     /** Gọi 1 lần khi app mở lại — tự đồng bộ lại trạng thái từ các Worker đang chạy ngầm */
     fun restoreLivestreamStateIfRunning(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
+            val serverSnapshotIsFresh = System.currentTimeMillis() - lastLivestreamServerSyncAt < 15_000L
+            if (serverSnapshotIsFresh && lastLivestreamServerRecordingIds.isEmpty()) {
+                LivestreamMonitorWorker.cancelAll(context)
+                withContext(Dispatchers.Main) {
+                    activeLivestreams.clear()
+                }
+                return@launch
+            }
+
             val workInfos = androidx.work.WorkManager.getInstance(context)
                 .getWorkInfosByTag("LIVESTREAM_ALL").get()
             
@@ -1519,10 +1530,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun syncLivestreamStateWithServer(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Phục hồi từ WorkManager trước (như bình thường)
-                restoreLivestreamStateIfRunning(context)
-                kotlinx.coroutines.delay(1000) // Đợi load local xong
-
                 val apiBaseUrl = currentUrl.toApiBaseUrl()
                 val requestBuilder = okhttp3.Request.Builder().url("$apiBaseUrl/api/livestream/status")
                 
@@ -1588,6 +1595,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 LivestreamMonitorWorker.cancelJob(context, jobId)
                             }
                         }
+                        lastLivestreamServerSyncAt = System.currentTimeMillis()
+                        lastLivestreamServerRecordingIds = serverRecordingIds.toSet()
                         withContext(Dispatchers.Main) {
                             activeLivestreams.removeAll { it.jobId !in serverRecordingIds }
                         }
@@ -1605,6 +1614,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             } catch (e: Exception) {
                 android.util.Log.e("LivestreamSync", "Lỗi đồng bộ trạng thái livestream: ${e.message}")
+                restoreLivestreamStateIfRunning(context)
             }
         }
     }
@@ -2098,13 +2108,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     private var lastForegroundRefreshAt = 0L
+    private var foregroundRefreshJob: Job? = null
+    private var lastForegroundHeavyRefreshAt = 0L
 
     fun refreshNasStateOnForeground(context: android.content.Context, force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && now - lastForegroundRefreshAt < 2500L) return
         lastForegroundRefreshAt = now
+        foregroundRefreshJob?.cancel()
 
-        viewModelScope.launch(Dispatchers.IO) {
+        foregroundRefreshJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (webDavManager.currentBaseUrl.isEmpty()) {
                     val savedUrl = SmartNetworkManager.getActiveBaseUrl(context)
@@ -2117,6 +2130,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             } catch (_: Exception) {}
 
+            val shouldRunHeavyRefresh = force || now - lastForegroundHeavyRefreshAt > 15_000L
+            if (shouldRunHeavyRefresh) lastForegroundHeavyRefreshAt = now
+
             withContext(Dispatchers.Main) {
                 AppConfig.IS_APP_FOREGROUND = true
                 checkSmartNetwork(context)
@@ -2124,18 +2140,32 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 launchDashboardRealtimeScheduler()
                 launchMetricsPolling()
                 restoreLivestreamStateIfRunning(context)
-                fetchUsbImportStatus()
                 fetchSmartData()
-                fetchDiskHealth()
-                fetchNasInsights()
-                fetchOmvOverview()
-                fetchStorageUsage()
-                loadSystemLogs()
                 fetchThumbStatus()
                 fetchLivestreamStatusOnly(context)
                 fetchTikTokLiveWatch(context)
-                syncLivestreamStateWithServer(context)
                 refresh()
+            }
+
+            if (!shouldRunHeavyRefresh) return@launch
+
+            delay(300L)
+            withContext(Dispatchers.Main) {
+                fetchUsbImportStatus()
+                syncLivestreamStateWithServer(context)
+            }
+
+            delay(700L)
+            withContext(Dispatchers.Main) {
+                fetchDiskHealth()
+                fetchNasInsights()
+            }
+
+            delay(1000L)
+            withContext(Dispatchers.Main) {
+                fetchOmvOverview()
+                fetchStorageUsage()
+                loadSystemLogs()
             }
         }
     }
@@ -5443,6 +5473,7 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                 val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
                 
                 val newJobs = mutableListOf<WebDavViewModel.LivestreamJob>()
+                val serverRecordingIds = mutableSetOf<String>()
                 for (i in 0 until jobsArray.length()) {
                     val jobObj = jobsArray.getJSONObject(i)
                     val status = jobObj.optString("status", "")
@@ -5450,6 +5481,7 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                     val platform = jobObj.optString("platform", "")
                     val watchUser = jobObj.optString("watch_username", "")
                     if (status == "recording" && jobId.isNotEmpty()) {
+                        serverRecordingIds.add(jobId)
                         newJobs.add(
                             WebDavViewModel.LivestreamJob(
                                 jobId = jobId,
@@ -5464,6 +5496,11 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                             )
                         )
                     }
+                }
+                lastLivestreamServerSyncAt = System.currentTimeMillis()
+                lastLivestreamServerRecordingIds = serverRecordingIds.toSet()
+                if (serverRecordingIds.isEmpty()) {
+                    LivestreamMonitorWorker.cancelAll(context)
                 }
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     if (activeLivestreams.size != newJobs.size || activeLivestreams != newJobs) {

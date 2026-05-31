@@ -37,6 +37,34 @@ import coil.memory.MemoryCache
  */
 class NasApplication : Application(), ImageLoaderFactory {
 
+    // ════════════════════════════════════════════════════════════════════════════
+    // Timber Tree ghi log vào Room DB — hiển thị trong phần System Log trên app
+    // ════════════════════════════════════════════════════════════════════════════
+    private inner class DatabaseLogTree : timber.log.Timber.DebugTree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            // Luôn in ra Logcat như bình thường
+            super.log(priority, tag, message, t)
+            // Chỉ ghi vào DB các log WARN trở lên để tránh spam
+            if (priority >= android.util.Log.WARN) {
+                try {
+                    val type = when (priority) {
+                        android.util.Log.WARN -> "WARN"
+                        android.util.Log.ERROR -> "ERROR"
+                        else -> "INFO"
+                    }
+                    val fullMsg = if (t != null) "$message\n${t.stackTraceToString()}" else message
+                    applicationScope.launch(Dispatchers.IO) {
+                        try {
+                            database.logDao().insertLog(
+                                SystemLog(type = type, module = tag ?: "Timber", message = fullMsg)
+                            )
+                        } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
             .memoryCache {
@@ -94,6 +122,34 @@ class NasApplication : Application(), ImageLoaderFactory {
             .writeTimeout(15, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.FAST_API_POOL_SIZE, AppConfig.FAST_API_POOL_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
             .build()
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // Debug HTTP Client — Clone từ fastApiClient, gắn Chucker để soi API trên điện thoại.
+    // Client chính HOÀN TOÀN KHÔNG BỊ ĐỤNG. Chucker chỉ chạy trong bản Debug.
+    // ════════════════════════════════════════════════════════════════════════════
+    val debugHttpClient: OkHttpClient by lazy {
+        val debugPrefs = getSharedPreferences("nas_debug", Context.MODE_PRIVATE)
+        if (!debugPrefs.getBoolean("network_inspector_enabled", false)) {
+            fastApiClient
+        } else {
+            fastApiClient.newBuilder()
+                .addInterceptor(
+                com.chuckerteam.chucker.api.ChuckerInterceptor.Builder(applicationContext)
+                    .collector(
+                        com.chuckerteam.chucker.api.ChuckerCollector(
+                            context = applicationContext,
+                            showNotification = true,
+                            retentionPeriod = com.chuckerteam.chucker.api.RetentionManager.Period.ONE_HOUR
+                        )
+                    )
+                    .maxContentLength(250_000L)
+                    .redactHeaders("Authorization") // Ẩn mật khẩu trong Chucker UI
+                    .alwaysReadResponseBody(true)
+                    .build()
+                )
+                .build()
+        }
     }
 
     val longRunningApiClient: OkHttpClient by lazy {
@@ -174,6 +230,14 @@ class NasApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        val debugPrefs = getSharedPreferences("nas_debug", Context.MODE_PRIVATE)
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+            debugPrefs.getBoolean("database_logging_enabled", false)
+        ) {
+            timber.log.Timber.plant(DatabaseLogTree())
+            timber.log.Timber.i("Timber đã khởi động - log WARN/ERROR sẽ ghi vào DB.")
+        }
 
         // TÍNH NĂNG 4.G: Global Crash Handler (Lưu log trước khi văng chết ngất)
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()

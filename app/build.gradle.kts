@@ -85,6 +85,13 @@ dependencies {
 
     // WorkManager để chạy ngầm
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Timber for better logging
+    implementation("com.jakewharton.timber:timber:5.0.1")
+
+    // Chucker for in-app network inspection
+    debugImplementation("com.github.chuckerteam.chucker:library:4.0.0")
+    releaseImplementation("com.github.chuckerteam.chucker:library-no-op:4.0.0")
 }
 
 ksp {

@@ -91,6 +91,7 @@ Provide only the exact code blocks being replaced.
 # 3. NGUYÊN TẮC THỰC THI (FILE EDITING)
 - Chỉ sử dụng công cụ thay thế cục bộ (replace_in_file hoặc tương đương) để nhắm đúng dòng cần sửa.
 - Không bao giờ dùng lệnh ghi đè toàn bộ file (write_to_file) trừ khi tạo file mới tinh.
+- CẤM dùng PowerShell `Set-Content`, `Out-File`, pipeline đọc toàn file rồi ghi lại toàn file, hoặc bất kỳ lệnh rewrite toàn file nào với file có tiếng Việt/UTF-8 như `nas_api_server.py`, vì dễ làm hỏng encoding/mojibake. Chỉ được dùng `apply_patch`/diff cục bộ hoặc công cụ bảo toàn byte/encoding đã kiểm chứng.
 - Không tự ý thêm thư viện, module hoặc dependencies bên thứ 3 vào dự án.
 
 # 4. CHỮ KÝ XÁC NHẬN (VERIFICATION TRIGGER)

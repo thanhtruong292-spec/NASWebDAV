@@ -8758,6 +8758,48 @@ def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
         log.warning("[Livestream] Lỗi kiểm tra codec FLV trực tiếp: %s", e)
     return False
 
+def _livestream_video_is_playable(video_path):
+    if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) <= 1024:
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "stream=codec_type:format=duration",
+                "-of", "json",
+                video_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+        )
+        if proc.returncode != 0:
+            err_tail = (proc.stderr or b"")[-200:].decode("utf-8", errors="ignore")
+            log.warning("[Livestream] ffprobe không đọc được video %s: %s", os.path.basename(video_path), err_tail)
+            return False
+        data = json.loads((proc.stdout or b"{}").decode("utf-8", errors="ignore") or "{}")
+        streams = data.get("streams") or []
+        has_video = any((s or {}).get("codec_type") == "video" for s in streams if isinstance(s, dict))
+        duration_text = str((data.get("format") or {}).get("duration") or "").strip()
+        return bool(has_video) or bool(duration_text)
+    except Exception as e:
+        log.warning("[Livestream] Lỗi kiểm tra video %s: %s", os.path.basename(video_path), e)
+        return False
+
+
+def _quarantine_broken_livestream_file(file_path):
+    if not file_path or not os.path.exists(file_path):
+        return ""
+    try:
+        broken_path = file_path + ".broken"
+        if os.path.exists(broken_path):
+            broken_path = broken_path + "." + str(int(time.time()))
+        os.rename(file_path, broken_path)
+        return broken_path
+    except Exception:
+        return ""
+
+
 def _remux_flv_to_mp4(flv_path):
     """Remux file FLV thảnh MP4 bang ffmpeg -c copy (khong re-encode, ~0% CPU).
     Tr? v? duong dan file MP4 neu thảnh cầng, hoac chuoi rong neu thất bại."""
@@ -8777,12 +8819,16 @@ def _remux_flv_to_mp4(flv_path):
             "-bsf:a", "aac_adtstoasc",
             mp4_path,
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-        if proc.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+        if proc.returncode == 0 and _livestream_video_is_playable(mp4_path):
             try:
                 os.remove(flv_path)
             except Exception:
                 pass
             return mp4_path
+        if not os.path.exists(flv_path):
+            log.warning("[Livestream] File nguon bien mat trong luc remux, bo qua quarantine: %s",
+                        os.path.basename(flv_path))
+            return ""
         # Fallback: th? lỗi không dùng aac_adtstoasc (mot so FLV co audio non-AAC)
         proc2 = subprocess.run([
             "ffmpeg", "-y", "-loglevel", "error",
@@ -8792,12 +8838,16 @@ def _remux_flv_to_mp4(flv_path):
             "-movflags", "+faststart",
             mp4_path,
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-        if proc2.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+        if proc2.returncode == 0 and _livestream_video_is_playable(mp4_path):
             try:
                 os.remove(flv_path)
             except Exception:
                 pass
             return mp4_path
+        if not os.path.exists(flv_path):
+            log.warning("[Livestream] File nguon bien mat trong luc remux fallback, bo qua quarantine: %s",
+                        os.path.basename(flv_path))
+            return ""
         # FIX: Pass 3 — th?m h264_mp4toannexb video BSF. Mot so FLV/H264 thieu
         # NAL annexB delimiter -> mp4 muxer reject. BSF nay th?m lai delimiter.
         proc3 = subprocess.run([
@@ -8809,12 +8859,16 @@ def _remux_flv_to_mp4(flv_path):
             "-movflags", "+faststart",
             mp4_path,
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-        if proc3.returncode == 0 and os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 1024:
+        if proc3.returncode == 0 and _livestream_video_is_playable(mp4_path):
             try:
                 os.remove(flv_path)
             except Exception:
                 pass
             return mp4_path
+        if proc.returncode in (-15, -9) or proc2.returncode in (-15, -9) or proc3.returncode in (-15, -9):
+            log.warning("[Livestream] Remux bị dừng do restart/cancel (rc=%d|%d|%d), giữ nguyên file gốc: %s",
+                        proc.returncode, proc2.returncode, proc3.returncode, os.path.basename(flv_path))
+            return ""
         # Het cach: log day du stderr + rename file .flv -> .broken.flv de user
         # biet file da bi hong/không pl?y được, KHÔNG xoá (de debug hoac thu
         # mo bang VLC tay).
@@ -8822,10 +8876,7 @@ def _remux_flv_to_mp4(flv_path):
         log.warning("[Livestream] Remux FLV sang MP4 thất bại sau cả 3 lượt thử (rc=%d|%d|%d): %s",
                     proc.returncode, proc2.returncode, proc3.returncode, err_tail)
         try:
-            broken_path = flv_path + ".broken"  # vd: foo.flv.broken
-            if os.path.exists(broken_path):
-                broken_path = broken_path + "." + str(int(time.time()))
-            os.rename(flv_path, broken_path)
+            broken_path = _quarantine_broken_livestream_file(flv_path)
             log.info("[Livestream] FLV không mở được, đã đổi tên thành: %s", os.path.basename(broken_path))
         except Exception:
             pass
@@ -8926,15 +8977,48 @@ def _livestream_watchdog():
                                     info["direct_output_path"] = mp4_path
                                     log.info("[Livestream] Job %s: remux FLV -> MP4 OK (%s)", jid, os.path.basename(mp4_path))
                                 else:
-                                    info["output_file"] = os.path.basename(flv_path) + ".broken"
-                                    info["file_size"] = 0
+                                    broken_path = flv_path + ".broken"
+                                    if os.path.exists(broken_path):
+                                        info["output_file"] = os.path.basename(broken_path)
+                                        info["file_size"] = os.path.getsize(broken_path)
+                                    elif os.path.exists(flv_path):
+                                        info["output_file"] = os.path.basename(flv_path)
+                                        info["file_size"] = os.path.getsize(flv_path)
+                                        info["error_reason"] = "Chua chuyen duoc sang MP4, da giu nguyen tep goc."
+                                    else:
+                                        info["error_reason"] = "Tep nguon da bien mat truoc khi remux hoan tat."
                         except Exception as e:
                             if flv_path:
-                                info["output_file"] = os.path.basename(flv_path) + ".broken"
-                                info["file_size"] = 0
+                                broken_path = flv_path + ".broken"
+                                if os.path.exists(broken_path):
+                                    info["output_file"] = os.path.basename(broken_path)
+                                    info["file_size"] = os.path.getsize(broken_path)
+                                elif os.path.exists(flv_path):
+                                    info["output_file"] = os.path.basename(flv_path)
+                                    info["file_size"] = os.path.getsize(flv_path)
                             log.warning("[Livestream] Job %s: remux thất bại: %s", jid, e)
 
                         # Kiểm tra dung lượng file de xac dinh thảnh cầng hay thất bại
+                        final_path = ""
+                        try:
+                            direct_path = info.get("direct_output_path", "")
+                            latest_path = info.get("_latest_output_path", "")
+                            output_file = info.get("output_file", "")
+                            output_dir = info.get("output_dir", _LIVESTREAM_DIR)
+                            for candidate in (direct_path, latest_path, os.path.join(output_dir, output_file) if output_file else ""):
+                                if candidate and os.path.exists(candidate):
+                                    final_path = candidate
+                                    break
+                            if final_path and final_path.lower().endswith(".mp4") and not _livestream_video_is_playable(final_path):
+                                broken_path = _quarantine_broken_livestream_file(final_path)
+                                info["output_file"] = os.path.basename(broken_path) if broken_path else os.path.basename(final_path) + ".broken"
+                                info["direct_output_path"] = broken_path
+                                info["file_size"] = 0
+                                info["error_reason"] = "Tệp MP4 thiếu metadata moov atom hoặc ffprobe không đọc được."
+                                log.error("[Livestream] Job %s: MP4 không hợp lệ, đã chuyển sang .broken: %s", jid, info["output_file"])
+                        except Exception as e:
+                            log.warning("[Livestream] Job %s: không kiểm tra được MP4 sau ghi: %s", jid, e)
+
                         if info.get("file_size", 0) < 1000:
                             info["status"] = "error"
                             info["error_reason"] = _livestream_error_from_log(info) or "Không tạo được tệp video hợp lệ."
@@ -9670,6 +9754,8 @@ def _tiktok_live_watchdog():
     _tiktok_watch_runtime.update({
         "running": True,
         "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "last_heartbeat": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
         "last_error": "",
         "last_summary": "Đã khởi động watcher TikTok trên NAS.",
     })
@@ -9686,6 +9772,7 @@ def _tiktok_live_watchdog():
             recording_count = 0
             pending_checks = []
             for user in users_snapshot:
+                _tiktok_watch_runtime["last_heartbeat"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 username = user.get("username", "")
                 if not username:
                     continue
@@ -9719,6 +9806,7 @@ def _tiktok_live_watchdog():
                         for user, username, now_str in pending_checks
                     }
                     for future in concurrent.futures.as_completed(future_map):
+                        _tiktok_watch_runtime["last_heartbeat"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                         user, username, now_str = future_map[future]
                         try:
                             check_results[username.lower()] = future.result()
@@ -9839,6 +9927,7 @@ def _tiktok_live_watchdog():
             _tiktok_watch_runtime.update({
                 "running": True,
                 "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "last_heartbeat": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "last_error": "",
                 "last_summary": "Đã kiểm tra %d user, %d đang ghi, %d vừa mới bắt đầu." % (checked_count, recording_count, started_count),
                 "loop_count": int(_tiktok_watch_runtime.get("loop_count", 0)) + 1,
@@ -9848,6 +9937,7 @@ def _tiktok_live_watchdog():
                 "running": False,
                 "last_error": normalize_vietnamese_message(str(e))[:200],
                 "last_tick": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "last_heartbeat": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             })
             log.error("[TikTokWatch] Lỗi watchdog: %s", e)
             _add_system_log_once("tiktok_watchdog_exception", "ERROR", "TikTokWatch", "Watchdog TikTok loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
@@ -9858,6 +9948,7 @@ def _tiktok_live_watchdog():
                     wait_seconds = min(wait_seconds, 15)
         except Exception:
             pass
+        _tiktok_watch_runtime["last_heartbeat"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         _tiktok_watch_wake.wait(wait_seconds)
         _tiktok_watch_wake.clear()
 
@@ -9917,9 +10008,12 @@ def _nas_api_self_watchdog():
 def api_tiktok_live_watch_get():
     # Pre-fetch livestream info to avoid nested locks (deadlock prevention)
     active_livestreams = {}
+    active_recording_count = 0
     with _livestream_lock:
         for k, v in _livestream_jobs.items():
             active_livestreams[k] = (v.get("status"), v.get("pid"))
+            if v.get("status") == "recording":
+                active_recording_count += 1
 
     with _tiktok_watch_lock:
         _load_tiktok_watch_state()
@@ -9954,7 +10048,17 @@ def api_tiktok_live_watch_get():
     cookies = _check_cookies_status()
     resp["cookies_status"] = cookies.get("status", "unknown")
     resp["cookies_message"] = cookies.get("message", "")
-    resp["daemon"] = dict(_tiktok_watch_runtime)
+    daemon = dict(_tiktok_watch_runtime)
+    try:
+        heartbeat = daemon.get("last_heartbeat") or daemon.get("last_tick") or ""
+        if heartbeat:
+            heartbeat_age = time.time() - datetime.datetime.strptime(heartbeat, "%d/%m/%Y %H:%M:%S").timestamp()
+            daemon["heartbeat_age_seconds"] = int(max(0, heartbeat_age))
+            daemon["running"] = active_recording_count > 0 or heartbeat_age < max(600, _tiktok_watch_interval() * 3)
+            daemon["active_recording_count"] = active_recording_count
+    except Exception:
+        pass
+    resp["daemon"] = daemon
     resp["poll_interval"] = _tiktok_watch_interval()
     return jsonify(resp)
 
@@ -11156,13 +11260,24 @@ if __name__ == "__main__":
     def _graceful_shutdown(signum, frame):
         """Dung server sach, không để lai zombie."""
         log.info("[Shutdown] Nhận tín hiệu %s, đang dọn dẹp...", signum)
-        # Kill tất c? child process cua nhom tien trinh nay
+        # Kill child process do NAS API sinh ra. Khong kill ca process group vi
+        # SIGTERM se quay lai chinh process hien tai va lap de quy shutdown.
         try:
-            import os as _os
-            pgid = _os.getpgrp()
-            _os.killpg(pgid, signal.SIGTERM)
-        except Exception:
-            pass
+            parent = psutil.Process(os.getpid())
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.terminate()
+                except Exception:
+                    pass
+            _, alive = psutil.wait_procs(children, timeout=3)
+            for child in alive:
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+        except Exception as e:
+            log.warning("[Shutdown] Khong don duoc child processes: %s", e)
         # Xo? PID file
         try:
             os.remove(PID_FILE)
@@ -11174,7 +11289,9 @@ if __name__ == "__main__":
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
         except Exception:
             pass
-        sys.exit(0)
+        # Signal handler runs while Tornado/background threads may be active.
+        # os._exit avoids systemd waiting until TimeoutStopSec and then SIGKILL.
+        os._exit(0)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
 
