@@ -423,7 +423,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
                     if (!isLoginScreen) {
-                        viewModel.refreshNasStateOnForeground(mContext.applicationContext)
+                        viewModel.refreshNasStateOnForeground(mContext.applicationContext, force = true)
                     }
                     if (!hasCompletedFirstResume) {
                         hasCompletedFirstResume = true

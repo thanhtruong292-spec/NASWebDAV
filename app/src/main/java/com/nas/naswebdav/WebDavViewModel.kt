@@ -957,7 +957,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val port = 5050
-                val apiUrl = "http://$host:$port/api/thumbnail/audit"
+                val apiUrl = "http://$host:$port/api/thumb/status"
                 
                 val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
@@ -970,10 +970,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (response.isSuccessful) {
                         val body = response.body?.string() ?: "{}"
                         val obj = org.json.JSONObject(body)
+                        val total = obj.optInt("total_media", 0)
+                        val generated = obj.optInt("generated", 0)
                         _thumbnailAudit.value = ThumbnailAuditData(
-                            total = obj.optInt("total", 0),
-                            thumbnailed = obj.optInt("thumbnailed", 0),
-                            missing = obj.optInt("missing", 0),
+                            total = total,
+                            thumbnailed = generated,
+                            missing = if (total > generated) total - generated else 0,
                             running = obj.optBoolean("running", false),
                             paused = obj.optBoolean("paused", false),
                             errors = obj.optInt("errors", 0)
@@ -989,12 +991,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val port = 5050
-                val apiUrl = "http://$host:$port/api/thumbnail/trigger"
+                val apiUrl = "http://$host:$port/api/thumb/control"
                 
                 val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
                 
-                val body = "".toRequestBody("application/json".toMediaTypeOrNull())
+                val body = "{\"action\": \"resume\"}".toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
                     .url(apiUrl)
                     .post(body)
@@ -1238,7 +1240,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
         tiktokCookiesMessage = json.optString("cookies_message", "")
         json.optJSONObject("daemon")?.let { daemon ->
-            tiktokWatchDaemonRunning = daemon.optBoolean("running", false)
+            val serverRunning = daemon.optBoolean("running", false)
+            val hasFreshHeartbeat = daemon.optLong("heartbeat_age_seconds", Long.MAX_VALUE) < 240L
+            val hasActiveWatchRecord = tiktokLiveWatchUsers.any { it.status == "recording" || it.jobId.isNotBlank() }
+            tiktokWatchDaemonRunning = serverRunning || hasFreshHeartbeat || hasActiveWatchRecord
             tiktokWatchDaemonLastTick = daemon.optString("last_tick", "")
             tiktokWatchDaemonSummary = daemon.optString("last_summary", "")
         } ?: run {
@@ -2126,6 +2131,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchOmvOverview()
                 fetchStorageUsage()
                 loadSystemLogs()
+                fetchThumbStatus()
+                fetchLivestreamStatusOnly(context)
+                fetchTikTokLiveWatch(context)
+                syncLivestreamStateWithServer(context)
+                refresh()
             }
         }
     }
@@ -4756,7 +4766,31 @@ fun WebDavViewModel.loadSystemLogs() {
         }
     }
 }
-fun WebDavViewModel.clearSystemLogs() { viewModelScope.launch(Dispatchers.IO) { repository.clearSystemLogs(); withContext(Dispatchers.Main) { systemLogsList = emptyList(); commonDialogMessage = "Đã dọn sạch nhật ký hệ thống."; showCommonDialog = true } } }
+fun WebDavViewModel.clearSystemLogs() { 
+    viewModelScope.launch(Dispatchers.IO) { 
+        repository.clearSystemLogs()
+        try {
+            if (webDavManager.currentBaseUrl.isNotEmpty()) {
+                val req = okhttp3.Request.Builder()
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs/clear")
+                    .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                    .build()
+                localApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        android.util.Log.e("NasAPI", "Lỗi xóa server logs: ${resp.code}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("NasAPI", "Không xóa được nhật ký trên NAS: ${e.message}")
+        }
+        withContext(Dispatchers.Main) { 
+            systemLogsList = emptyList()
+            commonDialogMessage = "Đã dọn sạch nhật ký hệ thống."
+            showCommonDialog = true 
+        } 
+    } 
+}
 
 fun WebDavViewModel.fetchSmartData() {
     viewModelScope.launch(Dispatchers.IO) {
