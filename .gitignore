@@ -20,3 +20,6 @@ local.properties
 .agents/
 .windsurf/
 .planning/
+__pycache__/
+*.pyc
+AGENTS.md
