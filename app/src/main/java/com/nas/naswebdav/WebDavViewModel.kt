@@ -536,6 +536,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
     var connectionStatus by mutableStateOf("Đang kết nối...")
+    private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private fun adaptiveTimeoutMs(url: String): Long {
+        val host = runCatching { java.net.URL(if (url.endsWith("/")) url else "$url/").host }.getOrNull() ?: ""
+        val saved = knownLatencyMs[host]
+        if (saved != null) return (saved * 4).coerceIn(500, 15_000)
+        return if (isTailscaleUrl(url)) 6_000L else 3_000L
+    }
+    private fun recordLatency(url: String, ms: Long) {
+        val host = runCatching { java.net.URL(if (url.endsWith("/")) url else "$url/").host }.getOrNull() ?: return
+        knownLatencyMs[host] = ms
+    }
 
     // BIẾN CHO BATCH COPY / MOVE
     var isBatchProcessing by mutableStateOf(false)
@@ -2231,8 +2242,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         }
 
                         try {
-                            val isTailscale = isTailscaleUrl(safeUrl)
-                            val timeoutMs = if (isTailscale) 2500L else 800L
+                            val timeoutMs = adaptiveTimeoutMs(safeUrl)
                             val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
                                 .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -2245,8 +2255,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 .header("Authorization", okhttp3.Credentials.basic(user, pass))
                                 .build()
 
+                            val t0 = android.os.SystemClock.elapsedRealtime()
                             pingClient.newCall(request).execute().use { response ->
                                 if (response.isSuccessful) {
+                                    recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
                                     channel.send(Pair(true, safeUrl))
                                 } else {
                                     channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
@@ -2341,16 +2353,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             urlList.distinct().map { url ->
                 async(Dispatchers.IO) {
                     url to try {
-                        val isTailscale = isTailscaleUrl(url)
-                        val timeoutMs = if (isTailscale) 2500 else 800
-
                         val safeUrl = if (url.endsWith("/")) url else "$url/"
+                        val timeoutMs = adaptiveTimeoutMs(safeUrl).toInt()
                         val uri = java.net.URI(safeUrl)
                         val host = uri.host ?: return@async url to -1L
                         val port = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
 
                         var best = Long.MAX_VALUE
-                        repeat(if (isTailscale) 1 else 3) {
+                        repeat(if (isTailscaleUrl(url)) 1 else 3) {
                             val start = android.os.SystemClock.elapsedRealtime()
                             try {
                                 val socket = java.net.Socket()
@@ -2361,7 +2371,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 // Ignore individual failures
                             }
                         }
-                        if (best == Long.MAX_VALUE) -1L else best
+                        if (best == Long.MAX_VALUE) -1L else {
+                            recordLatency(url, best)
+                            best
+                        }
                     } catch (_: Exception) {
                         -1L
                     }
