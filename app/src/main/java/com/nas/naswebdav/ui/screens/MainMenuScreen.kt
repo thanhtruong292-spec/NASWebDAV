@@ -255,7 +255,8 @@ fun MainMenuScreen(
     // ── TÍNH NĂNG MỚI ──────────────────────────────────────────────────────────
     onOpenOrganizer: () -> Unit = {},
     onOpenGuestPass: () -> Unit = {},
-    onOpenSocialExtractor: () -> Unit = {}
+    onOpenSocialExtractor: () -> Unit = {},
+    onStartScreenRecord: () -> Unit = {}
 ) {
     val mContext = LocalContext.current
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
@@ -293,6 +294,15 @@ fun MainMenuScreen(
     var slot2Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
     var slot3Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
     var slot4Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
+    LaunchedEffect(Unit) {
+        if (!sharedPrefs.getBoolean("screen_record_quick_added", false)) {
+            slot4Id = "screen_record"
+            sharedPrefs.edit()
+                .putString("qa_slot4", "screen_record")
+                .putBoolean("screen_record_quick_added", true)
+                .apply()
+        }
+    }
     var editingSlot by remember { mutableStateOf<Int?>(null) }
     var showCommonDialog by remember { mutableStateOf(false) }
 
@@ -690,6 +700,7 @@ fun MainMenuScreen(
             "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
             "smb" -> { viewModel.fetchSmbStatus(); showSmbDialog = true }
             "duplicate" -> showDuplicateScanDialog = true
+            "screen_record" -> onStartScreenRecord()
         }
     }
 
@@ -3983,7 +3994,8 @@ val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
     QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C))),
     QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00))),
-    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(Color(0xFF29B6F6), Color(0xFF0277BD)))
+    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(Color(0xFF29B6F6), Color(0xFF0277BD))),
+    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, listOf(Color(0xFF00BFA5), Color(0xFF00695C)))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

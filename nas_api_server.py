@@ -7303,6 +7303,278 @@ def api_media_fast():
     return Response(_iter_file_range(real_path, start, end), status=status, headers=headers, direct_passthrough=True)
 
 
+_SCREEN_RECORD_ROOT = os.path.join(WEBDAV_FILE_ROOT, "ScreenRecord")
+_SCREEN_RECORD_MAX_SESSIONS = 3
+_SCREEN_RECORD_SEGMENT_MAX_BYTES = 64 * 1024 * 1024
+_screen_record_locks = {}
+_screen_record_global_lock = threading.Lock()
+
+
+def _safe_screen_session_id(raw):
+    cleaned = _re_module.sub(r"[^A-Za-z0-9_.-]+", "_", str(raw or ""))
+    return cleaned[:80] or ("screen_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+
+
+def _screen_record_session_dir(session_id):
+    sid = _safe_screen_session_id(session_id)
+    root = os.path.realpath(_SCREEN_RECORD_ROOT)
+    path = os.path.realpath(os.path.join(root, sid))
+    if path != root and path.startswith(root + os.sep):
+        return path
+    return None
+
+
+def _screen_record_lock(session_id):
+    sid = _safe_screen_session_id(session_id)
+    with _screen_record_global_lock:
+        lock = _screen_record_locks.get(sid)
+        if lock is None:
+            lock = threading.Lock()
+            _screen_record_locks[sid] = lock
+        return lock
+
+
+def _screen_manifest_path(session_dir):
+    return os.path.join(session_dir, "manifest.json")
+
+
+def _read_screen_manifest(session_dir):
+    path = _screen_manifest_path(session_dir)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_screen_manifest(session_dir, manifest):
+    os.makedirs(session_dir, exist_ok=True)
+    tmp = _screen_manifest_path(session_dir) + ".tmp"
+    manifest["updated_at"] = int(time.time())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, _screen_manifest_path(session_dir))
+
+
+def _active_screen_record_count():
+    try:
+        if not os.path.isdir(_SCREEN_RECORD_ROOT):
+            return 0
+        count = 0
+        for name in os.listdir(_SCREEN_RECORD_ROOT):
+            m = _read_screen_manifest(os.path.join(_SCREEN_RECORD_ROOT, name))
+            if m.get("status") in ("recording", "finishing"):
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+
+@app.route("/api/screen_record/start", methods=["POST"])
+@requires_auth
+def api_screen_record_start():
+    try:
+        body = request.get_json(silent=True) or {}
+        if _active_screen_record_count() >= _SCREEN_RECORD_MAX_SESSIONS:
+            return jsonify({"ok": False, "error": "NAS đang nhận tối đa phiên quay màn hình."}), 429
+        sid = _safe_screen_session_id(body.get("session_id") or ("screen_%s" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))
+        session_dir = _screen_record_session_dir(sid)
+        if not session_dir:
+            return jsonify({"ok": False, "error": "Session không hợp lệ"}), 400
+        with _screen_record_lock(sid):
+            segments_dir = os.path.join(session_dir, "segments")
+            os.makedirs(segments_dir, exist_ok=True)
+            manifest = _read_screen_manifest(session_dir)
+            if manifest.get("status") in ("recording", "finishing"):
+                return jsonify({"ok": True, "session_id": sid, "resumed": True, "manifest": manifest})
+            manifest = {
+                "session_id": sid,
+                "status": "recording",
+                "created_at": int(time.time()),
+                "segment_duration_ms": int(body.get("segment_duration_ms") or 5000),
+                "width": int(body.get("width") or 0),
+                "height": int(body.get("height") or 0),
+                "bitrate": int(body.get("bitrate") or 0),
+                "format": "mpeg2ts",
+                "uploaded": [],
+                "failed": [],
+                "total_segments": 0,
+                "final_ts": None,
+                "final_mp4": None,
+            }
+            _write_screen_manifest(session_dir, manifest)
+        _set_thumbnail_auto_block("screen_record", True)
+        return jsonify({"ok": True, "session_id": sid, "path": "ScreenRecord/%s" % sid})
+    except Exception as e:
+        log.warning("[ScreenRecord] start lỗi: %s", e)
+        return jsonify({"ok": False, "error": str(e)[:160]}), 500
+
+
+@app.route("/api/screen_record/segment", methods=["POST"])
+@requires_auth
+def api_screen_record_segment():
+    sid = _safe_screen_session_id(request.args.get("session_id", ""))
+    try:
+        idx = int(request.args.get("index", "-1"))
+    except Exception:
+        idx = -1
+    if not sid or idx < 0:
+        return jsonify({"ok": False, "error": "Thiếu session_id hoặc index"}), 400
+    session_dir = _screen_record_session_dir(sid)
+    if not session_dir:
+        return jsonify({"ok": False, "error": "Session không hợp lệ"}), 400
+    sha_expected = request.args.get("sha256", "").strip().lower()
+    duration_ms = int(request.args.get("duration_ms", "0") or 0)
+    with _screen_record_lock(sid):
+        manifest = _read_screen_manifest(session_dir)
+        if manifest.get("status") not in ("recording", "finishing"):
+            return jsonify({"ok": False, "error": "Phiên chưa bắt đầu hoặc đã kết thúc"}), 409
+        segments_dir = os.path.join(session_dir, "segments")
+        os.makedirs(segments_dir, exist_ok=True)
+        final_path = os.path.join(segments_dir, "part_%06d.ts" % idx)
+        tmp_path = final_path + ".part"
+        hasher = hashlib.sha256()
+        written = 0
+        try:
+            with open(tmp_path, "wb") as f:
+                while True:
+                    chunk = request.stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > _SCREEN_RECORD_SEGMENT_MAX_BYTES:
+                        raise ValueError("Segment quá lớn")
+                    hasher.update(chunk)
+                    f.write(chunk)
+            sha_actual = hasher.hexdigest()
+            if sha_expected and sha_actual != sha_expected:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": "Sai checksum", "sha256": sha_actual}), 400
+            os.replace(tmp_path, final_path)
+        except Exception as e:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)[:160]}), 500
+
+        uploaded = manifest.get("uploaded") or []
+        uploaded = [x for x in uploaded if int(x.get("index", -1)) != idx]
+        uploaded.append({"index": idx, "bytes": written, "sha256": hasher.hexdigest(), "duration_ms": duration_ms})
+        uploaded.sort(key=lambda x: int(x.get("index", 0)))
+        manifest["uploaded"] = uploaded
+        manifest["total_segments"] = max(int(manifest.get("total_segments") or 0), idx + 1)
+        manifest["status"] = "recording"
+        _write_screen_manifest(session_dir, manifest)
+    return jsonify({"ok": True, "session_id": sid, "index": idx, "bytes": written})
+
+
+def _screen_record_remux_worker(session_dir, sid, final_ts):
+    try:
+        if not _background_heavy_work_allowed():
+            return
+        final_mp4 = os.path.join(session_dir, "%s.mp4" % sid)
+        proc = subprocess.run(
+            ["/usr/bin/ffmpeg", "-y", "-i", final_ts, "-c", "copy", "-movflags", "+faststart", final_mp4],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900
+        )
+        with _screen_record_lock(sid):
+            manifest = _read_screen_manifest(session_dir)
+            if proc.returncode == 0 and os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0:
+                manifest["final_mp4"] = os.path.relpath(final_mp4, WEBDAV_FILE_ROOT).replace(os.sep, "/")
+                manifest["remux_status"] = "done"
+            else:
+                manifest["remux_status"] = "failed"
+            _write_screen_manifest(session_dir, manifest)
+    except Exception as e:
+        log.warning("[ScreenRecord] remux lỗi: %s", e)
+
+
+@app.route("/api/screen_record/finish", methods=["POST"])
+@requires_auth
+def api_screen_record_finish():
+    body = request.get_json(silent=True) or {}
+    sid = _safe_screen_session_id(body.get("session_id") or request.args.get("session_id", ""))
+    session_dir = _screen_record_session_dir(sid)
+    if not session_dir:
+        return jsonify({"ok": False, "error": "Session không hợp lệ"}), 400
+    with _screen_record_lock(sid):
+        manifest = _read_screen_manifest(session_dir)
+        total = int(body.get("total_segments") or manifest.get("total_segments") or 0)
+        uploaded_idx = {int(x.get("index", -1)) for x in (manifest.get("uploaded") or [])}
+        missing = [i for i in range(total) if i not in uploaded_idx]
+        if missing:
+            manifest["status"] = "recording"
+            manifest["missing"] = missing[:5000]
+            _write_screen_manifest(session_dir, manifest)
+            return jsonify({"ok": False, "missing": missing, "uploaded": sorted(uploaded_idx)}), 409
+
+        manifest["status"] = "finishing"
+        _write_screen_manifest(session_dir, manifest)
+        segments_dir = os.path.join(session_dir, "segments")
+        final_ts = os.path.join(session_dir, "%s.ts" % sid)
+        tmp_ts = final_ts + ".part"
+        with open(tmp_ts, "wb") as out:
+            for i in range(total):
+                part = os.path.join(segments_dir, "part_%06d.ts" % i)
+                with open(part, "rb") as f:
+                    shutil.copyfileobj(f, out, 1024 * 1024)
+        os.replace(tmp_ts, final_ts)
+        manifest["status"] = "done"
+        manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
+        manifest["missing"] = []
+        manifest["completed_at"] = int(time.time())
+        _write_screen_manifest(session_dir, manifest)
+    _set_thumbnail_auto_block("screen_record", False)
+    threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
+    return jsonify({"ok": True, "session_id": sid, "final_ts": manifest["final_ts"], "segments": total})
+
+
+@app.route("/api/screen_record/status", methods=["GET"])
+@requires_auth
+def api_screen_record_status():
+    raw_sid = request.args.get("session_id", "").strip()
+    if raw_sid:
+        sid = _safe_screen_session_id(raw_sid)
+        session_dir = _screen_record_session_dir(sid)
+        if not session_dir or not os.path.exists(session_dir):
+            return jsonify({"ok": False, "error": "Không tìm thấy phiên"}), 404
+        return jsonify({"ok": True, "manifest": _read_screen_manifest(session_dir)})
+    sessions = []
+    try:
+        if os.path.isdir(_SCREEN_RECORD_ROOT):
+            for name in sorted(os.listdir(_SCREEN_RECORD_ROOT), reverse=True)[:50]:
+                m = _read_screen_manifest(os.path.join(_SCREEN_RECORD_ROOT, name))
+                if m:
+                    sessions.append(m)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "sessions": sessions})
+
+
+@app.route("/api/screen_record/cancel", methods=["POST"])
+@requires_auth
+def api_screen_record_cancel():
+    body = request.get_json(silent=True) or {}
+    sid = _safe_screen_session_id(body.get("session_id") or request.args.get("session_id", ""))
+    session_dir = _screen_record_session_dir(sid)
+    if not session_dir:
+        return jsonify({"ok": False, "error": "Session không hợp lệ"}), 400
+    with _screen_record_lock(sid):
+        manifest = _read_screen_manifest(session_dir)
+        manifest["status"] = "cancelled"
+        manifest["cancelled_at"] = int(time.time())
+        _write_screen_manifest(session_dir, manifest)
+    _set_thumbnail_auto_block("screen_record", False)
+    return jsonify({"ok": True, "session_id": sid})
+
+
 # ============ VIDEO STREAM TRANSCODE ============
 # Transcode video sang MP4 (H.264 + AAC) on-the-fly bang FFmpeg
 # ExoPlayer tren Android không gi?i mở được MPEG-2 (.mpg) tren nhieu thiet bi

@@ -65,6 +65,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     // Lưu ViewModel cấp độ Activity để nhận Intent khi sống nền
 
     private lateinit var viewModel: WebDavViewModel
+    private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
 
 
 
@@ -162,6 +163,21 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val repository = WebDavRepository(webDavManager, db)
 
         viewModel = WebDavViewModel(webDavManager, repository)
+        screenCaptureLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+                val serviceIntent = android.content.Intent(this, ScreenRecordService::class.java).apply {
+                    action = ScreenRecordService.ACTION_START
+                    putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data)
+                    putExtra(ScreenRecordService.EXTRA_API_BASE, viewModel.webDavManager.currentBaseUrl.toApiBaseUrl())
+                    putExtra(ScreenRecordService.EXTRA_USER, viewModel.webDavManager.currentUser)
+                    putExtra(ScreenRecordService.EXTRA_PASS, viewModel.webDavManager.currentPass)
+                }
+                androidx.core.content.ContextCompat.startForegroundService(this, serviceIntent)
+            }
+        }
 
 
 
@@ -333,7 +349,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
                 ) {
                     Surface(color = MaterialTheme.colorScheme.background) {
-                        NasAppNavigation(viewModel)
+                        NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
                     }
                 }
             }
@@ -362,6 +378,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     }
 
+    private fun requestScreenRecordPermission() {
+        val manager = getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+        screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+    }
+
 }
 
 
@@ -372,7 +393,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 @Composable
 
-fun NasAppNavigation(viewModel: WebDavViewModel) {
+fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit = {}) {
 
     val mContext = androidx.compose.ui.platform.LocalContext.current
 
@@ -600,7 +621,9 @@ fun NasAppNavigation(viewModel: WebDavViewModel) {
 
                 onOpenGuestPass = { navController.navigate("guest_pass") },
 
-                onOpenSocialExtractor = { navController.navigate("social_extractor") }
+                onOpenSocialExtractor = { navController.navigate("social_extractor") },
+
+                onStartScreenRecord = onStartScreenRecord
 
             )
 
