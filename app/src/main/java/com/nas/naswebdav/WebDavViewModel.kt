@@ -458,6 +458,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var usbImportState by mutableStateOf(UsbImportState())
     var usbImportMessage by mutableStateOf("")
     var isUsbImportLoading by mutableStateOf(false)
+    private var lastUsbImportStatusFetchAt = 0L
+    private var usbImportStatusInFlight = false
 
     data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
     data class InsightFlowTask(
@@ -494,6 +496,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     )
     var nasInsights by mutableStateOf(NasInsights())
     var isFetchingNasInsights by mutableStateOf(false)
+    private var lastNasInsightsFetchAt = 0L
 
     // Sleep Schedule (HDD spindown / suspend) state
     data class SleepSchedule(
@@ -3516,8 +3519,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         return out
     }
 
-    fun fetchNasInsights() {
+    fun fetchNasInsights(minIntervalMs: Long = 10_000L) {
         if (isFetchingNasInsights) return
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastNasInsightsFetchAt < minIntervalMs) return
+        lastNasInsightsFetchAt = now
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isFetchingNasInsights = true }
             try {
@@ -3833,14 +3839,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         return devices.joinToString(", ")
     }
 
-    internal suspend fun fetchUsbImportStatusSuspend() {
+    internal suspend fun fetchUsbImportStatusSuspend(compact: Boolean = false, minIntervalMs: Long = 0L) {
+        val now = System.currentTimeMillis()
+        if (usbImportStatusInFlight) return
+        if (minIntervalMs > 0L && now - lastUsbImportStatusFetchAt < minIntervalMs) return
+        usbImportStatusInFlight = true
+        lastUsbImportStatusFetchAt = now
         withContext(Dispatchers.IO) {
             try {
-                withContext(Dispatchers.Main) { isUsbImportLoading = true }
+                withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = true }
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
                 if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                val path = if (compact) "/api/usb_import/status?compact=1" else "/api/usb_import/status"
                 val req = okhttp3.Request.Builder()
-                    .url("$base/api/usb_import/status")
+                    .url("$base$path")
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
@@ -3858,13 +3870,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             } finally {
-                withContext(Dispatchers.Main) { isUsbImportLoading = false }
+                usbImportStatusInFlight = false
+                withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = false }
             }
         }
     }
 
-    fun fetchUsbImportStatus() {
-        viewModelScope.launch { fetchUsbImportStatusSuspend() }
+    fun fetchUsbImportStatus(compact: Boolean = false, minIntervalMs: Long = 0L) {
+        viewModelScope.launch { fetchUsbImportStatusSuspend(compact = compact, minIntervalMs = minIntervalMs) }
     }
 
     fun saveUsbImportSettings(settings: UsbImportSettings) {

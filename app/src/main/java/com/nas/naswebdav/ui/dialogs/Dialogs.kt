@@ -3568,8 +3568,8 @@ fun UsbImportDialog(
     val isPollingStatus = state.status == "copying" || state.status == "cancelling"
     LaunchedEffect(isPollingStatus) {
         while (isPollingStatus) {
-            delay(1500)
-            viewModel.fetchUsbImportStatusSuspend()
+            delay(2500)
+            viewModel.fetchUsbImportStatusSuspend(compact = true, minIntervalMs = 2_000L)
         }
     }
 
@@ -4100,7 +4100,7 @@ fun NasInsightsDialog(
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
 ) {
-    LaunchedEffect(Unit) { viewModel.fetchNasInsights() }
+    LaunchedEffect(Unit) { viewModel.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -4123,7 +4123,7 @@ fun NasInsightsDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Tổng quan hệ thống NAS", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchNasInsights() }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { viewModel.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }

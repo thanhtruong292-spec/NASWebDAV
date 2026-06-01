@@ -1482,6 +1482,32 @@ def get_storage_usage_summary():
     return result
 
 
+_STORAGE_USAGE_CACHE = {"ts": 0.0, "data": None}
+_STORAGE_USAGE_CACHE_LOCK = threading.Lock()
+_STORAGE_USAGE_CACHE_TTL = 300
+
+
+def _build_storage_usage_payload():
+    usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
+    return {
+        "ok": True,
+        "root": WEBDAV_FILE_ROOT,
+        "total": format_bytes(usage.total),
+        "used": format_bytes(usage.used),
+        "free": format_bytes(usage.free),
+        "percent": round(usage.percent, 1),
+        "folders": get_storage_usage_summary(),
+    }
+
+
+def _refresh_storage_usage_cache_locked():
+    try:
+        _STORAGE_USAGE_CACHE["data"] = _build_storage_usage_payload()
+        _STORAGE_USAGE_CACHE["ts"] = time.time()
+    finally:
+        _STORAGE_USAGE_CACHE_LOCK.release()
+
+
 
 def get_fan_info():
     """Lấy thông tin quạt làm mát - Chainedbox rk3328 dùng PWM pwmchip0."""
@@ -2424,16 +2450,24 @@ def api_status():
 def api_storage_usage():
     """Dung lượng cac thư mục lon. Chi Đọc metadata, gioi han thoi gian quet."""
     try:
-        usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
-        return jsonify({
-            "ok": True,
-            "root": WEBDAV_FILE_ROOT,
-            "total": format_bytes(usage.total),
-            "used": format_bytes(usage.used),
-            "free": format_bytes(usage.free),
-            "percent": round(usage.percent, 1),
-            "folders": get_storage_usage_summary(),
-        })
+        now = time.time()
+        cached = _STORAGE_USAGE_CACHE.get("data")
+        cached_ts = float(_STORAGE_USAGE_CACHE.get("ts", 0) or 0)
+        if cached is not None and now - cached_ts < _STORAGE_USAGE_CACHE_TTL:
+            return jsonify(cached)
+        if cached is not None:
+            if _STORAGE_USAGE_CACHE_LOCK.acquire(False):
+                threading.Thread(target=_refresh_storage_usage_cache_locked, daemon=True, name="StorageUsageRefresh").start()
+            return jsonify(cached)
+        if not _STORAGE_USAGE_CACHE_LOCK.acquire(False):
+            return jsonify(cached or {"ok": True, "root": WEBDAV_FILE_ROOT, "folders": []})
+        try:
+            data = _build_storage_usage_payload()
+            _STORAGE_USAGE_CACHE["data"] = data
+            _STORAGE_USAGE_CACHE["ts"] = now
+            return jsonify(data)
+        finally:
+            _STORAGE_USAGE_CACHE_LOCK.release()
     except Exception as e:
         return jsonify({"ok": False, "error": "Không tải được dung lượng thư mục: %s" % normalize_vietnamese_message(str(e)), "folders": []}), 500
 
@@ -4926,8 +4960,8 @@ def _usb_import_set_state(**kwargs):
         pass
 
 
-def _usb_import_public_state():
-    settings = _usb_import_load_settings()
+def _usb_import_public_state(compact=False):
+    settings = _usb_import_load_settings() if not compact else {}
     with _usb_import_lock:
         state = dict(_usb_import_state)
     if int(state.get("files_total") or 0) <= 0:
@@ -4938,12 +4972,20 @@ def _usb_import_public_state():
         processed = int(state.get("bytes_processed") or 0)
         state["bytes_total"] = processed + max(0, current_total - int(state.get("current_file_bytes_done") or 0))
     actual_dest = state.get("dest_dir", "")
-    state["settings"] = settings
-    state["history"] = _usb_import_load_history()[-10:]
+    if not compact:
+        state["settings"] = settings
+        state["history"] = _usb_import_load_history()[-10:]
     pending_conflicts = state.get("pending_conflicts") or []
     pending_errors = state.get("pending_errors") or []
     state["pending_conflicts_count"] = int(state.get("pending_conflicts_count") or (len(pending_conflicts) if isinstance(pending_conflicts, list) else 0))
     state["pending_errors_count"] = int(state.get("pending_errors_count") or (len(pending_errors) if isinstance(pending_errors, list) else 0))
+    if compact:
+        state["pending_conflicts"] = []
+        state["pending_errors"] = []
+        state["detected_devices"] = []
+        settings_dest = _USB_IMPORT_SETTINGS_FILE and "USB Import"
+        state["dest_dir"] = state.get("dest_dir") or os.path.join(WEBDAV_FILE_ROOT, settings_dest)
+        return state
     if isinstance(pending_conflicts, list) and len(pending_conflicts) > 200:
         state["pending_conflicts"] = pending_conflicts[:200]
     if isinstance(pending_errors, list) and len(pending_errors) > 200:
@@ -6094,7 +6136,8 @@ def _usb_import_watchdog():
 @app.route("/api/usb_import/status", methods=["GET"])
 @requires_auth
 def api_usb_import_status():
-    return jsonify(_usb_import_public_state())
+    compact = str(request.args.get("compact", "")).lower() in ("1", "true", "yes")
+    return jsonify(_usb_import_public_state(compact=compact))
 
 
 @app.route("/api/usb_import/settings", methods=["POST"])
@@ -11586,7 +11629,7 @@ if __name__ == "__main__":
 
     # FEATURE: Disk health time-series daemon + scheduled backup daemon
     threading.Thread(target=_disk_health_watchdog, daemon=True).start()
-    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 5 phút).")
+    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 30 phút).")
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
     threading.Thread(target=_usb_import_watchdog, daemon=True, name="USBImportWatchdog").start()

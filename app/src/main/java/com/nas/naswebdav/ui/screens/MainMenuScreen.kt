@@ -3019,7 +3019,7 @@ fun SystemStatusCards(
     LaunchedEffect(Unit) {
         viewModel.fetchThumbStatus()
         viewModel.syncLivestreamStateWithServer(mContext)
-        viewModel.fetchUsbImportStatus()
+        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
             val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
@@ -3062,12 +3062,12 @@ fun SystemStatusCards(
     val usbImport = viewModel.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
     LaunchedEffect(Unit) {
-        viewModel.fetchUsbImportStatus()
+        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
     }
     LaunchedEffect(usbImport.status) {
         while (usbImport.status == "copying" || usbImport.status == "cancelling") {
-            kotlinx.coroutines.delay(1000)
-            viewModel.fetchUsbImportStatus()
+            kotlinx.coroutines.delay(2_500L)
+            viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
         }
     }
     val usbImportProgress = if (usbImport.bytesTotal > 0L) {
