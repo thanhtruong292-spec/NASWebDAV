@@ -16,6 +16,8 @@ import sys
 # THÊM DÒNG NÀY ĐỂ TRỊ BỆNH 1.5GB RAM ẢO CỦA LINUX GLIBC
 os.environ["MALLOC_ARENA_MAX"] = "2"
 import json
+import gc
+import ctypes
 import time
 import uuid
 import subprocess
@@ -1892,6 +1894,9 @@ def _scan_photos_lightweight():
         with open(tmp_path, "w") as f:
             json.dump(ai_data, f)
         os.rename(tmp_path, AI_TAGS_PATH)
+        categories = None
+        ai_data = None
+        _release_memory_to_os()
 
         with _alert_state_lock:
             _alert_states["ai_scan_running"] = False
@@ -3373,8 +3378,29 @@ def _pwm_apply_on(duty=10000, period=10000):
 # Cache toan bo danh sach anh (da sort mtime desc) de tranh os.walk toan o moi
 # request. NAS RAM ~1GB + HDD 7200rpm: walk toan o moi lan la cuc ky ton I/O.
 _PHOTOS_TIMELINE_CACHE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "photos_timeline_cache.json")
+_PHOTOS_TIMELINE_DB_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "photos_timeline_cache.sqlite")
+# Sau khi giải phóng cấu trúc lớn (list 385K+ ảnh), glibc thường GIỮ pages trong
+# arena thay vì trả về OS -> RSS không giảm trên NAS RAM ~1GB. gc.collect() thu
+# hồi vòng tham chiếu, malloc_trim(0) ép glibc trả heap rảnh về kernel. ctypes là
+# stdlib (không thêm dependency). Best-effort: lỗi thì bỏ qua.
+_libc_for_trim = None
+def _release_memory_to_os():
+    global _libc_for_trim
+    try:
+        gc.collect()
+    except Exception:
+        pass
+    try:
+        if _libc_for_trim is None:
+            _libc_for_trim = ctypes.CDLL("libc.so.6")
+        _libc_for_trim.malloc_trim(0)
+    except Exception:
+        pass
+
+
 _photos_timeline_cache = {
-    "items": [],
+    "items": [],  # Legacy fallback only. SQLite index is the primary cache.
+    "count": 0,
     "ts": 0,
     "loaded": False,
     "loading": False,
@@ -3391,18 +3417,24 @@ def _load_photos_timeline_cache_file():
             return
         _photos_timeline_cache["loaded"] = True
     try:
-        if not os.path.exists(_PHOTOS_TIMELINE_CACHE_FILE):
+        if not os.path.exists(_PHOTOS_TIMELINE_DB_FILE):
             return
-        with open(_PHOTOS_TIMELINE_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        raw_items = data.get("items") or []
-        items = []
-        for it in raw_items:
-            if isinstance(it, list) and len(it) >= 3:
-                items.append((str(it[0]), int(it[1]), int(it[2])))
+        conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=20.0)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM meta WHERE key='ts'")
+            row = cur.fetchone()
+            ts_loaded = float(row[0]) if row else 0
+            cur.execute("SELECT value FROM meta WHERE key='count'")
+            row = cur.fetchone()
+            count_loaded = int(row[0]) if row else 0
+        finally:
+            conn.close()
         with _photos_timeline_cache["lock"]:
-            _photos_timeline_cache["items"] = items
-            _photos_timeline_cache["ts"] = float(data.get("ts") or 0)
+            _photos_timeline_cache["items"] = []
+            _photos_timeline_cache["count"] = count_loaded
+            _photos_timeline_cache["ts"] = ts_loaded
+        _release_memory_to_os()
     except Exception as e:
         log.warning("[PhotoTimeline] Không tải được cache file: %s", e)
 
@@ -3434,42 +3466,157 @@ def _save_photos_timeline_cache_file(items, ts):
         log.warning("[PhotoTimeline] Không lưu được cache file: %s", e)
 
 
-def _photos_timeline_rebuild_worker():
-    scanned = []
-    error = ""
-    seen = 0
+def _photos_timeline_query(offset, limit, target_year=None, target_month=None):
+    if not os.path.exists(_PHOTOS_TIMELINE_DB_FILE):
+        return None
+    where = ""
+    params = []
+    if target_year is not None and target_month is not None:
+        start_dt = datetime.datetime(target_year, target_month, 1)
+        if target_month == 12:
+            end_dt = datetime.datetime(target_year + 1, 1, 1)
+        else:
+            end_dt = datetime.datetime(target_year, target_month + 1, 1)
+        start_ts = int(time.mktime(start_dt.timetuple()))
+        end_ts = int(time.mktime(end_dt.timetuple()))
+        where = "WHERE mtime >= ? AND mtime < ?"
+        params.extend([start_ts, end_ts])
+    conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=20.0)
     try:
-        for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
-            for name in files:
-                if name.startswith('.'):
-                    continue
-                ext = os.path.splitext(name)[1].lower()
-                if ext not in _IMAGE_EXTS:
-                    continue
-                full = os.path.join(root, name)
-                try:
-                    st = os.stat(full)
-                    rel = os.path.relpath(full, WEBDAV_FILE_ROOT).replace("\\", "/")
-                    scanned.append((rel, int(st.st_mtime), st.st_size))
-                    seen += 1
-                    if seen % 2000 == 0:
-                        time.sleep(0.02)
-                except Exception:
-                    continue
-        scanned.sort(key=lambda x: x[1], reverse=True)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM photos %s" % where, params)
+        total = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            "SELECT path, mtime, size FROM photos %s ORDER BY mtime DESC LIMIT ? OFFSET ?" % where,
+            params + [limit, offset]
+        )
+        page = [{"path": str(p), "mtime": int(m), "size": int(s)} for p, m, s in cur.fetchall()]
+        return total, page
+    finally:
+        conn.close()
+
+
+# Script quét chạy trong PROCESS CON: walk + sort 385K ảnh rồi ghi JSONL đã sort.
+# Toàn bộ RAM churn (path string, os.stat, list, sort temp) nằm trong con; con
+# thoát -> OS thu hồi 100%. Parent long-lived KHÔNG tự walk/sort nên arena không
+# phình dần sau mỗi chu kỳ rebuild (nguyên nhân RSS creep 217->282MB trước đây).
+_PHOTOS_TIMELINE_SCAN_SCRIPT = r'''
+import os, sys, json
+root = sys.argv[1]
+out = sys.argv[2]
+thumb_dir = sys.argv[3]
+exts = set(e for e in sys.argv[4].split(',') if e)
+rows = []
+for dp, dirs, files in os.walk(root):
+    dirs[:] = [d for d in dirs if not d.startswith('.') and d != thumb_dir and d != '#recycle']
+    for name in files:
+        if name.startswith('.'):
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in exts:
+            continue
+        full = os.path.join(dp, name)
+        try:
+            st = os.stat(full)
+            rel = os.path.relpath(full, root).replace('\\', '/')
+            rows.append((rel, int(st.st_mtime), st.st_size))
+        except Exception:
+            continue
+rows.sort(key=lambda x: x[1], reverse=True)
+with open(out, 'w', encoding='utf-8') as f:
+    for r in rows:
+        f.write(json.dumps([r[0], r[1], r[2]], ensure_ascii=False))
+        f.write('\n')
+'''
+
+
+def _photos_timeline_rebuild_worker():
+    error = ""
+    tmp_jsonl = _PHOTOS_TIMELINE_CACHE_FILE + ".scan.jsonl"
+    tmp_db = _PHOTOS_TIMELINE_DB_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(_PHOTOS_TIMELINE_CACHE_FILE), exist_ok=True)
+        try:
+            if os.path.exists(tmp_db):
+                os.remove(tmp_db)
+        except Exception:
+            pass
+        exts_csv = ",".join(sorted(_IMAGE_EXTS))
+        proc = subprocess.run(
+            [sys.executable, "-c", _PHOTOS_TIMELINE_SCAN_SCRIPT,
+             WEBDAV_FILE_ROOT, tmp_jsonl, THUMB_DIR_NAME, exts_csv],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=1800
+        )
+        if proc.returncode != 0:
+            error = "scan rc=%d %s" % (proc.returncode, (proc.stderr or b"")[-160:].decode("utf-8", "ignore"))
+            log.warning("[PhotoTimeline] Rebuild subprocess lỗi: %s", error)
+        else:
+            conn = sqlite3.connect(tmp_db, timeout=60.0)
+            count = 0
+            with open(tmp_jsonl, "r", encoding="utf-8") as f:
+                cur = conn.cursor()
+                cur.execute("PRAGMA journal_mode=OFF")
+                cur.execute("PRAGMA synchronous=OFF")
+                cur.execute("CREATE TABLE photos(path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL)")
+                batch = []
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        a = json.loads(line)
+                        batch.append((str(a[0]), int(a[1]), int(a[2])))
+                        if len(batch) >= 1000:
+                            cur.executemany("INSERT OR REPLACE INTO photos(path, mtime, size) VALUES(?,?,?)", batch)
+                            count += len(batch)
+                            batch = []
+                    except Exception:
+                        continue
+                if batch:
+                    cur.executemany("INSERT OR REPLACE INTO photos(path, mtime, size) VALUES(?,?,?)", batch)
+                    count += len(batch)
+                cur.execute("CREATE INDEX idx_photos_mtime ON photos(mtime DESC)")
+                cur.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                cache_ts = time.time()
+                cur.executemany("INSERT INTO meta(key, value) VALUES(?,?)", [
+                    ("ts", str(cache_ts)),
+                    ("count", str(count)),
+                    ("schema", "2"),
+                ])
+                conn.commit()
+            conn.close()
+            os.replace(tmp_db, _PHOTOS_TIMELINE_DB_FILE)
+            cache_ts = time.time()
+            with _photos_timeline_cache["lock"]:
+                _photos_timeline_cache["items"] = []
+                _photos_timeline_cache["count"] = count
+                _photos_timeline_cache["ts"] = cache_ts
+            try:
+                os.remove(_PHOTOS_TIMELINE_CACHE_FILE)
+            except Exception:
+                pass
+    except subprocess.TimeoutExpired:
+        error = "scan timeout 1800s"
+        log.warning("[PhotoTimeline] Rebuild subprocess timeout")
     except Exception as e:
         error = str(e)[:200]
         log.warning("[PhotoTimeline] Rebuild cache lỗi: %s", e)
+    finally:
+        try:
+            if os.path.exists(tmp_jsonl):
+                os.remove(tmp_jsonl)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(tmp_db):
+                os.remove(tmp_db)
+        except Exception:
+            pass
     with _photos_timeline_cache["lock"]:
-        if not error:
-            _photos_timeline_cache["items"] = scanned
-            _photos_timeline_cache["ts"] = time.time()
-            cache_ts = _photos_timeline_cache["ts"]
         _photos_timeline_cache["error"] = error
         _photos_timeline_cache["rebuilding"] = False
-    if not error:
-        _save_photos_timeline_cache_file(scanned, cache_ts)
+    # List cũ đã thành rác sau swap. Trả pages rảnh về OS.
+    _release_memory_to_os()
 
 
 def _ensure_photos_timeline_rebuild():
@@ -3514,6 +3661,7 @@ def api_photos_timeline():
     _ensure_photos_timeline_cache_loaded()
     with cache["lock"]:
         items = cache["items"]
+        cached_count = int(cache.get("count", 0) or 0)
         cache_ts = float(cache.get("ts", 0) or 0)
         loading = bool(cache.get("loading"))
         rebuilding = bool(cache.get("rebuilding"))
@@ -3523,7 +3671,21 @@ def api_photos_timeline():
         _ensure_photos_timeline_rebuild()
         rebuilding = True
 
-    # Áp dụng lọc theo tháng SAU khi lấy từ cache (cache giữ toàn bộ, không theo tháng)
+    db_result = _photos_timeline_query(offset, limit, target_year, target_month)
+    if db_result is not None:
+        total, page = db_result
+        return jsonify({
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "items": page,
+            "filter_month": month_filter or None,
+            "cache_age_seconds": int(max(0, now - cache_ts)) if cache_ts else None,
+            "scanning": loading or rebuilding,
+            "error": error or None,
+        })
+
+    # Legacy fallback only while SQLite index is being rebuilt for the first time.
     if target_year is not None:
         filtered = []
         for it in items:
@@ -3532,7 +3694,7 @@ def api_photos_timeline():
                 filtered.append(it)
         items = filtered
 
-    total = len(items)
+    total = len(items) if items else cached_count
     page = [
         {"path": it[0], "mtime": it[1], "size": it[2]}
         for it in items[offset:offset + limit]
@@ -9168,6 +9330,9 @@ def _livestream_watchdog():
             _cleanup_stale_job_tmp(max_age_hours=24)
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
             _cleanup_livestream_junk()
+            # Thu hồi RAM steady-state mỗi 60s: trả pages rảnh (thumbnail/livestream
+            # đã xong) về OS. Rẻ (~vài µs khi không có gì để trim) trên NAS ~1GB.
+            _release_memory_to_os()
             # Auto-purge job cũ để _livestream_jobs/_livestream_starting_claims
             # không phình vô hạn (RAM NAS chỉ ~1GB). Chỉ xóa job ĐÃ kết thúc
             # (không còn recording/starting) và quá 6 giờ — app đã đồng bộ trạng
