@@ -766,7 +766,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
             android.util.Log.i("VideoPlayer", "Legacy format → transcode: $transcodeUrl")
             transcodeUrl
         } else {
-            url // MP4, MKV, MOV, TS, WEBM → phát trực tiếp
+            url.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM → endpoint Range/ETag tối ưu LAN
         }
     }
 

@@ -18,6 +18,7 @@ os.environ["MALLOC_ARENA_MAX"] = "2"
 import json
 import gc
 import ctypes
+import mimetypes
 import time
 import uuid
 import subprocess
@@ -7205,6 +7206,101 @@ def api_ai_status():
         "last_scan": last_scan_str,
         "has_data": tags_exist
     })
+
+
+def _resolve_webdav_request_path(webdav_path):
+    if not webdav_path:
+        return None
+    decoded = urllib.parse.unquote(webdav_path)
+    if decoded.startswith("/webdav"):
+        decoded = decoded[len("/webdav"):]
+    decoded = decoded.lstrip("/")
+    base_dir = os.path.realpath(get_webdav_root())
+    real_path = os.path.realpath(os.path.join(base_dir, decoded))
+    if real_path != base_dir and not real_path.startswith(base_dir + os.sep):
+        return None
+    return real_path
+
+
+def _media_cache_headers(real_path, file_size, mime_type):
+    try:
+        mtime = int(os.path.getmtime(real_path))
+    except Exception:
+        mtime = int(time.time())
+    etag = '"%x-%x"' % (file_size, mtime)
+    return {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=604800, immutable",
+        "ETag": etag,
+        "Last-Modified": datetime.datetime.utcfromtimestamp(mtime).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        "Content-Type": mime_type,
+        "X-Content-Type-Options": "nosniff",
+    }
+
+
+def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
+    with open(real_path, "rb") as f:
+        f.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = f.read(min(chunk_size, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
+@app.route("/api/media", methods=["GET", "HEAD"])
+@requires_auth
+def api_media_fast():
+    """LAN-optimized media endpoint: Range/HEAD/ETag, no JSON wrapping, 1MB chunks."""
+    real_path = _resolve_webdav_request_path(request.args.get("path", ""))
+    if not real_path or not os.path.exists(real_path) or not os.path.isfile(real_path):
+        return jsonify({"error": "Tệp không tồn tại"}), 404
+    try:
+        file_size = os.path.getsize(real_path)
+    except Exception:
+        return jsonify({"error": "Không đọc được kích thước tệp"}), 500
+
+    mime_type = mimetypes.guess_type(real_path)[0] or "application/octet-stream"
+    headers = _media_cache_headers(real_path, file_size, mime_type)
+    if request.headers.get("If-None-Match") == headers["ETag"]:
+        return Response(status=304, headers=headers)
+
+    range_header = request.headers.get("Range", "")
+    start = 0
+    end = max(0, file_size - 1)
+    status = 200
+    if range_header.startswith("bytes="):
+        spec = range_header[6:].split(",", 1)[0].strip()
+        try:
+            left, right = spec.split("-", 1)
+            if left == "":
+                suffix = int(right)
+                if suffix <= 0:
+                    raise ValueError("bad suffix")
+                start = max(0, file_size - suffix)
+            else:
+                start = int(left)
+                if right:
+                    end = min(end, int(right))
+            if start < 0 or start >= file_size or end < start:
+                h = dict(headers)
+                h["Content-Range"] = "bytes */%d" % file_size
+                return Response(status=416, headers=h)
+            status = 206
+        except Exception:
+            h = dict(headers)
+            h["Content-Range"] = "bytes */%d" % file_size
+            return Response(status=416, headers=h)
+
+    content_length = 0 if file_size == 0 else end - start + 1
+    headers["Content-Length"] = str(content_length)
+    if status == 206:
+        headers["Content-Range"] = "bytes %d-%d/%d" % (start, end, file_size)
+    if request.method == "HEAD":
+        return Response(status=status, headers=headers)
+    return Response(_iter_file_range(real_path, start, end), status=status, headers=headers, direct_passthrough=True)
 
 
 # ============ VIDEO STREAM TRANSCODE ============

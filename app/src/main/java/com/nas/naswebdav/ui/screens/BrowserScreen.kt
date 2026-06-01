@@ -1689,7 +1689,7 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
         // CỨU CHỮA KHI NAS API CHẾT: Ép Coil tải trực tiếp link WebDAV (size 300x300 để giải cứu RAM)
         AsyncImage(
             model = coil.request.ImageRequest.Builder(LocalContext.current)
-                .data(url)
+                .data(url.toFastMediaUrl())
                 .addHeader("Authorization", auth)
                 .size(300, 300)
                 .crossfade(true)

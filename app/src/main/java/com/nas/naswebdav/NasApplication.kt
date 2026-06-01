@@ -364,6 +364,15 @@ fun String.toApiBaseUrl(): String {
     return "${p.protocol}://${p.host}:${AppConfig.API_PORT}"
 }
 
+fun String.toFastMediaUrl(): String {
+    val apiBase = toApiBaseUrl()
+    if (apiBase.isEmpty()) return this
+    val p = try { java.net.URL(this) } catch (e: Exception) { return this }
+    val path = p.path ?: return this
+    val encodedPath = java.net.URLEncoder.encode(path, "UTF-8")
+    return "$apiBase/api/media?path=$encodedPath"
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // SecurePrefsHelper — Quản lý EncryptedSharedPreferences
 // ════════════════════════════════════════════════════════════════════════════
