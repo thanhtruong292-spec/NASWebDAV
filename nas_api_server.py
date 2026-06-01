@@ -291,6 +291,8 @@ def _cleanup_livestream_junk():
         except Exception:
             pass
         removed = 0
+        remuxed_orphans = 0
+        can_remux_orphan = not active_paths
         
         # Don file rac trong thu muc Livestream
         for fname in os.listdir(_LIVESTREAM_DIR):
@@ -311,12 +313,15 @@ def _cleanup_livestream_junk():
                     if fsize == 0:
                         os.remove(fpath)
                         removed += 1
-                    elif fsize > 1024:
+                    elif fsize > 1024 and can_remux_orphan and remuxed_orphans < 1:
                         # Orphaned .ts file (sau khi restart NAS hoac bi bo quen)
+                        # Remux đọc/ghi rất nặng; mỗi vòng chỉ xử lý 1 file và
+                        # bỏ qua khi đang có recording để tránh giành I/O với HDD.
                         mtime = os.path.getmtime(fpath)
                         if time.time() - mtime > 60: # Khong bi sua trong 60s qua
                             mp4_path = _remux_flv_to_mp4(fpath)
                             if mp4_path:
+                                remuxed_orphans += 1
                                 log.info("[Livestream] Remuxed orphaned file: %s", fname)
                 except Exception:
                     pass
@@ -1104,7 +1109,7 @@ def get_cpu_temp():
 
 
 _HDD_TEMP_CACHE = {"value": "--\u00b0C", "ts": 0}
-_HDD_TEMP_CACHE_TTL = 60
+_HDD_TEMP_CACHE_TTL = 300
 _HDD_TEMP_REFRESH_LOCK = threading.Lock()
 
 
@@ -2027,9 +2032,9 @@ def _check_torrent_completion():
 def _check_hdd_temp_alert(threshold=60):
     """Kiểm tra nhi?t để HDD co vuot nguong cầnh b?o khong."""
     try:
-        temp_str = get_hdd_temp()
-        if temp_str and temp_str != "--\u00b0C":
-            val = int(temp_str.replace("\u00b0C", "").strip())
+        with _disk_health_lock:
+            val = int((_disk_health_last_sample or {}).get("temp_c") or 0)
+        if val > 0:
             return val, val >= threshold
         return 0, False
     except Exception:
@@ -3518,7 +3523,7 @@ def api_photos_timeline():
 # (snapshot hien tai) hoac /api/disk/health/history?days=N (time series).
 # ============================================================================
 _DISK_HEALTH_HISTORY_FILE = "/etc/nas/state/disk_health_history.jsonl"
-_DISK_HEALTH_SAMPLE_INTERVAL_SEC = 300  # 5 phut
+_DISK_HEALTH_SAMPLE_INTERVAL_SEC = 1800  # 30 phut, tránh gọi SMART quá dày làm đánh thức HDD
 _DISK_HEALTH_RETENTION_DAYS = 30
 _disk_health_last_sample = {}   # giu sample gần nh?t trong RAM cho /api/disk/health
 _disk_health_lock = threading.Lock()
@@ -3950,14 +3955,10 @@ def api_disk_health():
     """Snapshot suc khoe HDD hien tai (sample gần nh?t trong RAM)."""
     with _disk_health_lock:
         sample = dict(_disk_health_last_sample) if _disk_health_last_sample else None
-    if sample is None:
-        # Sample on-demand neu ch?a co
-        _disk_health_sample_once()
-        with _disk_health_lock:
-            sample = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
     return jsonify({
-        "current": sample,
+        "current": sample or {},
         "sample_interval_sec": _DISK_HEALTH_SAMPLE_INTERVAL_SEC,
+        "sampling": sample is None,
     })
 
 
@@ -4030,13 +4031,6 @@ def _read_disk_health_history(days=7):
 def _disk_health_trend(days=7):
     with _disk_health_lock:
         current = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
-    if not current:
-        try:
-            _disk_health_sample_once()
-            with _disk_health_lock:
-                current = dict(_disk_health_last_sample) if _disk_health_last_sample else {}
-        except Exception:
-            current = {}
     items = _read_disk_health_history(days)
     scores = [int(x.get("score", 0) or 0) for x in items if x.get("score") is not None]
     temps = [int(x.get("temp_c", 0) or 0) for x in items if x.get("temp_c")]
@@ -4089,8 +4083,8 @@ def _workload_coordinator():
     except Exception:
         pass
     try:
-        temp_raw = get_hdd_temp()
-        temp_c = int(_re_module.sub(r"[^0-9]", "", str(temp_raw)) or "0") or None
+        with _disk_health_lock:
+            temp_c = (_disk_health_last_sample or {}).get("temp_c")
     except Exception:
         pass
     usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
@@ -4159,7 +4153,9 @@ def _emmc_guard():
     root = _path_usage("/")
     log_usage = _path_usage("/var/log")
     state_size, state_files, state_partial = _folder_size_limited("/etc/nas/state")
-    meta_size, meta_files, meta_partial = _folder_size_limited(os.path.join(WEBDAV_FILE_ROOT, ".nas_meta"))
+    # .nas_meta nằm trên HDD dữ liệu; không walk thư mục này trong dashboard vì
+    # có thể chứa nhiều cache/thumb/log và làm HDD phải đọc metadata không cần thiết.
+    meta_size, meta_files, meta_partial = 0, 0, False
     warnings = []
     recommendations = []
     if root.get("percent", 0) >= 85:
@@ -8000,9 +7996,12 @@ def _thumbnail_generator():
                 _thumb_stats["_base_done"] = already_done
                 _thumb_stats["start_time"] = time.time()
                 
-            # SMART SLEEP (Ngu dong): Chi chay neu co Media moi, hoac CPU rảnh, hoac 3:00 AM
+            # SMART SLEEP (Ngu dong): khi không có việc, không tự walk HDD mỗi
+            # phút chỉ vì CPU rảnh. Chỉ thức dậy theo khung 3:00 hoặc sau 6 giờ
+            # để tránh mài HDD bằng metadata scan liên tục.
             if len(pending) == 0:
                 import datetime
+                idle_started = time.time()
                 _update_process_state(
                     "thumbnail",
                     cursor_rel="",
@@ -8015,10 +8014,10 @@ def _thumbnail_generator():
                 )
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
-                    _thumb_stats["last_file"] = "Ngủ đông: Chờ 3:00 AM hoặc Rảnh"
+                    _thumb_stats["last_file"] = "Ngủ đông: Chờ 3:00 AM hoặc chu kỳ 6 giờ"
                     
                 while True:
-                    time.sleep(60)
+                    time.sleep(300)
                     if not _thumb_paused.is_set():
                         _thumb_paused.wait()
                     now = datetime.datetime.now()
@@ -8026,15 +8025,8 @@ def _thumbnail_generator():
                     # 1. Hẹn giờ ban đêm: Bắt buộc quét toàn bộ rác định kỳ lúc 3:00 - 3:05 Sáng
                     if now.hour == 3 and now.minute < 5:
                         break
-                        
-                    # 2. Xử lý tải nhẹ (Rảnh): Kiểm tra mỗi phút, nếu không có tiến trình nền (sync, livestream) và CPU < 15.0 -> Thức dậy
-                    with _thumb_gate_lock:
-                        is_idle = len(_thumb_auto_block_reasons) == 0
-                        
-                    if is_idle:
-                        cpu = psutil.cpu_percent(interval=1)
-                        if cpu < 15.0:
-                            break
+                    if time.time() - idle_started >= 21600:
+                        break
                             
                 continue # Pha vỡ Ngủ Đông, chạy Pass 1 lại từ đầu
             
@@ -8522,14 +8514,9 @@ def _system_health_watchdog():
     hdd_error_cycles = 0
     lan_error_cycles = 0
 
-    # THIẾT LẬP TỐI ƯU CƠ HỌC CHO Ổ SEAGATE SKYHAWK ST4000VX (SURVEILLANCE): 
-    # CẤM APM VÀ CẤM STANDBY CHỐNG HAO MÒN KHỞI ĐỘNG MOTOR (SPIN-DOWN)
-    try:
-        dev = _target_hdd_device_path()
-        if dev:
-            run_cmd(["sudo", "hdparm", "-B", "254", "-S", "0", dev], merge_stderr=True)
-    except Exception:
-        pass
+    # Không ép `hdparm -S 0` lúc khởi động. Lệnh đó tắt standby HDD và đi ngược
+    # mục tiêu bảo vệ ổ trên NAS gia đình. Spindown/standby chỉ do sleep schedule
+    # hoặc cấu hình hệ thống quyết định.
 
     while True:
         try:
