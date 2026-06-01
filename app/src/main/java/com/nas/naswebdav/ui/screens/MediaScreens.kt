@@ -51,6 +51,7 @@ import android.util.Rational
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -961,7 +962,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         exoPlayer.repeatMode = if (isRepeat) androidx.media3.common.Player.REPEAT_MODE_ALL else androidx.media3.common.Player.REPEAT_MODE_OFF
     }
     LaunchedEffect(exoPlayer) {
-        while (true) {
+        while (isActive) {
             playbackPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
             playbackDurationMs = exoPlayer.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET } ?: 0L
             delay(500)
@@ -1011,8 +1012,8 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
         onDispose {
             try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
-            mediaSession.release()
             exoPlayer.release()
+            mediaSession.release()
         }
     }
 

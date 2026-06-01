@@ -7,6 +7,7 @@ import com.nas.naswebdav.ui.dialogs.*
 
 import android.content.Context
 
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 import androidx.compose.runtime.collectAsState
@@ -260,7 +261,7 @@ fun MainMenuScreen(
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
     var realtimeNow by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
-        while (true) {
+        while (isActive) {
             realtimeNow = System.currentTimeMillis()
             kotlinx.coroutines.delay(1_000L)
         }
@@ -3019,7 +3020,7 @@ fun SystemStatusCards(
         viewModel.fetchThumbStatus()
         viewModel.syncLivestreamStateWithServer(mContext)
         viewModel.fetchUsbImportStatus()
-        while (true) {
+        while (isActive) {
             val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
             viewModel.fetchThumbStatus()
@@ -3052,7 +3053,7 @@ fun SystemStatusCards(
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
         viewModel.syncLivestreamStateWithServer(mContext)
-        while (true) {
+        while (isActive) {
             kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
             viewModel.fetchLivestreamStatusOnly(mContext)
             viewModel.fetchTikTokLiveWatch(mContext)
@@ -3469,7 +3470,7 @@ fun SystemStatusCards(
                                     
                                     var localSeconds by remember(job.jobId) { androidx.compose.runtime.mutableStateOf(job.durationSeconds) }
                                     LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
-                                        while (true) {
+                                         while (isActive) {
                                             localSeconds = if (job.startedTs > 0L) {
                                                 ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
                                             } else {
@@ -3563,7 +3564,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
 
     // Khởi động vòng lặp ping thực tế khi LoginScreen hiển thị
     LaunchedEffect(Unit) {
-        while (true) {
+        while (isActive) {
             isCheckingPings = true
             try {
                 val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
@@ -4140,7 +4141,7 @@ fun ProcessListBottomSheet(
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
     androidx.compose.runtime.LaunchedEffect(sortBy) {
-        while (true) {
+        while (isActive) {
             viewModel.fetchSystemProcesses(sortBy)
             kotlinx.coroutines.delay(3000) // Tự động làm mới mỗi 3 giây
         }

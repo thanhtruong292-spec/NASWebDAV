@@ -92,6 +92,9 @@ Provide only the exact code blocks being replaced.
 - Chỉ sử dụng công cụ thay thế cục bộ (replace_in_file hoặc tương đương) để nhắm đúng dòng cần sửa.
 - Không bao giờ dùng lệnh ghi đè toàn bộ file (write_to_file) trừ khi tạo file mới tinh.
 - CẤM dùng PowerShell `Set-Content`, `Out-File`, pipeline đọc toàn file rồi ghi lại toàn file, hoặc bất kỳ lệnh rewrite toàn file nào với file có tiếng Việt/UTF-8 như `nas_api_server.py`, vì dễ làm hỏng encoding/mojibake. Chỉ được dùng `apply_patch`/diff cục bộ hoặc công cụ bảo toàn byte/encoding đã kiểm chứng.
+- CẤM HOÀN TOÀN PowerShell cho mọi thao tác dự án/NAS. Không dùng PowerShell cho SSH/SCP/Git/ADB/Gradle, không dùng cho lệnh đọc, không dùng để ghi file, không dùng để bọc lệnh Linux. Mọi command phải đi qua `cmd /c` hoặc `apply_patch`.
+- Dù dùng `cmd /c`, shell tool vẫn có lớp PowerShell bên ngoài. Vì vậy CẤM ghép nhiều lệnh bằng `&&`, `|`, `>`, `$()`, `$VAR`, `$((...))` trong cùng một chuỗi command. Luôn tách thành từng lệnh `cmd /c` đơn giản, hoặc tạo script an toàn bằng `apply_patch` rồi gọi script đó qua `cmd /c`.
+- Với SSH remote command, tránh toàn bộ cú pháp dễ bị PowerShell ăn trước như `$()`, `$VAR`, backtick, pipe/redirect phức tạp. Nếu cần logic nhiều bước trên NAS, tạo script `.sh` phía repo/NAS rồi chạy script, không nhồi logic vào một dòng SSH.
 - Không tự ý thêm thư viện, module hoặc dependencies bên thứ 3 vào dự án.
 
 # 4. CHỮ KÝ XÁC NHẬN (VERIFICATION TRIGGER)
@@ -137,3 +140,13 @@ Provide only the exact code blocks being replaced.
 - Khi bổ sung tính năng mới cho NAS Dashboard, ưu tiên tối đa tính ổn định và khả năng tương thích với cấu hình NAS hiện tại; tính năng mới phải được thiết kế dạng độc lập, không làm thay đổi hoặc ảnh hưởng luồng hiện có nếu không có yêu cầu trực tiếp.
 - Tất cả tiêu đề của thẻ, card, panel, Bottom Sheet/BottomCard trong NAS Dashboard phải thống nhất cùng kiểu chữ với tiêu đề OMV: cỡ chữ 11sp, `FontWeight.Black`, `letterSpacing = 1.5sp`; chỉ khác màu theo nhóm chức năng để phân biệt với nội dung.
 - Trạng thái kết nối NAS trên header phải hiển thị bằng chip: Online nền xanh lá chữ trắng, Offline nền đỏ chữ trắng; trạng thái cập nhật realtime đặt cùng hàng với chip kết nối.
+
+# 11. CẤU HÌNH PHẦN CỨNG NAS THỰC TẾ (HARDWARE SPEC — LẤY TỪ THIẾT BỊ, CẤM ĐOÁN MÒ)
+# Đã xác minh trực tiếp trên NAS ngày 01/06/2026 (KHÔNG phải giả định):
+- Thiết bị: Chainedbox (board pine64/rock64) — SoC **Rockchip RK3328**, kiến trúc **aarch64 (ARM 64-bit)**, **4 nhân**.
+- RAM: **chỉ ~978MB (~1GB) total** — RẤT eo hẹp (không phải 2GB). Có zram swap (~540MB) + swap 2.5GB. Mọi tối ưu phải coi RAM là tài nguyên khan hiếm nhất.
+- Ổ lưu trữ: **TOSHIBA MG04ACA400N** (Enterprise HDD, dòng MG04), **4TB**, **7200rpm**, 3.5 inch. Ổ enterprise chịu tải 24/7 và random I/O tốt — KHÔNG phải N300, KHÔNG phải 5400rpm.
+- Mount dữ liệu thật: **/sharedfolders/Data** (`/dev/sda1`, 3.6T, đang dùng ~47%, trống ~2.0T). OS chạy trên eMMC mmcblk1 7.3GB.
+- Mạng: Ethernet 1Gbps + Tailscale VPN. IP: LAN `192.168.100.254` (port 22 ổn định nhất), Tailscale `100.90.135.102` (có thể timeout tùy mạng).
+- Triển khai: file đích `/opt/nas_api_server.py`, service systemd tên `nas_api` (KHÔNG phải `nas_api_server`). Lệnh: `scp ... root@192.168.100.254:/opt/nas_api_server.py` rồi `ssh root@192.168.100.254 "systemctl restart nas_api"`.
+- Mọi đề xuất tối ưu hiệu năng/tính năng mới BẮT BUỘC dựa trên đúng thông số phần cứng trên (đặc biệt RAM ~1GB), không suy diễn cấu hình khác.

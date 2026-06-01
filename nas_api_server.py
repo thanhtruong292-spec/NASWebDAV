@@ -391,6 +391,12 @@ def init_db():
             # Không return — th? ti?p connect xem co the DB file van con OK
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA busy_timeout=5000")
+        except Exception:
+            pass
         cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
         cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
         cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
@@ -580,6 +586,8 @@ def handle_auth_failure(ip):
     conn.close()
 
 recent_auth_ips = {}
+_ARP_LOOKUP_CACHE = {}
+_ARP_LOOKUP_TTL = 60
 
 def monitor_scanners():
     if not os.path.exists(WEBDAV_LOG): return
@@ -612,12 +620,17 @@ def monitor_scanners():
                         # A. Lấy thông tin MAC Address bằng lệnh arp
                         mac_address = "Không rõ"
                         try:
-                            arp_out = subprocess.check_output(["arp", "-n", ip], stderr=subprocess.DEVNULL).decode('utf-8')
-                            match = _re_module.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', arp_out)
-                            if match:
-                                mac_address = match.group(0).upper()
+                            cached = _ARP_LOOKUP_CACHE.get(ip)
+                            if cached and time.time() - float(cached.get("ts", 0) or 0) < _ARP_LOOKUP_TTL:
+                                mac_address = cached.get("mac", "Không rõ")
+                            else:
+                                arp_out = subprocess.check_output(["arp", "-n", ip], stderr=subprocess.DEVNULL, timeout=1.5).decode('utf-8')
+                                match = _re_module.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', arp_out)
+                                if match:
+                                    mac_address = match.group(0).upper()
+                                _ARP_LOOKUP_CACHE[ip] = {"mac": mac_address, "ts": time.time()}
                         except Exception:
-                            pass
+                            _ARP_LOOKUP_CACHE[ip] = {"mac": mac_address, "ts": time.time()}
                             
                         # B. Lọc Tên Thiết Bị từ User Agent String (Dalvik, Windows, WebDAVFS...)
                         device_info = "Thiết bị ngoại tuyến"
@@ -1090,8 +1103,40 @@ def get_cpu_temp():
     return "--\u00b0C"
 
 
+_HDD_TEMP_CACHE = {"value": "--\u00b0C", "ts": 0}
+_HDD_TEMP_CACHE_TTL = 60
+_HDD_TEMP_REFRESH_LOCK = threading.Lock()
+
+
+def _cache_hdd_temp(value):
+    if value and value != "--\u00b0C":
+        _HDD_TEMP_CACHE["value"] = value
+        _HDD_TEMP_CACHE["ts"] = time.time()
+    return value
+
+
 def get_hdd_temp():
     """L?y nhi?t để ổ cứng — uu tien OMV RPC, fallback smartctl/sysfs."""
+    import re
+    try:
+        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
+            return cached
+    except Exception:
+        pass
+    if not _HDD_TEMP_REFRESH_LOCK.acquire(False):
+        return _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+    try:
+        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
+            return cached
+        return _get_hdd_temp_uncached()
+    finally:
+        _HDD_TEMP_REFRESH_LOCK.release()
+
+
+def _get_hdd_temp_uncached():
+    """Refresh HDD temperature once. Caller must hold _HDD_TEMP_REFRESH_LOCK."""
     import re
     # Phuong phap 0 (uu tien): L?y tu OMV Smart enumerateDevices
     try:
@@ -1108,7 +1153,7 @@ def get_hdd_temp():
                     # OMV tr? v? "31°C" hoac "31"
                     temp_str = str(temp_str).replace("\u00b0C", "").strip()
                     if temp_str.isdigit() and 10 < int(temp_str) < 100:
-                        return "%s\u00b0C" % temp_str
+                        return _cache_hdd_temp("%s\u00b0C" % temp_str)
     except Exception:
         pass
     # Phuong phap 1: smartctl voi regex chinh xac
@@ -1131,13 +1176,13 @@ def get_hdd_temp():
                     if match:
                         temp_val = int(match.group(1))
                         if 10 < temp_val < 100:
-                            return "%d\u00b0C" % temp_val
+                            return _cache_hdd_temp("%d\u00b0C" % temp_val)
                     # Fallback: l?y so hop le cuoi cung trong dong (truoc ngoac don)
                     line_before_paren = line.split("(")[0]
                     nums = re.findall(r'\b(\d{2})\b', line_before_paren)
                     for n in reversed(nums):
                         if 10 < int(n) < 100:
-                            return "%d\u00b0C" % int(n)
+                            return _cache_hdd_temp("%d\u00b0C" % int(n))
         except Exception:
             pass
         # Phuong phap 2: hddtemp
@@ -1146,7 +1191,7 @@ def get_hdd_temp():
             if output and output.strip().replace("-", "").isdigit():
                 temp_val = int(output.strip())
                 if 10 < temp_val < 100:
-                    return "%d\u00b0C" % temp_val
+                    return _cache_hdd_temp("%d\u00b0C" % temp_val)
         except Exception:
             pass
     # Xong buoc lap qua cac disk
@@ -1157,7 +1202,7 @@ def get_hdd_temp():
             for entry in temps["drivetemp"]:
                 label = str(getattr(entry, "label", "") or "").lower()
                 if _target_hdd_devname().lower() in label and entry.current > 0:
-                    return "%d\u00b0C" % int(entry.current)
+                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
     except Exception:
         pass
     # Phuong phap 4: Đọc truc tiep tu sysfs hwmon (không cần smartctl)
@@ -1176,7 +1221,7 @@ def get_hdd_temp():
                 else:
                     temp_c = temp_milli
                 if 10 < temp_c < 100:
-                    return "%d\u00b0C" % temp_c
+                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
     except Exception:
         pass
     # Phuong phap 5: Quet tất c? hwmon devices tim drivetemp
@@ -1195,7 +1240,7 @@ def get_hdd_temp():
                                 temp_milli = int(f.read().strip())
                                 temp_c = temp_milli // 1000 if temp_milli > 1000 else temp_milli
                                 if 10 < temp_c < 100:
-                                    return "%d\u00b0C" % temp_c
+                                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
             except Exception:
                 continue
     except Exception:
@@ -1210,7 +1255,7 @@ def get_hdd_temp():
             for entry in temps["drivetemp"]:
                 label = str(getattr(entry, "label", "") or "").lower()
                 if _target_hdd_devname().lower() in label and entry.current > 0:
-                    return "%d\u00b0C" % int(entry.current)
+                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
     except Exception:
         pass
     return "--\u00b0C"
@@ -3286,6 +3331,115 @@ def _pwm_apply_on(duty=10000, period=10000):
 # Endpoint nh? — chi liet ke path + mtime, KHONG mo tung file de Đọc EXIF
 # (trảnh stress disk). Client tu group theo mtime client-side.
 # ============================================================================
+# Cache toan bo danh sach anh (da sort mtime desc) de tranh os.walk toan o moi
+# request. NAS RAM ~1GB + HDD 7200rpm: walk toan o moi lan la cuc ky ton I/O.
+_PHOTOS_TIMELINE_CACHE_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "photos_timeline_cache.json")
+_photos_timeline_cache = {
+    "items": [],
+    "ts": 0,
+    "loaded": False,
+    "loading": False,
+    "lock": threading.Lock(),
+    "rebuilding": False,
+    "error": ""
+}
+_PHOTOS_TIMELINE_CACHE_TTL = 300  # 5 phut
+
+
+def _load_photos_timeline_cache_file():
+    with _photos_timeline_cache["lock"]:
+        if _photos_timeline_cache.get("loaded"):
+            return
+        _photos_timeline_cache["loaded"] = True
+    try:
+        if not os.path.exists(_PHOTOS_TIMELINE_CACHE_FILE):
+            return
+        with open(_PHOTOS_TIMELINE_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        raw_items = data.get("items") or []
+        items = []
+        for it in raw_items:
+            if isinstance(it, list) and len(it) >= 3:
+                items.append((str(it[0]), int(it[1]), int(it[2])))
+        with _photos_timeline_cache["lock"]:
+            _photos_timeline_cache["items"] = items
+            _photos_timeline_cache["ts"] = float(data.get("ts") or 0)
+    except Exception as e:
+        log.warning("[PhotoTimeline] Không tải được cache file: %s", e)
+
+
+def _photos_timeline_cache_load_worker():
+    try:
+        _load_photos_timeline_cache_file()
+    finally:
+        with _photos_timeline_cache["lock"]:
+            _photos_timeline_cache["loading"] = False
+
+
+def _ensure_photos_timeline_cache_loaded():
+    with _photos_timeline_cache["lock"]:
+        if _photos_timeline_cache.get("loaded") or _photos_timeline_cache.get("loading"):
+            return
+        _photos_timeline_cache["loading"] = True
+    threading.Thread(target=_photos_timeline_cache_load_worker, daemon=True, name="PhotoTimelineCacheLoad").start()
+
+
+def _save_photos_timeline_cache_file(items, ts):
+    try:
+        os.makedirs(os.path.dirname(_PHOTOS_TIMELINE_CACHE_FILE), exist_ok=True)
+        tmp_path = _PHOTOS_TIMELINE_CACHE_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"ts": ts, "items": items}, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp_path, _PHOTOS_TIMELINE_CACHE_FILE)
+    except Exception as e:
+        log.warning("[PhotoTimeline] Không lưu được cache file: %s", e)
+
+
+def _photos_timeline_rebuild_worker():
+    scanned = []
+    error = ""
+    seen = 0
+    try:
+        for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
+            for name in files:
+                if name.startswith('.'):
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in _IMAGE_EXTS:
+                    continue
+                full = os.path.join(root, name)
+                try:
+                    st = os.stat(full)
+                    rel = os.path.relpath(full, WEBDAV_FILE_ROOT).replace("\\", "/")
+                    scanned.append((rel, int(st.st_mtime), st.st_size))
+                    seen += 1
+                    if seen % 2000 == 0:
+                        time.sleep(0.02)
+                except Exception:
+                    continue
+        scanned.sort(key=lambda x: x[1], reverse=True)
+    except Exception as e:
+        error = str(e)[:200]
+        log.warning("[PhotoTimeline] Rebuild cache lỗi: %s", e)
+    with _photos_timeline_cache["lock"]:
+        if not error:
+            _photos_timeline_cache["items"] = scanned
+            _photos_timeline_cache["ts"] = time.time()
+            cache_ts = _photos_timeline_cache["ts"]
+        _photos_timeline_cache["error"] = error
+        _photos_timeline_cache["rebuilding"] = False
+    if not error:
+        _save_photos_timeline_cache_file(scanned, cache_ts)
+
+
+def _ensure_photos_timeline_rebuild():
+    with _photos_timeline_cache["lock"]:
+        if _photos_timeline_cache.get("rebuilding"):
+            return
+        _photos_timeline_cache["rebuilding"] = True
+    threading.Thread(target=_photos_timeline_rebuild_worker, daemon=True, name="PhotoTimelineRebuild").start()
+
 @app.route('/api/photos/timeline', methods=['GET'])
 @requires_auth
 def api_photos_timeline():
@@ -3316,45 +3470,43 @@ def api_photos_timeline():
         except Exception:
             pass
 
-    items = []
-    try:
-        for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
-            # Skip hidden + thumb dirs (trảnh stress disk)
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle']
-            for name in files:
-                if name.startswith('.'): continue
-                ext = os.path.splitext(name)[1].lower()
-                if ext not in _IMAGE_EXTS: continue
-                full = os.path.join(root, name)
-                try:
-                    st = os.stat(full)
-                    mtime = int(st.st_mtime)
-                    if target_year is not None:
-                        dt = datetime.datetime.fromtimestamp(mtime)
-                        if dt.year != target_year or dt.month != target_month:
-                            continue
-                    rel = os.path.relpath(full, WEBDAV_FILE_ROOT).replace("\\", "/")
-                    items.append({
-                        "path": rel,
-                        "mtime": mtime,
-                        "size": st.st_size,
-                    })
-                except Exception:
-                    continue
-    except Exception as e:
-        log.warning("[PhotoTimeline] Walk lỗi: %s", e)
-        return jsonify({"error": str(e)[:200]}), 500
+    now = time.time()
+    cache = _photos_timeline_cache
+    _ensure_photos_timeline_cache_loaded()
+    with cache["lock"]:
+        items = cache["items"]
+        cache_ts = float(cache.get("ts", 0) or 0)
+        loading = bool(cache.get("loading"))
+        rebuilding = bool(cache.get("rebuilding"))
+        error = cache.get("error", "")
+    cache_stale = now - cache_ts >= _PHOTOS_TIMELINE_CACHE_TTL
+    if cache_stale and not loading and not rebuilding:
+        _ensure_photos_timeline_rebuild()
+        rebuilding = True
 
-    # Sort desc, apply pagination
-    items.sort(key=lambda x: x["mtime"], reverse=True)
+    # Áp dụng lọc theo tháng SAU khi lấy từ cache (cache giữ toàn bộ, không theo tháng)
+    if target_year is not None:
+        filtered = []
+        for it in items:
+            dt = datetime.datetime.fromtimestamp(it[1])
+            if dt.year == target_year and dt.month == target_month:
+                filtered.append(it)
+        items = filtered
+
     total = len(items)
-    page = items[offset:offset + limit]
+    page = [
+        {"path": it[0], "mtime": it[1], "size": it[2]}
+        for it in items[offset:offset + limit]
+    ]
     return jsonify({
         "total": total,
         "offset": offset,
         "limit": limit,
         "items": page,
         "filter_month": month_filter or None,
+        "cache_age_seconds": int(max(0, now - cache_ts)) if cache_ts else None,
+        "scanning": loading or rebuilding,
+        "error": error or None,
     })
 
 
@@ -4141,6 +4293,34 @@ def api_system_data_flow():
     return jsonify(_data_flow_snapshot())
 
 
+_SYSTEM_INSIGHTS_CACHE = {
+    "ts": 0.0,
+    "data": None,
+}
+_SYSTEM_INSIGHTS_CACHE_LOCK = threading.Lock()
+_SYSTEM_INSIGHTS_CACHE_TTL = 15
+
+
+def _build_system_insights_snapshot():
+    return {
+        "health_trend": _disk_health_trend(7),
+        "workload": _workload_coordinator(),
+        "usb_import": _usb_import_summary_state() if "_usb_import_summary_state" in globals() else {},
+        "emmc_guard": _emmc_guard(),
+        "data_flow": _data_flow_snapshot(),
+        "maintenance": _maintenance_advisor(),
+    }
+
+
+def _refresh_system_insights_cache_locked():
+    try:
+        data = _build_system_insights_snapshot()
+        _SYSTEM_INSIGHTS_CACHE["data"] = data
+        _SYSTEM_INSIGHTS_CACHE["ts"] = time.time()
+    finally:
+        _SYSTEM_INSIGHTS_CACHE_LOCK.release()
+
+
 @app.route('/api/system/maintenance_advisor', methods=['GET'])
 @requires_auth
 def api_system_maintenance_advisor():
@@ -4150,14 +4330,37 @@ def api_system_maintenance_advisor():
 @app.route('/api/system/insights', methods=['GET'])
 @requires_auth
 def api_system_insights():
-    return jsonify({
-        "health_trend": _disk_health_trend(7),
-        "workload": _workload_coordinator(),
-        "usb_import": _usb_import_public_state() if "_usb_import_public_state" in globals() else {},
-        "emmc_guard": _emmc_guard(),
-        "data_flow": _data_flow_snapshot(),
-        "maintenance": _maintenance_advisor(),
-    })
+    now = time.time()
+    cached = _SYSTEM_INSIGHTS_CACHE.get("data")
+    cached_ts = float(_SYSTEM_INSIGHTS_CACHE.get("ts", 0) or 0)
+    if cached is not None and now - cached_ts < _SYSTEM_INSIGHTS_CACHE_TTL:
+        return jsonify(cached)
+    if cached is not None:
+        if _SYSTEM_INSIGHTS_CACHE_LOCK.acquire(False):
+            threading.Thread(
+                target=_refresh_system_insights_cache_locked,
+                daemon=True,
+                name="SystemInsightsRefresh"
+            ).start()
+        return jsonify(cached)
+
+    # First request after boot has no stale value yet, so it builds once
+    # synchronously. Later refreshes return stale data and rebuild in background.
+    if not _SYSTEM_INSIGHTS_CACHE_LOCK.acquire(False):
+        with _SYSTEM_INSIGHTS_CACHE_LOCK:
+            return jsonify(_SYSTEM_INSIGHTS_CACHE.get("data") or {})
+
+    try:
+        data = _build_system_insights_snapshot()
+        _SYSTEM_INSIGHTS_CACHE["data"] = data
+        _SYSTEM_INSIGHTS_CACHE["ts"] = now
+        return jsonify(data)
+    finally:
+        _SYSTEM_INSIGHTS_CACHE_LOCK.release()
+
+
+def _invalidate_system_insights_cache():
+    _SYSTEM_INSIGHTS_CACHE["ts"] = 0.0
 
 
 _SLEEP_SCHEDULE_FILE = "/etc/nas/state/sleep_schedule.json"
@@ -4271,22 +4474,22 @@ def _hdd_get_power_state():
 
 
 def _sleep_schedule_worker():
-    """Daemon: kiểm tra mới 5 ph?t, trigger sleep neu dieu kien dat."""
+    """Daemon: kiểm tra mỗi 60s, trigger sleep neu dieu kien dat."""
     time.sleep(120)  # cho server on dinh
     while True:
         try:
             sched = _load_sleep_schedule()
             if not sched.get("enabled"):
-                time.sleep(300)
+                time.sleep(60)
                 continue
             in_window = _is_in_sleep_window(sched)
             if not in_window:
-                time.sleep(300)
+                time.sleep(60)
                 continue
             # In window — kiểm tra dieu kien idle
             if sched.get("idle_only", True) and not _system_is_idle():
-                # Busy — b? qua tick nay, check lai sau 5 phut
-                time.sleep(300)
+                # Busy — b? qua tick nay, check lai sau 60s
+                time.sleep(60)
                 continue
             # Trigger sleep action
             mode = sched.get("mode", "spindown")
@@ -4295,7 +4498,7 @@ def _sleep_schedule_worker():
                 state = _hdd_get_power_state()
                 if "standby" in state or "sleeping" in state:
                     # để spindown r?i, skip
-                    time.sleep(300)
+                    time.sleep(60)
                     continue
                 ok, msg = _hdd_spindown()
                 sched["last_action_ts"] = int(time.time())
@@ -4313,10 +4516,10 @@ def _sleep_schedule_worker():
                 _add_system_log("INFO", "SleepSchedule", "NAS suspend (full) gio %d-%d. Wake bang WoL." % (sched.get("start_hour"), sched.get("end_hour")))
                 # Don't actually suspend — too aggressive; user must opt in via explicit endpoint
                 # subprocess.run(["systemctl", "suspend"])
-            time.sleep(300)
+            time.sleep(60)
         except Exception as e:
             log.error("[SleepSchedule] Worker lỗi: %s", e)
-            time.sleep(300)
+            time.sleep(60)
 
 
 @app.route('/api/system/sleep_schedule', methods=['GET'])
@@ -4758,6 +4961,15 @@ def _usb_import_public_state():
     state["dest_dir"] = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"))
     if state.get("status") in ("copying", "cancelled", "error", "done", "needs_action") and actual_dest:
         state["dest_dir"] = actual_dest
+    return state
+
+
+def _usb_import_summary_state():
+    """Small USB import snapshot for dashboard insights; avoids huge conflict lists."""
+    state = _usb_import_public_state()
+    for key in ("pending_conflicts", "pending_errors", "history"):
+        if key in state and isinstance(state.get(key), list):
+            state[key] = state[key][:5]
     return state
 
 
@@ -8926,8 +9138,29 @@ def _livestream_watchdog():
             _cleanup_stale_job_tmp(max_age_hours=24)
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
             _cleanup_livestream_junk()
+            # Auto-purge job cũ để _livestream_jobs/_livestream_starting_claims
+            # không phình vô hạn (RAM NAS chỉ ~1GB). Chỉ xóa job ĐÃ kết thúc
+            # (không còn recording/starting) và quá 6 giờ — app đã đồng bộ trạng
+            # thái cuối từ lâu; cooldown dedup chỉ 300s nên không ảnh hưởng.
+            try:
+                _purge_now = time.time()
+                with _livestream_lock:
+                    for _pjid in list(_livestream_jobs.keys()):
+                        _pinfo = _livestream_jobs.get(_pjid) or {}
+                        _pstatus = _pinfo.get("status", "")
+                        _pstarted = float(_pinfo.get("started_ts", 0) or 0)
+                        if _pstatus not in ("recording", "starting") and _purge_now - _pstarted > 21600:
+                            _livestream_jobs.pop(_pjid, None)
+                    for _ck in list(_livestream_starting_claims.keys()):
+                        _claim = _livestream_starting_claims.get(_ck) or {}
+                        if _purge_now - float(_claim.get("ts", 0) or 0) > 300:
+                            _livestream_starting_claims.pop(_ck, None)
+            except Exception as _pe:
+                log.warning("[Livestream] Auto-purge job lỗi: %s", _pe)
             with _livestream_lock:
                 for jid, info in list(_livestream_jobs.items()):
+                    if info.get("status", "") in ("finished", "error", "timeout", "stopped", "cancelled"):
+                        continue
                     pid = info.get("pid")
                     # Kiểm tra process con song khong
                     is_running = False
@@ -9997,8 +10230,11 @@ def _nas_api_self_watchdog():
 
             if stale_cycles >= 3:
                 _restart_nas_api("TikTok watcher bi ket, last_tick cach %d giay" % int(tick_age))
-            if lock_fail_cycles >= 3:
-                _restart_nas_api("Livestream lock bi ket lien tiep")
+            # Nâng ngưỡng 3->5 chu kỳ (~5 phút) trước khi restart: restart sẽ giết
+            # mọi livestream đang ghi nên chỉ restart khi CHẮC CHẮN lock deadlock
+            # thật, tránh false-positive khi lock kẹt tạm thời.
+            if lock_fail_cycles >= 5:
+                _restart_nas_api("Livestream lock bi ket lien tiep %d chu ky (~5 phut)" % lock_fail_cycles)
         except Exception as e:
             _add_system_log_once("nasapi_self_watchdog_exception", "ERROR", "NasAPI", "Self-watchdog loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
         time.sleep(60)
@@ -10544,10 +10780,9 @@ def api_livestream_record():
                 # CDN không serve FLV thuan — bo direct path, dung yt-dlp fallback
                 direct_tiktok_flv = False
                 direct_output_file = ""
-            elif False:
-                # TikTok FLV moi co the dung enhanced FLV/HEVC tag ma ffmpeg 3.2
-                # tren NAS Đọc thảnh codec unknown. Neu cu curl raw se tao file
-                # lon nhung không remux/mở được, nen fallback ve yt-dlp.
+            elif not _direct_flv_has_remuxable_video(live_url, cookies_path, user_agent):
+                # TikTok FLV mới có thể dùng enhanced FLV/HEVC tag mà ffmpeg cũ
+                # trên ARM NAS không remux được. Probe nhanh trước khi ghi raw.
                 direct_tiktok_flv = False
                 direct_output_file = ""
 
@@ -11386,7 +11621,7 @@ if __name__ == "__main__":
     def run_flask():
         try:
             from waitress import serve
-            serve(app, host=bind_host, port=5050, threads=4, connection_limit=50)
+            serve(app, host=bind_host, port=5050, threads=6, connection_limit=50)
         except ImportError:
             log.warning("Thiếu thư viện Waitress. Vui lòng chạy: pip3 install waitress")
             app.run(host=bind_host, port=5050, debug=False, threaded=True)

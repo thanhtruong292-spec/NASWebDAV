@@ -84,6 +84,46 @@ import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.lazy.items
 
+private const val VIEWED_FILES_LIMIT = 5000
+
+private fun markBrowserFilesViewed(
+    prefs: android.content.SharedPreferences,
+    paths: Collection<String>
+) {
+    val cleanPaths = paths.filter { it.isNotBlank() }.distinct()
+    if (cleanPaths.isEmpty()) return
+    synchronized(prefs) {
+        val viewed = prefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
+        val order = mutableListOf<String>()
+        val orderRaw = prefs.getString("viewed_files_order", "[]") ?: "[]"
+        try {
+            val arr = JSONArray(orderRaw)
+            for (i in 0 until arr.length()) {
+                val p = arr.optString(i, "")
+                if (p.isNotBlank() && p in viewed) order.add(p)
+            }
+        } catch (_: Exception) {}
+
+        val cleanSet = cleanPaths.toSet()
+        order.removeAll(cleanSet)
+        order.addAll(cleanPaths)
+        viewed.addAll(cleanPaths)
+
+        while (order.size > VIEWED_FILES_LIMIT) {
+            viewed.remove(order.removeAt(0))
+        }
+        if (viewed.size > VIEWED_FILES_LIMIT) {
+            val keep = order.toSet()
+            viewed.removeAll(viewed.filter { it !in keep }.take(viewed.size - VIEWED_FILES_LIMIT).toSet())
+        }
+
+        prefs.edit()
+            .putStringSet("viewed_files", viewed)
+            .putString("viewed_files_order", JSONArray(order).toString())
+            .apply()
+    }
+}
+
 // --- BROWSER SCREEN ---
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -595,9 +635,10 @@ fun BrowserScreen(
                                     // den toan bo danh sach thi khong can chi dau.
                                     try {
                                         val prefs = context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
-                                        val cur = prefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
-                                        displayedFiles.filter { !it.isDirectory }.forEach { cur.add(it.path) }
-                                        prefs.edit().putStringSet("viewed_files", cur).commit()
+                                        val paths = displayedFiles.filter { !it.isDirectory }.map { it.path }
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            markBrowserFilesViewed(prefs, paths)
+                                        }
                                         // Bump tick de moi FileItemGridCell remember key bi
                                         // invalidated -> doc lai prefs -> red dot bien mat.
                                         viewedRefreshTick++
@@ -1180,6 +1221,7 @@ fun FileItemGridCell(
     // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
     // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
     val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    val itemScope = rememberCoroutineScope()
     // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
     var isNewFile by remember(file.path, viewedRefreshTick) {
         mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
@@ -1249,10 +1291,10 @@ fun FileItemGridCell(
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
                     if (!selectionMode && !file.isDirectory && isNewFile) {
-                        val current = viewedPrefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
-                        current.add(file.path)
-                        viewedPrefs.edit().putStringSet("viewed_files", current).commit()
                         isNewFile = false
+                        itemScope.launch(Dispatchers.IO) {
+                            markBrowserFilesViewed(viewedPrefs, listOf(file.path))
+                        }
                     }
                     onClick()
                 },
