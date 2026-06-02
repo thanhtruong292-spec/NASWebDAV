@@ -2707,6 +2707,26 @@ def api_smart():
 _omv_overview_cache = {"data": None, "time": 0.0, "fetching": False}
 _omv_overview_lock = threading.Lock()
 
+def _get_smb_runtime_state():
+    smb_active = False
+    try:
+        status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+        smb_active = status_out == "active"
+    except Exception:
+        pass
+    is_enabled = False
+    try:
+        with open("/etc/samba/smb.conf", "r") as f:
+            is_enabled = "# --- BEGIN NASWEBDAV SMB ---" in f.read()
+    except Exception:
+        pass
+    return {
+        "enabled": bool(is_enabled),
+        "active": bool(smb_active),
+        "running": bool(smb_active),
+        "effective_enabled": bool(is_enabled and smb_active)
+    }
+
 @app.route("/api/omv/overview")
 @requires_auth
 def api_omv_overview():
@@ -2754,12 +2774,22 @@ def api_omv_overview():
             svc_data = json.loads(svc_out)
             services = []
             for s in svc_data.get("data", []):
+                name = s.get("name", "")
+                title = s.get("title", "")
+                enabled = bool(s.get("enabled", False))
+                running = bool(s.get("running", False))
+                effective_enabled = bool(enabled and running)
+                if name == "samba":
+                    smb_state = _get_smb_runtime_state()
+                    enabled = smb_state["enabled"]
+                    running = smb_state["running"]
+                    effective_enabled = smb_state["effective_enabled"]
                 services.append({
-                    "name": s.get("name", ""),
-                    "title": s.get("title", ""),
-                    "enabled": s.get("enabled", False),
-                    "running": s.get("running", False),
-                    "effective_enabled": bool(s.get("enabled", False) and s.get("running", False))
+                    "name": name,
+                    "title": title,
+                    "enabled": enabled,
+                    "running": running,
+                    "effective_enabled": effective_enabled
                 })
             result["services"] = services
     except Exception:
@@ -3000,29 +3030,12 @@ def api_processes():
 @requires_auth
 def api_smb_status():
     try:
-        smb_active = False
-        try:
-            import subprocess
-            status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
-            if status_out == "active":
-                smb_active = True
-        except Exception:
-            pass
-        
-        is_enabled = False
-        try:
-            with open("/etc/samba/smb.conf", "r") as f:
-                if "# --- BEGIN NASWEBDAV SMB ---" in f.read():
-                    is_enabled = True
-        except Exception:
-            pass
-
-        effective_enabled = bool(is_enabled and smb_active)
+        smb_state = _get_smb_runtime_state()
         return jsonify({
             "status": "success",
-            "enabled": is_enabled,
-            "active": smb_active,
-            "effective_enabled": effective_enabled,
+            "enabled": smb_state["enabled"],
+            "active": smb_state["active"],
+            "effective_enabled": smb_state["effective_enabled"],
             "share": "NAS_Data",
             "user": "daica"
         })
@@ -10095,10 +10108,16 @@ def _livestream_watchdog():
 
 def _fan_controller_watchdog():
     """Tien trinh ngam dieu khien quat theo che do tuy chinh (Hysteresis)"""
+    stable_seconds = 4.0
+    service_check_ts = 0.0
+    last_target_percent = None
+    target_since_ts = 0.0
+    last_applied_percent = None
     while True:
         try:
             settings = _load_fan_settings()
             if settings.get("mode") == "custom":
+                now_ts = time.time()
                 on_temp = float(settings.get("on_temp", FAN_DEFAULT_ON_TEMP))
                 off_temp = float(settings.get("off_temp", FAN_DEFAULT_OFF_TEMP))
                 if off_temp >= on_temp:
@@ -10109,27 +10128,51 @@ def _fan_controller_watchdog():
                 current_temp = max(cpu_temp, hdd_temp)
                 
                 # Dam bao OS daemon da được tat
-                out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
-                if out == "active":
-                    subprocess.run(["systemctl", "stop", "fan.service"])
+                if now_ts - service_check_ts >= 30.0:
+                    service_check_ts = now_ts
+                    out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
+                    if out == "active":
+                        subprocess.run(["systemctl", "stop", "fan.service"])
                     
-                if cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP:
-                    percent = 100
+                force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
+                if force_hot:
+                    target_percent = 100
+                    target_since_ts = now_ts
                 elif current_temp <= off_temp:
-                    percent = 0
+                    target_percent = 0
                 elif current_temp >= on_temp:
-                    percent = 100
+                    target_percent = 100
                 else:
                     span = max(on_temp - off_temp, 1.0)
                     ratio = (current_temp - off_temp) / span
                     if ratio <= 0.25:
-                        percent = 25
+                        target_percent = 25
                     elif ratio <= 0.50:
-                        percent = 50
+                        target_percent = 50
                     elif ratio <= 0.75:
-                        percent = 75
+                        target_percent = 75
                     else:
-                        percent = 100
+                        target_percent = 100
+
+                if target_percent != last_target_percent and not force_hot:
+                    last_target_percent = target_percent
+                    target_since_ts = now_ts
+                    log.info("[FanWatchdog] Chờ ổn định %.0fs trước khi đổi quạt sang %s%% (CPU %.1f°C, HDD %.1f°C)", stable_seconds, target_percent, cpu_temp, hdd_temp)
+                    time.sleep(1)
+                    continue
+                elif force_hot:
+                    last_target_percent = target_percent
+
+                if last_applied_percent is not None and target_percent != last_applied_percent and not force_hot:
+                    if now_ts - target_since_ts < stable_seconds:
+                        time.sleep(1)
+                        continue
+
+                if target_percent == last_applied_percent:
+                    time.sleep(1)
+                    continue
+
+                percent = target_percent
                 duty = _fan_pwm_duty(percent)
 
                 if duty > 0:
@@ -10141,10 +10184,15 @@ def _fan_controller_watchdog():
                     subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
                 else:
                     _pwm_apply_off()
+                last_applied_percent = percent
+            else:
+                last_target_percent = None
+                target_since_ts = 0.0
+                last_applied_percent = None
                 
         except Exception as e:
             log.error("[FanWatchdog] Lỗi: %s", e)
-        time.sleep(30)
+        time.sleep(1)
 
 # FIX: Khoi phuc trạng thái quat sau reboot. Kernel PWM driver mac dinh
 # enable=1 -> 5V luon co o cong ra quat ngay khi NAS bat nguon. Đọc lai

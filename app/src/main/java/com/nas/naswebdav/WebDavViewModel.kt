@@ -2449,8 +2449,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
                     .getWorkInfosByTagFlow("com.nas.naswebdav.AutoBackupWorker").collect { workInfos ->
                         val workInfo = workInfos.find {
-                            it.state == androidx.work.WorkInfo.State.RUNNING ||
-                                it.state == androidx.work.WorkInfo.State.ENQUEUED
+                            it.state == androidx.work.WorkInfo.State.RUNNING
+                        } ?: workInfos.find {
+                            it.state == androidx.work.WorkInfo.State.ENQUEUED &&
+                                it.tags.contains("MANUAL_AUTO_BACKUP")
                         }
                         if (workInfo != null) {
                             isAutoBackupRunning = true
@@ -3280,10 +3282,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.
     fun triggerManualBackup(context: android.content.Context) {
         val workManager = androidx.work.WorkManager.getInstance(context)
+        isAutoBackupRunning = true
+        autoBackupProgress = 0f
+        autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
+        autoBackupSourcePath = "Thiết bị máy trạm"
+        autoBackupDestPath = ""
+        autoBackupProcessedCount = 0
+        autoBackupTotalCount = 0
+        autoBackupElapsedTime = 0L
 
         // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
             .addTag("com.nas.naswebdav.AutoBackupWorker")
+            .addTag("MANUAL_AUTO_BACKUP")
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
         logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
