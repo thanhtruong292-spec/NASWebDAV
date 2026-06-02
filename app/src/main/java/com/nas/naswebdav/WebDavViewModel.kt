@@ -323,6 +323,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private var metricsPollingJob: kotlinx.coroutines.Job? = null
     private var dashboardRealtimeJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
+    private var realtimeMetricInFlight = false
 
     // TÍNH NĂNG 4.H: Lắng nghe trạng thái mạng Ping (ms)
     var networkPingMs by mutableStateOf<Long?>(null)
@@ -2230,7 +2231,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             delay(700L)
             withContext(Dispatchers.Main) {
-                fetchDiskHealth()
                 fetchNasInsights()
             }
 
@@ -2600,9 +2600,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 fetchMetricsHistory(metricsHours)
                 startRealtimeAlerts()
             }
-            // Sau đó poll mỗi 30 giây (90s khi app o background)
+            // Lich su bieu do chi nap nen. Diem realtime duoc append rieng tu cache nhe.
             while (isActive) {
-                delay(if (AppConfig.IS_APP_FOREGROUND) AppConfig.METRICS_POLL_INTERVAL_MS else 90_000L)
+                delay(if (AppConfig.IS_APP_FOREGROUND) 600_000L else 1_800_000L)
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
                     fetchMetricsHistory(metricsHours)
                 }
@@ -2672,6 +2672,57 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 withContext(Dispatchers.Main) { metricsError = "Nhấn Làm mới để thử lại: ${e.message?.take(80)}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingMetrics = false }
+            }
+        }
+    }
+
+    fun fetchRealtimeMetricPoint() {
+        if (realtimeMetricInFlight) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val baseUrl = webDavManager.currentBaseUrl
+            if (baseUrl.isEmpty()) return@launch
+            realtimeMetricInFlight = true
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url("${baseUrl.toApiBaseUrl()}/api/status/realtime")
+                    .build()
+                localApiClient.newCall(request).execute().use { resp ->
+                    val raw = resp.body?.string() ?: "{}"
+                    if (!resp.isSuccessful) return@use
+                    val json = org.json.JSONObject(raw)
+                    val snap = MetricsSnapshot(
+                        timestamp = json.optString("timestamp", ""),
+                        cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
+                        ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
+                        cpuTemp = json.optDouble("cpu_temp", 0.0).toFloat(),
+                        hddTemp = json.optDouble("hdd_temp", 0.0).toFloat(),
+                        netRxKbps = json.optDouble("net_rx_kbps", 0.0).toFloat(),
+                        netTxKbps = json.optDouble("net_tx_kbps", 0.0).toFloat()
+                    )
+                    withContext(Dispatchers.Main) {
+                        if (snap.timestamp.isNotBlank() && metricsHistory.lastOrNull()?.timestamp != snap.timestamp) {
+                            metricsHistory.add(snap)
+                            val maxPoints = when (metricsHours) {
+                                1 -> 720
+                                6 -> 1440
+                                else -> 1440
+                            }
+                            while (metricsHistory.size > maxPoints) metricsHistory.removeAt(0)
+                        }
+                        if (snap.cpuTemp > 0f || snap.hddTemp > 0f) {
+                            val next = kotlin.collections.ArrayDeque(temperatureHistory)
+                            next.addLast(Pair(snap.cpuTemp, snap.hddTemp))
+                            while (next.size > 40) next.removeFirst()
+                            temperatureHistory = next
+                        }
+                        metricsError = null
+                        lastMetricsRefreshAt = System.currentTimeMillis()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MetricsRealtime", "Realtime metric failed: ${e.message}")
+            } finally {
+                realtimeMetricInFlight = false
             }
         }
     }
@@ -3680,7 +3731,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         usbHistoryCount = usb.optJSONArray("history")?.length() ?: 0,
                         updatedAt = System.currentTimeMillis()
                     )
-                    withContext(Dispatchers.Main) { nasInsights = insights }
+                    val insightDiskHealth = DiskHealthSample(
+                        ts = System.currentTimeMillis() / 1000L,
+                        datetime = "",
+                        score = health.optInt("score", 0),
+                        smartStatus = health.optString("smart_status", "Unknown"),
+                        tempC = if (health.isNull("temp_c")) null else health.optInt("temp_c"),
+                        powerOnHours = if (health.isNull("power_on_hours")) null else health.optInt("power_on_hours"),
+                        reallocatedSectors = health.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                        pendingSectors = health.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                        offlineUncorrectable = health.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                        udmaCrcErr = health.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                        commandTimeout = health.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                        ext4ErrorsRecent = diskHealthCurrent?.ext4ErrorsRecent ?: 0,
+                        sataResetsRecent = diskHealthCurrent?.sataResetsRecent ?: 0,
+                        ioErrorsRecent = diskHealthCurrent?.ioErrorsRecent ?: 0,
+                        warnings = jsonStringList(health.optJSONArray("warnings"))
+                    )
+                    withContext(Dispatchers.Main) {
+                        nasInsights = insights
+                        if (insightDiskHealth.score > 0 || insightDiskHealth.tempC != null) {
+                            diskHealthCurrent = insightDiskHealth
+                            lastSmartRefreshAt = System.currentTimeMillis()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.w("NasInsights", "fetch err: ${e.message}")
@@ -3703,10 +3777,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             var lastLogRefresh = 0L
             var lastSmartRefresh = 0L
             var lastInsightsRefresh = 0L
+            var lastRealtimeMetric = 0L
             while (isActive) {
                 val hasUrl = webDavManager.currentBaseUrl.isNotEmpty()
                 if (hasUrl) {
                     val now = System.currentTimeMillis()
+                    val realtimeInterval = if (AppConfig.IS_APP_FOREGROUND) 5_000L else 20_000L
+                    if (now - lastRealtimeMetric >= realtimeInterval) {
+                        fetchRealtimeMetricPoint()
+                        lastRealtimeMetric = now
+                    }
                     if (lastHeavyRefresh == 0L || now - lastHeavyRefresh >= 300_000L) {
                         fetchOmvOverview()
                         fetchDailyReport()
@@ -3722,7 +3802,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                     if (now - lastSmartRefresh >= 300_000L) {
                         fetchSmartData()
-                        fetchDiskHealth()
                         lastSmartRefresh = now
                     }
                     if (now - lastInsightsRefresh >= if (AppConfig.IS_APP_FOREGROUND) 15_000L else 60_000L) {
@@ -4669,7 +4748,7 @@ object VideoDownloadHelper {
 fun WebDavViewModel.listenToLocalNasApi() {
     statusJob?.cancel()
     statusJob = viewModelScope.launch(Dispatchers.IO) {
-        var currentDelayMs = 3000L
+        var currentDelayMs = 5000L
         while (isActive) {
             try {
                 val baseUrl = webDavManager.currentBaseUrl
@@ -4679,7 +4758,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                     val startedAt = System.currentTimeMillis()
                     localApiClient.newCall(request).execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
-                            currentDelayMs = 3000L
+                            currentDelayMs = 5000L
                             val latency = System.currentTimeMillis() - startedAt
                             val jsonObject = org.json.JSONObject(response.body?.string() ?: "{}")
                             val tempRaw = jsonObject.optString("temperature", "--°C")

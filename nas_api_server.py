@@ -430,6 +430,39 @@ def init_db():
                 generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS hardware_status (
+                key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS disk_health_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                device TEXT,
+                score INTEGER,
+                smart_status TEXT,
+                temp_c INTEGER,
+                payload_json TEXT NOT NULL
+            )
+        ''')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_disk_health_history_ts ON disk_health_history(ts)')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS scheduler_state (
+                key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS runtime_state (
+                key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        ''')
         conn.commit()
         conn.close()
         log.info("[init_db] DB san sang.")
@@ -1677,7 +1710,14 @@ def _update_status_cache():
             if _smart_cache and _smart_cache.get("data"):
                 cached_hdd_temp = _smart_cache["data"].get("temperature", "--°C")
             else:
-                cached_hdd_temp = "--°C"
+                try:
+                    with _disk_health_lock:
+                        disk_temp = (_disk_health_last_sample or {}).get("temp_c")
+                    cached_hdd_temp = "%s°C" % disk_temp if disk_temp else "--°C"
+                except Exception:
+                    cached_hdd_temp = "--°C"
+                if cached_hdd_temp == "--°C":
+                    cached_hdd_temp = get_hdd_temp()
 
             data = {
                 "temperature": cached_hdd_temp,
@@ -1696,6 +1736,7 @@ def _update_status_cache():
                 "uptime": get_uptime(),
                 "status": "Online",
                 "fan_rpm": cached_fan.get("rpm"),
+                "fan_percent": cached_fan.get("percent"),
                 "fan_status": cached_fan.get("status", "--"),
                 "fan_mode": cached_fan.get("mode", "auto"),
                 "fan_on_temp": cached_fan.get("on_temp", FAN_DEFAULT_ON_TEMP),
@@ -1707,6 +1748,7 @@ def _update_status_cache():
             with _cache_lock:
                 _status_cache = data
             if loop_count % 6 == 0:
+                _db_set_json("hardware_status", "latest", data)
                 _update_process_state(
                     "hardware",
                     cpu_percent=round(float(cpu_percent or 0), 1),
@@ -2447,6 +2489,56 @@ def api_status():
         pass
         
     return jsonify(data)
+
+
+def _metric_float(raw, default=0.0):
+    try:
+        text = str(raw or "").replace("%", "").replace("\u00b0C", "").strip()
+        if not text or text == "--":
+            return default
+        return float(text)
+    except Exception:
+        return default
+
+
+def _speed_to_kbps(raw):
+    try:
+        text = str(raw or "0 B/s").strip()
+        parts = text.split()
+        if not parts:
+            return 0.0
+        value = float(parts[0])
+        unit = parts[1] if len(parts) > 1 else "B/s"
+        if unit.startswith("GB"):
+            return value * 1024.0 * 1024.0
+        if unit.startswith("MB"):
+            return value * 1024.0
+        if unit.startswith("KB"):
+            return value
+        return value / 1024.0
+    except Exception:
+        return 0.0
+
+
+@app.route("/api/status/realtime")
+@requires_auth
+def api_status_realtime():
+    """Diem metrics realtime nhe: chi doc cache nen khong cham SMART/disk/proc."""
+    with _cache_lock:
+        snap = dict(_status_cache)
+    now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    return jsonify({
+        "timestamp": now,
+        "cpu_percent": round(_metric_float(snap.get("cpu")), 1),
+        "ram_percent": round(_metric_float(snap.get("ram_percent")), 1),
+        "cpu_temp": round(_metric_float(snap.get("cpu_temp")), 1),
+        "hdd_temp": round(_metric_float(snap.get("temperature")), 1),
+        "net_rx_kbps": round(_speed_to_kbps(snap.get("net_rx")), 1),
+        "net_tx_kbps": round(_speed_to_kbps(snap.get("net_tx")), 1),
+        "fan_percent": snap.get("fan_percent"),
+        "fan_rpm": snap.get("fan_rpm"),
+        "status": snap.get("status", "Online")
+    })
 
 
 @app.route("/api/storage/usage")
@@ -3877,8 +3969,67 @@ def api_photos_timeline():
 _DISK_HEALTH_HISTORY_FILE = "/etc/nas/state/disk_health_history.jsonl"
 _DISK_HEALTH_SAMPLE_INTERVAL_SEC = 1800  # 30 phut, tránh gọi SMART quá dày làm đánh thức HDD
 _DISK_HEALTH_RETENTION_DAYS = 30
+_DISK_HEALTH_HEALTHY_INTERVAL_SEC = 30 * 86400
+_DISK_HEALTH_WARNING_INTERVAL_SEC = 7 * 86400
+_DISK_HEALTH_CRITICAL_INTERVAL_SEC = 24 * 3600
 _disk_health_last_sample = {}   # giu sample gần nh?t trong RAM cho /api/disk/health
 _disk_health_lock = threading.Lock()
+
+
+def _db_set_json(table, key, payload):
+    try:
+        now = int(time.time())
+        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO %s (key, payload_json, updated_at) VALUES (?, ?, ?)" % table,
+            (key, json.dumps(payload, ensure_ascii=False), now)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning("[SQLiteState] Không ghi được %s/%s: %s", table, key, e)
+        return False
+
+
+def _db_get_json(table, key, default=None):
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        cur = conn.cursor()
+        cur.execute("SELECT payload_json FROM %s WHERE key=?" % table, (key,))
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            return json.loads(row[0])
+    except Exception:
+        pass
+    return default
+
+
+def _disk_health_interval_for_sample(sample):
+    score = int((sample or {}).get("score", 0) or 0)
+    warnings = (sample or {}).get("warnings") or []
+    if score < 70 or (sample or {}).get("smart_status") == "FAILED":
+        return _DISK_HEALTH_CRITICAL_INTERVAL_SEC
+    if score < 90 or warnings:
+        return _DISK_HEALTH_WARNING_INTERVAL_SEC
+    return _DISK_HEALTH_HEALTHY_INTERVAL_SEC
+
+
+def _disk_health_scheduler_state(sample=None):
+    state = _db_get_json("scheduler_state", "disk_health", {}) or {}
+    if sample:
+        interval = _disk_health_interval_for_sample(sample)
+        state.update({
+            "last_scan_at": int(sample.get("ts") or time.time()),
+            "next_scan_at": int(sample.get("ts") or time.time()) + interval,
+            "interval_sec": interval,
+            "score": int(sample.get("score", 0) or 0),
+            "smart_status": sample.get("smart_status", "Unknown"),
+        })
+        _db_set_json("scheduler_state", "disk_health", state)
+    return state
 
 
 def _read_dmesg_recent(seconds=300):
@@ -4079,6 +4230,7 @@ def _disk_health_sample_once():
         normalized_warnings = [normalize_vietnamese_message(w) for w in warnings]
         sample["score"] = score
         sample["warnings"] = normalized_warnings
+        _cache_hdd_temp("%d°C" % int(sample.get("temp_c") or 0)) if sample.get("temp_c") else None
 
         with _disk_health_lock:
             _disk_health_last_sample = sample
@@ -4091,13 +4243,28 @@ def _disk_health_sample_once():
             sample_interval_sec=_DISK_HEALTH_SAMPLE_INTERVAL_SEC,
         )
 
-        # Append vao .jsonl tren eMMC
+        # Ghi vao SQLite chung. JSONL cu chi giu fallback doc lich su cu.
         try:
-            os.makedirs(os.path.dirname(_DISK_HEALTH_HISTORY_FILE), exist_ok=True)
-            with open(_DISK_HEALTH_HISTORY_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO disk_health_history (ts, device, score, smart_status, temp_c, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    int(sample.get("ts") or time.time()),
+                    sample.get("device", ""),
+                    int(sample.get("score", 0) or 0),
+                    sample.get("smart_status", "Unknown"),
+                    sample.get("temp_c"),
+                    json.dumps(sample, ensure_ascii=False)
+                )
+            )
+            cur.execute("DELETE FROM disk_health_history WHERE ts <= ?", (int(time.time()) - _DISK_HEALTH_RETENTION_DAYS * 86400,))
+            conn.commit()
+            conn.close()
+            _db_set_json("hardware_status", "disk_health_current", sample)
+            _disk_health_scheduler_state(sample)
         except Exception as e:
-            log.warning("[DiskHealth] Không ghi history: %s", e)
+            log.warning("[DiskHealth] Không ghi SQLite history: %s", e)
 
         # Alert qua system_logs neu score xuong duoi nguong hoac co warning critical
         if score < 60:
@@ -4118,40 +4285,42 @@ def _disk_health_sample_once():
 
 
 def _disk_health_prune_old_records():
-    """Xo? cac dong .jsonl cu hon retention."""
+    """Xoa cac mau disk health cu hon retention trong SQLite."""
     try:
-        if not os.path.exists(_DISK_HEALTH_HISTORY_FILE): return
         cutoff = int(time.time()) - (_DISK_HEALTH_RETENTION_DAYS * 86400)
-        kept = []
-        with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    obj = json.loads(line)
-                    if obj.get("ts", 0) >= cutoff:
-                        kept.append(line.rstrip("\n"))
-                except Exception:
-                    continue
-        # Chi rewrite neu thuc su co prune
-        if kept and len(kept) < sum(1 for _ in open(_DISK_HEALTH_HISTORY_FILE)):
-            tmp = _DISK_HEALTH_HISTORY_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(kept) + "\n")
-            os.replace(tmp, _DISK_HEALTH_HISTORY_FILE)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM disk_health_history WHERE ts <= ?", (cutoff,))
+        conn.commit()
+        conn.close()
     except Exception as e:
         log.warning("[DiskHealth] Prune lỗi: %s", e)
 
 
 def _disk_health_watchdog():
-    """Background daemon: sample mới 5 ph?t, prune moi 1 gio."""
+    """Background daemon: SMART scan theo lich thong minh, khong quet lien tuc."""
+    global _disk_health_last_sample
     time.sleep(30)  # cho server on dinh
-    prune_counter = 0
     while True:
-        _disk_health_sample_once()
-        prune_counter += 1
-        if prune_counter >= 12:  # ~1 gio
-            _disk_health_prune_old_records()
-            prune_counter = 0
-        time.sleep(_DISK_HEALTH_SAMPLE_INTERVAL_SEC)
+        try:
+            now_ts = int(time.time())
+            with _disk_health_lock:
+                has_ram_sample = bool(_disk_health_last_sample)
+            if not has_ram_sample:
+                saved = _db_get_json("hardware_status", "disk_health_current", {}) or {}
+                if saved:
+                    with _disk_health_lock:
+                        _disk_health_last_sample = saved
+            state = _disk_health_scheduler_state()
+            next_scan_at = int(state.get("next_scan_at") or 0)
+            if next_scan_at <= 0 or now_ts >= next_scan_at:
+                _disk_health_sample_once()
+                _disk_health_prune_old_records()
+            sleep_for = max(3600, min(21600, int((next_scan_at or now_ts + 3600) - now_ts)))
+            time.sleep(sleep_for)
+        except Exception as e:
+            log.warning("[DiskHealth] Watchdog lỗi: %s", e)
+            time.sleep(3600)
 
 
 def _add_system_log(level, module, message, timestamp=None):
@@ -4203,7 +4372,7 @@ def _load_process_state():
             if not isinstance(data, dict):
                 data = {}
         except Exception:
-            data = {}
+            data = _db_get_json("runtime_state", "process_state", {}) or {}
         _process_state_cache = data
         return dict(data)
 
@@ -4241,6 +4410,7 @@ def _update_process_state(name, **kwargs):
         data[name] = item
         _process_state_cache = data
         _save_process_state_locked(data)
+        _db_set_json("runtime_state", "process_state", data)
         return dict(item)
 
 def _get_process_state(name, default=None):
@@ -4304,12 +4474,16 @@ def _log_unhandled_flask_error(e):
 @app.route('/api/disk/health', methods=['GET'])
 @requires_auth
 def api_disk_health():
-    """Snapshot suc khoe HDD hien tai (sample gần nh?t trong RAM)."""
+    """Snapshot suc khoe HDD hien tai tu RAM/SQLite, khong kich hoat SMART scan."""
     with _disk_health_lock:
         sample = dict(_disk_health_last_sample) if _disk_health_last_sample else None
+    if not sample:
+        sample = _db_get_json("hardware_status", "disk_health_current", {}) or {}
+    schedule = _disk_health_scheduler_state()
     return jsonify({
         "current": sample or {},
-        "sample_interval_sec": _DISK_HEALTH_SAMPLE_INTERVAL_SEC,
+        "sample_interval_sec": int(schedule.get("interval_sec") or _DISK_HEALTH_HEALTHY_INTERVAL_SEC),
+        "next_scan_at": int(schedule.get("next_scan_at") or 0),
         "sampling": sample is None,
     })
 
@@ -4327,18 +4501,21 @@ def api_disk_health_history():
     target_device = _target_hdd_device_path()
     items = []
     try:
-        if os.path.exists(_DISK_HEALTH_HISTORY_FILE):
-            with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        obj = json.loads(line)
-                        obj_device = obj.get("device", "")
-                        if obj.get("ts", 0) >= cutoff and obj_device == target_device:
-                            items.append(obj)
-                    except Exception:
-                        continue
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT payload_json FROM disk_health_history WHERE ts >= ? AND device = ? ORDER BY ts ASC",
+            (cutoff, target_device)
+        )
+        rows = cur.fetchall()
+        conn.close()
+        for row in rows:
+            try:
+                items.append(json.loads(row[0]))
+            except Exception:
+                pass
     except Exception as e:
-        log.warning("[DiskHealth] Read history lỗi: %s", e)
+        log.warning("[DiskHealth] Read SQLite history lỗi: %s", e)
     return jsonify({
         "days": days,
         "count": len(items),
@@ -4365,18 +4542,21 @@ def _read_disk_health_history(days=7):
     target_device = _target_hdd_device_path()
     items = []
     try:
-        if os.path.exists(_DISK_HEALTH_HISTORY_FILE):
-            with open(_DISK_HEALTH_HISTORY_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        obj = json.loads(line)
-                        obj_device = obj.get("device", "")
-                        if obj.get("ts", 0) >= cutoff and obj_device == target_device:
-                            items.append(obj)
-                    except Exception:
-                        continue
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT payload_json FROM disk_health_history WHERE ts >= ? AND device = ? ORDER BY ts ASC",
+            (cutoff, target_device)
+        )
+        rows = cur.fetchall()
+        conn.close()
+        for row in rows:
+            try:
+                items.append(json.loads(row[0]))
+            except Exception:
+                pass
     except Exception as e:
-        log.warning("[Insights] Read disk history lỗi: %s", e)
+        log.warning("[Insights] Read SQLite disk history lỗi: %s", e)
     return items
 
 
@@ -5187,7 +5367,12 @@ _usb_import_last_save = 0.0
 def _usb_import_load_state():
     global _usb_import_state
     try:
-        if os.path.exists(_USB_IMPORT_STATE_FILE):
+        saved_db = _db_get_json("runtime_state", "usb_import_state", None)
+        if isinstance(saved_db, dict):
+            with _usb_import_lock:
+                _usb_import_state.update(saved_db)
+            log.info("[USBImport] Đã tải trạng thái từ SQLite runtime_state")
+        elif os.path.exists(_USB_IMPORT_STATE_FILE):
             with open(_USB_IMPORT_STATE_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
                 with _usb_import_lock:
@@ -5210,12 +5395,16 @@ def _usb_import_save_state():
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp, _USB_IMPORT_STATE_FILE)
+        _db_set_json("runtime_state", "usb_import_state", payload)
     except Exception as e:
         log.warning("[USBImport] Save state lỗi: %s", e)
 
 
 def _usb_import_load_history():
     try:
+        saved_db = _db_get_json("runtime_state", "usb_import_history", None)
+        if isinstance(saved_db, list):
+            return saved_db[-50:]
         if os.path.exists(_USB_IMPORT_HISTORY_FILE):
             with open(_USB_IMPORT_HISTORY_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -5235,6 +5424,7 @@ def _usb_import_add_history(record):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(items[-50:], f, ensure_ascii=False, indent=2)
         os.replace(tmp, _USB_IMPORT_HISTORY_FILE)
+        _db_set_json("runtime_state", "usb_import_history", items[-50:])
     except Exception as e:
         log.warning("[USBImport] Save history lỗi: %s", e)
 
@@ -10125,7 +10315,9 @@ def _fan_controller_watchdog():
 
                 cpu_temp = _fan_temp_value(get_cpu_temp())
                 hdd_temp = _fan_temp_value(get_hdd_temp())
-                current_temp = max(cpu_temp, hdd_temp)
+                # Custom fan control follows HDD temperature. CPU changes too fast and
+                # already has its own heatsink/fan, so it is only kept as emergency guard.
+                control_temp = hdd_temp
                 
                 # Dam bao OS daemon da được tat
                 if now_ts - service_check_ts >= 30.0:
@@ -10138,13 +10330,13 @@ def _fan_controller_watchdog():
                 if force_hot:
                     target_percent = 100
                     target_since_ts = now_ts
-                elif current_temp <= off_temp:
+                elif control_temp <= off_temp:
                     target_percent = 0
-                elif current_temp >= on_temp:
+                elif control_temp >= on_temp:
                     target_percent = 100
                 else:
                     span = max(on_temp - off_temp, 1.0)
-                    ratio = (current_temp - off_temp) / span
+                    ratio = (control_temp - off_temp) / span
                     if ratio <= 0.25:
                         target_percent = 25
                     elif ratio <= 0.50:
@@ -10157,7 +10349,7 @@ def _fan_controller_watchdog():
                 if target_percent != last_target_percent and not force_hot:
                     last_target_percent = target_percent
                     target_since_ts = now_ts
-                    log.info("[FanWatchdog] Chờ ổn định %.0fs trước khi đổi quạt sang %s%% (CPU %.1f°C, HDD %.1f°C)", stable_seconds, target_percent, cpu_temp, hdd_temp)
+                    log.info("[FanWatchdog] Chờ ổn định %.0fs theo HDD trước khi đổi quạt sang %s%% (HDD %.1f°C, CPU %.1f°C)", stable_seconds, target_percent, hdd_temp, cpu_temp)
                     time.sleep(1)
                     continue
                 elif force_hot:
@@ -12442,7 +12634,7 @@ if __name__ == "__main__":
 
     # FEATURE: Disk health time-series daemon + scheduled backup daemon
     threading.Thread(target=_disk_health_watchdog, daemon=True).start()
-    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (sample mỗi 30 phút).")
+    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (SMART theo lịch: khỏe 30 ngày, cảnh báo 7 ngày, lỗi 24 giờ).")
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
     threading.Thread(target=_usb_import_watchdog, daemon=True, name="USBImportWatchdog").start()

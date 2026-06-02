@@ -1094,9 +1094,8 @@ fun MainMenuScreen(
                                     var displayStatusStr = fanStatusStr
                                     
                                     if (viewModel.systemStatus.fanMode == "custom") {
-                                        val cpuVal = viewModel.systemStatus.cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                                         val hddVal = viewModel.systemStatus.temp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                                        val fanTempVal = maxOf(cpuVal, hddVal)
+                                        val fanTempVal = hddVal
                                         val onT = viewModel.systemStatus.fanOnTemp
                                         val offT = viewModel.systemStatus.fanOffTemp
                                         val rawPercent = if (fanTempVal <= offT) {
@@ -2597,7 +2596,7 @@ private fun DiskProfileBottomSheet(
 
     LaunchedEffect(Unit) {
         viewModel.fetchSmartData()
-        viewModel.fetchDiskHealth()
+        viewModel.fetchNasInsights()
         viewModel.fetchOmvOverview()
         viewModel.fetchStorageUsage()
         viewModel.loadSystemLogs()
