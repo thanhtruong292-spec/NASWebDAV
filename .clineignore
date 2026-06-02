@@ -120,6 +120,7 @@ Provide only the exact code blocks being replaced.
 
 # 8. NGUYÊN TẮC COMMIT MỚI NHẤT, TRIỂN KHAI VÀ ADB
 - Tất cả cuộc trò chuyện và thao tác kỹ thuật chỉ tập trung vào commit mới nhất đang làm việc; không tự ý load, đọc, quét hoặc phân tích các vùng lịch sử/nhánh/thư mục khác nếu không trực tiếp cần cho yêu cầu hiện tại.
+- CẤM TUYỆT ĐỐI sửa lung tung hoặc kéo lỗi/logic cũ từ trí nhớ ra áp dụng. Mọi sửa đổi phải dựa trên file thực tế hiện tại, trạng thái API/NAS hiện tại và commit mới nhất; trước khi sửa phải đọc đúng đoạn code đang chạy và chỉ vá nguyên nhân đã xác minh.
 - Ưu tiên tiết kiệm token tối đa: chỉ đọc đúng file, đúng đoạn, đúng dòng cần xử lý; không mở rộng phạm vi điều tra khi chưa có bằng chứng cần thiết.
 - Sau khi người dùng xác nhận tính năng đã hoạt động, AI tự tiến hành commit và đẩy lên GitHub theo nhánh hiện tại, không hỏi lại các bước lặp lại.
 - Khi cần deploy, build APK hoặc cài APK qua ADB Wi-Fi, AI tự động thực hiện đầy đủ các bước cần thiết nếu môi trường đã có cấu hình phù hợp; không hỏi lại trừ khi thiếu thông tin bắt buộc hoặc thao tác có nguy cơ phá hủy dữ liệu.
@@ -150,3 +151,24 @@ Provide only the exact code blocks being replaced.
 - Mạng: Ethernet 1Gbps + Tailscale VPN. IP: LAN `192.168.100.254` (port 22 ổn định nhất), Tailscale `100.90.135.102` (có thể timeout tùy mạng).
 - Triển khai: file đích `/opt/nas_api_server.py`, service systemd tên `nas_api` (KHÔNG phải `nas_api_server`). Lệnh: `scp ... root@192.168.100.254:/opt/nas_api_server.py` rồi `ssh root@192.168.100.254 "systemctl restart nas_api"`.
 - Mọi đề xuất tối ưu hiệu năng/tính năng mới BẮT BUỘC dựa trên đúng thông số phần cứng trên (đặc biệt RAM ~1GB), không suy diễn cấu hình khác.
+
+# 12. CẤU HÌNH ROUTER / WIFI LAN THỰC TẾ (BẮT BUỘC TÍNH KHI TỐI ƯU GHI MÀN HÌNH)
+# Xác nhận từ giao diện router ngày 02/06/2026:
+- Router: **ASUS RT-N12**, Operation Mode: **Wireless router**, Firmware **3.0.0.4.260**, SSID `Anonymous`.
+- Mạng LAN ghi màn hình: NAS `192.168.100.254`; điện thoại test qua ADB Wi-Fi `192.168.100.93:<port>`.
+- RT-N12 là router Wi-Fi 2.4GHz chuẩn N300 đời cũ, half-duplex/shared medium; KHÔNG được tối ưu như Wi-Fi 5/6 hoặc Ethernet gigabit. Tốc độ thực tế phụ thuộc nhiễu 2.4GHz, khoảng cách, số thiết bị, channel width, và CPU router.
+- QoS trên router hiện **OFF** theo ảnh chụp. Nếu bật QoS, không dùng rule mặc định làm giảm ưu tiên "File Transfer" dung lượng lớn; phải thêm rule ưu tiên cao cho traffic NASWebDAV:
+  - Source: IP điện thoại Secure Folder / thiết bị Android đang quay.
+  - Destination: NAS `192.168.100.254`, port API `5050`, TCP, priority Highest.
+  - Nếu WebDAV/HTTP phụ trợ dùng port 80/443 thì cũng ưu tiên riêng cho NAS, tránh bị rule mặc định xếp Low khi transfer >512KB.
+- Chính sách tối ưu ghi màn hình qua Wi-Fi RT-N12:
+  - Luôn ưu tiên LAN URL `http://192.168.100.254:5050` trước Tailscale khi điện thoại cùng mạng.
+  - Bitrate khởi điểm an toàn cho screen recording LAN: **8 Mbps** ở output cạnh dài 1920px.
+  - Có thể tăng thử **10-12 Mbps** nếu test quay 5-10 phút không drop segment, không timeout upload, không làm router/NAS lag.
+  - Không mặc định vượt **12 Mbps** trên RT-N12 nếu chưa đo thực tế; bitrate quá cao có thể làm Wi-Fi bufferbloat, tăng latency, gây backlog upload và mất segment.
+  - Segment screen recording nên giữ **30 giây** để giảm số request/restart MediaRecorder nhưng vẫn giới hạn mất mát nếu mạng rớt.
+  - Overlay/app phải hiển thị rõ mode `LAN` hoặc `Tailscale`, số segment đã gửi và số segment chờ upload để phát hiện nghẽn Wi-Fi.
+- Muốn "tận dụng tối đa" router phải đo throughput thực tế, không đoán theo N300 marketing:
+  - Test quay 5 phút ở 8 Mbps, 10 Mbps, 12 Mbps.
+  - Theo dõi backlog segment, HTTP upload timeout, ping tới NAS, và log `ScreenRecordService`.
+  - Chỉ nâng bitrate khi backlog luôn 0-1 segment và NAS finalize MP4 ổn định.

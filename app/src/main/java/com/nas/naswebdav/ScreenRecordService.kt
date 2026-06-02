@@ -8,14 +8,26 @@ import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import com.nas.naswebdav.utils.SystemLogger
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +37,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -53,12 +66,18 @@ class ScreenRecordService : Service() {
     private var segmentIndex = 0
     private var currentSegmentFile: File? = null
     private var startedAtMs = 0L
+    private var overlayView: TextView? = null
+    private var overlayContainer: LinearLayout? = null
+    private var overlayAdded = false
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var width = 1280
     private var height = 720
     private var density = 320
     private var bitrate = 2_500_000
-    private val segmentMs = 10_000L
-    private val maxSpoolBytes = 2L * 1024L * 1024L * 1024L
+    private val segmentMs = 30_000L
+    private val maxSpoolBytes = 512L * 1024L * 1024L
+    private var uploadedSegments = 0
+    private var lastProgressLogSegment = -1
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,6 +95,34 @@ class ScreenRecordService : Service() {
     private fun startRecording(intent: Intent) {
         if (projection != null) return
         createChannel()
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification("Cần quyền hiển thị trên cùng để hiện REC khi quay"),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+            logError("Không bắt đầu quay vì chưa có quyền hiển thị trên cùng cho chip REC")
+            mainHandler.post {
+                Toast.makeText(
+                    this,
+                    "Cần bật quyền hiển thị trên cùng để hiện REC và thời gian quay.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        isRecordingState.value = true
+        elapsedSecondsState.value = 0L
+        segmentIndexState.value = 0
+        uploadedSegmentsState.value = 0
+        pendingSegmentsState.value = 0
+        networkModeState.value = "..."
+        showRecordingOverlay()
+        logInfo("Bắt đầu khởi động quay màn hình")
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
@@ -101,15 +148,27 @@ class ScreenRecordService : Service() {
         density = metrics.densityDpi
         val rawWidth = metrics.widthPixels
         val rawHeight = metrics.heightPixels
-        width = (rawWidth / 2) * 2
-        height = (rawHeight / 2) * 2
-        bitrate = if (maxOf(width, height) >= 1920) 6_000_000 else 4_000_000
+        val longestSide = maxOf(rawWidth, rawHeight)
+        val scale = minOf(1.0, 1920.0 / longestSide.toDouble())
+        width = ((rawWidth * scale).toInt() / 2) * 2
+        height = ((rawHeight * scale).toInt() / 2) * 2
+        val onTailscale = isTailscaleUrl(apiBase)
+        networkModeState.value = if (onTailscale) "Tailscale" else "LAN"
+        bitrate = when {
+            onTailscale && maxOf(width, height) >= 1920 -> 4_500_000
+            onTailscale -> 3_000_000
+            maxOf(width, height) >= 1920 -> 8_000_000
+            else -> 5_000_000
+        }
         Log.i(TAG, "Start screen recording session=$sessionId raw=${rawWidth}x$rawHeight output=${width}x$height bitrate=$bitrate api=$apiBase")
+        logInfo("Tạo phiên quay $sessionId, raw=${rawWidth}x$rawHeight, output=${width}x$height, bitrate=$bitrate, mode=${if (onTailscale) "tailscale" else "lan"}, segment=${segmentMs / 1000}s")
 
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = if (data != null) manager.getMediaProjection(resultCode, data) else null
         if (projection == null || apiBase.isBlank()) {
             Log.e(TAG, "Cannot start screen recording: projection=${projection != null}, apiBaseBlank=${apiBase.isBlank()}")
+            logError("Không thể bắt đầu quay: thiếu quyền MediaProjection hoặc API base rỗng")
+            hideRecordingOverlay()
             stopSelf()
             return
         }
@@ -122,7 +181,42 @@ class ScreenRecordService : Service() {
         scope.launch {
             try {
                 startNasSession()
+                // Khởi tạo VirtualDisplay một lần duy nhất cho toàn session
+                // Android 14+ cấm gọi createVirtualDisplay() nhiều lần trên cùng projection
+                val initRecorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this@ScreenRecordService)
+                    else @Suppress("DEPRECATION") MediaRecorder()
+                val firstFile = File(spoolDir, "part_%06d.ts".format(0))
+                initRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                initRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_2_TS)
+                initRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                initRecorder.setVideoSize(width, height)
+                initRecorder.setVideoFrameRate(30)
+                initRecorder.setVideoEncodingBitRate(bitrate)
+                initRecorder.setOutputFile(firstFile.absolutePath)
+                initRecorder.prepare()
+                virtualDisplay = projection?.createVirtualDisplay(
+                    "NAS Screen Record",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    initRecorder.surface, null, null
+                )
+                if (virtualDisplay == null) {
+                    initRecorder.release()
+                    throw IllegalStateException("Không thể tạo VirtualDisplay")
+                }
+                initRecorder.start()
+                recorder = initRecorder
+                currentSegmentFile = firstFile
+                Log.i(TAG, "VirtualDisplay created, first segment started file=${firstFile.name}")
+                logInfo("Đã tạo VirtualDisplay, bắt đầu ghi segment đầu tiên")
                 startedAtMs = System.currentTimeMillis()
+                withContext(Dispatchers.Main) {
+                    isRecordingState.value = true
+                    elapsedSecondsState.value = 0L
+                    segmentIndexState.value = 0
+                    uploadedSegmentsState.value = 0
+                    pendingSegmentsState.value = 0
+                }
                 uploadJob = launch { uploadLoop() }
                 launch { tickerLoop() }
                 segmentJob = launch { segmentLoop() }
@@ -134,20 +228,33 @@ class ScreenRecordService : Service() {
 
     private suspend fun segmentLoop() {
         try {
+            // Segment 0 đã được khởi động bởi startRecording() — bắt đầu từ delay ngay
             while (!stopping.get()) {
-                val file = File(spoolDir, "part_%06d.ts".format(segmentIndex))
-                currentSegmentFile = file
-                startSegment(file)
-                updateNotification("Đang quay: đoạn ${segmentIndex + 1}")
                 delay(segmentMs)
-                stopSegment()
-                if (!file.exists() || file.length() <= 0L) {
-                    throw IllegalStateException("MediaRecorder tạo đoạn rỗng: ${file.name}")
+                if (stopping.get()) break
+                val doneFile = currentSegmentFile
+                // Tạo recorder mới cho segment tiếp theo trước khi stop recorder cũ
+                val nextIndex = segmentIndex + 1
+                val nextFile = File(spoolDir, "part_%06d.ts".format(nextIndex))
+                val nextRecorder = startNextSegment(nextFile)
+                // Stop recorder cũ sau khi recorder mới đã bắt đầu
+                stopCurrentRecorder()
+                recorder = nextRecorder
+                currentSegmentFile = nextFile
+                // Đánh dấu segment cũ là sẵn sàng upload
+                if (doneFile != null) {
+                    if (!doneFile.exists() || doneFile.length() <= 0L) {
+                        throw IllegalStateException("MediaRecorder tạo đoạn rỗng: ${doneFile.name}")
+                    }
+                    File(spoolDir, "part_%06d.ready".format(segmentIndex)).writeText(doneFile.name)
+                    Log.i(TAG, "Segment ready index=$segmentIndex bytes=${doneFile.length()}")
+                    refreshUploadCounters()
+                    if (segmentIndex == 0 || segmentIndex - lastProgressLogSegment >= 5) {
+                        logInfo("Segment $segmentIndex sẵn sàng upload, ${doneFile.length() / 1024} KB")
+                        lastProgressLogSegment = segmentIndex
+                    }
                 }
-                File(spoolDir, "part_%06d.ready".format(segmentIndex)).writeText(file.name)
-                Log.i(TAG, "Segment ready index=$segmentIndex bytes=${file.length()}")
-                currentSegmentFile = null
-                segmentIndex++
+                segmentIndex = nextIndex
                 enforceSpoolLimit()
             }
         } catch (e: Exception) {
@@ -155,7 +262,8 @@ class ScreenRecordService : Service() {
         }
     }
 
-    private fun startSegment(file: File) {
+    // Tạo recorder mới và swap surface vào VirtualDisplay hiện có (không tạo lại VirtualDisplay)
+    private fun startNextSegment(file: File): MediaRecorder {
         val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
         r.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_2_TS)
@@ -165,52 +273,53 @@ class ScreenRecordService : Service() {
         r.setVideoEncodingBitRate(bitrate)
         r.setOutputFile(file.absolutePath)
         r.prepare()
-        virtualDisplay = projection?.createVirtualDisplay(
-            "NAS Screen Record",
-            width,
-            height,
-            density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            r.surface,
-            null,
-            null
-        )
+        // Swap surface: VirtualDisplay giữ nguyên, chỉ đổi surface đích
+        virtualDisplay?.surface = r.surface
         r.start()
-        recorder = r
-        Log.i(TAG, "Segment started index=$segmentIndex file=${file.name}")
+        Log.i(TAG, "Next segment started index=${segmentIndex + 1} file=${file.name}")
+        return r
     }
 
-    private fun stopSegment() {
+    private fun stopCurrentRecorder() {
         try { recorder?.stop() } catch (_: Exception) {}
         try { recorder?.reset() } catch (_: Exception) {}
         try { recorder?.release() } catch (_: Exception) {}
         recorder = null
+    }
+
+    private fun stopSegment() {
+        stopCurrentRecorder()
         try { virtualDisplay?.release() } catch (_: Exception) {}
         virtualDisplay = null
     }
 
     private suspend fun uploadLoop() {
         while (!stopping.get() || spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
-            val ready = spoolDir.listFiles()
-                ?.filter { it.name.endsWith(".ready") }
-                ?.sortedBy { it.name }
-                ?: emptyList()
-            if (ready.isEmpty()) {
+            if (!uploadReadySegmentsOnce()) {
                 delay(1000)
-                continue
-            }
-            for (marker in ready) {
-                val mediaFile = File(spoolDir, marker.readText().trim())
-                val idx = mediaFile.name.substringAfter("part_").substringBefore(".").toIntOrNull() ?: continue
-                if (mediaFile.exists() && uploadSegment(idx, mediaFile)) {
-                    marker.delete()
-                    mediaFile.delete()
-                } else {
-                    delay(2000)
-                    break
-                }
             }
         }
+    }
+
+    private fun uploadReadySegmentsOnce(): Boolean {
+        val ready = spoolDir.listFiles()
+            ?.filter { it.name.endsWith(".ready") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        if (ready.isEmpty()) return false
+        for (marker in ready) {
+            val mediaFile = File(spoolDir, marker.readText().trim())
+            val idx = mediaFile.name.substringAfter("part_").substringBefore(".").toIntOrNull() ?: continue
+            if (mediaFile.exists() && uploadSegment(idx, mediaFile)) {
+                marker.delete()
+                mediaFile.delete()
+                uploadedSegments = maxOf(uploadedSegments, idx + 1)
+                refreshUploadCounters()
+            } else {
+                return true
+            }
+        }
+        return true
     }
 
     private suspend fun startNasSession() {
@@ -231,6 +340,7 @@ class ScreenRecordService : Service() {
             if (!response.isSuccessful) throw IllegalStateException("NAS từ chối tạo phiên quay: HTTP ${response.code}")
         }
         Log.i(TAG, "NAS session started session=$sessionId")
+        logInfo("NAS đã nhận phiên quay $sessionId")
     }
 
     private fun uploadSegment(index: Int, file: File): Boolean {
@@ -247,6 +357,9 @@ class ScreenRecordService : Service() {
                     false
                 } else {
                     Log.i(TAG, "Uploaded segment index=$index bytes=${file.length()}")
+                    if (index == 0 || index % 5 == 0) {
+                        logInfo("Đã upload segment $index, ${file.length() / 1024} KB")
+                    }
                     true
                 }
             }
@@ -256,7 +369,7 @@ class ScreenRecordService : Service() {
         }
     }
 
-    private suspend fun finishNasSession() {
+    private fun finishNasSession(): Boolean {
         val body = JSONObject()
             .put("session_id", sessionId)
             .put("total_segments", segmentIndex)
@@ -267,29 +380,49 @@ class ScreenRecordService : Service() {
             .header("Authorization", authHeader)
             .post(body)
             .build()
-        NasApplication.instance.longRunningApiClient.newCall(req).execute().close()
-        Log.i(TAG, "Finish NAS session session=$sessionId totalSegments=$segmentIndex")
+        NasApplication.instance.longRunningApiClient.newCall(req).execute().use { response ->
+            val ok = response.isSuccessful
+            if (ok) {
+                Log.i(TAG, "Finish NAS session session=$sessionId totalSegments=$segmentIndex")
+                logInfo("Hoàn tất phiên quay $sessionId, tổng $segmentIndex segment")
+            } else {
+                Log.w(TAG, "Finish NAS session failed session=$sessionId http=${response.code}")
+                logWarn("NAS từ chối hoàn tất phiên $sessionId: HTTP ${response.code}")
+            }
+            return ok
+        }
     }
 
     private fun failRecording(message: String, throwable: Throwable) {
         Log.e(TAG, "$message session=$sessionId segment=$segmentIndex", throwable)
+        logError("$message: ${throwable.message ?: throwable.javaClass.simpleName}")
         stopping.set(true)
+        scope.launch(Dispatchers.Main) {
+            isRecordingState.value = false
+        }
+        hideRecordingOverlay()
         updateNotification(message)
         scope.launch {
             try {
                 cancelNasSession()
             } catch (e: Exception) {
-            Log.w(TAG, "Cancel NAS session failed session=$sessionId", e)
+                Log.w(TAG, "Cancel NAS session failed session=$sessionId", e)
             }
-            stopSegment()
-            try { projection?.stop() } catch (_: Exception) {}
-            projection = null
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            try {
+                stopSegment()
+            } catch (e: Exception) {
+                Log.w(TAG, "stopSegment failed in failRecording", e)
+            } finally {
+                try { projection?.stop() } catch (_: Exception) {}
+                projection = null
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 
     private fun cancelNasSession() {
+        logWarn("Hủy phiên quay trên NAS: $sessionId")
         val req = Request.Builder()
             .url("$apiBase/api/screen_record/cancel?session_id=$sessionId")
             .header("Authorization", authHeader)
@@ -302,41 +435,87 @@ class ScreenRecordService : Service() {
         val files = spoolDir.listFiles()?.sortedBy { it.lastModified() } ?: return
         var total = files.filter { it.isFile }.sumOf { it.length() }
         if (total <= maxSpoolBytes) return
+        var dropped = 0
         for (file in files) {
             if (!file.name.endsWith(".ts")) continue
             val marker = File(spoolDir, file.name.replace(".ts", ".ready"))
-            if (marker.exists()) continue
             total -= file.length()
-            file.delete()
+            if (file.delete()) {
+                dropped++
+            }
+            if (marker.exists()) {
+                marker.delete()
+            }
             if (total <= maxSpoolBytes) break
+        }
+        refreshUploadCounters()
+        if (dropped > 0) {
+            logWarn("Đã xóa $dropped segment cũ do spool vượt giới hạn ${maxSpoolBytes / 1024 / 1024} MB")
         }
     }
 
     private fun stopRecording() {
         if (!stopping.compareAndSet(false, true)) return
         updateNotification("Đang hoàn tất và đồng bộ lên NAS")
+        logInfo("Người dùng dừng quay, đang đồng bộ các segment còn lại")
+        scope.launch(Dispatchers.Main) {
+            isRecordingState.value = false
+        }
+        hideRecordingOverlay()
         scope.launch {
-            stopSegment()
-            currentSegmentFile?.let { file ->
-                if (file.exists() && file.length() > 0L) {
-                    File(spoolDir, "part_%06d.ready".format(segmentIndex)).writeText(file.name)
-                    segmentIndex++
+            try {
+                stopSegment()
+                currentSegmentFile?.let { file ->
+                    if (file.exists() && file.length() > 0L) {
+                        File(spoolDir, "part_%06d.ready".format(segmentIndex)).writeText(file.name)
+                        segmentIndex++
+                    }
+                    currentSegmentFile = null
+                    refreshUploadCounters()
                 }
-                currentSegmentFile = null
+                var waitCount = 0
+                while (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true && waitCount < 30) {
+                    uploadReadySegmentsOnce()
+                    delay(1000)
+                    waitCount++
+                }
+                if (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
+                    Log.w(TAG, "Timed out waiting for pending screen-record uploads; cancelling NAS session=$sessionId")
+                    logWarn("Quá 30 giây vẫn còn segment chưa upload, hủy phiên để dọn tài nguyên")
+                    try {
+                        cancelNasSession()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Cancel NAS session after upload timeout failed session=$sessionId", e)
+                    }
+                    return@launch
+                }
+                try {
+                    if (!finishNasSession()) {
+                        cancelNasSession()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Gặp lỗi khi thông báo hoàn tất phiên lên NAS", e)
+                    try {
+                        cancelNasSession()
+                    } catch (cancelError: Exception) {
+                        Log.w(TAG, "Cancel NAS session after finish failure failed session=$sessionId", cancelError)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Lỗi khi dừng quay màn hình", e)
+            } finally {
+                try { projection?.stop() } catch (_: Exception) {}
+                projection = null
+                scope.cancel()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
-            while (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
-                delay(1000)
-            }
-            finishNasSession()
-            try { projection?.stop() } catch (_: Exception) {}
-            projection = null
-            scope.cancel()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
         }
     }
 
     override fun onDestroy() {
+        isRecordingState.value = false
+        hideRecordingOverlay()
         try { stopSegment() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
         scope.cancel()
@@ -349,8 +528,136 @@ class ScreenRecordService : Service() {
             val minutes = elapsed / 60L
             val seconds = elapsed % 60L
             updateNotification("Đang quay %02d:%02d - đoạn %d".format(minutes, seconds, segmentIndex + 1))
+            withContext(Dispatchers.Main) {
+                elapsedSecondsState.value = elapsed
+                segmentIndexState.value = segmentIndex
+            }
+            updateRecordingOverlay(elapsed)
             delay(1000L)
         }
+    }
+
+    private fun showRecordingOverlay() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { showRecordingOverlay() }
+            return
+        }
+        if (overlayAdded) return
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            logWarn("Chưa có quyền hiển thị trên cùng, không thể hiện chip REC toàn màn hình")
+            return
+        }
+        try {
+            val dot = View(this).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(255, 23, 68))
+                }
+            }
+            val dotSize = (10 * resources.displayMetrics.density).toInt()
+            val label = TextView(this).apply {
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                text = "REC 00:00"
+            }
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(18).toFloat()
+                    setColor(Color.argb(220, 20, 20, 20))
+                    setStroke(dp(1), Color.rgb(255, 23, 68))
+                }
+                addView(dot, LinearLayout.LayoutParams(dotSize, dotSize).apply {
+                    marginEnd = dp(8)
+                })
+                addView(label)
+            }
+            val type = if (Build.VERSION.SDK_INT >= 26) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                x = dp(12)
+                y = dp(32)
+            }
+            val manager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            manager.addView(container, params)
+            overlayContainer = container
+            overlayView = label
+            overlayAdded = true
+            logInfo("Đã hiện chip REC toàn màn hình")
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot show recording overlay", e)
+            logWarn("Không thể hiện chip REC: ${e.message ?: e.javaClass.simpleName}")
+            overlayAdded = false
+            overlayContainer = null
+            overlayView = null
+        }
+    }
+
+    private fun updateRecordingOverlay(elapsedSeconds: Long) {
+        val label = overlayView ?: return
+        val minutes = elapsedSeconds / 60L
+        val seconds = elapsedSeconds % 60L
+        label.post {
+            label.text = "REC %02d:%02d".format(minutes, seconds)
+        }
+    }
+
+    private fun hideRecordingOverlay() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { hideRecordingOverlay() }
+            return
+        }
+        val container = overlayContainer ?: return
+        try {
+            val manager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            manager.removeView(container)
+        } catch (_: Exception) {
+        } finally {
+            overlayAdded = false
+            overlayContainer = null
+            overlayView = null
+        }
+    }
+
+    private fun refreshUploadCounters() {
+        val pending = spoolDir.listFiles()?.count { it.name.endsWith(".ready") } ?: 0
+        mainHandler.post {
+            pendingSegmentsState.value = pending
+            uploadedSegmentsState.value = uploadedSegments
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun logInfo(message: String) {
+        Log.i(TAG, message)
+        SystemLogger.log("INFO", TAG, message)
+    }
+
+    private fun logWarn(message: String) {
+        Log.w(TAG, message)
+        SystemLogger.log("WARN", TAG, message)
+    }
+
+    private fun logError(message: String) {
+        Log.e(TAG, message)
+        SystemLogger.log("ERROR", TAG, message)
     }
 
     private fun sha256(file: File): String {
@@ -401,5 +708,13 @@ class ScreenRecordService : Service() {
         private const val CHANNEL_ID = "screen_record_nas"
         private const val NOTIFICATION_ID = 2219
         private const val TAG = "ScreenRecordService"
+
+        // Trạng thái live chia sẻ với UI
+        val isRecordingState = androidx.compose.runtime.mutableStateOf(false)
+        val elapsedSecondsState = androidx.compose.runtime.mutableStateOf(0L)
+        val segmentIndexState = androidx.compose.runtime.mutableStateOf(0)
+        val uploadedSegmentsState = androidx.compose.runtime.mutableStateOf(0)
+        val pendingSegmentsState = androidx.compose.runtime.mutableStateOf(0)
+        val networkModeState = androidx.compose.runtime.mutableStateOf("")
     }
 }

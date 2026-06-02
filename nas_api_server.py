@@ -1520,7 +1520,7 @@ def get_fan_info():
         period_path = os.path.join(PWM_DIR, "period")
         
         # Đọc setting tu JSON
-        settings = {"mode": "auto", "on_temp": 65, "off_temp": 55}
+        settings = {"mode": "auto", "on_temp": FAN_DEFAULT_ON_TEMP, "off_temp": FAN_DEFAULT_OFF_TEMP}
         try:
             if os.path.exists("/opt/fan_custom.json"):
                 with open("/opt/fan_custom.json", "r") as f:
@@ -1545,7 +1545,7 @@ def get_fan_info():
                         period = max(int(f.read().strip()), 1)
                 except Exception:
                     pass
-            percent = int((duty * 100.0) / period)
+            raw_percent = int((duty * 100.0) / period)
 
             # FIX: Đọc th?m enable de bao cao "Tat" chinh xac khi PWM da bi cat hen
             enable_path = os.path.join(PWM_DIR, "enable")
@@ -1561,17 +1561,15 @@ def get_fan_info():
                 if duty == 0 or enable_val == 0: mode = "off"
                 else: mode = "on"
 
+            percent = _fan_pwm_level(raw_percent if enable_val == 1 else 0)
             payload = {
-                "rpm": None,
-                "percent": percent if enable_val == 1 else 0,
+                "rpm": _fan_rpm_for_percent(percent),
+                "percent": percent,
                 "mode": mode,
-                "on_temp": settings.get("on_temp", 65),
-                "off_temp": settings.get("off_temp", 55)
+                "on_temp": settings.get("on_temp", FAN_DEFAULT_ON_TEMP),
+                "off_temp": settings.get("off_temp", FAN_DEFAULT_OFF_TEMP)
             }
-            if duty == 0 or enable_val == 0:
-                payload["status"] = "Dừng"
-            else:
-                payload["status"] = "Đang chạy %d%%" % percent
+            payload["status"] = _fan_status_for_percent(percent)
             return payload
     except Exception:
         pass
@@ -1700,8 +1698,8 @@ def _update_status_cache():
                 "fan_rpm": cached_fan.get("rpm"),
                 "fan_status": cached_fan.get("status", "--"),
                 "fan_mode": cached_fan.get("mode", "auto"),
-                "fan_on_temp": cached_fan.get("on_temp", 65),
-                "fan_off_temp": cached_fan.get("off_temp", 55),
+                "fan_on_temp": cached_fan.get("on_temp", FAN_DEFAULT_ON_TEMP),
+                "fan_off_temp": cached_fan.get("off_temp", FAN_DEFAULT_OFF_TEMP),
                 "top_processes": cached_top,
                 "torrents": cached_torrents,
                 "disk_parts": cached_disk_parts
@@ -2760,7 +2758,8 @@ def api_omv_overview():
                     "name": s.get("name", ""),
                     "title": s.get("title", ""),
                     "enabled": s.get("enabled", False),
-                    "running": s.get("running", False)
+                    "running": s.get("running", False),
+                    "effective_enabled": bool(s.get("enabled", False) and s.get("running", False))
                 })
             result["services"] = services
     except Exception:
@@ -3018,7 +3017,15 @@ def api_smb_status():
         except Exception:
             pass
 
-        return jsonify({"status": "success", "enabled": is_enabled, "active": smb_active, "share": "NAS_Data", "user": "daica"})
+        effective_enabled = bool(is_enabled and smb_active)
+        return jsonify({
+            "status": "success",
+            "enabled": is_enabled,
+            "active": smb_active,
+            "effective_enabled": effective_enabled,
+            "share": "NAS_Data",
+            "user": "daica"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3055,8 +3062,74 @@ def api_smb_toggle():
         subprocess.run(["systemctl", "restart", "smbd"], check=False)
         if enable:
             subprocess.run(["systemctl", "enable", "smbd"], check=False)
+        else:
+            subprocess.run(["systemctl", "disable", "smbd"], check=False)
+            subprocess.run(["systemctl", "stop", "smbd"], check=False)
+        with _omv_overview_lock:
+            _omv_overview_cache["time"] = 0.0
+            _omv_overview_cache["data"] = None
             
-        return jsonify({"status": "success", "enabled": enable})
+        smb_active = False
+        try:
+            status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+            smb_active = status_out == "active"
+        except Exception:
+            pass
+        return jsonify({"status": "success", "enabled": enable, "active": smb_active, "effective_enabled": bool(enable and smb_active)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/service/toggle", methods=["POST"])
+@requires_auth
+def api_service_toggle():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        name = str(data.get("name", "")).strip().lower()
+        enable = bool(data.get("enable", False))
+        service_map = {
+            "ftp": "proftpd",
+            "nfs": "nfs-kernel-server",
+            "rsyncd": "rsync",
+            "ssh": "ssh",
+        }
+        if name == "samba":
+            with app.test_request_context(
+                "/api/smb/toggle",
+                method="POST",
+                data=json.dumps({"enable": enable}),
+                content_type="application/json",
+            ):
+                return api_smb_toggle.__wrapped__()
+        unit = service_map.get(name)
+        if not unit:
+            return jsonify({"error": "Dịch vụ không hợp lệ"}), 400
+        if enable:
+            subprocess.run(["systemctl", "enable", unit], check=False)
+            subprocess.run(["systemctl", "start", unit], check=False)
+        else:
+            subprocess.run(["systemctl", "disable", unit], check=False)
+            subprocess.run(["systemctl", "stop", unit], check=False)
+        actual_enabled = False
+        actual_running = False
+        try:
+            actual_enabled = subprocess.run(["systemctl", "is-enabled", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip() == "enabled"
+        except Exception:
+            pass
+        try:
+            actual_running = subprocess.run(["systemctl", "is-active", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip() == "active"
+        except Exception:
+            pass
+        with _omv_overview_lock:
+            _omv_overview_cache["time"] = 0.0
+            _omv_overview_cache["data"] = None
+        return jsonify({
+            "status": "success",
+            "name": name,
+            "enabled": actual_enabled,
+            "running": actual_running,
+            "effective_enabled": bool(actual_enabled and actual_running)
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3302,7 +3375,7 @@ def _load_fan_settings():
             with open(FAN_SETTINGS_FILE, "r") as f:
                 return json.load(f)
     except Exception: pass
-    return {"mode": "auto", "on_temp": 65, "off_temp": 55}
+    return {"mode": "auto", "on_temp": FAN_DEFAULT_ON_TEMP, "off_temp": FAN_DEFAULT_OFF_TEMP}
 
 def _save_fan_settings(settings):
     try:
@@ -3317,6 +3390,12 @@ def _save_fan_settings(settings):
 # transistor o trạng thái khong xac dinh tuy phan cung Chainedbox).
 # ============================================================================
 PWM_PATH = "/sys/class/pwm/pwmchip0/pwm0"
+FAN_POWER_GPIO = "79"
+FAN_DEFAULT_ON_TEMP = 45.0
+FAN_DEFAULT_OFF_TEMP = 40.0
+FAN_CPU_FORCE_ON_TEMP = 70.0
+FAN_HDD_FORCE_ON_TEMP = 50.0
+FAN_MAX_RPM = 4300
 
 
 def _pwm_write(node, value):
@@ -3345,6 +3424,67 @@ def _pwm_export_if_needed():
         pass
 
 
+def _fan_power_set(enabled):
+    """Dieu khien chan enable nguon quat cua Chainedbox."""
+    gpio_dir = "/sys/class/gpio/gpio%s" % FAN_POWER_GPIO
+    try:
+        if not os.path.isdir(gpio_dir) and os.path.exists("/sys/class/gpio/export"):
+            with open("/sys/class/gpio/export", "w") as f:
+                f.write(FAN_POWER_GPIO)
+        direction = os.path.join(gpio_dir, "direction")
+        if os.path.exists(direction):
+            with open(direction, "w") as f:
+                f.write("high" if enabled else "low")
+        value = os.path.join(gpio_dir, "value")
+        if os.path.exists(value):
+            with open(value, "w") as f:
+                f.write("1" if enabled else "0")
+    except Exception as e:
+        log.warning("[Fan] GPIO%s set %s lỗi: %s", FAN_POWER_GPIO, enabled, e)
+
+
+def _fan_temp_value(raw):
+    try:
+        return float(_re_module.sub(r"[^0-9.\-]", "", str(raw).strip()) or "0")
+    except Exception:
+        return 0.0
+
+
+def _fan_pwm_level(percent):
+    try:
+        value = int(round(float(percent)))
+    except Exception:
+        value = 0
+    if value <= 10:
+        return 0
+    if value <= 25:
+        return 25
+    if value <= 50:
+        return 50
+    if value <= 75:
+        return 75
+    return 100
+
+
+def _fan_pwm_duty(percent):
+    return int(max(0, min(100, int(percent))) * 100)
+
+
+def _fan_rpm_for_percent(percent):
+    level = _fan_pwm_level(percent)
+    if level == 0:
+        return 0
+    return int(round(FAN_MAX_RPM * level / 100.0))
+
+
+def _fan_status_for_percent(percent):
+    level = _fan_pwm_level(percent)
+    rpm = _fan_rpm_for_percent(level)
+    if level == 0:
+        return "Dừng"
+    return "Đang chạy %d%% - Tốc độ: %d rpm" % (level, rpm)
+
+
 def _pwm_apply_off():
     """Tất ho?n to?n PWM: duty=0 truoc, enable=0 sau de pin ve LOW va peripheral
     ngung output. Tren rk3328 Chainedbox phai ca hai buoc nay 5V moi ngat tai
@@ -3352,11 +3492,13 @@ def _pwm_apply_off():
     _pwm_export_if_needed()
     _pwm_write("duty_cycle", 0)
     _pwm_write("enable", 0)
+    _fan_power_set(False)
 
 
 def _pwm_apply_on(duty=10000, period=10000):
     """Bắt PWM: period -> duty -> enable. Kernel yeu cau duty <= period nen phai
     cap nhat period truoc neu can tang duty. enable=1 cuoi cung."""
+    _fan_power_set(True)
     _pwm_export_if_needed()
     # Đọc period hien tai; chi ghi neu nho hon duty mong muon (trảnh ghi -EINVAL).
     try:
@@ -6737,6 +6879,7 @@ def api_fan_control():
             # fan.service se tu set duty va enable theo nhiệt độ. Phai bao dam
             # enable=1 truoc khi start service de service khong gap PWM da bi
             # disable boi lan "off" truoc do.
+            _fan_power_set(True)
             _pwm_write("enable", 1)
             run_cmd(["systemctl", "start", "fan.service"])
             with _cache_lock:
@@ -6745,12 +6888,13 @@ def api_fan_control():
 
         elif mode == 'custom':
             settings['mode'] = 'custom'
-            settings['on_temp'] = data.get('on_temp', settings.get('on_temp', 65))
-            settings['off_temp'] = data.get('off_temp', settings.get('off_temp', 55))
+            settings['on_temp'] = data.get('on_temp', settings.get('on_temp', FAN_DEFAULT_ON_TEMP))
+            settings['off_temp'] = data.get('off_temp', settings.get('off_temp', FAN_DEFAULT_OFF_TEMP))
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             # Watchdog se quyet dinh duty 0/10000 theo hysteresis. Cho phep
             # PWM peripheral chay san de watchdog ghi duty co tac dung.
+            _fan_power_set(True)
             _pwm_write("enable", 1)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'custom'
@@ -7363,10 +7507,14 @@ def _active_screen_record_count():
         if not os.path.isdir(_SCREEN_RECORD_ROOT):
             return 0
         count = 0
+        now = int(time.time())
         for name in os.listdir(_SCREEN_RECORD_ROOT):
             m = _read_screen_manifest(os.path.join(_SCREEN_RECORD_ROOT, name))
             if m.get("status") in ("recording", "finishing"):
-                count += 1
+                # Bỏ qua các session đã quá 5 phút không có cập nhật để tránh kẹt slot quay
+                updated_at = int(m.get("updated_at") or m.get("created_at") or 0)
+                if now - updated_at < 300:
+                    count += 1
         return count
     except Exception:
         return 0
@@ -7476,12 +7624,29 @@ def api_screen_record_segment():
 
 
 def _screen_record_remux_worker(session_dir, sid, final_ts):
+    import shutil
+    import subprocess
     try:
-        if not _background_heavy_work_allowed():
-            return
+        # Chờ hệ thống rảnh bớt nếu đang có livestream hoặc tác vụ nặng khác
+        retry_count = 0
+        while retry_count < 12:  # Thử trong 3 phút (12 * 15 giây)
+            if _background_heavy_work_allowed():
+                break
+            log.info("[ScreenRecord] Hệ thống đang bận/RAM cao, tạm hoãn remux phiên %s, thử lại sau 15 giây", sid)
+            time.sleep(15)
+            retry_count += 1
+
         final_mp4 = os.path.join(session_dir, "%s.mp4" % sid)
+        cmd = ["/usr/bin/ffmpeg", "-y", "-i", final_ts, "-c", "copy", "-movflags", "+faststart", final_mp4]
+        
+        # Nếu hệ thống có lệnh "nice", chạy ffmpeg với nice -n 19 để giảm độ ưu tiên CPU cực đại, tránh lag/OOM
+        nice_path = shutil.which("nice")
+        if nice_path:
+            cmd = [nice_path, "-n", "19"] + cmd
+
+        log.info("[ScreenRecord] Bắt đầu remux phiên %s sang MP4: %s", sid, cmd)
         proc = subprocess.run(
-            ["/usr/bin/ffmpeg", "-y", "-i", final_ts, "-c", "copy", "-movflags", "+faststart", final_mp4],
+            cmd,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900
         )
         with _screen_record_lock(sid):
@@ -7489,11 +7654,19 @@ def _screen_record_remux_worker(session_dir, sid, final_ts):
             if proc.returncode == 0 and os.path.exists(final_mp4) and os.path.getsize(final_mp4) > 0:
                 manifest["final_mp4"] = os.path.relpath(final_mp4, WEBDAV_FILE_ROOT).replace(os.sep, "/")
                 manifest["remux_status"] = "done"
+                log.info("[ScreenRecord] Remux thành công phiên %s sang MP4", sid)
             else:
                 manifest["remux_status"] = "failed"
+                log.warning("[ScreenRecord] Remux thất bại phiên %s, mã trả về: %s", sid, proc.returncode)
             _write_screen_manifest(session_dir, manifest)
     except Exception as e:
         log.warning("[ScreenRecord] remux lỗi: %s", e)
+    finally:
+        # Bắt buộc gỡ block thumbnail tại đây để đảm bảo tài nguyên được giải phóng hoàn toàn
+        try:
+            _set_thumbnail_auto_block("screen_record", False)
+        except Exception as e:
+            log.warning("[ScreenRecord] Lỗi unblock thumbnail: %s", e)
 
 
 @app.route("/api/screen_record/finish", methods=["POST"])
@@ -7526,12 +7699,20 @@ def api_screen_record_finish():
                 with open(part, "rb") as f:
                     shutil.copyfileobj(f, out, 1024 * 1024)
         os.replace(tmp_ts, final_ts)
+        
+        # Xóa các segment riêng lẻ để giải phóng bộ nhớ đĩa ngay lập tức
+        try:
+            shutil.rmtree(segments_dir)
+            log.info("[ScreenRecord] Đã dọn dẹp thư mục segments tạm thời: %s", segments_dir)
+        except Exception as e:
+            log.warning("[ScreenRecord] Không thể xóa thư mục segments tạm thời: %s", e)
+
         manifest["status"] = "done"
         manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
         manifest["missing"] = []
         manifest["completed_at"] = int(time.time())
         _write_screen_manifest(session_dir, manifest)
-    _set_thumbnail_auto_block("screen_record", False)
+    # KHÔNG giải phóng block thumbnail ở đây, remux_worker sẽ giải phóng trong khối finally khi xong
     threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
     return jsonify({"ok": True, "session_id": sid, "final_ts": manifest["final_ts"], "segments": total})
 
@@ -7571,6 +7752,16 @@ def api_screen_record_cancel():
         manifest["status"] = "cancelled"
         manifest["cancelled_at"] = int(time.time())
         _write_screen_manifest(session_dir, manifest)
+        
+        # Xóa các segment đã ghi khi huỷ phiên để giải phóng dung lượng đĩa HDD
+        segments_dir = os.path.join(session_dir, "segments")
+        if os.path.exists(segments_dir):
+            try:
+                shutil.rmtree(segments_dir)
+                log.info("[ScreenRecord] Đã xóa thư mục segments khi hủy phiên: %s", segments_dir)
+            except Exception as e:
+                log.warning("[ScreenRecord] Không thể xóa thư mục segments khi hủy phiên: %s", e)
+
     _set_thumbnail_auto_block("screen_record", False)
     return jsonify({"ok": True, "session_id": sid})
 
@@ -8928,7 +9119,7 @@ def api_docker_power_get():
     try:
         r = subprocess.run(["systemctl", "is-active", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         running = r.stdout.decode().strip() == "active"
-        return jsonify({"running": running})
+        return jsonify({"running": running, "effective_running": running})
     except Exception as e:
         return jsonify({"running": False, "error": str(e)})
 
@@ -8954,7 +9145,9 @@ def api_docker_power_post():
             conn.commit()
             conn.close()
         except Exception: pass
-        return jsonify({"result": "ok", "action": "started"})
+        r = subprocess.run(["systemctl", "is-active", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        running = r.stdout.decode().strip() == "active"
+        return jsonify({"result": "ok", "action": "started", "running": running, "effective_running": running})
     elif action == "stop":
         _running_ids = run_cmd(["docker", "ps", "-q"])
         if _running_ids:
@@ -8968,7 +9161,9 @@ def api_docker_power_post():
             conn.commit()
             conn.close()
         except Exception: pass
-        return jsonify({"result": "ok", "action": "stopped"})
+        r = subprocess.run(["systemctl", "is-active", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        running = r.stdout.decode().strip() == "active"
+        return jsonify({"result": "ok", "action": "stopped", "running": running, "effective_running": running})
     else:
         return jsonify({"error": "Hành động phải là 'start' hoặc 'stop'"}), 400
 
@@ -9904,35 +10099,48 @@ def _fan_controller_watchdog():
         try:
             settings = _load_fan_settings()
             if settings.get("mode") == "custom":
-                on_temp = float(settings.get("on_temp", 65))
-                off_temp = float(settings.get("off_temp", 55))
-                # get_cpu_temp() tr? v? chuoi co hau to °C (vd "57°C") nen phai strip truoc khi convert.
-                raw_temp = str(get_cpu_temp()).strip()
-                current_temp = float(_re_module.sub(r"[^0-9.\-]", "", raw_temp) or "0")
+                on_temp = float(settings.get("on_temp", FAN_DEFAULT_ON_TEMP))
+                off_temp = float(settings.get("off_temp", FAN_DEFAULT_OFF_TEMP))
+                if off_temp >= on_temp:
+                    off_temp = max(30.0, on_temp - 5.0)
+
+                cpu_temp = _fan_temp_value(get_cpu_temp())
+                hdd_temp = _fan_temp_value(get_hdd_temp())
+                current_temp = max(cpu_temp, hdd_temp)
                 
                 # Dam bao OS daemon da được tat
                 out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
                 if out == "active":
                     subprocess.run(["systemctl", "stop", "fan.service"])
                     
-                # Binary Hysteresis Logic (ON/OFF)
-                if current_temp >= on_temp:
-                    duty = 10000
+                if cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP:
+                    percent = 100
                 elif current_temp <= off_temp:
-                    duty = 0
+                    percent = 0
+                elif current_temp >= on_temp:
+                    percent = 100
                 else:
-                    # Giữ nguyên trạng thái hiện tại (Đang chạy thì chạy tiếp, đang dừng thì dừng tiếp)
-                    try:
-                        with open('/sys/class/pwm/pwmchip0/pwm0/duty_cycle', 'r') as f:
-                            duty = int(f.read().strip())
-                    except Exception:
-                        duty = 0
+                    span = max(on_temp - off_temp, 1.0)
+                    ratio = (current_temp - off_temp) / span
+                    if ratio <= 0.25:
+                        percent = 25
+                    elif ratio <= 0.50:
+                        percent = 50
+                    elif ratio <= 0.75:
+                        percent = 75
+                    else:
+                        percent = 100
+                duty = _fan_pwm_duty(percent)
 
-                # FIX: enable=1 truoc khi ghi duty trong custom mode — neu user
-                # chuyen tu OFF (enable=0) sang CUSTOM ma watchdog ghi duty truoc
-                # khi enable thi kernel se tr? v? EINVAL va quat khong chay.
-                _pwm_write("enable", 1)
-                subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
+                if duty > 0:
+                    # FIX: enable=1 truoc khi ghi duty trong custom mode — neu user
+                    # chuyen tu OFF (enable=0) sang CUSTOM ma watchdog ghi duty truoc
+                    # khi enable thi kernel se tr? v? EINVAL va quat khong chay.
+                    _fan_power_set(True)
+                    _pwm_write("enable", 1)
+                    subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
+                else:
+                    _pwm_apply_off()
                 
         except Exception as e:
             log.error("[FanWatchdog] Lỗi: %s", e)
@@ -9957,6 +10165,7 @@ def _restore_fan_state_on_boot():
             log.info("[Fan] Khôi phục trạng thái BẬT 100%% từ /opt/fan_custom.json")
         elif mode == "custom":
             # Watchdog se dieu khien duty, nhung enable=1 phai san sang
+            _fan_power_set(True)
             _pwm_write("enable", 1)
             log.info("[Fan] Khôi phục trạng thái TUỲ CHỈNH — watchdog sẽ quyết định")
         # mode="auto" -> fan.service tu lo, không cần lam gi
@@ -11781,6 +11990,29 @@ def api_livestream_status():
             "watch_username": info.get("watch_username", ""),
             "recording_key": info.get("recording_key", "")
         })
+
+    try:
+        deduped_jobs = {}
+        for job in result_jobs:
+            username = (job.get("watch_username") or "").strip().lower()
+            recording_key = (job.get("recording_key") or "").strip().lower()
+            output_file = (job.get("output_file") or "").strip().lower()
+            key = username or recording_key or output_file or job.get("job_id", "")
+            size_bytes = int(job.get("file_size_bytes") or 0)
+            rank = (
+                1 if job.get("status") == "recording" else 0,
+                1 if size_bytes > 0 else 0,
+                size_bytes,
+                int(job.get("duration_seconds") or 0),
+                int(job.get("started_ts") or 0),
+            )
+            current = deduped_jobs.get(key)
+            if current is None or rank > current[0]:
+                deduped_jobs[key] = (rank, job)
+        result_jobs = [item[1] for item in deduped_jobs.values()]
+        result_jobs.sort(key=lambda j: int(j.get("started_ts") or 0), reverse=True)
+    except Exception:
+        pass
 
     try:
         live_count = sum(1 for j in result_jobs if j["status"] == "recording")

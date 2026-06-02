@@ -580,10 +580,11 @@ fun MainMenuScreen(
                         .build()
                     val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(24, java.util.concurrent.TimeUnit.HOURS)
                         .setConstraints(constraints)
+                        .addTag("com.nas.naswebdav.AutoBackupWorker")
                         .build()
-                    androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
+                        androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
                         "AutoBackupWork",
-                        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                        androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
                         backupWorkRequest
                     )
                     commonDialogType = DialogType.SUCCESS
@@ -937,6 +938,32 @@ fun MainMenuScreen(
         }
 
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
+        var pendingServiceName by remember { mutableStateOf("") }
+        var pendingServiceTitle by remember { mutableStateOf("") }
+        var pendingServiceEnable by remember { mutableStateOf(false) }
+        if (pendingServiceName.isNotBlank()) {
+            AlertDialog(
+                onDismissRequest = { pendingServiceName = "" },
+                containerColor = Color(0xFF15161D),
+                title = { Text("Xác nhận dịch vụ", color = TextPrimary, fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        "${if (pendingServiceEnable) "Bật" else "Tắt"} dịch vụ $pendingServiceTitle?",
+                        color = TextSecondary,
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.toggleOmvService(pendingServiceName, pendingServiceEnable)
+                        pendingServiceName = ""
+                    }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingServiceName = "" }) { Text("Hủy", color = TextSecondary) }
+                }
+            )
+        }
         if (viewModel.omvOverview.services.isNotEmpty() || viewModel.omvOverview.disks.isNotEmpty()) {
             // Mo doc quyen: panel mo dong bo voi ExclusivePanelState — khi mo
             // panel khac (Tasks, Chart) thi panel nay tu cup.
@@ -999,7 +1026,8 @@ fun MainMenuScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     viewModel.omvOverview.services.forEach { svc ->
-                                        val svcColor = if (svc.running) Color(0xFF00E676) else if (svc.enabled) Color(0xFFFFA726) else TextSecondary.copy(alpha = 0.4f)
+                                        val svcActive = svc.effectiveEnabled
+                                        val svcColor = if (svcActive) Color(0xFF00E676) else TextSecondary.copy(alpha = 0.45f)
                                         val svcIcon = when (svc.name) {
                                             "ssh" -> Icons.Default.Terminal
                                             "ftp" -> Icons.Default.CloudUpload
@@ -1007,10 +1035,20 @@ fun MainMenuScreen(
                                             "nfs" -> Icons.Default.Storage
                                             else -> Icons.Default.SettingsEthernet
                                         }
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.weight(1f).clickable(
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                pendingServiceName = svc.name
+                                                pendingServiceTitle = svc.title
+                                                pendingServiceEnable = !svcActive
+                                            }
+                                        ) {
                                             Icon(svcIcon, null, tint = svcColor, modifier = Modifier.size(18.dp))
                                             Text(svc.title, fontSize = 9.sp, color = svcColor, maxLines = 1, fontWeight = FontWeight.Bold)
-                                            Text(if (svc.running) "Bật" else "Tắt", fontSize = 9.sp, color = svcColor.copy(alpha = 0.7f))
+                                            Text(if (svcActive) "Bật" else "Tắt", fontSize = 9.sp, color = svcColor.copy(alpha = 0.7f))
                                         }
                                     }
                                 }
@@ -1046,32 +1084,54 @@ fun MainMenuScreen(
                             Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val fanStatusStr = viewModel.systemStatus.fanStatus
-                                    val isFanRunning = fanStatusStr != "Dừng" && fanStatusStr != "--"
-                                    val percentStr = fanStatusStr.replace(Regex("[^0-9]"), "")
-                                    val realPercent = if (percentStr.isNotEmpty()) percentStr.toInt() else if (isFanRunning) 100 else 0
+                                    val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
+                                    val realPercent = statusPercent ?: percentFromRpm ?: 0
+                                    val isFanRunning = realPercent > 0
                                     
                                     var displayPercent = realPercent
                                     var displayStatusStr = fanStatusStr
                                     
-                                    if (viewModel.systemStatus.fanMode == "custom" && isFanRunning) {
+                                    if (viewModel.systemStatus.fanMode == "custom") {
                                         val cpuVal = viewModel.systemStatus.cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                                        val hddVal = viewModel.systemStatus.temp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                                        val fanTempVal = maxOf(cpuVal, hddVal)
                                         val onT = viewModel.systemStatus.fanOnTemp
                                         val offT = viewModel.systemStatus.fanOffTemp
-                                        if (cpuVal >= onT) {
-                                            displayPercent = 100
-                                        } else if (cpuVal <= offT) {
-                                            displayPercent = 20
+                                        val rawPercent = if (fanTempVal <= offT) {
+                                            0
+                                        } else if (fanTempVal >= onT) {
+                                            100
                                         } else if (onT > offT) {
-                                            displayPercent = 20 + ((cpuVal - offT) / (onT - offT) * 80).toInt()
+                                            (((fanTempVal - offT) / (onT - offT)) * 100).toInt()
+                                        } else {
+                                            realPercent
                                         }
-                                        displayStatusStr = "Đang thực thi $displayPercent%"
+                                        displayPercent = when {
+                                            rawPercent <= 10 -> 0
+                                            rawPercent <= 25 -> 25
+                                            rawPercent <= 50 -> 50
+                                            rawPercent <= 75 -> 75
+                                            else -> 100
+                                        }
+                                        if (displayPercent > 0) {
+                                            val rpm = (4300f * displayPercent / 100f).toInt()
+                                            displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
+                                        } else {
+                                            displayStatusStr = "Dừng"
+                                        }
+                                    } else if (isFanRunning) {
+                                        val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
+                                        displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
                                     }
                                     
-                                    FanSpeedIcon(percent = displayPercent, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                    val isFanDisplayRunning = displayPercent > 0
+                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Column {
                                         Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanRunning) Color(0xFF00E676) else TextSecondary)
+                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
                                     }
                                 }
                                 // Mute / Auto / Max Toggle
@@ -1121,7 +1181,7 @@ fun MainMenuScreen(
                                             Button(
                                                 enabled = !isFanControlLocked,
                                                 onClick = { 
-                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 65f, offTemp.toFloatOrNull() ?: 55f)
+                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
                                                     showFanSettings = false 
                                                 }
                                             ) { Text("Lưu & Áp dụng") }

@@ -93,7 +93,7 @@ data class SpeedTestResult(val writeSpeed: String, val readSpeed: String)
 
 // DATA CLASS CHO OMV OVERVIEW
 data class ThumbnailAuditData(val total: Int = 0, val thumbnailed: Int = 0, val missing: Int = 0, val running: Boolean = false, val paused: Boolean = false, val errors: Int = 0)
-data class OmvServiceInfo(val name: String, val title: String, val enabled: Boolean, val running: Boolean)
+data class OmvServiceInfo(val name: String, val title: String, val enabled: Boolean, val running: Boolean, val effectiveEnabled: Boolean = enabled && running)
 data class OmvNetworkInfo(val name: String, val address: String, val mac: String, val speed: Int, val state: String, val gateway: String, val wol: Boolean)
 data class OmvFilesystem(val device: String, val label: String, val mountpoint: String, val used: String, val sizeBytes: Long, val percentage: Int, val description: String)
 data class OmvDiskInfo(
@@ -197,8 +197,8 @@ data class NasSystemStatus(
     val diskParts: List<DiskPart> = emptyList(),
     val fanStatus: String = "--",  // Trạng thái quạt (Dừng / Đang chạy)
     val fanMode: String = "auto",  // auto, on, off, custom
-    val fanOnTemp: Float = 65f,
-    val fanOffTemp: Float = 55f,
+    val fanOnTemp: Float = 45f,
+    val fanOffTemp: Float = 40f,
     val fanRpm: Int? = null,       // Số vòng quạt (nếu có)
     val topProcesses: List<Pair<String, Float>> = emptyList() // Top tiến trình ăn CPU
 )
@@ -1185,6 +1185,47 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         var watchUsername: String = ""
     )
 
+    private fun livestreamJobSizeBytes(fileSize: String): Long {
+        val value = fileSize.replace(",", ".")
+            .replace(Regex("[^0-9.]"), "")
+            .toDoubleOrNull() ?: return 0L
+        val unit = fileSize.uppercase(java.util.Locale.US)
+        val multiplier = when {
+            "TB" in unit || "TIB" in unit -> 1024.0 * 1024.0 * 1024.0 * 1024.0
+            "GB" in unit || "GIB" in unit -> 1024.0 * 1024.0 * 1024.0
+            "MB" in unit || "MIB" in unit -> 1024.0 * 1024.0
+            "KB" in unit || "KIB" in unit -> 1024.0
+            else -> 1.0
+        }
+        return (value * multiplier).toLong().coerceAtLeast(0L)
+    }
+
+    private fun livestreamDisplayKey(job: LivestreamJob): String {
+        val user = job.watchUsername.trim().removePrefix("@").lowercase(java.util.Locale.US)
+        if (user.isNotBlank()) return "user:$user"
+        val fileStem = job.outputFile.trim().substringBeforeLast('.').lowercase(java.util.Locale.US)
+        return if (fileStem.isNotBlank()) "file:$fileStem" else "job:${job.jobId}"
+    }
+
+    fun dedupeLivestreamJobsForDisplay(jobs: List<LivestreamJob>): List<LivestreamJob> {
+        return jobs
+            .filter { it.status == "recording" && it.jobId.isNotBlank() }
+            .groupBy { livestreamDisplayKey(it) }
+            .mapNotNull { (_, group) ->
+                group.maxWithOrNull(
+                    compareBy<LivestreamJob> { livestreamJobSizeBytes(it.fileSize) }
+                        .thenBy { if (it.outputFile.isNotBlank()) 1 else 0 }
+                        .thenBy { if (it.speed.isNotBlank() && it.speed != "—") 1 else 0 }
+                        .thenBy { it.durationSeconds }
+                        .thenBy { it.startedTs }
+                )
+            }
+            .filter { job ->
+                job.outputFile.isNotBlank() || livestreamJobSizeBytes(job.fileSize) > 0L
+            }
+            .sortedByDescending { it.startedTs }
+    }
+
     data class TikTokLiveWatchUser(
         val username: String,
         val status: String = "watching",
@@ -1500,24 +1541,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 it.state == androidx.work.WorkInfo.State.ENQUEUED
             }
             
-            withContext(Dispatchers.Main) {
-                activeLivestreams.clear() // Xóa list cũ, nạp lại từ Worker
-                
-                for (work in activeWorks) {
-                    val progress = work.progress
-                    // Worker vua enqueue chua kip setProgress -> progress rong.
-                    // Fallback parse jobId tu tag "LIVESTREAM_MONITOR_<jobId>" de
-                    // khong miss job vua khoi (vd: do Discovery Worker hoac sync).
-                    val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID)
-                        ?: work.tags.firstOrNull { it.startsWith(LivestreamMonitorWorker.WORK_NAME_PREFIX) }
-                            ?.removePrefix(LivestreamMonitorWorker.WORK_NAME_PREFIX)
-                        ?: continue
-                    
-                    // Xây dựng lại data class
-                    val workerStatus = progress.getString(LivestreamMonitorWorker.OUT_STATUS)
-                    val job = LivestreamJob(
+            val restoredJobs = mutableListOf<LivestreamJob>()
+            for (work in activeWorks) {
+                val progress = work.progress
+                // Worker vua enqueue chua kip setProgress -> progress rong.
+                // Fallback parse jobId tu tag "LIVESTREAM_MONITOR_<jobId>" de
+                // khong miss job vua khoi (vd: do Discovery Worker hoac sync).
+                val jobId = progress.getString(LivestreamMonitorWorker.OUT_JOB_ID)
+                    ?: work.tags.firstOrNull { it.startsWith(LivestreamMonitorWorker.WORK_NAME_PREFIX) }
+                        ?.removePrefix(LivestreamMonitorWorker.WORK_NAME_PREFIX)
+                    ?: continue
+
+                val workerStatus = progress.getString(LivestreamMonitorWorker.OUT_STATUS)
+                restoredJobs.add(
+                    LivestreamJob(
                         jobId = jobId,
-                        platform = "", // Platform worker không trả ra (trừ khi format lại), nhưng UI sẽ có thể hiện placeholder icon
+                        platform = "",
                         status = workerStatus ?: "pending",
                         fileSize = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE) ?: "0 B",
                         duration = progress.getString(LivestreamMonitorWorker.OUT_DURATION) ?: "0h00m00s",
@@ -1527,12 +1566,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         outputFile = progress.getString(LivestreamMonitorWorker.OUT_OUTPUT_FILE) ?: "",
                         watchUsername = progress.getString(LivestreamMonitorWorker.OUT_WATCH_USER) ?: ""
                     )
-                    
-                    if (job.status == "recording") {
-                        activeLivestreams.add(job)
-                    }
-                }
-                
+                )
+            }
+
+            val displayJobs = dedupeLivestreamJobsForDisplay(restoredJobs)
+            withContext(Dispatchers.Main) {
+                activeLivestreams.clear()
+                activeLivestreams.addAll(displayJobs)
+
                 if (activeWorks.isNotEmpty()) {
                     observeLivestreamWorker(context)
                 }
@@ -1560,8 +1601,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
                         
                         var hasNewJobs = false
-                        var hasRecordingJobs = false
                         val serverRecordingIds = mutableSetOf<String>()
+                        val serverJobs = mutableListOf<LivestreamJob>()
                         for (i in 0 until jobsArray.length()) {
                             val jobObj = jobsArray.getJSONObject(i)
                             val status = jobObj.optString("status", "")
@@ -1569,25 +1610,42 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             val platform = jobObj.optString("platform", "")
                             
                             if (status == "recording" && jobId.isNotEmpty()) {
-                                hasRecordingJobs = true
                                 serverRecordingIds.add(jobId)
                                 val watchUser = jobObj.optString("watch_username", "")
                                 val durationSeconds = jobObj.optLong("duration_seconds", 0L)
                                 val startedTs = jobObj.optLong("started_ts", 0L)
+                                serverJobs.add(
+                                    LivestreamJob(
+                                        jobId = jobId,
+                                        platform = platform,
+                                        status = status,
+                                        watchUsername = watchUser,
+                                        durationSeconds = durationSeconds,
+                                        startedTs = startedTs,
+                                        fileSize = jobObj.optString("file_size", "0 B"),
+                                        duration = jobObj.optString("duration_display", "0h00m00s"),
+                                        speed = jobObj.optString("avg_speed", "—"),
+                                        outputFile = jobObj.optString("output_file", "")
+                                    )
+                                )
+                            } else if (jobId.isNotEmpty()) {
+                                LivestreamMonitorWorker.cancelJob(context, jobId)
+                            }
+                        }
+                        val displayJobs = dedupeLivestreamJobsForDisplay(serverJobs)
+                        val displayJobIds = displayJobs.map { it.jobId }.toSet()
+                        for (job in displayJobs) {
+                            val jobId = job.jobId
+                            val platform = job.platform
+                            val watchUser = job.watchUsername
+                            val durationSeconds = job.durationSeconds
+                            val startedTs = job.startedTs
                                 // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
                                 val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
                                 if (!alreadyTracked) {
                                     val host = java.net.URL(currentUrl).host
                                     withContext(Dispatchers.Main) {
-                                        activeLivestreams.add(
-                                            LivestreamJob(
-                                                jobId = jobId,
-                                                platform = platform,
-                                                durationSeconds = durationSeconds,
-                                                startedTs = startedTs,
-                                                watchUsername = watchUser
-                                            )
-                                        )
+                                        activeLivestreams.add(job)
                                     }
                                     LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
                                     hasNewJobs = true
@@ -1600,21 +1658,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                             activeLivestreams[idx] = existing.copy(
                                                 watchUsername = if (watchUser.isNotEmpty()) watchUser else existing.watchUsername,
                                                 durationSeconds = if (durationSeconds > 0) durationSeconds else existing.durationSeconds,
-                                                startedTs = if (startedTs > 0) startedTs else existing.startedTs
+                                                startedTs = if (startedTs > 0) startedTs else existing.startedTs,
+                                                fileSize = job.fileSize,
+                                                duration = job.duration,
+                                                speed = job.speed,
+                                                outputFile = job.outputFile
                                             )
                                         }
                                     }
                                 }
-                            } else if (jobId.isNotEmpty()) {
-                                LivestreamMonitorWorker.cancelJob(context, jobId)
-                            }
                         }
                         lastLivestreamServerSyncAt = System.currentTimeMillis()
-                        lastLivestreamServerRecordingIds = serverRecordingIds.toSet()
+                        lastLivestreamServerRecordingIds = displayJobIds
                         withContext(Dispatchers.Main) {
-                            activeLivestreams.removeAll { it.jobId !in serverRecordingIds }
+                            activeLivestreams.removeAll { it.jobId !in displayJobIds }
                         }
-                        if (!hasRecordingJobs) {
+                        if (displayJobs.isEmpty()) {
                             LivestreamMonitorWorker.cancelAll(context)
                             withContext(Dispatchers.Main) {
                                 activeLivestreams.clear()
@@ -2389,7 +2448,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
                     .getWorkInfosByTagFlow("com.nas.naswebdav.AutoBackupWorker").collect { workInfos ->
-                        val workInfo = workInfos.find { it.state == androidx.work.WorkInfo.State.RUNNING }
+                        val workInfo = workInfos.find {
+                            it.state == androidx.work.WorkInfo.State.RUNNING ||
+                                it.state == androidx.work.WorkInfo.State.ENQUEUED
+                        }
                         if (workInfo != null) {
                             isAutoBackupRunning = true
                             autoBackupProgress = workInfo.progress.getFloat("progress", 0f)
@@ -3221,6 +3283,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
+            .addTag("com.nas.naswebdav.AutoBackupWorker")
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
         logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
@@ -4630,8 +4693,8 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             jsonObject.optJSONArray("disk_parts")?.let { arr -> for (i in 0 until arr.length()) { val dObj = arr.getJSONObject(i); diskPartList.add(DiskPart(dObj.optString("mount", "/"), dObj.optDouble("percent", 0.0).toFloat(), dObj.optString("total", "0GB"), dObj.optString("used", "0GB"))) } }
                             val fanStatus = jsonObject.optString("fan_status", "--")
                             val fanMode = jsonObject.optString("fan_mode", "auto")
-                            val fanOnTemp = jsonObject.optDouble("fan_on_temp", 65.0).toFloat()
-                            val fanOffTemp = jsonObject.optDouble("fan_off_temp", 55.0).toFloat()
+                            val fanOnTemp = jsonObject.optDouble("fan_on_temp", 45.0).toFloat()
+                            val fanOffTemp = jsonObject.optDouble("fan_off_temp", 40.0).toFloat()
                             val fanRpmRaw = jsonObject.opt("fan_rpm"); val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
                             val topProcs = mutableListOf<Pair<String, Float>>()
                             jsonObject.optJSONArray("top_processes")?.let { arr -> for (i in 0 until arr.length()) { val p = arr.getJSONObject(i); topProcs.add(Pair(p.optString("name", "?"), p.optDouble("cpu", 0.0).toFloat())) } }
@@ -4883,7 +4946,15 @@ fun WebDavViewModel.fetchOmvOverview() {
 
                     val services = (0 until svcArr.length()).map { i ->
                         val s = svcArr.getJSONObject(i)
-                        OmvServiceInfo(s.optString("name"), s.optString("title"), s.optBoolean("enabled"), s.optBoolean("running"))
+                        val enabled = s.optBoolean("enabled")
+                        val running = s.optBoolean("running")
+                        OmvServiceInfo(
+                            s.optString("name"),
+                            s.optString("title"),
+                            enabled,
+                            running,
+                            s.optBoolean("effective_enabled", enabled && running)
+                        )
                     }
                     val network = parseOmvNetwork(netArr)
                     persistDetectedWakeOnLanMac(network)
@@ -5084,12 +5155,48 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
             val client = localApiClient.newBuilder().readTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
             client.newCall(request).execute().use { response ->
                 repository.addSystemLog(if (response.isSuccessful) "INFO" else "WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent ${if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"}.")
-                if (response.isSuccessful) withContext(Dispatchers.Main) { isDockerRunning = turnOn }
+                if (response.isSuccessful) {
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    val running = json.optBoolean("running", json.optBoolean("effective_running", false))
+                    withContext(Dispatchers.Main) { isDockerRunning = running }
+                }
             }
+            checkDockerStatus()
         } catch (e: Exception) {
             repository.addSystemLog("WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent thất bại: ${e.message?.take(120)}")
         }
         withContext(Dispatchers.Main) { isTogglingDocker = false }
+    }
+}
+
+fun WebDavViewModel.toggleOmvService(serviceName: String, enable: Boolean) {
+    viewModelScope.launch(Dispatchers.IO) {
+        try {
+            val body = org.json.JSONObject()
+                .put("name", serviceName)
+                .put("enable", enable)
+                .toString()
+                .toRequestBody("application/json".toMediaTypeOrNull())
+            val request = okhttp3.Request.Builder()
+                .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/service/toggle")
+                .post(body)
+                .build()
+            localApiClient.newCall(request).execute().use { response ->
+                val ok = response.isSuccessful
+                withContext(Dispatchers.Main) {
+                    commonDialogType = if (ok) com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                    commonDialogMessage = if (ok) "Đã ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()}." else "Không thể ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()} (HTTP ${response.code})."
+                    showCommonDialog = true
+                }
+            }
+            fetchOmvOverview()
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                commonDialogMessage = "Lỗi điều khiển dịch vụ: ${e.message?.take(120)}"
+                showCommonDialog = true
+            }
+        }
     }
 }
 
@@ -5518,7 +5625,8 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                                 startedTs = jobObj.optLong("started_ts", 0L),
                                 fileSize = jobObj.optString("file_size", "0 B"),
                                 duration = jobObj.optString("duration_display", "0h00m00s"),
-                                speed = jobObj.optString("avg_speed", "—")
+                                speed = jobObj.optString("avg_speed", "—"),
+                                outputFile = jobObj.optString("output_file", "")
                             )
                         )
                     }
@@ -5528,10 +5636,12 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                 if (serverRecordingIds.isEmpty()) {
                     LivestreamMonitorWorker.cancelAll(context)
                 }
+                val displayJobs = dedupeLivestreamJobsForDisplay(newJobs)
+                lastLivestreamServerRecordingIds = displayJobs.map { it.jobId }.toSet()
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (activeLivestreams.size != newJobs.size || activeLivestreams != newJobs) {
+                    if (activeLivestreams.size != displayJobs.size || activeLivestreams != displayJobs) {
                         activeLivestreams.clear()
-                        activeLivestreams.addAll(newJobs)
+                        activeLivestreams.addAll(displayJobs)
                     }
                 }
             }
@@ -5549,7 +5659,10 @@ fun WebDavViewModel.fetchSmbStatus() {
                     val body = response.body?.string()
                     if (body != null) {
                         val obj = org.json.JSONObject(body)
-                        val enabled = obj.optBoolean("enabled", false)
+                        val enabled = obj.optBoolean(
+                            "effective_enabled",
+                            obj.optBoolean("enabled", false) && obj.optBoolean("active", false)
+                        )
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             isSmbEnabled = enabled
                         }
@@ -5573,15 +5686,22 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/smb/toggle").post(body).build()
             localApiClient.newCall(request).execute().use { response ->
                 val responseBody = response.body?.string() ?: ""
+                val responseJson = try { org.json.JSONObject(responseBody) } catch (_: Exception) { org.json.JSONObject() }
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     isLoadingSmb = false
                     if (response.isSuccessful) {
-                        isSmbEnabled = enable
-                        onResult(true, if (enable) "Đã bật chia sẻ SMB" else "Đã tắt chia sẻ SMB")
+                        val effectiveEnabled = responseJson.optBoolean(
+                            "effective_enabled",
+                            responseJson.optBoolean("enabled", false) && responseJson.optBoolean("active", false)
+                        )
+                        isSmbEnabled = effectiveEnabled
+                        onResult(true, if (effectiveEnabled) "SMB đang bật thực tế" else "SMB đang tắt thực tế")
                     } else {
                         onResult(false, "Lỗi: $responseBody")
                     }
                 }
+                fetchSmbStatus()
+                fetchOmvOverview()
             }
         } catch (e: Exception) {
             e.printStackTrace()

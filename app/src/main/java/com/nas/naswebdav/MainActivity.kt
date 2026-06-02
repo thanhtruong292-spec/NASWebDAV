@@ -31,10 +31,21 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-
 import androidx.compose.material3.*
-
 import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 
 import coil.decode.VideoFrameDecoder
 
@@ -66,6 +77,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private lateinit var viewModel: WebDavViewModel
     private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
+    private lateinit var notificationPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>
+    private lateinit var overlayPermissionLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
 
 
 
@@ -155,6 +168,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
 
         }
+        requestMediaReadPermissionsIfNeeded()
 
         val db = NasApplication.instance.database
 
@@ -167,15 +181,37 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
         ) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
-                val serviceIntent = android.content.Intent(this, ScreenRecordService::class.java).apply {
-                    action = ScreenRecordService.ACTION_START
-                    putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
-                    putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data)
-                    putExtra(ScreenRecordService.EXTRA_API_BASE, viewModel.webDavManager.currentBaseUrl.toApiBaseUrl())
-                    putExtra(ScreenRecordService.EXTRA_USER, viewModel.webDavManager.currentUser)
-                    putExtra(ScreenRecordService.EXTRA_PASS, viewModel.webDavManager.currentPass)
+                lifecycleScope.launch {
+                    val activeBaseUrl = SmartNetworkManager.getActiveBaseUrl(this@MainActivity)
+                        .ifBlank { viewModel.webDavManager.currentBaseUrl }
+                    val serviceIntent = android.content.Intent(this@MainActivity, ScreenRecordService::class.java).apply {
+                        action = ScreenRecordService.ACTION_START
+                        putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
+                        putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data)
+                        putExtra(ScreenRecordService.EXTRA_API_BASE, activeBaseUrl.toApiBaseUrl())
+                        putExtra(ScreenRecordService.EXTRA_USER, viewModel.webDavManager.currentUser)
+                        putExtra(ScreenRecordService.EXTRA_PASS, viewModel.webDavManager.currentPass)
+                    }
+                    androidx.core.content.ContextCompat.startForegroundService(this@MainActivity, serviceIntent)
                 }
-                androidx.core.content.ContextCompat.startForegroundService(this, serviceIntent)
+            }
+        }
+        notificationPermissionLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+        ) { _ ->
+            requestScreenRecordPermission()
+        }
+        overlayPermissionLauncher = registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+        ) {
+            if (android.os.Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(this)) {
+                requestScreenRecordPermissionActual()
+            } else {
+                android.widget.Toast.makeText(
+                    this,
+                    "Chưa có quyền hiển thị trên cùng nên chưa thể hiện REC khi quay.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         }
 
@@ -349,7 +385,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
                 ) {
                     Surface(color = MaterialTheme.colorScheme.background) {
-                        NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
+
+                            // Floating Screen Recording overlay (global)
+                            ScreenRecordFloatingOverlay()
+                        }
                     }
                 }
             }
@@ -378,7 +419,50 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     }
 
+    private fun requestMediaReadPermissionsIfNeeded() {
+        val permissions = when {
+            android.os.Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                android.Manifest.permission.READ_MEDIA_IMAGES,
+                android.Manifest.permission.READ_MEDIA_VIDEO
+            )
+            android.os.Build.VERSION.SDK_INT >= 23 -> arrayOf(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+            else -> emptyArray()
+        }
+        val missing = permissions.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            androidx.core.app.ActivityCompat.requestPermissions(this, missing.toTypedArray(), 4102)
+        }
+    }
+
     private fun requestScreenRecordPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val permission = android.Manifest.permission.POST_NOTIFICATIONS
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(permission)
+                return
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            overlayPermissionLauncher.launch(intent)
+            android.widget.Toast.makeText(
+                this,
+                "Bật quyền hiển thị trên cùng để thấy REC và thời gian khi quay màn hình.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        requestScreenRecordPermissionActual()
+    }
+
+    private fun requestScreenRecordPermissionActual() {
         val manager = getSystemService(android.content.Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
     }
@@ -853,6 +937,101 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
     }
 
+}
+
+@Composable
+fun ScreenRecordFloatingOverlay() {
+    val isRecordingScreen by remember { ScreenRecordService.isRecordingState }
+    val elapsedSec by remember { ScreenRecordService.elapsedSecondsState }
+    val segIdx by remember { ScreenRecordService.segmentIndexState }
+    val uploadedSegments by remember { ScreenRecordService.uploadedSegmentsState }
+    val pendingSegments by remember { ScreenRecordService.pendingSegmentsState }
+    val networkMode by remember { ScreenRecordService.networkModeState }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    if (isRecordingScreen) {
+        val minutes = elapsedSec / 60
+        val seconds = elapsedSec % 60
+        val timeString = String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
+
+        // Pulsating animation for the red dot
+        val infiniteTransition = rememberInfiniteTransition(label = "recording_pulse")
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulse_alpha"
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = 16.dp, start = 16.dp, end = 16.dp),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F1F1F).copy(alpha = 0.95f)),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF1744)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer(shadowElevation = 8f)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Pulsating red dot
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFF1744).copy(alpha = alpha))
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Đang quay màn hình: $timeString",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${networkMode.ifBlank { "NAS" }} - đoạn ${segIdx + 1}, đã gửi $uploadedSegments, chờ $pendingSegments",
+                                color = Color.Gray,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            val stopIntent = android.content.Intent(context, ScreenRecordService::class.java).apply {
+                                action = ScreenRecordService.ACTION_STOP
+                            }
+                            context.startService(stopIntent)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "Dừng",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 
