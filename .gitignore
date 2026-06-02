@@ -23,3 +23,14 @@ local.properties
 __pycache__/
 *.pyc
 AGENTS.md
+
+.android-sdk/
+NASWebDAV-screen-record-optimized-debug.apk
+*tmp_kt_diff.txt
+*tmp_py_diff.txt
+temp_patch*.ps1
+
+
+REVIEW_PATCH_CHECKLIST.md
+REVIEW_e25d698.md
+

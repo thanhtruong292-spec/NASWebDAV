@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // Dùng 35 để ổn định nhất với Room hiện tại
+    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"

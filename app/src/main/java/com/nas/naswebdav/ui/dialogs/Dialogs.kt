@@ -3080,7 +3080,7 @@ fun DiskHealthDialog(
     onDismiss: () -> Unit
 ) {
     LaunchedEffect(Unit) {
-        viewModel.fetchDiskHealth()
+        viewModel.fetchNasInsights(minIntervalMs = 0L)
         viewModel.fetchDiskHealthHistory(7)
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -3105,7 +3105,7 @@ fun DiskHealthDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Sức khoẻ ổ cứng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchDiskHealth(); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { viewModel.fetchNasInsights(minIntervalMs = 0L); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }

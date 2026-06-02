@@ -4270,7 +4270,7 @@ fun ProcessListBottomSheet(
                 modifier = Modifier.fillMaxWidth().heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.85f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(displayProcesses.size) { index ->
+                items(displayProcesses.size, key = { displayProcesses[it].pid }) { index ->
                     val proc = displayProcesses[index]
                     val statusColor = when (proc.status) {
                         "running" -> Color(0xFF66BB6A)

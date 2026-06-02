@@ -39,45 +39,47 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.StateFlow
 import com.nas.naswebdav.utils.ImageFingerprint
 import androidx.work.WorkManager
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
-// FIX ERROR HANDLING: Chuyển lỗi kỹ thuật thành thông báo dễ hiểu
+// FIX ERROR HANDLING: Chuyá»ƒn lá»—i ká»¹ thuáº­t thÃ nh thÃ´ng bÃ¡o dá»… hiá»ƒu
 private fun friendlyError(e: Exception): String = when (e) {
-    is java.net.SocketTimeoutException -> "Kết nối tới NAS quá chậm hoặc NAS không phản hồi. Vui lòng kiểm tra mạng."
-    is java.net.ConnectException -> "Không thể kết nối tới NAS. Kiểm tra NAS đã bật và cùng mạng WiFi."
-    is java.net.UnknownHostException -> "Địa chỉ NAS không hợp lệ hoặc mất kết nối mạng."
-    is javax.net.ssl.SSLException -> "Lỗi bảo mật kết nối. Kiểm tra cấu hình SSL/TLS của NAS."
-    else -> e.message ?: "Lỗi không xác định"
+    is java.net.SocketTimeoutException -> "Káº¿t ná»‘i tá»›i NAS quÃ¡ cháº­m hoáº·c NAS khÃ´ng pháº£n há»“i. Vui lÃ²ng kiá»ƒm tra máº¡ng."
+    is java.net.ConnectException -> "KhÃ´ng thá»ƒ káº¿t ná»‘i tá»›i NAS. Kiá»ƒm tra NAS Ä‘Ã£ báº­t vÃ  cÃ¹ng máº¡ng WiFi."
+    is java.net.UnknownHostException -> "Äá»‹a chá»‰ NAS khÃ´ng há»£p lá»‡ hoáº·c máº¥t káº¿t ná»‘i máº¡ng."
+    is javax.net.ssl.SSLException -> "Lá»—i báº£o máº­t káº¿t ná»‘i. Kiá»ƒm tra cáº¥u hÃ¬nh SSL/TLS cá»§a NAS."
+    else -> e.message ?: "Lá»—i khÃ´ng xÃ¡c Ä‘á»‹nh"
 }
 
 private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
     if (errorDetails.isEmpty()) {
-        return "Không đăng nhập được. Kiểm tra tài khoản, mật khẩu hoặc dịch vụ WebDAV."
+        return "KhÃ´ng Ä‘Äƒng nháº­p Ä‘Æ°á»£c. Kiá»ƒm tra tÃ i khoáº£n, máº­t kháº©u hoáº·c dá»‹ch vá»¥ WebDAV."
     }
-    // Hiển thị TẤT CẢ các URL đã thử (LAN + Tailscale) kèm lý do từng URL,
-    // tránh hiểu nhầm chỉ một URL được thử khi nhiều URL cùng fail.
+    // Hiá»ƒn thá»‹ Táº¤T Cáº¢ cÃ¡c URL Ä‘Ã£ thá»­ (LAN + Tailscale) kÃ¨m lÃ½ do tá»«ng URL,
+    // trÃ¡nh hiá»ƒu nháº§m chá»‰ má»™t URL Ä‘Æ°á»£c thá»­ khi nhiá»u URL cÃ¹ng fail.
     val lines = errorDetails.map { detail ->
         val colonIdx = detail.indexOf(": ")
         val rawUrl = if (colonIdx > 0) detail.take(colonIdx) else detail
-        val rawReason = if (colonIdx > 0) detail.substring(colonIdx + 2).take(110).trim() else "không xác định"
+        val rawReason = if (colonIdx > 0) detail.substring(colonIdx + 2).take(110).trim() else "khÃ´ng xÃ¡c Ä‘á»‹nh"
         val host = runCatching {
             val u = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
             java.net.URL(u).host
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: rawUrl
         val niceReason = when {
-            rawReason.contains("WebDAV", ignoreCase = true) -> "WebDAV quá hạn hoặc chưa xác thực"
-            rawReason.contains("timeout", ignoreCase = true) || rawReason.contains("quá hạn", ignoreCase = true) || rawReason.contains("timed out", ignoreCase = true) -> "Mạng quá hạn / không phản hồi"
-            rawReason.contains("Unable to resolve", ignoreCase = true) || rawReason.contains("UnknownHost", ignoreCase = true) -> "Không tìm thấy host"
-            rawReason.contains("ECONNREFUSED", ignoreCase = true) || rawReason.contains("refused", ignoreCase = true) -> "Kết nối bị từ chối"
-            rawReason.contains("ENETUNREACH", ignoreCase = true) || rawReason.contains("unreachable", ignoreCase = true) -> "Mạng không thể tiếp cận"
+            rawReason.contains("WebDAV", ignoreCase = true) -> "WebDAV quÃ¡ háº¡n hoáº·c chÆ°a xÃ¡c thá»±c"
+            rawReason.contains("timeout", ignoreCase = true) || rawReason.contains("quÃ¡ háº¡n", ignoreCase = true) || rawReason.contains("timed out", ignoreCase = true) -> "Máº¡ng quÃ¡ háº¡n / khÃ´ng pháº£n há»“i"
+            rawReason.contains("Unable to resolve", ignoreCase = true) || rawReason.contains("UnknownHost", ignoreCase = true) -> "KhÃ´ng tÃ¬m tháº¥y host"
+            rawReason.contains("ECONNREFUSED", ignoreCase = true) || rawReason.contains("refused", ignoreCase = true) -> "Káº¿t ná»‘i bá»‹ tá»« chá»‘i"
+            rawReason.contains("ENETUNREACH", ignoreCase = true) || rawReason.contains("unreachable", ignoreCase = true) -> "Máº¡ng khÃ´ng thá»ƒ tiáº¿p cáº­n"
             else -> rawReason.trimEnd('.')
         }
-        "• $host — $niceReason"
+        "â€¢ $host â€” $niceReason"
     }
-    val header = if (lines.size > 1) "Không đăng nhập được NAS (đã thử ${lines.size} địa chỉ):" else "Không đăng nhập được NAS:"
+    val header = if (lines.size > 1) "KhÃ´ng Ä‘Äƒng nháº­p Ä‘Æ°á»£c NAS (Ä‘Ã£ thá»­ ${lines.size} Ä‘á»‹a chá»‰):" else "KhÃ´ng Ä‘Äƒng nháº­p Ä‘Æ°á»£c NAS:"
     return "$header\n" + lines.joinToString("\n")
 }
 
-// THÊM DATA CLASS CHO TORRENT
+// THÃŠM DATA CLASS CHO TORRENT
 data class TorrentInfo(
     val name: String,
     val progress: Float,
@@ -87,7 +89,7 @@ data class TorrentInfo(
     val savePath: String = ""
 )
 
-// DATA CLASS CHO SMART VÀ SPEED TEST
+// DATA CLASS CHO SMART VÃ€ SPEED TEST
 data class SmartInfo(val status: String, val temperature: String, val rawLog: String)
 data class SpeedTestResult(val writeSpeed: String, val readSpeed: String)
 
@@ -163,7 +165,7 @@ data class OrganizerGroup(
 
 enum class OrganizerFilter { ALL, IMAGE, VIDEO }
 
-// DATA CLASS CHO PHÂN TÍCH Ổ ĐĨA
+// DATA CLASS CHO PHÃ‚N TÃCH á»” ÄÄ¨A
 data class DiskPart(
     val mount: String,
     val percent: Float,
@@ -180,27 +182,27 @@ data class StorageFolderUsage(
     val partial: Boolean
 )
 
-// Data class lưu trữ trạng thái hệ thống qua Local API
+// Data class lÆ°u trá»¯ tráº¡ng thÃ¡i há»‡ thá»‘ng qua Local API
 data class NasSystemStatus(
-    val temp: String = "--°C",
+    val temp: String = "--Â°C",
     val cpu: String = "--%",
-    val cpuTemp: String = "--°C",
+    val cpuTemp: String = "--Â°C",
     val ram: String = "--",
     val disk: String = "--%",
     val diskCapacity: String = "",
     val netRx: String = "0 B/s",
     val netTx: String = "0 B/s",
     val uptime: String = "--:--",
-    val status: String = "Đang kết nối...",
+    val status: String = "Äang káº¿t ná»‘i...",
     val ramPercent: String = "0",
     val torrents: List<TorrentInfo> = emptyList(),
     val diskParts: List<DiskPart> = emptyList(),
-    val fanStatus: String = "--",  // Trạng thái quạt (Dừng / Đang chạy)
+    val fanStatus: String = "--",  // Tráº¡ng thÃ¡i quáº¡t (Dá»«ng / Äang cháº¡y)
     val fanMode: String = "auto",  // auto, on, off, custom
     val fanOnTemp: Float = 45f,
     val fanOffTemp: Float = 40f,
-    val fanRpm: Int? = null,       // Số vòng quạt (nếu có)
-    val topProcesses: List<Pair<String, Float>> = emptyList() // Top tiến trình ăn CPU
+    val fanRpm: Int? = null,       // Sá»‘ vÃ²ng quáº¡t (náº¿u cÃ³)
+    val topProcesses: List<Pair<String, Float>> = emptyList() // Top tiáº¿n trÃ¬nh Äƒn CPU
 )
 
 // DATA CLASS CHO GUEST PASS
@@ -230,7 +232,7 @@ data class SocialDownloadItem(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-// DATA CLASS CHO BIỂU ĐỒ GIÁM SÁT
+// DATA CLASS CHO BIá»‚U Äá»’ GIÃM SÃT
 data class MetricsSnapshot(
     val timestamp: String = "",
     val cpuPercent: Float = 0f,
@@ -260,15 +262,15 @@ data class DailyReportData(
 )
 
 /**
- * Kiểm tra URL có trỏ đến một địa chỉ Tailscale hay không.
- * Tailscale dùng dải CGNAT 100.64.0.0/10 (octet 2 từ 64 đến 127).
- * VD: 100.90.135.102 → Tailscale ✅
- *     192.168.100.5  → LAN bình thường ✅ (KHÔNG bị nhầm)
- *     100.20.1.1     → LAN bình thường (ngoài dải Tailscale) ✅
+ * Kiá»ƒm tra URL cÃ³ trá» Ä‘áº¿n má»™t Ä‘á»‹a chá»‰ Tailscale hay khÃ´ng.
+ * Tailscale dÃ¹ng dáº£i CGNAT 100.64.0.0/10 (octet 2 tá»« 64 Ä‘áº¿n 127).
+ * VD: 100.90.135.102 â†’ Tailscale âœ…
+ *     192.168.100.5  â†’ LAN bÃ¬nh thÆ°á»ng âœ… (KHÃ”NG bá»‹ nháº§m)
+ *     100.20.1.1     â†’ LAN bÃ¬nh thÆ°á»ng (ngoÃ i dáº£i Tailscale) âœ…
  */
 fun isTailscaleUrl(url: String): Boolean {
     if (url.isBlank()) return false
-    // Kiểm tra từ khóa "tailscale" trong URL (cho hostname dạng tailscale)
+    // Kiá»ƒm tra tá»« khÃ³a "tailscale" trong URL (cho hostname dáº¡ng tailscale)
     if (url.contains("tailscale", ignoreCase = true)) return true
     return try {
         val host = java.net.URL(url).host ?: return false
@@ -276,7 +278,7 @@ fun isTailscaleUrl(url: String): Boolean {
         if (parts.size == 4) {
             val a = parts[0].toIntOrNull() ?: return false
             val b = parts[1].toIntOrNull() ?: return false
-            // Dải Tailscale: 100.64.x.x – 100.127.x.x
+            // Dáº£i Tailscale: 100.64.x.x â€“ 100.127.x.x
             a == 100 && b in 64..127
         } else false
     } catch (_: Exception) { false }
@@ -285,13 +287,13 @@ fun isTailscaleUrl(url: String): Boolean {
 class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRepository) : ViewModel() {
 
 
-    // CHỐNG RÒ RỈ THREAD VÀ BỘ NHỚ: Dùng chung một OkHttpClient duy nhất cho toàn bộ các truy vấn Local API
+    // CHá»NG RÃ’ Rá»ˆ THREAD VÃ€ Bá»˜ NHá»š: DÃ¹ng chung má»™t OkHttpClient duy nháº¥t cho toÃ n bá»™ cÃ¡c truy váº¥n Local API
     internal val localApiClient: okhttp3.OkHttpClient by lazy {
         NasApplication.instance.fastApiClient.newBuilder()
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
-            // BẢN VÁ LỖI API TỪ CHỐI: Tự động đính kèm Header Authorization cho TẤT CẢ các request Local API
+            // Báº¢N VÃ Lá»–I API Tá»ª CHá»I: Tá»± Ä‘á»™ng Ä‘Ã­nh kÃ¨m Header Authorization cho Táº¤T Cáº¢ cÃ¡c request Local API
             .addInterceptor { chain ->
                 val requestBuilder = chain.request().newBuilder()
                 val user = webDavManager.currentUser
@@ -304,28 +306,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
             .build()
     }
-    // Biến lưu trữ trạng thái giám sát hệ thống (Local API)
+    // Biáº¿n lÆ°u trá»¯ tráº¡ng thÃ¡i giÃ¡m sÃ¡t há»‡ thá»‘ng (Local API)
     var systemStatus by mutableStateOf(NasSystemStatus())
-    var temperatureHistory by mutableStateOf(kotlin.collections.ArrayDeque<Pair<Float, Float>>())
+    var temperatureHistory = androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>()
 
-    // ─── BIỂU ĐỒ GIÁM SÁT REAL-TIME ──────────────────────────────────────────────
+    // â”€â”€â”€ BIá»‚U Äá»’ GIÃM SÃT REAL-TIME â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
-    var metricsHours by mutableIntStateOf(1)         // 1 / 6 / 24 giờ
-    var metricsChartTab by mutableIntStateOf(0)       // 0=Nhiệt độ, 1=Tài nguyên, 2=Mạng
+    var metricsHours by mutableIntStateOf(1)         // 1 / 6 / 24 giá»
+    var metricsChartTab by mutableIntStateOf(0)       // 0=Nhiá»‡t Ä‘á»™, 1=TÃ i nguyÃªn, 2=Máº¡ng
     var isLoadingMetrics by mutableStateOf(false)
-    var metricsError by mutableStateOf<String?>(null)  // Nếu có lỗi, hiển thị thay vì spinner vô hạn
+    var metricsError by mutableStateOf<String?>(null)  // Náº¿u cÃ³ lá»—i, hiá»ƒn thá»‹ thay vÃ¬ spinner vÃ´ háº¡n
     var dailyReport by mutableStateOf<DailyReportData?>(null)
     var isDailyReportLoading by mutableStateOf(false)
 
-    // STATE CHO TIẾN TRÌNH HỆ THỐNG
+    // STATE CHO TIáº¾N TRÃŒNH Há»† THá»NG
     var systemProcesses by mutableStateOf<List<SystemProcess>>(emptyList())
     var isLoadingProcesses by mutableStateOf(false)
     private var metricsPollingJob: kotlinx.coroutines.Job? = null
     private var dashboardRealtimeJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
-    private var realtimeMetricInFlight = false
+    private val realtimeMetricInFlight = AtomicBoolean(false)
+    private val realtimeMetricNextAllowedAt = AtomicLong(0L)
+    private val realtimeMetricBackoffMs = AtomicLong(5_000L)
 
-    // TÍNH NĂNG 4.H: Lắng nghe trạng thái mạng Ping (ms)
+    // TÃNH NÄ‚NG 4.H: Láº¯ng nghe tráº¡ng thÃ¡i máº¡ng Ping (ms)
     var networkPingMs by mutableStateOf<Long?>(null)
     var lastStatusRefreshAt by mutableStateOf(0L)
     var lastMetricsRefreshAt by mutableStateOf(0L)
@@ -335,21 +339,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var apiLatencyMs by mutableStateOf<Long?>(null)
     var apiFailureCount by mutableIntStateOf(0)
 
-    // ─── SMART NETWORK – trạng thái đang dùng LAN hay Tailscale ───────────────
+    // â”€â”€â”€ SMART NETWORK â€“ tráº¡ng thÃ¡i Ä‘ang dÃ¹ng LAN hay Tailscale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var isOnLan by mutableStateOf(true) // true = LAN, false = Tailscale
 
-    // ─── GUEST PASS STATE ─────────────────────────────────────────────────────
+    // â”€â”€â”€ GUEST PASS STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var activeGuestPass by mutableStateOf<GuestPassInfo?>(null)
     var isGuestPassLoading by mutableStateOf(false)
     var guestPassError by mutableStateOf<String?>(null)
 
-    // ─── SOCIAL EXTRACTOR STATE ───────────────────────────────────────────────
+    // â”€â”€â”€ SOCIAL EXTRACTOR STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var socialExtractStatus by mutableStateOf("")
     var isSocialExtracting by mutableStateOf(false)
     var socialDownloadHistory by mutableStateOf<List<SocialDownloadItem>>(emptyList())
 
-    // ─── STREAM PIPE STATE (Điện thoại bơm CDN → NAS trực tiếp) ──────────────
-    var isStreamPiping      by mutableStateOf(false)     // Đang bơm stream
+    // â”€â”€â”€ STREAM PIPE STATE (Äiá»‡n thoáº¡i bÆ¡m CDN â†’ NAS trá»±c tiáº¿p) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    var isStreamPiping      by mutableStateOf(false)     // Äang bÆ¡m stream
     // NAS Config Backup/Restore state
     data class NasConfigBackup(
         val filename: String,
@@ -387,7 +391,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var storageFolderUsage by mutableStateOf<List<StorageFolderUsage>>(emptyList())
     var isFetchingStorageUsage by mutableStateOf(false)
 
-    // TÍNH NĂNG SMB
+    // TÃNH NÄ‚NG SMB
     var isSmbEnabled by mutableStateOf(false)
     var isLoadingSmb by mutableStateOf(false)
 
@@ -460,7 +464,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var usbImportMessage by mutableStateOf("")
     var isUsbImportLoading by mutableStateOf(false)
     private var lastUsbImportStatusFetchAt = 0L
-    private var usbImportStatusInFlight = false
+    private val usbImportStatusInFlight = AtomicBoolean(false)
 
     data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
     data class InsightFlowTask(
@@ -517,16 +521,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // Biometric lock: cho phep BiometricSettingsDialog yeu cau lock ngay
     var lockNowRequested by mutableStateOf(false)
 
-    var streamPipeStatus    by mutableStateOf("")        // Mô tả trạng thái hiện tại
-    var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 → 1.0 (nếu biết size)
-    var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tốc độ dạng text
-    var streamPipeEtaStr    by mutableStateOf("--")      // ETA dạng text
+    var streamPipeStatus    by mutableStateOf("")        // MÃ´ táº£ tráº¡ng thÃ¡i hiá»‡n táº¡i
+    var streamPipeProgress  by mutableFloatStateOf(0f)   // 0.0 â†’ 1.0 (náº¿u biáº¿t size)
+    var streamPipeSpeedStr  by mutableStateOf("-- MB/s") // Tá»‘c Ä‘á»™ dáº¡ng text
+    var streamPipeEtaStr    by mutableStateOf("--")      // ETA dáº¡ng text
     private var streamPipeJob: kotlinx.coroutines.Job? = null
     private var _activeStreamPipeWorkId: java.util.UUID? = null
     private var livestreamObserverJob: kotlinx.coroutines.Job? = null
 
-    // LOẠI BỎ fileList GÂY OOM, THAY BẰNG PAGING DATA FLOW
-    var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
+    // LOáº I Bá»Ž fileList GÃ‚Y OOM, THAY Báº°NG PAGING DATA FLOW
+    var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giá»¯ láº¡i dá»± phÃ²ng cho tÃ­nh nÄƒng tÃ¬m kiáº¿m/Ä‘áº·c biá»‡t
 
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
@@ -536,7 +540,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
-    var connectionStatus by mutableStateOf("Đang kết nối...")
+    var connectionStatus by mutableStateOf("Äang káº¿t ná»‘i...")
     private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private fun adaptiveTimeoutMs(url: String): Long {
         val host = runCatching { java.net.URL(if (url.endsWith("/")) url else "$url/").host }.getOrNull() ?: ""
@@ -549,13 +553,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         knownLatencyMs[host] = ms
     }
 
-    // BIẾN CHO BATCH COPY / MOVE
+    // BIáº¾N CHO BATCH COPY / MOVE
     var isBatchProcessing by mutableStateOf(false)
-    var batchProcessType by mutableStateOf("") // "COPY" hoặc "MOVE"
+    var batchProcessType by mutableStateOf("") // "COPY" hoáº·c "MOVE"
     var batchProcessProgress by mutableFloatStateOf(0f)
     var batchProcessCurrentFile by mutableStateOf("")
 
-    // TÍNH NĂNG 7.M: Trạng thái chứa dữ liệu Text Preview
+    // TÃNH NÄ‚NG 7.M: Tráº¡ng thÃ¡i chá»©a dá»¯ liá»‡u Text Preview
     var textPreviewContent by mutableStateOf<String?>(null)
 
     fun fetchTextPreview(url: String) {
@@ -566,11 +570,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // Tiến trình tải thumbnail
+    // Tiáº¿n trÃ¬nh táº£i thumbnail
     var totalImagesInFolder by mutableIntStateOf(0)
     var loadedImagesCount by mutableIntStateOf(0)
     val imageLoadProgress: Float get() = if (totalImagesInFolder > 0) loadedImagesCount.toFloat() / totalImagesInFolder else 0f
-    // Biến trạng thái cho tiến trình Auto Backup
+    // Biáº¿n tráº¡ng thÃ¡i cho tiáº¿n trÃ¬nh Auto Backup
     var isAutoBackupRunning by mutableStateOf(false)
     var autoBackupCurrentFile by mutableStateOf("")
     var autoBackupSourcePath by mutableStateOf("")
@@ -581,9 +585,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var autoBackupElapsedTime by mutableLongStateOf(0L)
     var autoBackupIsPaused by mutableStateOf(false)
 
-    // === Đã gỡ bỏ tính năng Đồng bộ thư mục ===
+    // === ÄÃ£ gá»¡ bá» tÃ­nh nÄƒng Äá»“ng bá»™ thÆ° má»¥c ===
 
-    // Biến trạng thái cho tính năng Quét và Xóa file trùng lặp
+    // Biáº¿n tráº¡ng thÃ¡i cho tÃ­nh nÄƒng QuÃ©t vÃ  XÃ³a file trÃ¹ng láº·p
     var isShowingDuplicates by mutableStateOf(false)
     var shouldAutoOpenDuplicates by mutableStateOf(false)
     var duplicateFilesList by mutableStateOf<List<NasFile>>(emptyList())
@@ -594,18 +598,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var scanDuplicatesCurrentItemName by mutableStateOf("")
     var scanDuplicatesTotalScanned by mutableIntStateOf(0)
     var scanDuplicatesFound by mutableIntStateOf(0)
-    var scanDuplicatesPercent by mutableFloatStateOf(0f) // Thanh tổng
-    var scanDuplicatesCurrentStagePercent by mutableFloatStateOf(0f) // Thanh hiện tại
-    var scanDuplicatesElapsedTime by mutableLongStateOf(0L) // Thời gian đã chạy
-    var scanDuplicatesEstimatedTimeRemaining by mutableLongStateOf(-1L) // Thời gian còn lại dự kiến
+    var scanDuplicatesPercent by mutableFloatStateOf(0f) // Thanh tá»•ng
+    var scanDuplicatesCurrentStagePercent by mutableFloatStateOf(0f) // Thanh hiá»‡n táº¡i
+    var scanDuplicatesElapsedTime by mutableLongStateOf(0L) // Thá»i gian Ä‘Ã£ cháº¡y
+    var scanDuplicatesEstimatedTimeRemaining by mutableLongStateOf(-1L) // Thá»i gian cÃ²n láº¡i dá»± kiáº¿n
     var scanDuplicatesIsFolder by mutableStateOf(false)
-    var scanDuplicatesStage by mutableStateOf("Khởi động...") // PHASE 4: Giai đoạn hiện tại
-    var scanDuplicatesStageNumber by mutableIntStateOf(1)      // Số thứ tự giai đoạn (1-4)
-    var scanDuplicatesTotalStages by mutableIntStateOf(4)      // Tổng số giai đoạn
-    var scanDuplicatesStageDescription by mutableStateOf("")   // Mô tả chi tiết giai đoạn
+    var scanDuplicatesStage by mutableStateOf("Khá»Ÿi Ä‘á»™ng...") // PHASE 4: Giai Ä‘oáº¡n hiá»‡n táº¡i
+    var scanDuplicatesStageNumber by mutableIntStateOf(1)      // Sá»‘ thá»© tá»± giai Ä‘oáº¡n (1-4)
+    var scanDuplicatesTotalStages by mutableIntStateOf(4)      // Tá»•ng sá»‘ giai Ä‘oáº¡n
+    var scanDuplicatesStageDescription by mutableStateOf("")   // MÃ´ táº£ chi tiáº¿t giai Ä‘oáº¡n
     internal var scanJob: kotlinx.coroutines.Job? = null
     
-    // ĐIỀU KHIỂN QUÉT RÁC
+    // ÄIá»€U KHIá»‚N QUÃ‰T RÃC
     var scanDuplicatesIsPaused by mutableStateOf(false)
     fun togglePauseDuplicateScan() {
         scanDuplicatesIsPaused = !scanDuplicatesIsPaused
@@ -617,27 +621,27 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         scanDuplicatesIsPaused = false
         androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
         isWorkerRunning = false
-        scanJob?.cancel() // Huỷ luồng theo dõi trạng thái Worker
-        isScanningDuplicates = false // Đóng panel tiến trình
-        duplicateFilesList = emptyList() // Xoá danh sách kết quả (nếu có) để ẩn card Tác vụ nền
+        scanJob?.cancel() // Huá»· luá»“ng theo dÃµi tráº¡ng thÃ¡i Worker
+        isScanningDuplicates = false // ÄÃ³ng panel tiáº¿n trÃ¬nh
+        duplicateFilesList = emptyList() // XoÃ¡ danh sÃ¡ch káº¿t quáº£ (náº¿u cÃ³) Ä‘á»ƒ áº©n card TÃ¡c vá»¥ ná»n
         
-        // Reset trạng thái tiến trình
-        DuplicateProgressState.stage.value = "Khởi động..."
+        // Reset tráº¡ng thÃ¡i tiáº¿n trÃ¬nh
+        DuplicateProgressState.stage.value = "Khá»Ÿi Ä‘á»™ng..."
         DuplicateProgressState.percent.value = 0f
     }
     
-    // TÍNH NĂNG AUTO-CLEAN DUPLICATES
+    // TÃNH NÄ‚NG AUTO-CLEAN DUPLICATES
     var autoCleanEnabled by mutableStateOf(false)
     fun toggleAutoClean(context: Context, enabled: Boolean) {
         autoCleanEnabled = enabled
-        // Lưu SharedPreferences
+        // LÆ°u SharedPreferences
         context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE).edit().putBoolean("auto_clean_enabled", enabled).apply()
         
         val workManager = androidx.work.WorkManager.getInstance(context)
         if (enabled) {
             val constraints = androidx.work.Constraints.Builder()
                 .setRequiresCharging(true)
-                .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // Cần Wifi
+                .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // Cáº§n Wifi
                 .build()
                 
             val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(7, java.util.concurrent.TimeUnit.DAYS)
@@ -649,30 +653,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // --- QUẢN LÝ BẢO MẬT & PHÊ DUYỆT (DEVICE APPROVAL) ---
+    // --- QUáº¢N LÃ Báº¢O Máº¬T & PHÃŠ DUYá»†T (DEVICE APPROVAL) ---
     var showApprovalDialog by mutableStateOf(false)
     var pendingIpAddress by mutableStateOf("")
     var approvalMessage by mutableStateOf("")
     var pendingCountryCode by mutableStateOf("VN")
-    var weeklyReportText by mutableStateOf("Đang tải dữ liệu...")
+    var weeklyReportText by mutableStateOf("Äang táº£i dá»¯ liá»‡u...")
 
     internal var webSocket: okhttp3.WebSocket? = null
-    // FIX: tranh reconnect storm — track so lan thu lai de exponential backoff
+    // FIX: tranh reconnect storm â€” track so lan thu lai de exponential backoff
     // va co flag chong reconnect tu nhieu listener onFailure cu va race nhau.
     @Volatile internal var wsReconnectAttempt: Int = 0
     @Volatile internal var wsReconnectScheduled: Boolean = false
 
-    // TRÍCH XUẤT HOST CHUẨN ĐỂ FIX LỖI CRASH PORT (8822:5050)
+    // TRÃCH XUáº¤T HOST CHUáº¨N Äá»‚ FIX Lá»–I CRASH PORT (8822:5050)
 
-    // --- QUẢN LÝ NHẬT KÝ HỆ THỐNG ---
+    // --- QUáº¢N LÃ NHáº¬T KÃ Há»† THá»NG ---
     var showLogDialog by mutableStateOf(false)
     var systemLogsList by mutableStateOf<List<SystemLog>>(emptyList())
 
-    // Trạng thái cho chế độ xem đặc biệt (Ảnh mới/Video gần đây)
+    // Tráº¡ng thÃ¡i cho cháº¿ Ä‘á»™ xem Ä‘áº·c biá»‡t (áº¢nh má»›i/Video gáº§n Ä‘Ã¢y)
     var isSpecialMode by mutableStateOf(false)
     var specialTitle by mutableStateOf("")
 
-    // STATE CHO DIALOG THÔNG BÁO CHUNG TỪ VIEWMODEL
+    // STATE CHO DIALOG THÃ”NG BÃO CHUNG Tá»ª VIEWMODEL
     var commonDialogMessage by mutableStateOf("")
     var commonDialogType by mutableStateOf(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS)
     var showCommonDialog by mutableStateOf(false)
@@ -680,7 +684,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun logUserAction(module: String, message: String, type: String = "INFO") {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                repository.addSystemLog(type, module, "Người dùng: $message")
+                repository.addSystemLog(type, module, "NgÆ°á»i dÃ¹ng: $message")
                 withContext(Dispatchers.Main) { loadSystemLogs() }
             } catch (e: Exception) {
                 android.util.Log.w("UserActionLog", "log failed: ${e.message}")
@@ -688,15 +692,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
+    // FIX Lá»–I 5: Debounce â€“ chá»‰ hiá»ƒn thá»‹ dialog lá»—i máº¥t máº¡ng má»—i 2 phÃºt, trÃ¡nh spam
     private var lastNetworkErrorDialogAt = 0L
     internal var lastFanModeSettingTime = 0L
     var isFanModeUpdating by mutableStateOf(false)
-    private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phút
+    private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phÃºt
 
-    // STATE CHO SMART DIALOG VÀ SPEED TEST
+    // STATE CHO SMART DIALOG VÃ€ SPEED TEST
     var showSmartDialog by mutableStateOf(false)
-    var smartInfo by mutableStateOf(SmartInfo("Đang tải...", "--", ""))
+    var smartInfo by mutableStateOf(SmartInfo("Äang táº£i...", "--", ""))
     var speedTestResult by mutableStateOf(SpeedTestResult("--", "--"))
     var isTestingSpeed by mutableStateOf(false)
     var lastAutoSpeedTime by mutableStateOf("")
@@ -708,21 +712,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // STATE CHO DOCKER MANAGER
     var showDockerDialog by mutableStateOf(false)
     var dockerContainers by mutableStateOf<List<DockerContainer>>(emptyList())
-    // Quản lý Nhật ký hệ thống
+    // Quáº£n lÃ½ Nháº­t kÃ½ há»‡ thá»‘ng
     var systemLogs by mutableStateOf(listOf<SystemLog>())
     var isFetchingDocker by mutableStateOf(false)
 
     // STATE CHO OMV OVERVIEW
     var omvOverview by mutableStateOf(OmvOverview())
 
-    // STATE CHO LAN WHITELIST (tách logic ra khỏi UI)
+    // STATE CHO LAN WHITELIST (tÃ¡ch logic ra khá»i UI)
     var lanWhitelistIps by mutableStateOf<List<String>>(emptyList())
     var lanWhitelistSubnets by mutableStateOf<List<String>>(emptyList())
     var lanWhitelistLoading by mutableStateOf(true)
     var lanWhitelistError by mutableStateOf("")
     var lanWhitelistStatus by mutableStateOf("")
 
-    // STATE CHO SMART ORGANIZER (tách logic ra khỏi UI)
+    // STATE CHO SMART ORGANIZER (tÃ¡ch logic ra khá»i UI)
     var organizerScanning by mutableStateOf(false)
     var organizerExecuting by mutableStateOf(false)
     var organizerScanResult by mutableStateOf<List<OrganizerGroup>?>(null)
@@ -768,7 +772,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val appContext = com.nas.naswebdav.NasApplication.instance.applicationContext
                         if (thumbRunning && thumbTotal > 0) {
                             val percent = if (thumbTotal > 0) (thumbGenerated * 100 / thumbTotal) else 0
-                            showSystemNotification(appContext, 9011, "Đang tạo Thumbnail (" + thumbGenerated + " / " + thumbTotal + ")", "File hiện tại: " + thumbLastFile, percent)
+                            showSystemNotification(appContext, 9011, "Äang táº¡o Thumbnail (" + thumbGenerated + " / " + thumbTotal + ")", "File hiá»‡n táº¡i: " + thumbLastFile, percent)
                         } else {
                             cancelSystemNotification(appContext, 9011)
                         }
@@ -781,7 +785,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private fun showSystemNotification(context: android.content.Context, id: Int, title: String, content: String, progress: Int? = null) {
         val channelId = "nas_background_tasks"
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(channelId, "Tiến trình ngầm NAS", android.app.NotificationManager.IMPORTANCE_LOW)
+            val channel = android.app.NotificationChannel(channelId, "Tiáº¿n trÃ¬nh ngáº§m NAS", android.app.NotificationManager.IMPORTANCE_LOW)
             channel.setShowBadge(false)
             context.getSystemService(android.app.NotificationManager::class.java)?.createNotificationChannel(channel)
         }
@@ -796,7 +800,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     fun toggleThumbPause() {
         val action = if (thumbPaused) "resume" else "pause"
-        // Optimistic UI: cập nhật trạng thái ngay lập tức để nút phản hồi tức thì
+        // Optimistic UI: cáº­p nháº­t tráº¡ng thÃ¡i ngay láº­p tá»©c Ä‘á»ƒ nÃºt pháº£n há»“i tá»©c thÃ¬
         thumbPaused = action == "pause"
         if (thumbPaused) thumbRunning = false
 
@@ -811,42 +815,42 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        // Rollback nếu server từ chối
+                        // Rollback náº¿u server tá»« chá»‘i
                         withContext(Dispatchers.Main) {
                             thumbPaused = action != "pause"
                         }
                     }
                 }
-                // Đợi server xử lý xong rồi mới refresh (tránh race condition)
+                // Äá»£i server xá»­ lÃ½ xong rá»“i má»›i refresh (trÃ¡nh race condition)
                 kotlinx.coroutines.delay(1500)
                 fetchThumbStatus()
             } catch (e: Exception) {
-                // Rollback + log lỗi
+                // Rollback + log lá»—i
                 withContext(Dispatchers.Main) {
                     thumbPaused = action != "pause"
-                    repository.addSystemLog("WARNING", "Thumbnail", "Toggle pause thất bại: ${e.message?.take(80)}")
+                    repository.addSystemLog("WARNING", "Thumbnail", "Toggle pause tháº¥t báº¡i: ${e.message?.take(80)}")
                 }
             }
         }
     }
 
-    // ĐỊNH NGHĨA THƯ MỤC THÙNG RÁC (Dấu chấm ở đầu để ẩn thư mục trên NAS)
+    // Äá»ŠNH NGHÄ¨A THÆ¯ Má»¤C THÃ™NG RÃC (Dáº¥u cháº¥m á»Ÿ Ä‘áº§u Ä‘á»ƒ áº©n thÆ° má»¥c trÃªn NAS)
     internal val TRASH_FOLDER_NAME = ".trash/"
 
     internal val urlStack = Stack<String>()
 
     var currentUrl by mutableStateOf("")
-    // HÀM CONNECT_AND_LOAD BỊ XÓA BỎ VÌ DƯ THỪA. SẼ DÙNG HÀM CONNECT CHÍNH THỨC NẰM Ở CUỐI FILE.
+    // HÃ€M CONNECT_AND_LOAD Bá»Š XÃ“A Bá»Ž VÃŒ DÆ¯ THá»ªA. Sáº¼ DÃ™NG HÃ€M CONNECT CHÃNH THá»¨C Náº°M á»ž CUá»I FILE.
 
     fun openFolder(file: NasFile) {
         urlStack.push(currentUrl)
         currentUrl = if (file.path.endsWith("/")) file.path else "${file.path}/"
 
-        // SỬA LỖI: Xóa trắng màn hình lập tức để dọn luồng mạng và bắt đầu tải giao diện mới trơn tru
+        // Sá»¬A Lá»–I: XÃ³a tráº¯ng mÃ n hÃ¬nh láº­p tá»©c Ä‘á»ƒ dá»n luá»“ng máº¡ng vÃ  báº¯t Ä‘áº§u táº£i giao diá»‡n má»›i trÆ¡n tru
         fileList = emptyList()
         isLoading = true
 
-        // LOG: Ghi nhật ký mở thư mục
+        // LOG: Ghi nháº­t kÃ½ má»Ÿ thÆ° má»¥c
         viewModelScope.launch(Dispatchers.IO) {
             // Removed folder navigation log
         }
@@ -854,7 +858,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         loadCurrentUrl()
     }
     fun openSpecificUrl(url: String, title: String) {
-        // Fix cú pháp và đồng bộ tiêu đề Sub-menu
+        // Fix cÃº phÃ¡p vÃ  Ä‘á»“ng bá»™ tiÃªu Ä‘á» Sub-menu
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 urlStack.clear()
@@ -866,7 +870,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 isLoading = true
             }
             val targetUrl = if (url.endsWith("/")) url else "$url/"
-            if (title == "Thùng rác") {
+            if (title == "ThÃ¹ng rÃ¡c") {
                 try { webDavManager.createFolder(targetUrl) } catch(e: Exception) {}
             }
             withContext(Dispatchers.Main) { loadCurrentUrl() }
@@ -874,12 +878,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun refresh() {
-        // SỬA LỖI REFRESH: Phân loại để gọi đúng hàm truy vấn DB cho sub-menu
+        // Sá»¬A Lá»–I REFRESH: PhÃ¢n loáº¡i Ä‘á»ƒ gá»i Ä‘Ãºng hÃ m truy váº¥n DB cho sub-menu
         if (isSpecialMode) {
             when (specialTitle) {
-                "Ảnh mới nhất" -> showLatestPhotos()
-                "Video gần đây" -> showRecentVideos()
-                else -> loadCurrentUrl(forceRefresh = true) // Cho Thùng rác
+                "áº¢nh má»›i nháº¥t" -> showLatestPhotos()
+                "Video gáº§n Ä‘Ã¢y" -> showRecentVideos()
+                else -> loadCurrentUrl(forceRefresh = true) // Cho ThÃ¹ng rÃ¡c
             }
         } else {
             loadCurrentUrl(forceRefresh = true)
@@ -905,11 +909,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         if (urlStack.isNotEmpty()) {
             currentUrl = urlStack.pop()
 
-            // SỬA LỖI: Nhường toàn bộ băng thông cho lệnh lùi thư mục
+            // Sá»¬A Lá»–I: NhÆ°á»ng toÃ n bá»™ bÄƒng thÃ´ng cho lá»‡nh lÃ¹i thÆ° má»¥c
             fileList = emptyList()
             isLoading = true
 
-            // LOG: Ghi nhật ký lùi thư mục
+            // LOG: Ghi nháº­t kÃ½ lÃ¹i thÆ° má»¥c
             viewModelScope.launch(Dispatchers.IO) {
                 // Removed back navigation log
             }
@@ -921,7 +925,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun showLatestPhotos() {
         viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Ảnh mới nhất" }
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "áº¢nh má»›i nháº¥t" }
             try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
             val photos = repository.getLatestPhotos()
             withContext(Dispatchers.Main) { fileList = photos; isLoading = false }
@@ -930,24 +934,24 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     fun showRecentVideos() {
         viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gần đây" }
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gáº§n Ä‘Ã¢y" }
             try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
             val videos = repository.getRecentVideos()
             withContext(Dispatchers.Main) { fileList = videos; isLoading = false }
         }
     }
-    // TÍNH NĂNG TÌM KIẾM TOÀN CẦU
+    // TÃNH NÄ‚NG TÃŒM KIáº¾M TOÃ€N Cáº¦U
     fun searchGlobal(keyword: String) {
         if (keyword.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Tìm kiếm: $keyword"; urlStack.clear() }
+            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "TÃ¬m kiáº¿m: $keyword"; urlStack.clear() }
             val results = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
             withContext(Dispatchers.Main) { fileList = results; isLoading = false }
         }
     }
-    // TÍNH NĂNG ĐIỀU KHIỂN NGUỒN VÀ DỊCH VỤ
+    // TÃNH NÄ‚NG ÄIá»€U KHIá»‚N NGUá»’N VÃ€ Dá»ŠCH Vá»¤
 
-    // GỬI LINK TẢI XUỐNG TỪ XA CHO NAS (QBITTORRENT / WGET)
+    // Gá»¬I LINK Táº¢I XUá»NG Tá»ª XA CHO NAS (QBITTORRENT / WGET)
     fun controlTorrent(action: String, hash: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -970,9 +974,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun fetchThumbnailAudit() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
-                val port = 5050
-                val apiUrl = "http://$host:$port/api/thumb/status"
+                val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (apiBase.isBlank()) return@launch
+                val apiUrl = "$apiBase/api/thumb/status"
                 
                 val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
@@ -1004,9 +1008,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun triggerThumbnailScan() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
-                val port = 5050
-                val apiUrl = "http://$host:$port/api/thumb/control"
+                val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
+                if (apiBase.isBlank()) return@launch
+                val apiUrl = "$apiBase/api/thumb/control"
                 
                 val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
@@ -1033,18 +1037,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             put("file_path", relativePath)
         }.toString()
 
-        // Báo UI đang xử lý thông qua Notification do chạy ngầm
+        // BÃ¡o UI Ä‘ang xá»­ lÃ½ thÃ´ng qua Notification do cháº¡y ngáº§m
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-        commonDialogMessage = "Tác vụ giải nén ($fileName) đang chạy ngầm trên NAS!"
+        commonDialogMessage = "TÃ¡c vá»¥ giáº£i nÃ©n ($fileName) Ä‘ang cháº¡y ngáº§m trÃªn NAS!"
         showCommonDialog = true
 
-        // KIẾN TRÚC MỚI: Đẩy sang LongRunningApiWorker (Foreground Service)
-        // → Tắt App vẫn chạy, hiển thị Notification tiến trình
+        // KIáº¾N TRÃšC Má»šI: Äáº©y sang LongRunningApiWorker (Foreground Service)
+        // â†’ Táº¯t App váº«n cháº¡y, hiá»ƒn thá»‹ Notification tiáº¿n trÃ¬nh
         val inputData = androidx.work.Data.Builder()
             .putString("taskType", "UNZIP")
             .putString("apiUrl", "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/file/unzip")
             .putString("jsonBody", jsonBody)
-            .putString("taskLabel", "Giải nén $fileName")
+            .putString("taskLabel", "Giáº£i nÃ©n $fileName")
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
@@ -1056,7 +1060,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         androidx.work.WorkManager.getInstance(context)
             .enqueueUniqueWork("Unzip_$fileName", androidx.work.ExistingWorkPolicy.REPLACE, workRequest)
 
-        // Lắng nghe kết quả từ Worker
+        // Láº¯ng nghe káº¿t quáº£ tá»« Worker
         viewModelScope.launch {
             androidx.work.WorkManager.getInstance(context)
                 .getWorkInfoByIdFlow(workRequest.id)
@@ -1068,11 +1072,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         if (workInfo.state == androidx.work.WorkInfo.State.SUCCEEDED) {
                             refresh()
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                            commonDialogMessage = message.ifEmpty { "Giải nén thành công!" }
+                            commonDialogMessage = message.ifEmpty { "Giáº£i nÃ©n thÃ nh cÃ´ng!" }
                             showCommonDialog = true
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                            commonDialogMessage = message.ifEmpty { "Giải nén thất bại!" }
+                            commonDialogMessage = message.ifEmpty { "Giáº£i nÃ©n tháº¥t báº¡i!" }
                             showCommonDialog = true
                         }
                     }
@@ -1096,14 +1100,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 withContext(Dispatchers.Main) {
                     val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
                     commonDialogMessage = if (o.optString("result") == "ok")
-                        "✅ Đã gửi link cho qBittorrent. Theo dõi tiến trình ở Dashboard."
-                    else "❌ Lỗi: ${o.optString("error", "không phản hồi")}"
+                        "âœ… ÄÃ£ gá»­i link cho qBittorrent. Theo dÃµi tiáº¿n trÃ¬nh á»Ÿ Dashboard."
+                    else "âŒ Lá»—i: ${o.optString("error", "khÃ´ng pháº£n há»“i")}"
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                     showCommonDialog = true
                 }
             } catch(e: Exception) {
                 withContext(Dispatchers.Main) {
-                    commonDialogMessage = "❌ Lỗi mạng: ${e.message?.take(120)}"
+                    commonDialogMessage = "âŒ Lá»—i máº¡ng: ${e.message?.take(120)}"
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                     showCommonDialog = true
                 }
@@ -1111,7 +1115,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    /** Upload 1 file .torrent len NAS → qBittorrent.
+    /** Upload 1 file .torrent len NAS â†’ qBittorrent.
      *  Goi tu Dispatchers.IO se OK; method nay tu launch coroutine. */
     fun uploadTorrentFile(context: Context, uri: android.net.Uri) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -1133,9 +1137,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .let { if (it.lowercase().endsWith(".torrent")) it else "$it.torrent" }
 
                 val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: throw IllegalArgumentException("Không đọc được nội dung file")
-                if (bytes.size < 64) throw IllegalArgumentException("File .torrent quá nhỏ")
-                if (bytes[0].toInt().toChar() != 'd') throw IllegalArgumentException("File không phải định dạng torrent hợp lệ")
+                    ?: throw IllegalArgumentException("KhÃ´ng Ä‘á»c Ä‘Æ°á»£c ná»™i dung file")
+                if (bytes.size < 64) throw IllegalArgumentException("File .torrent quÃ¡ nhá»")
+                if (bytes[0].toInt().toChar() != 'd') throw IllegalArgumentException("File khÃ´ng pháº£i Ä‘á»‹nh dáº¡ng torrent há»£p lá»‡")
 
                 val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
                 val filePart = okhttp3.MultipartBody.Builder()
@@ -1155,14 +1159,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
                 withContext(Dispatchers.Main) {
                     commonDialogMessage = if (o.optString("result") == "ok")
-                        "✅ Đã gửi $safeName cho qBittorrent (${o.optInt("size")} bytes)"
-                    else "❌ Lỗi: ${o.optString("error", "không phản hồi")}"
+                        "âœ… ÄÃ£ gá»­i $safeName cho qBittorrent (${o.optInt("size")} bytes)"
+                    else "âŒ Lá»—i: ${o.optString("error", "khÃ´ng pháº£n há»“i")}"
                     commonDialogType = if (o.optString("result") == "ok") com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                     showCommonDialog = true
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    commonDialogMessage = "❌ Lỗi upload torrent: ${e.message?.take(120)}"
+                    commonDialogMessage = "âŒ Lá»—i upload torrent: ${e.message?.take(120)}"
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                     showCommonDialog = true
                 }
@@ -1170,7 +1174,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // ============ GHI HÌNH LIVESTREAM (TikTok / Facebook / YouTube) ============
+    // ============ GHI HÃŒNH LIVESTREAM (TikTok / Facebook / YouTube) ============
     data class LivestreamJob(
         val jobId: String,
         val platform: String,
@@ -1216,7 +1220,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 group.maxWithOrNull(
                     compareBy<LivestreamJob> { livestreamJobSizeBytes(it.fileSize) }
                         .thenBy { if (it.outputFile.isNotBlank()) 1 else 0 }
-                        .thenBy { if (it.speed.isNotBlank() && it.speed != "—") 1 else 0 }
+                        .thenBy { if (it.speed.isNotBlank() && it.speed != "â€”") 1 else 0 }
                         .thenBy { it.durationSeconds }
                         .thenBy { it.startedTs }
                 )
@@ -1236,7 +1240,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val jobId: String = ""
     )
     
-    // Danh sách các stream đang ghi
+    // Danh sÃ¡ch cÃ¡c stream Ä‘ang ghi
     var activeLivestreams = androidx.compose.runtime.mutableStateListOf<LivestreamJob>()
         private set
     internal var lastLivestreamServerSyncAt = 0L
@@ -1244,7 +1248,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var livestreamMessage by mutableStateOf("")
         private set
 
-    /** UI gọi để xóa message lỗi, hiện lại nút "BẮT ĐẦU GHI" */
+    /** UI gá»i Ä‘á»ƒ xÃ³a message lá»—i, hiá»‡n láº¡i nÃºt "Báº®T Äáº¦U GHI" */
     fun clearLivestreamMessage() { livestreamMessage = "" }
 
     var tiktokLiveWatchUsers = androidx.compose.runtime.mutableStateListOf<TikTokLiveWatchUser>()
@@ -1326,7 +1330,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             val text = response.body?.string() ?: "{}"
             val result = org.json.JSONObject(text)
             if (!response.isSuccessful) {
-                throw IllegalStateException(result.optString("error", "NAS từ chối (${response.code})"))
+                throw IllegalStateException(result.optString("error", "NAS tá»« chá»‘i (${response.code})"))
             }
             return result
         }
@@ -1339,7 +1343,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch")
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Chưa kết nối NAS"}" }
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lá»—i: ${e.message?.take(80) ?: "ChÆ°a káº¿t ná»‘i NAS"}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
             }
@@ -1354,12 +1358,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/add", org.json.JSONObject().put("username", clean))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
-                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: thêm tài khoản theo dõi live @$clean.")
-                // Bắt job ngay nếu user vừa thêm đang live - không chờ 15p chu kỳ Discovery.
+                repository.addSystemLog("INFO", "TikTokWatch", "NgÆ°á»i dÃ¹ng: thÃªm tÃ i khoáº£n theo dÃµi live @$clean.")
+                // Báº¯t job ngay náº¿u user vá»«a thÃªm Ä‘ang live - khÃ´ng chá» 15p chu ká»³ Discovery.
                 syncLivestreamStateWithServer(context)
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: thêm tài khoản @$clean thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không thêm được người dùng"}" }
+                repository.addSystemLog("WARNING", "TikTokWatch", "NgÆ°á»i dÃ¹ng: thÃªm tÃ i khoáº£n @$clean tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lá»—i: ${e.message?.take(80) ?: "KhÃ´ng thÃªm Ä‘Æ°á»£c ngÆ°á»i dÃ¹ng"}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
             }
@@ -1371,10 +1375,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/remove", org.json.JSONObject().put("username", username))
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
-                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: xoá tài khoản theo dõi live @$username.")
+                repository.addSystemLog("INFO", "TikTokWatch", "NgÆ°á»i dÃ¹ng: xoÃ¡ tÃ i khoáº£n theo dÃµi live @$username.")
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: xoá tài khoản @$username thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không xoá được người dùng"}" }
+                repository.addSystemLog("WARNING", "TikTokWatch", "NgÆ°á»i dÃ¹ng: xoÃ¡ tÃ i khoáº£n @$username tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lá»—i: ${e.message?.take(80) ?: "KhÃ´ng xoÃ¡ Ä‘Æ°á»£c ngÆ°á»i dÃ¹ng"}" }
             }
         }
     }
@@ -1389,17 +1393,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                 val json = tiktokWatchRequest(context, "/api/tiktok/live_watch/settings", body)
                 withContext(Dispatchers.Main) { applyTikTokWatchJson(json) }
-                repository.addSystemLog("INFO", "TikTokWatch", "Người dùng: cập nhật khung loại trừ TikTok Watch (${if (enabled) "bật" else "tắt"}, $start-$end).")
+                repository.addSystemLog("INFO", "TikTokWatch", "NgÆ°á»i dÃ¹ng: cáº­p nháº­t khung loáº¡i trá»« TikTok Watch (${if (enabled) "báº­t" else "táº¯t"}, $start-$end).")
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "TikTokWatch", "Người dùng: cập nhật cấu hình TikTok Watch thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lỗi: ${e.message?.take(80) ?: "Không lưu được cấu hình"}" }
+                repository.addSystemLog("WARNING", "TikTokWatch", "NgÆ°á»i dÃ¹ng: cáº­p nháº­t cáº¥u hÃ¬nh TikTok Watch tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { tiktokLiveWatchError = "Lá»—i: ${e.message?.take(80) ?: "KhÃ´ng lÆ°u Ä‘Æ°á»£c cáº¥u hÃ¬nh"}" }
             }
         }
     }
 
     fun startLivestreamRecord(context: Context, url: String, quality: String = "best", referer: String = "", userAgent: String = "") {
         isStartingLivestream = true
-        livestreamMessage = "Đang phân tích liên kết & kết nối..."
+        livestreamMessage = "Äang phÃ¢n tÃ­ch liÃªn káº¿t & káº¿t ná»‘i..."
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
@@ -1423,7 +1427,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val apiBaseUrl = webDavManager.currentBaseUrl.toApiBaseUrl()
                     .ifBlank { currentUrl.toApiBaseUrl() }
                 if (apiBaseUrl.isBlank()) {
-                    throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                    throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 }
                 val requestBuilder = okhttp3.Request.Builder()
                     .url("$apiBaseUrl/api/livestream/record")
@@ -1435,10 +1439,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
                 }
 
-                // FIX: dùng client có timeout dài hơn (60s) chỉ riêng cho call này —
-                // preflight check TikTok có thể tốn 20-30s (curl HTML + probe FLV).
-                // Không tăng timeout của client mặc định vì các endpoint khác phải
-                // trả kết quả nhanh.
+                // FIX: dÃ¹ng client cÃ³ timeout dÃ i hÆ¡n (60s) chá»‰ riÃªng cho call nÃ y â€”
+                // preflight check TikTok cÃ³ thá»ƒ tá»‘n 20-30s (curl HTML + probe FLV).
+                // KhÃ´ng tÄƒng timeout cá»§a client máº·c Ä‘á»‹nh vÃ¬ cÃ¡c endpoint khÃ¡c pháº£i
+                // tráº£ káº¿t quáº£ nhanh.
                 val recordClient = localApiClient.newBuilder()
                     .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                     .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -1451,26 +1455,26 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (response.isSuccessful) {
                         val jobId    = json.optString("job_id", "")
                         val platform = json.optString("platform", "")
-                        repository.addSystemLog("INFO", "Livestream", "Người dùng: bắt đầu ghi livestream ${tiktokUsername.ifBlank { url.take(80) }} chất lượng $quality.")
+                        repository.addSystemLog("INFO", "Livestream", "NgÆ°á»i dÃ¹ng: báº¯t Ä‘áº§u ghi livestream ${tiktokUsername.ifBlank { url.take(80) }} cháº¥t lÆ°á»£ng $quality.")
 
-                        // Thêm vào danh sách active (mặc định trạng thái recording)
+                        // ThÃªm vÃ o danh sÃ¡ch active (máº·c Ä‘á»‹nh tráº¡ng thÃ¡i recording)
                         withContext(Dispatchers.Main) {
                             if (activeLivestreams.none { it.jobId == jobId }) {
                                 activeLivestreams.add(WebDavViewModel.LivestreamJob(jobId, platform, watchUsername = tiktokUsername))
                             }
-                            livestreamMessage   = json.optString("message", "Đang khởi động ghi hình...")
+                            livestreamMessage   = json.optString("message", "Äang khá»Ÿi Ä‘á»™ng ghi hÃ¬nh...")
                         }
 
-                        // Khởi động Foreground Worker độc lập với vòng đời app
+                        // Khá»Ÿi Ä‘á»™ng Foreground Worker Ä‘á»™c láº­p vá»›i vÃ²ng Ä‘á»i app
                         LivestreamMonitorWorker.enqueue(context, jobId, host, platform)
 
-                        // Observe tiến trình từ Worker để cập nhật UI
+                        // Observe tiáº¿n trÃ¬nh tá»« Worker Ä‘á»ƒ cáº­p nháº­t UI
                         observeLivestreamWorker(context)
 
-                        // FIX: Tự động thêm username vào watcher list nếu chưa có —
-                        // đảm bảo mỗi lúc user ghi 1 live mới qua link, lần sau watcher
-                        // sẽ tự phát hiện và auto-record. Không dựa vào logic ở Dialog
-                        // (để robust trong mọi flow gọi startLivestreamRecord).
+                        // FIX: Tá»± Ä‘á»™ng thÃªm username vÃ o watcher list náº¿u chÆ°a cÃ³ â€”
+                        // Ä‘áº£m báº£o má»—i lÃºc user ghi 1 live má»›i qua link, láº§n sau watcher
+                        // sáº½ tá»± phÃ¡t hiá»‡n vÃ  auto-record. KhÃ´ng dá»±a vÃ o logic á»Ÿ Dialog
+                        // (Ä‘á»ƒ robust trong má»i flow gá»i startLivestreamRecord).
                         if (tiktokUsername.isNotBlank() &&
                             tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
                             addTikTokLiveWatchUser(context, tiktokUsername)
@@ -1479,7 +1483,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         // FIX: server tra error CU THE qua field "error" + "reason"
                         // Map HTTP code de hien icon/mau dialog hop ly.
                         val errMsg = json.optString("error", "").ifBlank {
-                            "Lỗi NAS (HTTP ${response.code}): ${rawBody.take(150)}"
+                            "Lá»—i NAS (HTTP ${response.code}): ${rawBody.take(150)}"
                         }
                         withContext(Dispatchers.Main) {
                             livestreamMessage = errMsg
@@ -1487,24 +1491,24 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             commonDialogMessage = errMsg
                             showCommonDialog    = true
                         }
-                        repository.addSystemLog("WARNING", "Livestream", "Người dùng: bắt đầu ghi livestream thất bại: ${errMsg.take(120)}")
+                        repository.addSystemLog("WARNING", "Livestream", "NgÆ°á»i dÃ¹ng: báº¯t Ä‘áº§u ghi livestream tháº¥t báº¡i: ${errMsg.take(120)}")
                     }
                 }
             } catch (e: Exception) {
-                // FIX: phan loai exception cu the thay vi "Lỗi kết nối NAS: null"
+                // FIX: phan loai exception cu the thay vi "Lá»—i káº¿t ná»‘i NAS: null"
                 val errMsg = when (e) {
                     is java.net.SocketTimeoutException ->
-                        "NAS chưa trả kết quả kịp khi phân tích link TikTok. Không tạo thêm phiên trùng; hãy chờ trạng thái ghi cập nhật rồi thử lại nếu chưa thấy chạy."
+                        "NAS chÆ°a tráº£ káº¿t quáº£ ká»‹p khi phÃ¢n tÃ­ch link TikTok. KhÃ´ng táº¡o thÃªm phiÃªn trÃ¹ng; hÃ£y chá» tráº¡ng thÃ¡i ghi cáº­p nháº­t rá»“i thá»­ láº¡i náº¿u chÆ°a tháº¥y cháº¡y."
                     is java.net.ConnectException ->
-                        "Không kết nối được NAS. Kiểm tra: NAS có đang chạy không? Tailscale có bật không?"
+                        "KhÃ´ng káº¿t ná»‘i Ä‘Æ°á»£c NAS. Kiá»ƒm tra: NAS cÃ³ Ä‘ang cháº¡y khÃ´ng? Tailscale cÃ³ báº­t khÃ´ng?"
                     is java.net.UnknownHostException ->
-                        "Không tìm thấy NAS (DNS/Tailscale lỗi). Kiểm tra lại địa chỉ kết nối."
+                        "KhÃ´ng tÃ¬m tháº¥y NAS (DNS/Tailscale lá»—i). Kiá»ƒm tra láº¡i Ä‘á»‹a chá»‰ káº¿t ná»‘i."
                     is javax.net.ssl.SSLException ->
-                        "Lỗi SSL: ${e.message ?: "Chứng chỉ NAS không hợp lệ"}"
+                        "Lá»—i SSL: ${e.message ?: "Chá»©ng chá»‰ NAS khÃ´ng há»£p lá»‡"}"
                     else -> {
                         val raw = e.message?.take(200)
-                        if (raw.isNullOrBlank()) "Lỗi ${e.javaClass.simpleName} không có chi tiết"
-                        else "Lỗi: $raw"
+                        if (raw.isNullOrBlank()) "Lá»—i ${e.javaClass.simpleName} khÃ´ng cÃ³ chi tiáº¿t"
+                        else "Lá»—i: $raw"
                     }
                 }
                 withContext(Dispatchers.Main) {
@@ -1513,7 +1517,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     commonDialogMessage = errMsg
                     showCommonDialog    = true
                 }
-                repository.addSystemLog("WARNING", "Livestream", "Người dùng: bắt đầu ghi livestream thất bại: ${errMsg.take(120)}")
+                repository.addSystemLog("WARNING", "Livestream", "NgÆ°á»i dÃ¹ng: báº¯t Ä‘áº§u ghi livestream tháº¥t báº¡i: ${errMsg.take(120)}")
             } finally {
                 withContext(Dispatchers.Main) {
                     isStartingLivestream = false
@@ -1522,7 +1526,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    /** Gọi 1 lần khi app mở lại — tự đồng bộ lại trạng thái từ các Worker đang chạy ngầm */
+    /** Gá»i 1 láº§n khi app má»Ÿ láº¡i â€” tá»± Ä‘á»“ng bá»™ láº¡i tráº¡ng thÃ¡i tá»« cÃ¡c Worker Ä‘ang cháº¡y ngáº§m */
     fun restoreLivestreamStateIfRunning(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             val serverSnapshotIsFresh = System.currentTimeMillis() - lastLivestreamServerSyncAt < 15_000L
@@ -1582,7 +1586,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    /** Gọi ngầm để quét các luồng Livestream bị "bỏ quên" (zombie streams) trên NAS */
+    /** Gá»i ngáº§m Ä‘á»ƒ quÃ©t cÃ¡c luá»“ng Livestream bá»‹ "bá» quÃªn" (zombie streams) trÃªn NAS */
     fun syncLivestreamStateWithServer(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1625,7 +1629,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                         startedTs = startedTs,
                                         fileSize = jobObj.optString("file_size", "0 B"),
                                         duration = jobObj.optString("duration_display", "0h00m00s"),
-                                        speed = jobObj.optString("avg_speed", "—"),
+                                        speed = jobObj.optString("avg_speed", "â€”"),
                                         outputFile = jobObj.optString("output_file", "")
                                     )
                                 )
@@ -1641,7 +1645,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             val watchUser = job.watchUsername
                             val durationSeconds = job.durationSeconds
                             val startedTs = job.startedTs
-                                // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
+                                // Náº¿u tiáº¿n trÃ¬nh Ä‘ang cháº¡y trÃªn NAS nhÆ°ng Ä‘iá»‡n thoáº¡i khÃ´ng biáº¿t (hoáº·c bá»‹ xoÃ¡ cache data)
                                 val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
                                 if (!alreadyTracked) {
                                     val host = java.net.URL(currentUrl).host
@@ -1687,15 +1691,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e("LivestreamSync", "Lỗi đồng bộ trạng thái livestream: ${e.message}")
+                android.util.Log.e("LivestreamSync", "Lá»—i Ä‘á»“ng bá»™ tráº¡ng thÃ¡i livestream: ${e.message}")
                 restoreLivestreamStateIfRunning(context)
             }
         }
     }
 
     private fun observeLivestreamWorker(context: Context) {
-        // FIX: Cancel collector cũ trước khi tạo mới, tránh tích lũy N collectors chạy song song
-        // gây thrashing UI khi mỗi collector đều process toàn bộ workInfoList
+        // FIX: Cancel collector cÅ© trÆ°á»›c khi táº¡o má»›i, trÃ¡nh tÃ­ch lÅ©y N collectors cháº¡y song song
+        // gÃ¢y thrashing UI khi má»—i collector Ä‘á»u process toÃ n bá»™ workInfoList
         livestreamObserverJob?.cancel()
         livestreamObserverJob = viewModelScope.launch {
             WorkManager.getInstance(context)
@@ -1714,25 +1718,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         if (index != -1) {
                             val existing = activeLivestreams[index]
                             
-                            // Worker hoàn tất
+                            // Worker hoÃ n táº¥t
                             if (info.state.isFinished || status !in listOf(null, "recording")) {
                                 activeLivestreams.removeAt(index)
                                 livestreamMessage = when (status) {
-                                    "finished" -> "✅ Ghi hình hoàn tất!"
-                                    "stopped"  -> "⏹ Đã dừng ghi hình"
-                                    "timeout"  -> "⏰ Tự động dừng (quá 12 giờ)"
+                                    "finished" -> "âœ… Ghi hÃ¬nh hoÃ n táº¥t!"
+                                    "stopped"  -> "â¹ ÄÃ£ dá»«ng ghi hÃ¬nh"
+                                    "timeout"  -> "â° Tá»± Ä‘á»™ng dá»«ng (quÃ¡ 12 giá»)"
                                     "error"    -> {
                                         val reason = progress.getString("error_reason")
                                             ?: info.outputData.getString("error_reason")
                                             ?: ""
-                                        if (reason.isNotEmpty()) "Lỗi: $reason" else "Lỗi: Nguồn Stream bị ngắt / File quá nhỏ!"
+                                        if (reason.isNotEmpty()) "Lá»—i: $reason" else "Lá»—i: Nguá»“n Stream bá»‹ ngáº¯t / File quÃ¡ nhá»!"
                                     }
-                                    else       -> "Trạng thái báo cáo: $status"
+                                    else       -> "Tráº¡ng thÃ¡i bÃ¡o cÃ¡o: $status"
                                 }
                             } else {
-                                // FIX: Tạo copy với tham số mới thay vì mutate var sau copy()
-                                // Mutate var sau copy() không trigger Compose recomposition vì
-                                // mutableStateListOf so sánh object identity, không deep-compare
+                                // FIX: Táº¡o copy vá»›i tham sá»‘ má»›i thay vÃ¬ mutate var sau copy()
+                                // Mutate var sau copy() khÃ´ng trigger Compose recomposition vÃ¬
+                                // mutableStateListOf so sÃ¡nh object identity, khÃ´ng deep-compare
                                 val fs = progress.getString(LivestreamMonitorWorker.OUT_FILE_SIZE)
                                 val dur = progress.getString(LivestreamMonitorWorker.OUT_DURATION)
                                 val durSec = progress.getLong(LivestreamMonitorWorker.OUT_DURATION_SECONDS, -1L)
@@ -1762,10 +1766,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun stopLivestreamRecord(context: Context, jobId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Cancel Worker trước
+                // Cancel Worker trÆ°á»›c
                 LivestreamMonitorWorker.cancelJob(context, jobId)
 
-                // Gọi NAS stop API
+                // Gá»i NAS stop API
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                 val body = org.json.JSONObject().apply {
@@ -1778,77 +1782,74 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
 
                 localApiClient.newCall(request).execute().use { }
-                repository.addSystemLog("INFO", "Livestream", "Người dùng: dừng ghi livestream job $jobId.")
+                repository.addSystemLog("INFO", "Livestream", "NgÆ°á»i dÃ¹ng: dá»«ng ghi livestream job $jobId.")
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
-                    livestreamMessage   = "⏹ Đã dừng ghi hình. File đang được xử lý..."
+                    livestreamMessage   = "â¹ ÄÃ£ dá»«ng ghi hÃ¬nh. File Ä‘ang Ä‘Æ°á»£c xá»­ lÃ½..."
                 }
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "Livestream", "Người dùng: dừng ghi livestream job $jobId thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }
+                repository.addSystemLog("WARNING", "Livestream", "NgÆ°á»i dÃ¹ng: dá»«ng ghi livestream job $jobId tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { livestreamMessage = "Lá»—i dá»«ng ghi: ${e.message}" }
             }
         }
     }
 
 
-    // ĐÁNH THỨC NAS BẰNG WAKE-ON-LAN (MAGIC PACKET)
+    // ÄÃNH THá»¨C NAS Báº°NG WAKE-ON-LAN (MAGIC PACKET)
     
     private fun loadCurrentUrl(forceRefresh: Boolean = false) {
         viewModelScope.launch {
             errorMessage = null
             
-            // SỬA LỖI CHÍ MẠNG TỪ PHASE 1: LUÔN LUÔN KẾT NỐI UI VỚI CSDL TRƯỚC TIÊN!
-            // Khi Paging Flow trói buộc vào Room DB, mọi thay đổi dữ liệu từ NAS tải về sẽ lập tức bắn lên UI một cách Auto!
+            // Sá»¬A Lá»–I CHÃ Máº NG Tá»ª PHASE 1: LUÃ”N LUÃ”N Káº¾T Ná»I UI Vá»šI CSDL TRÆ¯á»šC TIÃŠN!
+            // Khi Paging Flow trÃ³i buá»™c vÃ o Room DB, má»i thay Ä‘á»•i dá»¯ liá»‡u tá»« NAS táº£i vá» sáº½ láº­p tá»©c báº¯n lÃªn UI má»™t cÃ¡ch Auto!
             _pagedFilesFlow.value = repository.getFilesStream(currentUrl).cachedIn(viewModelScope)
 
-            // Lấy danh sách tĩnh để phục vụ ImageViewerScreen
+            // Láº¥y danh sÃ¡ch tÄ©nh Ä‘á»ƒ phá»¥c vá»¥ ImageViewerScreen
             val cached = repository.getCachedFiles(currentUrl)
             fileList = cached.map { 
                 NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) 
             }.filter { !it.name.startsWith(".") || isSpecialMode }
 
-            // TỐI ƯU SMART REFRESH: Nếu không ép buộc Refresh và Cache đã có sẵn dữ liệu thì xong luôn!
+            // Tá»I Æ¯U SMART REFRESH: Náº¿u khÃ´ng Ã©p buá»™c Refresh vÃ  Cache Ä‘Ã£ cÃ³ sáºµn dá»¯ liá»‡u thÃ¬ xong luÃ´n!
             if (!forceRefresh && cached.isNotEmpty()) {
                 isLoading = false
-                // Chạy ngầm việc kiểm tra cập nhật mà không làm treo UI
+                // Cháº¡y ngáº§m viá»‡c kiá»ƒm tra cáº­p nháº­t mÃ  khÃ´ng lÃ m treo UI
                 launch(Dispatchers.IO) {
                     try { repository.getRemoteFilesAndCache(currentUrl) } catch (e: Exception) {}
                 }
                 return@launch
             }
 
-            // Nếu là Force Refresh (vd: Vừa Login xong) hoặc Lần đầu vào thư mục chưa có Cache -> Phải Đợi
+            // Náº¿u lÃ  Force Refresh (vd: Vá»«a Login xong) hoáº·c Láº§n Ä‘áº§u vÃ o thÆ° má»¥c chÆ°a cÃ³ Cache -> Pháº£i Äá»£i
             isLoading = true
 
             try {
-                // 3 & 4. Uỷ quyền cho Repository tải luồng NAS và chèn toàn bộ vào Room DB
+                // 3 & 4. Uá»· quyá»n cho Repository táº£i luá»“ng NAS vÃ  chÃ¨n toÃ n bá»™ vÃ o Room DB
                 repository.getRemoteFilesAndCache(currentUrl)
-                // Lập tức Cập nhật lại FileList tĩnh cho chế độ xem ảnh Full-Screen
+                // Láº­p tá»©c Cáº­p nháº­t láº¡i FileList tÄ©nh cho cháº¿ Ä‘á»™ xem áº£nh Full-Screen
                 val refreshedCached = repository.getCachedFiles(currentUrl)
                 fileList = refreshedCached.map { 
                     NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) 
                 }.filter { !it.name.startsWith(".") || isSpecialMode }
 
-                // LOG + IP: Hiển thị IP NAS sau trạng thái kết nối
+                // LOG + IP: Hiá»ƒn thá»‹ IP NAS sau tráº¡ng thÃ¡i káº¿t ná»‘i
                 val nasHost = try { java.net.URL(currentUrl).host } catch (_: Exception) { "" }
-                connectionStatus = if (nasHost.isNotEmpty()) "Đã kết nối LAN: $nasHost" else "Đã kết nối LAN"
-                viewModelScope.launch(Dispatchers.IO) {
-                    // Removed redundant fetch log
-                }
+                connectionStatus = if (nasHost.isNotEmpty()) "ÄÃ£ káº¿t ná»‘i LAN: $nasHost" else "ÄÃ£ káº¿t ná»‘i LAN"
             } catch (e: Exception) {
-                connectionStatus = "Lỗi kết nối" // Ép cập nhật trạng thái lỗi ngay lập tức dù có Cache hay không
+                connectionStatus = "Lá»—i káº¿t ná»‘i" // Ã‰p cáº­p nháº­t tráº¡ng thÃ¡i lá»—i ngay láº­p tá»©c dÃ¹ cÃ³ Cache hay khÃ´ng
                 viewModelScope.launch(Dispatchers.IO) {
-                    repository.addSystemLog("ERROR", "Browser", "Lỗi tải danh sách: ${e.message?.take(100)}")
+                    repository.addSystemLog("ERROR", "Browser", "Lá»—i táº£i danh sÃ¡ch: ${e.message?.take(100)}")
                 }
                 if (fileList.isEmpty()) {
                     errorMessage = friendlyError(e)
                 }
-                // FIX LỖI 5: Debounce - chỉ bật dialog lỗi mạng nếu cách lần trước hơn 2 phút
+                // FIX Lá»–I 5: Debounce - chá»‰ báº­t dialog lá»—i máº¡ng náº¿u cÃ¡ch láº§n trÆ°á»›c hÆ¡n 2 phÃºt
                 val now = System.currentTimeMillis()
                 if (now - lastNetworkErrorDialogAt > NETWORK_ERROR_DIALOG_COOLDOWN_MS) {
                     lastNetworkErrorDialogAt = now
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                    commonDialogMessage = "Mất kết nối dữ liệu máy chủ NAS:\n${e.message}"
+                    commonDialogMessage = "Máº¥t káº¿t ná»‘i dá»¯ liá»‡u mÃ¡y chá»§ NAS:\n${e.message}"
                     showCommonDialog = true
                 }
             } finally {
@@ -1857,7 +1858,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // HELPER: Chèn Tác vụ vào Hàng đợi Offline WorkManager (TÍNH NĂNG 5.I)
+    // HELPER: ChÃ¨n TÃ¡c vá»¥ vÃ o HÃ ng Ä‘á»£i Offline WorkManager (TÃNH NÄ‚NG 5.I)
     private fun enqueueOfflineAction(context: Context, actionType: String, sourcePath: String, destPath: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1868,7 +1869,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     destPath = destPath
                 ))
                 
-                // Báo WorkManager chạy khi có mạng
+                // BÃ¡o WorkManager cháº¡y khi cÃ³ máº¡ng
                 val constraints = androidx.work.Constraints.Builder()
                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
                     .build()
@@ -1877,51 +1878,51 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 androidx.work.WorkManager.getInstance(context).enqueue(request)
                 
-                // Hiển thị Dialog báo cho User
+                // Hiá»ƒn thá»‹ Dialog bÃ¡o cho User
                 withContext(Dispatchers.Main) {
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                    commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào hàng đợi ngoại tuyến."
+                    commonDialogMessage = "KhÃ´ng cÃ³ káº¿t ná»‘i. Lá»‡nh '$actionType' Ä‘Ã£ Ä‘Æ°á»£c Ä‘Æ°a vÃ o hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n."
                     showCommonDialog = true
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi khi lưu hàng đợi ngoại tuyến: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "Lá»—i khi lÆ°u hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n: ${e.message}" }
             }
         }
     }
 
     fun deleteFile(context: Context, file: NasFile) {
-        // TỐI ƯU CỰC ĐẠI: UI Lạc quan (Optimistic UI) 
-        // Ẩn file ngay lập tức khỏi biến RAM mà CHƯA CẦN đợi NAS phản hồi -> Xóa "Tức thì" (0ms)
+        // Tá»I Æ¯U Cá»°C Äáº I: UI Láº¡c quan (Optimistic UI)
+        // áº¨n file ngay láº­p tá»©c khá»i biáº¿n RAM mÃ  CHÆ¯A Cáº¦N Ä‘á»£i NAS pháº£n há»“i -> XÃ³a "Tá»©c thÃ¬" (0ms)
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
 
-        // BÓC TÁCH: Đẩy việc liên lạc mạng NAS (chậm) vào luồng ngầm I/O, giải phóng luồng màn hình UI
+        // BÃ“C TÃCH: Äáº©y viá»‡c liÃªn láº¡c máº¡ng NAS (cháº­m) vÃ o luá»“ng ngáº§m I/O, giáº£i phÃ³ng luá»“ng mÃ n hÃ¬nh UI
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Tìm đường dẫn gốc của ổ đĩa (VD: /Data N300/)
+                // 1. TÃ¬m Ä‘Æ°á»ng dáº«n gá»‘c cá»§a á»• Ä‘Ä©a (VD: /Data N300/)
                 val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
                 val driveName = relativePath.substringBefore('/')
                 val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
 
-                // 2. Chặn xoá vĩnh viễn nếu chưa nằm trong thùng rác
+                // 2. Cháº·n xoÃ¡ vÄ©nh viá»…n náº¿u chÆ°a náº±m trong thÃ¹ng rÃ¡c
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) {}
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
                     var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
                     if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
                     webDavManager.renameFile(file.path, targetUrl)
-                    repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác ổ $driveName.")
+                    repository.addSystemLog("WARNING", "File Ops", "ÄÃ£ di chuyá»ƒn tá»‡p '${file.name}' vÃ o ThÃ¹ng rÃ¡c á»• $driveName.")
                 } else {
                     webDavManager.deleteFile(file.path)
-                    repository.addSystemLog("WARNING", "File Ops", "Đã XÓA VĨNH VIỄN tệp '${file.name}'.")
+                    repository.addSystemLog("WARNING", "File Ops", "ÄÃ£ XÃ“A VÄ¨NH VIá»„N tá»‡p '${file.name}'.")
                 }
-                // TRIỆT TIÊU refresh() VĨNH VIỄN: Tránh tải lại 5000 file chỉ vì xóa 1 thẻ
+                // TRIá»†T TIÃŠU refresh() VÄ¨NH VIá»„N: TrÃ¡nh táº£i láº¡i 5000 file chá»‰ vÃ¬ xÃ³a 1 tháº»
             } catch (e: Exception) {
-                // Nhồi lại file vào giao diện nếu rớt mạng
+                // Nhá»“i láº¡i file vÃ o giao diá»‡n náº¿u rá»›t máº¡ng
                 withContext(Dispatchers.Main) { fileList = oldList }
                 
-                // TÍNH NĂNG 5.I: Bẫy lỗi và tống vào Hàng Đợi Offline
-                repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
+                // TÃNH NÄ‚NG 5.I: Báº«y lá»—i vÃ  tá»‘ng vÃ o HÃ ng Äá»£i Offline
+                repository.addSystemLog("WARNING", "File Ops", "XÃ³a tá»‡p '${file.name}' tháº¥t báº¡i, Ä‘Ã£ Ä‘Æ°a vÃ o hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n: ${e.message?.take(80)}")
                 val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
                 val driveName = relativePath.substringBefore('/')
                 val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
@@ -1941,40 +1942,40 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun deleteMultipleFiles(context: Context, filesToDelete: List<NasFile>) {
         if (filesToDelete.isEmpty()) return
 
-        // TỐI ƯU CỰC ĐẠI: UI Lạc quan cho HÀNG LOẠT FILE
-        // Cùng lúc bốc hơi 100+ file ra khỏi List để giao diện trống ngay trong 0 mili-giây!
+        // Tá»I Æ¯U Cá»°C Äáº I: UI Láº¡c quan cho HÃ€NG LOáº T FILE
+        // CÃ¹ng lÃºc bá»‘c hÆ¡i 100+ file ra khá»i List Ä‘á»ƒ giao diá»‡n trá»‘ng ngay trong 0 mili-giÃ¢y!
         val pathsToDelete = filesToDelete.map { it.path }.toSet()
         fileList = fileList.filter { it.path !in pathsToDelete }
 
-        // KIẾN TRÚC MỚI: Đẩy toàn bộ tác vụ sang BatchOperationWorker (Foreground Service)
-        // → Tiến trình KHÔNG BỊ HỦY khi App tắt, hiển thị trên Notification Bar
+        // KIáº¾N TRÃšC Má»šI: Äáº©y toÃ n bá»™ tÃ¡c vá»¥ sang BatchOperationWorker (Foreground Service)
+        // â†’ Tiáº¿n trÃ¬nh KHÃ”NG Bá»Š Há»¦Y khi App táº¯t, hiá»ƒn thá»‹ trÃªn Notification Bar
         enqueueBatchOperation(context, "DELETE", filesToDelete, "")
     }
 
     fun batchCopyFiles(context: Context, filesToCopy: List<NasFile>, destUrl: String) {
         if (filesToCopy.isEmpty()) return
 
-        // KIẾN TRÚC MỚI: Đẩy tác vụ sang BatchOperationWorker (Foreground Service)
+        // KIáº¾N TRÃšC Má»šI: Äáº©y tÃ¡c vá»¥ sang BatchOperationWorker (Foreground Service)
         enqueueBatchOperation(context, "COPY", filesToCopy, destUrl)
     }
 
     fun batchMoveFiles(context: Context, filesToMove: List<NasFile>, destUrl: String) {
         if (filesToMove.isEmpty()) return
 
-        // Tối ưu UI lạc quan: Giấu file ngay lập tức nếu di chuyển ra khỏi thư mục hiện tại
+        // Tá»‘i Æ°u UI láº¡c quan: Giáº¥u file ngay láº­p tá»©c náº¿u di chuyá»ƒn ra khá»i thÆ° má»¥c hiá»‡n táº¡i
         if (!destUrl.startsWith(currentUrl)) {
             val pathsToMove = filesToMove.map { it.path }.toSet()
             fileList = fileList.filter { it.path !in pathsToMove }
         }
 
-        // KIẾN TRÚC MỚI: Đẩy tác vụ sang BatchOperationWorker (Foreground Service)
+        // KIáº¾N TRÃšC Má»šI: Äáº©y tÃ¡c vá»¥ sang BatchOperationWorker (Foreground Service)
         enqueueBatchOperation(context, "MOVE", filesToMove, destUrl)
     }
 
-    // ═══════════════════════════════════════════════════════
-    // DISPATCH ENGINE: Đẩy tác vụ nặng sang Foreground Worker
-    // Worker chạy độc lập với Activity — Tắt App vẫn hoạt động
-    // ═══════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // DISPATCH ENGINE: Äáº©y tÃ¡c vá»¥ náº·ng sang Foreground Worker
+    // Worker cháº¡y Ä‘á»™c láº­p vá»›i Activity â€” Táº¯t App váº«n hoáº¡t Ä‘á»™ng
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     private fun enqueueBatchOperation(context: Context, operation: String, files: List<NasFile>, destUrl: String) {
         isBatchProcessing = true
         batchProcessType = operation
@@ -1997,7 +1998,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             file
         } catch (e: Exception) {
             isBatchProcessing = false
-            errorMessage = "Không thể chuẩn bị tác vụ hàng loạt: ${e.message}"
+            errorMessage = "KhÃ´ng thá»ƒ chuáº©n bá»‹ tÃ¡c vá»¥ hÃ ng loáº¡t: ${e.message}"
             return
         }
 
@@ -2016,7 +2017,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         androidx.work.WorkManager.getInstance(context)
             .enqueueUniqueWork("BatchOperation_$operation", androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE, workRequest)
 
-        // Lắng nghe tiến trình từ Worker để cập nhật UI (nếu App đang mở)
+        // Láº¯ng nghe tiáº¿n trÃ¬nh tá»« Worker Ä‘á»ƒ cáº­p nháº­t UI (náº¿u App Ä‘ang má»Ÿ)
         viewModelScope.launch {
             androidx.work.WorkManager.getInstance(context)
                 .getWorkInfoByIdFlow(workRequest.id)
@@ -2031,7 +2032,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             batchProcessProgress = 1f
                             isBatchProcessing = false
-                            // Làm mới danh sách file sau khi Worker hoàn tất
+                            // LÃ m má»›i danh sÃ¡ch file sau khi Worker hoÃ n táº¥t
                             if (operation == "COPY" || (operation == "MOVE" && destUrl.startsWith(currentUrl))) {
                                 refresh()
                             }
@@ -2042,20 +2043,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun restoreFile(context: Context, file: NasFile) {
-        // TỐI ƯU CỰC ĐẠI: Xóa ảo tức thì khỏi giao diện Thùng rác
+        // Tá»I Æ¯U Cá»°C Äáº I: XÃ³a áº£o tá»©c thÃ¬ khá»i giao diá»‡n ThÃ¹ng rÃ¡c
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // KHÔI PHỤC: Di chuyển file từ rác về thư mục gốc của NAS
+                // KHÃ”I PHá»¤C: Di chuyá»ƒn file tá»« rÃ¡c vá» thÆ° má»¥c gá»‘c cá»§a NAS
                 val targetUrl = webDavManager.currentBaseUrl + file.name
                 webDavManager.renameFile(file.path, targetUrl)
-                repository.addSystemLog("INFO", "File Ops", "Đã khôi phục tệp '${file.name}' từ Thùng rác.")
-                // Bỏ refresh()
+                repository.addSystemLog("INFO", "File Ops", "ÄÃ£ khÃ´i phá»¥c tá»‡p '${file.name}' tá»« ThÃ¹ng rÃ¡c.")
+                // Bá» refresh()
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { fileList = oldList }
-                repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "KhÃ´i phá»¥c tá»‡p '${file.name}' tháº¥t báº¡i, Ä‘Ã£ Ä‘Æ°a vÃ o hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n: ${e.message?.take(80)}")
                 val targetUrl = webDavManager.currentBaseUrl + file.name
                 enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
             }
@@ -2065,15 +2066,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun restoreMultipleFiles(context: Context, filesToRestore: List<NasFile>) {
         if (filesToRestore.isEmpty()) return
 
-        // TỐI ƯU CỰC ĐẠI: UI Lạc quan cho HÀNG LOẠT FILE
+        // Tá»I Æ¯U Cá»°C Äáº I: UI Láº¡c quan cho HÃ€NG LOáº T FILE
         val pathsToRestore = filesToRestore.map { it.path }.toSet()
         fileList = fileList.filter { it.path !in pathsToRestore }
 
-        // KIẾN TRÚC MỚI: Đẩy tác vụ sang BatchOperationWorker (Foreground Service)
+        // KIáº¾N TRÃšC Má»šI: Äáº©y tÃ¡c vá»¥ sang BatchOperationWorker (Foreground Service)
         enqueueBatchOperation(context, "RESTORE", filesToRestore, "")
     }
     fun renameFile(context: Context, file: NasFile, newName: String) {
-        // TỐI ƯU CỰC ĐẠI: Đổi tên ảo trên bộ nhớ RAM -> Tốc độ hiển thị 0s
+        // Tá»I Æ¯U Cá»°C Äáº I: Äá»•i tÃªn áº£o trÃªn bá»™ nhá»› RAM -> Tá»‘c Ä‘á»™ hiá»ƒn thá»‹ 0s
         val oldList = fileList
         val newUrl = currentUrl + newName
         val renamedFile = file.copy(name = newName, path = newUrl)
@@ -2082,11 +2083,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 webDavManager.renameFile(file.path, newUrl)
-                repository.addSystemLog("INFO", "File Ops", "Đổi tên tệp '${file.name}' thành '${newName}'.")
-                // Không refresh() để chống khựng giao diện
+                repository.addSystemLog("INFO", "File Ops", "Äá»•i tÃªn tá»‡p '${file.name}' thÃ nh '${newName}'.")
+                // KhÃ´ng refresh() Ä‘á»ƒ chá»‘ng khá»±ng giao diá»‡n
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { fileList = oldList } // Hoàn nguyên tên cũ
-                repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
+                withContext(Dispatchers.Main) { fileList = oldList } // HoÃ n nguyÃªn tÃªn cÅ©
+                repository.addSystemLog("WARNING", "File Ops", "Äá»•i tÃªn '${file.name}' tháº¥t báº¡i, Ä‘Ã£ Ä‘Æ°a vÃ o hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n: ${e.message?.take(80)}")
                 enqueueOfflineAction(context, "RENAME", file.path, newUrl)
             }
         }
@@ -2095,13 +2096,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
-                // Đảm bảo URL thư mục mới kết thúc bằng dấu gạch chéo '/'
+                // Äáº£m báº£o URL thÆ° má»¥c má»›i káº¿t thÃºc báº±ng dáº¥u gáº¡ch chÃ©o '/'
                 val newFolderUrl = currentUrl + folderName + "/"
                 webDavManager.createFolder(newFolderUrl)
-                repository.addSystemLog("SUCCESS", "File Ops", "Đã tạo thư mục mới: '$folderName'")
-                withContext(Dispatchers.Main) { refresh() } // Tải lại danh sách sau khi tạo thành công
+                repository.addSystemLog("SUCCESS", "File Ops", "ÄÃ£ táº¡o thÆ° má»¥c má»›i: '$folderName'")
+                withContext(Dispatchers.Main) { refresh() } // Táº£i láº¡i danh sÃ¡ch sau khi táº¡o thÃ nh cÃ´ng
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
+                repository.addSystemLog("WARNING", "File Ops", "Táº¡o thÆ° má»¥c '$folderName' tháº¥t báº¡i, Ä‘Ã£ Ä‘Æ°a vÃ o hÃ ng Ä‘á»£i ngoáº¡i tuyáº¿n: ${e.message?.take(80)}")
                 val newFolderUrl = currentUrl + folderName + "/"
                 enqueueOfflineAction(context, "CREATE_FOLDER", newFolderUrl)
             } finally {
@@ -2109,25 +2110,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
     }
-    // === Đã gỡ bỏ tính năng Upload lẻ tẻ và Đồng bộ ===
+    // === ÄÃ£ gá»¡ bá» tÃ­nh nÄƒng Upload láº» táº» vÃ  Äá»“ng bá»™ ===
 
     /**
-     * checkSmartNetwork() – Tự động phát hiện mạng và chuyển URL NAS phù hợp.
+     * checkSmartNetwork() â€“ Tá»± Ä‘á»™ng phÃ¡t hiá»‡n máº¡ng vÃ  chuyá»ƒn URL NAS phÃ¹ há»£p.
      *
-     * Gọi hàm này khi:
-     *  - User vào MainMenuScreen (resume app)
+     * Gá»i hÃ m nÃ y khi:
+     *  - User vÃ o MainMenuScreen (resume app)
      *  - Dashboard refresh
-     *  - User bấm nút refresh thủ công
+     *  - User báº¥m nÃºt refresh thá»§ cÃ´ng
      *
-     * Cơ chế:
+     * CÆ¡ cháº¿:
      *  1. Ping gateway LAN (ASUS RT-N12: 192.168.100.254 port 80)
-     *  2. Nếu PASS → Đang ở LAN → reconnect bằng URL LAN (Gigabit nhanh)
-     *  3. Nếu FAIL → Ra ngoài → reconnect bằng URL Tailscale (100.90.135.102)
+     *  2. Náº¿u PASS â†’ Äang á»Ÿ LAN â†’ reconnect báº±ng URL LAN (Gigabit nhanh)
+     *  3. Náº¿u FAIL â†’ Ra ngoÃ i â†’ reconnect báº±ng URL Tailscale (100.90.135.102)
      */
     fun checkSmartNetwork(context: android.content.Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Invalidate cache để buộc kiểm tra thực sự (không dùng kết quả cũ)
+                // Invalidate cache Ä‘á»ƒ buá»™c kiá»ƒm tra thá»±c sá»± (khÃ´ng dÃ¹ng káº¿t quáº£ cÅ©)
                 SmartNetworkManager.invalidateCache()
                 val activeUrl = SmartNetworkManager.getActiveBaseUrl(context)
                 if (activeUrl.isEmpty()) return@launch
@@ -2137,21 +2138,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     isOnLan = onLan
                 }
 
-                // Nếu URL thực tế khác URL đang dùng → tự động reconnect mượt
+                // Náº¿u URL thá»±c táº¿ khÃ¡c URL Ä‘ang dÃ¹ng â†’ tá»± Ä‘á»™ng reconnect mÆ°á»£t
                 val currentBase = webDavManager.currentBaseUrl
                 val safeActive = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
                 if (safeActive != currentBase && currentBase.isNotEmpty()) {
                     val user = webDavManager.currentUser
                     val pass = webDavManager.currentPass
                     withContext(Dispatchers.Main) {
-                        connectionStatus = if (onLan) "Chuyển sang LAN - Gigabit" else "Chuyển sang Tailscale VPN"
+                        connectionStatus = if (onLan) "Chuyá»ƒn sang LAN - Gigabit" else "Chuyá»ƒn sang Tailscale VPN"
                     }
                     withContext(Dispatchers.IO) {
                         try {
                             webDavManager.connect(safeActive, user, pass)
                             webDavManager.initConnection()
                             
-                            // Gọi authorize để IP mới được thêm vào whitelist/iptables trên NAS
+                            // Gá»i authorize Ä‘á»ƒ IP má»›i Ä‘Æ°á»£c thÃªm vÃ o whitelist/iptables trÃªn NAS
                             val host = java.net.URL(safeActive).host
                             if (!host.isNullOrEmpty()) {
                                 val authHeader = okhttp3.Credentials.basic(user, pass)
@@ -2172,11 +2173,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                     repository.addSystemLog(
                         "INFO", "SmartSwitch",
-                        "Chuyển mạng: ${if (onLan) "LAN" else "Tailscale"} ($safeActive)"
+                        "Chuyá»ƒn máº¡ng: ${if (onLan) "LAN" else "Tailscale"} ($safeActive)"
                     )
                 }
             } catch (e: Exception) {
-                android.util.Log.w("SmartSwitch", "Lỗi kiểm tra mạng thông minh: ${e.message}")
+                android.util.Log.w("SmartSwitch", "Lá»—i kiá»ƒm tra máº¡ng thÃ´ng minh: ${e.message}")
             }
         }
     }
@@ -2250,21 +2251,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         webDavManager.cancelActiveCalls()
         loginJob = null
         isLoading = false
-        connectionStatus = "Đã dừng đăng nhập"
+        connectionStatus = "ÄÃ£ dá»«ng Ä‘Äƒng nháº­p"
     }
 
     fun connect(urlList: List<String>, user: String, pass: String, onSuccess: () -> Unit = {}, onError: (String) -> Unit = {}) {
         loginJob?.cancel()
         loginJob = viewModelScope.launch {
-            var lastErrorDetail = "Không rõ"
+            var lastErrorDetail = "KhÃ´ng rÃµ"
 
             withContext(Dispatchers.Main) {
                 isLoading = true
-                connectionStatus = "Đang kiểm tra môi trường LAN..."
+                connectionStatus = "Äang kiá»ƒm tra mÃ´i trÆ°á»ng LAN..."
                 urlStack.clear()
             }
 
-            // FIX LỖI 7 B: Đọc credentials cũ trước bước lưu tạm, để có thể REVERT nếu handshake thất bại
+            // FIX Lá»–I 7 B: Äá»c credentials cÅ© trÆ°á»›c bÆ°á»›c lÆ°u táº¡m, Ä‘á»ƒ cÃ³ thá»ƒ REVERT náº¿u handshake tháº¥t báº¡i
             val context = NasApplication.instance
             val oldUrlList = SecurePrefsHelper.getUrlList(context)
             val oldUser = SecurePrefsHelper.getUser(context)
@@ -2274,15 +2275,15 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
             }
 
-            // FIX: Thử lần lượt từng URL (LAN → Tailscale) mà không gây race condition
-            // Vòng lặp tuần tự tránh lỗi split-tunneling cache của Android
+            // FIX: Thá»­ láº§n lÆ°á»£t tá»«ng URL (LAN â†’ Tailscale) mÃ  khÃ´ng gÃ¢y race condition
+            // VÃ²ng láº·p tuáº§n tá»± trÃ¡nh lá»—i split-tunneling cache cá»§a Android
             val errorDetails = mutableListOf<String>()
             var connectedUrl = ""
             var result = false
 
             val result2 = withContext(Dispatchers.IO) {
                 if (urlList.isEmpty()) {
-                    lastErrorDetail = "Không có URL để kết nối"
+                    lastErrorDetail = "KhÃ´ng cÃ³ URL Ä‘á»ƒ káº¿t ná»‘i"
                     return@withContext false
                 }
 
@@ -2297,7 +2298,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
 
                         withContext(Dispatchers.Main) {
-                            connectionStatus = "Đang kết nối: $safeUrl"
+                            connectionStatus = "Äang káº¿t ná»‘i: $safeUrl"
                         }
 
                         try {
@@ -2320,12 +2321,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
                                     channel.send(Pair(true, safeUrl))
                                 } else {
-                                    channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
+                                    channel.send(Pair(false, "$activeUrl: WebDAV tá»« chá»‘i xÃ¡c thá»±c (HTTP ${response.code})"))
                                 }
                             }
                         } catch (e: Exception) {
-                            android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
-                            channel.send(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
+                            android.util.Log.e("NAS_AUTH", "Lá»—i káº¿t ná»‘i $activeUrl: ${e.message}")
+                            channel.send(Pair(false, "$activeUrl: ${e.message ?: "Máº¡ng quÃ¡ háº¡n"}"))
                         }
                     }
                 }
@@ -2353,13 +2354,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 if (successUrl.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
                         currentUrl = successUrl
-                        connectionStatus = "Đã kết nối: $successUrl"
+                        connectionStatus = "ÄÃ£ káº¿t ná»‘i: $successUrl"
                         isOnLan = !isTailscaleUrl(successUrl)
                     }
 
                     webDavManager.connect(successUrl, user, pass)
                     SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
-                    repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
+                    repository.addSystemLog("SUCCESS", "Network", "Truy cáº­p WebDAV thÃ nh cÃ´ng qua User '$user' táº¡i IP: $successUrl")
 
                     connectedUrl = successUrl
 
@@ -2380,7 +2381,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                     .build()
                                 cleanClient.newCall(request).execute().use { }
                             } catch (e: Exception) {
-                                android.util.Log.w("NAS_AUTH", "API Phụ Warning: ${e.message}")
+                                android.util.Log.w("NAS_AUTH", "API Phá»¥ Warning: ${e.message}")
                             }
                         }
                     }
@@ -2394,10 +2395,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             withContext(Dispatchers.Main) {
                 isLoading = false
                 if (result2) {
-                    connectionStatus = "Đã xác thực thành công"
+                    connectionStatus = "ÄÃ£ xÃ¡c thá»±c thÃ nh cÃ´ng"
                     onSuccess()
                 } else {
-                    connectionStatus = "Lỗi xác thực"
+                    connectionStatus = "Lá»—i xÃ¡c thá»±c"
                     onError(lastErrorDetail)
                 }
             }
@@ -2443,7 +2444,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     init {
-        // Cập nhật trạng thái Auto Backup từ WorkManager
+        // Cáº­p nháº­t tráº¡ng thÃ¡i Auto Backup tá»« WorkManager
         viewModelScope.launch {
             try {
                 androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
@@ -2457,7 +2458,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         if (workInfo != null) {
                             isAutoBackupRunning = true
                             autoBackupProgress = workInfo.progress.getFloat("progress", 0f)
-                            autoBackupCurrentFile = workInfo.progress.getString("fileName") ?: "Đang sao lưu..."
+                            autoBackupCurrentFile = workInfo.progress.getString("fileName") ?: "Äang sao lÆ°u..."
                             autoBackupSourcePath = workInfo.progress.getString("sourcePath") ?: ""
                             autoBackupDestPath = workInfo.progress.getString("destPath") ?: ""
                             autoBackupProcessedCount = workInfo.progress.getInt("processedCount", 0)
@@ -2471,7 +2472,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {}
         }
 
-        // KIẾN TRÚC MỚI: Đồng bộ hóa khép kín (Khôi phục UI State khi App tái khởi động từ cõi chết)
+        // KIáº¾N TRÃšC Má»šI: Äá»“ng bá»™ hÃ³a khÃ©p kÃ­n (KhÃ´i phá»¥c UI State khi App tÃ¡i khá»Ÿi Ä‘á»™ng tá»« cÃµi cháº¿t)
         val workManager = androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
         
         viewModelScope.launch {
@@ -2480,10 +2481,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 if (active != null) {
                     isBatchProcessing = true
                     batchProcessProgress = active.progress.getInt("percent", 0).toFloat() / 100f
-                    batchProcessCurrentFile = active.progress.getString("currentFile") ?: "Khôi phục đồng bộ..."
+                    batchProcessCurrentFile = active.progress.getString("currentFile") ?: "KhÃ´i phá»¥c Ä‘á»“ng bá»™..."
                 } else if (isBatchProcessing) {
                     isBatchProcessing = false
-                    refresh() // Cập nhật lại danh sách file khi Background Worker vừa hoàn tất
+                    refresh() // Cáº­p nháº­t láº¡i danh sÃ¡ch file khi Background Worker vá»«a hoÃ n táº¥t
                 }
             }
         }
@@ -2493,9 +2494,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val active = workInfos.find { it.state == androidx.work.WorkInfo.State.RUNNING || it.state == androidx.work.WorkInfo.State.ENQUEUED }
                 if (active != null) {
                     isStreamPiping = true
-                    streamPipeStatus = "Khôi phục đồng bộ: " + (active.progress.getString("status") ?: "Đang tải ngầm...")
+                    streamPipeStatus = "KhÃ´i phá»¥c Ä‘á»“ng bá»™: " + (active.progress.getString("status") ?: "Äang táº£i ngáº§m...")
                     streamPipeProgress = active.progress.getInt("progress", 0).toFloat() / 100f
-                    streamPipeSpeedStr = active.progress.getString("speedStr") ?: "Đồng bộ..."
+                    streamPipeSpeedStr = active.progress.getString("speedStr") ?: "Äá»“ng bá»™..."
                     streamPipeEtaStr = if (active.progress.getLong("etaSec", 0L) > 0) "${active.progress.getLong("etaSec", 0L)}s" else "--"
                 }
             }
@@ -2508,7 +2509,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val taskLabel = active.progress.getString("taskLabel") ?: ""
                     if (taskLabel.contains("Gom video")) {
                         organizingLegacyRunning = true
-                        organizingLegacyResult = active.progress.getString("status") ?: "Đang gom video ngầm..."
+                        organizingLegacyResult = active.progress.getString("status") ?: "Äang gom video ngáº§m..."
                     }
                 }
             }
@@ -2516,9 +2517,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     
         listenToLocalNasApi()
 
-        // FIX A2: Thay vòng lặp polling while(true){delay(32)} bằng combine() trên StateFlow.
-        // Cũ: Vòng lặp chạy liên tục @30fps kể cả khi không scan → tiêu hao CPU/pin vô ích.
-        // Mới: Chỉ emit khi một trong các StateFlow thực sự thay đổi → 0% CPU khi idle.
+        // FIX A2: Thay vÃ²ng láº·p polling while(true){delay(32)} báº±ng combine() trÃªn StateFlow.
+        // CÅ©: VÃ²ng láº·p cháº¡y liÃªn tá»¥c @30fps ká»ƒ cáº£ khi khÃ´ng scan â†’ tiÃªu hao CPU/pin vÃ´ Ã­ch.
+        // Má»›i: Chá»‰ emit khi má»™t trong cÃ¡c StateFlow thá»±c sá»± thay Ä‘á»•i â†’ 0% CPU khi idle.
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(
                 DuplicateProgressState.stage,
@@ -2527,10 +2528,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 DuplicateProgressState.scannedCount,
                 DuplicateProgressState.elapsedTime
             ) { stage, folderUrl, percent, scanned, elapsed ->
-                // Trả về tuple để trigger collector khi BẤT KỲ field nào thay đổi
+                // Tráº£ vá» tuple Ä‘á»ƒ trigger collector khi Báº¤T Ká»² field nÃ o thay Ä‘á»•i
                 arrayOf<Any?>(stage, folderUrl, percent, scanned, elapsed)
             }.collect {
-                // Đồng bộ toàn bộ state từ DuplicateProgressState → ViewModel state
+                // Äá»“ng bá»™ toÃ n bá»™ state tá»« DuplicateProgressState â†’ ViewModel state
                 scanDuplicatesCurrentFolderUrl = DuplicateProgressState.currentFolderUrl.value
                 scanDuplicatesCurrentItemName  = DuplicateProgressState.itemName.value
                 scanDuplicatesStage            = DuplicateProgressState.stage.value
@@ -2545,57 +2546,57 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 scanDuplicatesElapsedTime      = DuplicateProgressState.elapsedTime.value
                 scanDuplicatesEstimatedTimeRemaining = DuplicateProgressState.estimatedTimeRemaining.value
 
-                // FIX (BUG: dialog tự pop-up lại khi user bấm Thu nhỏ):
-                // Chỉ cập nhật isWorkerRunning — KHÔNG tự động set isScanningDuplicates = true.
-                // Dialog hiển thị do user chủ động mở (qua nút Quét hoặc chip "Thu nhỏ").
-                // Trước đây, mỗi tick progress collector đặt isScanningDuplicates=true ->
-                // user không thể Thu nhỏ/Hủy/Tạm dừng được vì dialog tự bật lại 30ms sau.
+                // FIX (BUG: dialog tá»± pop-up láº¡i khi user báº¥m Thu nhá»):
+                // Chá»‰ cáº­p nháº­t isWorkerRunning â€” KHÃ”NG tá»± Ä‘á»™ng set isScanningDuplicates = true.
+                // Dialog hiá»ƒn thá»‹ do user chá»§ Ä‘á»™ng má»Ÿ (qua nÃºt QuÃ©t hoáº·c chip "Thu nhá»").
+                // TrÆ°á»›c Ä‘Ã¢y, má»—i tick progress collector Ä‘áº·t isScanningDuplicates=true ->
+                // user khÃ´ng thá»ƒ Thu nhá»/Há»§y/Táº¡m dá»«ng Ä‘Æ°á»£c vÃ¬ dialog tá»± báº­t láº¡i 30ms sau.
                 val stage = scanDuplicatesStage
-                if (stage != "Hoàn tất" && stage.isNotEmpty() && stage != "Khởi động...") {
+                if (stage != "HoÃ n táº¥t" && stage.isNotEmpty() && stage != "Khá»Ÿi Ä‘á»™ng...") {
                     isWorkerRunning = true
-                } else if (stage == "Hoàn tất") {
+                } else if (stage == "HoÃ n táº¥t") {
                     isWorkerRunning = false
                 }
             }
         }
 
-        // Khởi động vòng lặp kiểm tra sức khoẻ mạng (Ping ICMP siêu nhẹ)
+        // Khá»Ÿi Ä‘á»™ng vÃ²ng láº·p kiá»ƒm tra sá»©c khoáº» máº¡ng (Ping ICMP siÃªu nháº¹)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             while (true) {
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
                     val ms = webDavManager.checkPingServer()
                     withContext(Dispatchers.Main) { networkPingMs = ms }
-                    // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
+                    // Giao thá»©c ICMP Ping tá»‘n háº§u nhÆ° khÃ´ng Ä‘Ã¡ng biá»ƒu Ä‘á»“ mÃ¡y, cho phÃ©p quÃ©t 3s/láº§n!
                     kotlinx.coroutines.delay(3000)
                 } else {
-                    // Nếu chưa Login xong thì đợi 1s hỏi lại, tránh việc bắt User đợi tận 30s mới chọc Ping
+                    // Náº¿u chÆ°a Login xong thÃ¬ Ä‘á»£i 1s há»i láº¡i, trÃ¡nh viá»‡c báº¯t User Ä‘á»£i táº­n 30s má»›i chá»c Ping
                     kotlinx.coroutines.delay(1000)
                 }
             }
         }
 
-        // Khởi động vòng lặp lấy metrics biểu đồ:
-        // Chờ cho URL sẵn sàng rồi mới fetch lần đầu, sau đó poll mỗi 30s
+        // Khá»Ÿi Ä‘á»™ng vÃ²ng láº·p láº¥y metrics biá»ƒu Ä‘á»“:
+        // Chá» cho URL sáºµn sÃ ng rá»“i má»›i fetch láº§n Ä‘áº§u, sau Ä‘Ã³ poll má»—i 30s
         launchMetricsPolling()
         launchDashboardRealtimeScheduler()
     }
 
-    // Dọn các listener (nếu có)
+    // Dá»n cÃ¡c listener (náº¿u cÃ³)
 
     // =======================================================
-    // ======== BIỂU ĐỒ GIÁM SÁT + BÁO CÁO NGÀY ============
+    // ======== BIá»‚U Äá»’ GIÃM SÃT + BÃO CÃO NGÃ€Y ============
     // =======================================================
 
     fun launchMetricsPolling() {
         metricsPollingJob?.cancel()
         metricsPollingJob = viewModelScope.launch(Dispatchers.IO) {
-            // Chờ tối đa 60s cho đến khi URL sẵn sàng (tránh fetch khi chưa login)
+            // Chá» tá»‘i Ä‘a 60s cho Ä‘áº¿n khi URL sáºµn sÃ ng (trÃ¡nh fetch khi chÆ°a login)
             var waited = 0
             while (isActive && webDavManager.currentBaseUrl.isEmpty() && waited < 60) {
                 delay(1_000L)
                 waited++
             }
-            // Lấy lần đầu ngay sau khi URL sẵn sàng
+            // Láº¥y láº§n Ä‘áº§u ngay sau khi URL sáºµn sÃ ng
             if (isActive && webDavManager.currentBaseUrl.isNotEmpty()) {
                 fetchMetricsHistory(metricsHours)
                 startRealtimeAlerts()
@@ -2629,7 +2630,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val bodyStr = resp.body?.string() ?: ""
                     if (!resp.isSuccessful) {
                         withContext(Dispatchers.Main) {
-                            metricsError = "Lỗi HTTP ${resp.code}: $bodyStr"
+                            metricsError = "Lá»—i HTTP ${resp.code}: $bodyStr"
                         }
                         return@launch
                     }
@@ -2639,7 +2640,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         return@launch
                     }
                     val timestamps = json.optJSONArray("timestamps") ?: run {
-                        withContext(Dispatchers.Main) { metricsError = "Server trả về dữ liệu không hợp lệ" }
+                        withContext(Dispatchers.Main) { metricsError = "Server tráº£ vá» dá»¯ liá»‡u khÃ´ng há»£p lá»‡" }
                         return@launch
                     }
                     val cpuArr   = json.optJSONArray("cpu_percent")
@@ -2669,7 +2670,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { metricsError = "Nhấn Làm mới để thử lại: ${e.message?.take(80)}" }
+                withContext(Dispatchers.Main) { metricsError = "Nháº¥n LÃ m má»›i Ä‘á»ƒ thá»­ láº¡i: ${e.message?.take(80)}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingMetrics = false }
             }
@@ -2677,18 +2678,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun fetchRealtimeMetricPoint() {
-        if (realtimeMetricInFlight) return
+        val now = System.currentTimeMillis()
+        if (now < realtimeMetricNextAllowedAt.get()) return
+        if (!realtimeMetricInFlight.compareAndSet(false, true)) return
         viewModelScope.launch(Dispatchers.IO) {
             val baseUrl = webDavManager.currentBaseUrl
-            if (baseUrl.isEmpty()) return@launch
-            realtimeMetricInFlight = true
+            if (baseUrl.isEmpty()) {
+                realtimeMetricInFlight.set(false)
+                return@launch
+            }
             try {
                 val request = okhttp3.Request.Builder()
                     .url("${baseUrl.toApiBaseUrl()}/api/status/realtime")
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
-                    if (!resp.isSuccessful) return@use
+                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
                     val json = org.json.JSONObject(raw)
                     val snap = MetricsSnapshot(
                         timestamp = json.optString("timestamp", ""),
@@ -2702,27 +2707,28 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     withContext(Dispatchers.Main) {
                         if (snap.timestamp.isNotBlank() && metricsHistory.lastOrNull()?.timestamp != snap.timestamp) {
                             metricsHistory.add(snap)
-                            val maxPoints = when (metricsHours) {
-                                1 -> 720
-                                6 -> 1440
-                                else -> 1440
-                            }
+                            val maxPoints = (metricsHours.coerceAtLeast(1) * 3600 / 5).coerceAtLeast(720)
                             while (metricsHistory.size > maxPoints) metricsHistory.removeAt(0)
                         }
                         if (snap.cpuTemp > 0f || snap.hddTemp > 0f) {
-                            val next = kotlin.collections.ArrayDeque(temperatureHistory)
-                            next.addLast(Pair(snap.cpuTemp, snap.hddTemp))
-                            while (next.size > 40) next.removeFirst()
-                            temperatureHistory = next
+                            temperatureHistory.add(Pair(snap.cpuTemp, snap.hddTemp))
+
+                            while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
+
                         }
                         metricsError = null
                         lastMetricsRefreshAt = System.currentTimeMillis()
                     }
+                    realtimeMetricBackoffMs.set(5_000L)
+                    realtimeMetricNextAllowedAt.set(0L)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("MetricsRealtime", "Realtime metric failed: ${e.message}")
+                val backoffMs = realtimeMetricBackoffMs.get()
+                realtimeMetricNextAllowedAt.set(System.currentTimeMillis() + backoffMs)
+                realtimeMetricBackoffMs.set((backoffMs * 2).coerceAtMost(60_000L))
             } finally {
-                realtimeMetricInFlight = false
+                realtimeMetricInFlight.set(false)
             }
         }
     }
@@ -2768,22 +2774,24 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (_: Exception) {}
-            withContext(Dispatchers.Main) { isDailyReportLoading = false }
+            finally {
+                withContext(Dispatchers.Main) { isDailyReportLoading = false }
+            }
         }
     }
 
     // =======================================================
-    // ======== CÁC HÀM XỬ LÝ API NỘI BỘ (LOCAL NAS API) ======
+    // ======== CÃC HÃ€M Xá»¬ LÃ API Ná»˜I Bá»˜ (LOCAL NAS API) ======
     // =======================================================
 
-    // Các hàm lắng nghe System Monitor đã được chuyển ra SystemMonitorHelper.kt
+    // CÃ¡c hÃ m láº¯ng nghe System Monitor Ä‘Ã£ Ä‘Æ°á»£c chuyá»ƒn ra SystemMonitorHelper.kt
 
     // ============ AI SMART PHOTOS ============
     var aiCategories by mutableStateOf<Map<String, List<String>>>(emptyMap())
     var aiTotal by mutableStateOf(0)
     var aiLastScan by mutableStateOf("")
     var aiRunning by mutableStateOf(false)
-    var aiStatus by mutableStateOf("Chưa có dữ liệu")
+    var aiStatus by mutableStateOf("ChÆ°a cÃ³ dá»¯ liá»‡u")
     var isLoadingAiTags by mutableStateOf(false)
 
     fun fetchAiTags() {
@@ -2813,7 +2821,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { aiStatus = "Lỗi kết nối: ${e.message?.take(60)}" }
+                withContext(Dispatchers.Main) { aiStatus = "Lá»—i káº¿t ná»‘i: ${e.message?.take(60)}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingAiTags = false }
             }
@@ -2830,7 +2838,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val json = org.json.JSONObject(resp.body?.string() ?: "{}")
-                    val msg = json.optString("message", "Đang quét phân loại ảnh...")
+                    val msg = json.optString("message", "Äang quÃ©t phÃ¢n loáº¡i áº£nh...")
                     withContext(Dispatchers.Main) {
                         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                         commonDialogMessage = msg
@@ -2854,8 +2862,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val res = org.json.JSONObject(resp.body?.string() ?: "{}")
-                    val msg = res.optString("message", "Hoàn tất dọn Thùng rác!")
-                    repository.addSystemLog("INFO", "File Ops", "Người dùng đã thực hiện XÓA THÙNG RÁC: $msg")
+                    val msg = res.optString("message", "HoÃ n táº¥t dá»n ThÃ¹ng rÃ¡c!")
+                    repository.addSystemLog("INFO", "File Ops", "NgÆ°á»i dÃ¹ng Ä‘Ã£ thá»±c hiá»‡n XÃ“A THÃ™NG RÃC: $msg")
                     withContext(Dispatchers.Main) {
                         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                         commonDialogMessage = msg
@@ -2865,7 +2873,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                    commonDialogMessage = "Lỗi dọn rác: ${e.message}"
+                    commonDialogMessage = "Lá»—i dá»n rÃ¡c: ${e.message}"
                     showCommonDialog = true
                 }
             }
@@ -2875,7 +2883,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // ============ GUEST PASS ============
 
     /**
-     * Gọi POST /api/guest/create → NAS tạo FTP user tạm thời read-only.
+     * Gá»i POST /api/guest/create â†’ NAS táº¡o FTP user táº¡m thá»i read-only.
      * Response JSON: { username, password, host, ftp_port, expires_at_unix }
      */
     fun createGuestPass(durationMinutes: Int) {
@@ -2908,19 +2916,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         )
                         withContext(Dispatchers.Main) { activeGuestPass = pass }
                         repository.addSystemLog("SUCCESS", "GuestPass",
-                            "Đã cấp Guest FTP: user='${pass.username}', hết hạn sau $durationMinutes phút")
+                            "ÄÃ£ cáº¥p Guest FTP: user='${pass.username}', háº¿t háº¡n sau $durationMinutes phÃºt")
                     } else {
                         val errBody = resp.body?.string() ?: ""
                         withContext(Dispatchers.Main) {
-                            guestPassError = "NAS từ chối (${resp.code}): $errBody"
+                            guestPassError = "NAS tá»« chá»‘i (${resp.code}): $errBody"
                         }
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    guestPassError = "Lỗi kết nối API: ${e.message}"
+                    guestPassError = "Lá»—i káº¿t ná»‘i API: ${e.message}"
                 }
-                repository.addSystemLog("ERROR", "GuestPass", "Tạo Guest Pass lỗi: ${e.message?.take(80)}")
+                repository.addSystemLog("ERROR", "GuestPass", "Táº¡o Guest Pass lá»—i: ${e.message?.take(80)}")
             } finally {
                 withContext(Dispatchers.Main) { isGuestPassLoading = false }
             }
@@ -2928,14 +2936,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     /**
-     * Gọi POST /api/guest/revoke → NAS xóa FTP user tạm thời.
+     * Gá»i POST /api/guest/revoke â†’ NAS xÃ³a FTP user táº¡m thá»i.
      */
     fun revokeGuestPass() {
         val pass = activeGuestPass ?: return
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isGuestPassLoading = true }
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
                 val json = org.json.JSONObject().put("username", pass.username)
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
@@ -2944,24 +2951,26 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     withContext(Dispatchers.Main) {
-                        activeGuestPass = null
-                        guestPassError = null
-                        commonDialogType = if (resp.isSuccessful)
-                            com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                        else
-                            com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                        commonDialogMessage = if (resp.isSuccessful)
-                            "Đã thu hồi Guest Pass của '${pass.username}' thành công!"
-                        else
-                            "Thu hồi có lỗi (${resp.code}), nhưng Pass đã bị xóa khỏi app."
+                        if (resp.isSuccessful) {
+                            activeGuestPass = null
+                            guestPassError = null
+                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                            commonDialogMessage = "Da thu hoi Guest Pass cua '${pass.username}' thanh cong!"
+                            repository.addSystemLog("INFO", "GuestPass", "Da thu hoi Guest FTP user '${pass.username}'")
+                        } else {
+                            guestPassError = "Thu hoi that bai: HTTP ${resp.code}"
+                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
+                            commonDialogMessage = "Thu hoi that bai (HTTP ${resp.code}). Pass duoc giu lai de thu lai."
+                        }
                         showCommonDialog = true
                     }
                 }
-                repository.addSystemLog("INFO", "GuestPass", "Đã thu hồi Guest FTP user '${pass.username}'")
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    activeGuestPass = null // Dù lỗi vẫn xóa khỏi app, người dùng biết phải xóa tay
-                    guestPassError = "Lỗi thu hồi: ${e.message}"
+                    guestPassError = "Loi thu hoi: ${e.message}"
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
+                    commonDialogMessage = "Loi mang khi thu hoi Guest Pass. Pass duoc giu lai de thu lai."
+                    showCommonDialog = true
                 }
             } finally {
                 withContext(Dispatchers.Main) { isGuestPassLoading = false }
@@ -2970,17 +2979,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     // ============ SOCIAL EXTRACTOR (yt-dlp qua NAS API) ============
+    // ============ SOCIAL EXTRACTOR (yt-dlp qua NAS API) ============
 
     /**
-     * Gửi link video tới NAS → NAS chạy yt-dlp ngầm → lưu vào Downloads/social/.
-     * Điện thoại KHÔNG tốn 1MB dung lượng.
+     * Gá»­i link video tá»›i NAS â†’ NAS cháº¡y yt-dlp ngáº§m â†’ lÆ°u vÃ o Downloads/social/.
+     * Äiá»‡n thoáº¡i KHÃ”NG tá»‘n 1MB dung lÆ°á»£ng.
      */
     fun requestSocialDownload(url: String, saveFolder: String = AppConfig.SOCIAL_DOWNLOAD_FOLDER) {
         if (url.isBlank() || isSocialExtracting) return
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 isSocialExtracting = true
-                socialExtractStatus = "Đang gửi lệnh tới NAS..."
+                socialExtractStatus = "Äang gá»­i lá»‡nh tá»›i NAS..."
             }
             try {
                 val host = java.net.URL(webDavManager.currentBaseUrl).host
@@ -2996,7 +3006,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .post(body)
                     .build()
 
-                // Timeout dài hơn vì NAS cần phân giải tên miền + bắt link
+                // Timeout dÃ i hÆ¡n vÃ¬ NAS cáº§n phÃ¢n giáº£i tÃªn miá»n + báº¯t link
                 val ytdlpClient = localApiClient.newBuilder()
                     .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -3010,8 +3020,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     withContext(Dispatchers.Main) {
                         val statusText = when {
-                            isOk -> "✅ NAS đã nhận lệnh tải video!\nVideo sẽ được tải ngầm và lưu vào $saveFolder."
-                            else -> "❌ Lỗi (${resp.code}): ${msg.take(100)}"
+                            isOk -> "âœ… NAS Ä‘Ã£ nháº­n lá»‡nh táº£i video!\nVideo sáº½ Ä‘Æ°á»£c táº£i ngáº§m vÃ  lÆ°u vÃ o $saveFolder."
+                            else -> "âŒ Lá»—i (${resp.code}): ${msg.take(100)}"
                         }
                         socialExtractStatus = statusText
                         val histItem = SocialDownloadItem(url, platform, isOk)
@@ -3021,7 +3031,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog(
                         if (isOk) "SUCCESS" else "ERROR",
                         "SocialExtract",
-                        "[$platform] $url → ${if (isOk) "OK" else "Lỗi ${resp.code}"}"
+                        "[$platform] $url â†’ ${if (isOk) "OK" else "Lá»—i ${resp.code}"}"
                     )
 
                     if (isOk) {
@@ -3033,10 +3043,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    socialExtractStatus = "❌ Lỗi kết nối API: ${e.message?.take(80)}"
-                    socialDownloadHistory = (listOf(SocialDownloadItem(url, "Không rõ", false)) + socialDownloadHistory).take(50)
+                    socialExtractStatus = "âŒ Lá»—i káº¿t ná»‘i API: ${e.message?.take(80)}"
+                    socialDownloadHistory = (listOf(SocialDownloadItem(url, "KhÃ´ng rÃµ", false)) + socialDownloadHistory).take(50)
                 }
-                repository.addSystemLog("ERROR", "SocialExtract", "Lỗi gửi yt-dlp: ${e.message?.take(80)}")
+                repository.addSystemLog("ERROR", "SocialExtract", "Lá»—i gá»­i yt-dlp: ${e.message?.take(80)}")
             } finally {
                 withContext(Dispatchers.Main) { isSocialExtracting = false }
             }
@@ -3077,13 +3087,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     if (!found) {
                         isFinished = true
-                        // Khi job_id không còn trong list, tác vụ tải đã hoàn thành
+                        // Khi job_id khÃ´ng cÃ²n trong list, tÃ¡c vá»¥ táº£i Ä‘Ã£ hoÃ n thÃ nh
                         withContext(Dispatchers.Main) {
-                            commonDialogMessage = "✅ Tải video ($platform) hoàn tất!\nĐã tải xong và lưu vào thư mục $saveFolder"
+                            commonDialogMessage = "âœ… Táº£i video ($platform) hoÃ n táº¥t!\nÄÃ£ táº£i xong vÃ  lÆ°u vÃ o thÆ° má»¥c $saveFolder"
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                             showCommonDialog = true
                         }
-                        repository.addSystemLog("SUCCESS", "SocialDownload", "Tải video $platform hoàn tất. Lưu tại: $saveFolder ($url)")
+                        repository.addSystemLog("SUCCESS", "SocialDownload", "Táº£i video $platform hoÃ n táº¥t. LÆ°u táº¡i: $saveFolder ($url)")
                     }
                 } catch (e: Exception) {
                     consecutiveErrors++
@@ -3100,35 +3110,35 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             lower.contains("facebook") || lower.contains("fb.watch") -> "Facebook"
             lower.contains("youtube") || lower.contains("youtu.be") -> "YouTube"
             lower.contains("instagram") -> "Instagram"
-            else -> "Khác"
+            else -> "KhÃ¡c"
         }
     }
 
     // ============ STREAM PIPING ENGINE ============
     //
-    // Triết lý: Điện thoại = Ống nước (Pipe).
-    //   CDN Server ──[OkHttp GET stream]──▶ Phone RAM buffer ──[WebDAV PUT]──▶ NAS HDD
+    // Triáº¿t lÃ½: Äiá»‡n thoáº¡i = á»ng nÆ°á»›c (Pipe).
+    //   CDN Server â”€â”€[OkHttp GET stream]â”€â”€â–¶ Phone RAM buffer â”€â”€[WebDAV PUT]â”€â”€â–¶ NAS HDD
     //
-    // Điện thoại KHÔNG lưu file. Mỗi chunk 128KB đọc xong bơm lên ngay.
-    // Tổng RAM dùng: ~256KB (2 buffer chunk) bất kể video to bao nhiêu.
+    // Äiá»‡n thoáº¡i KHÃ”NG lÆ°u file. Má»—i chunk 128KB Ä‘á»c xong bÆ¡m lÃªn ngay.
+    // Tá»•ng RAM dÃ¹ng: ~256KB (2 buffer chunk) báº¥t ká»ƒ video to bao nhiÃªu.
 
     /**
-     * Bắt đầu Stream Piping từ [sourceUrl] (link MP4 CDN đã bóc) → WebDAV NAS.
+     * Báº¯t Ä‘áº§u Stream Piping tá»« [sourceUrl] (link MP4 CDN Ä‘Ã£ bÃ³c) â†’ WebDAV NAS.
      *
-     * @param sourceUrl  Link video CDN trực tiếp (đã giải mã, có thể stream)
-     * @param fileName   Tên file lưu trên NAS
+     * @param sourceUrl  Link video CDN trá»±c tiáº¿p (Ä‘Ã£ giáº£i mÃ£, cÃ³ thá»ƒ stream)
+     * @param fileName   TÃªn file lÆ°u trÃªn NAS
      */
     fun startStreamPipe(sourceUrl: String, fileName: String) {
         streamPipeJob?.cancel()
 
         isStreamPiping = true
         streamPipeProgress = 0f
-        streamPipeSpeedStr = "Đang kết nối..."
+        streamPipeSpeedStr = "Äang káº¿t ná»‘i..."
         streamPipeEtaStr = "--"
-        streamPipeStatus = "⏳ Đang truyền video qua tác vụ nền..."
+        streamPipeStatus = "â³ Äang truyá»n video qua tÃ¡c vá»¥ ná»n..."
 
-        // KIẾN TRÚC MỚI: Đẩy sang StreamPipeWorker (Foreground Service)
-        // → Tắt App vẫn bơm video liên tục, Notification hiển thị % tiến trình
+        // KIáº¾N TRÃšC Má»šI: Äáº©y sang StreamPipeWorker (Foreground Service)
+        // â†’ Táº¯t App váº«n bÆ¡m video liÃªn tá»¥c, Notification hiá»ƒn thá»‹ % tiáº¿n trÃ¬nh
         val payloadFile = try {
             val payloadDir = File(NasApplication.instance.cacheDir, "stream_pipe_payloads").apply { mkdirs() }
             val file = File(payloadDir, "stream_${System.currentTimeMillis()}.json")
@@ -3142,7 +3152,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             file
         } catch (e: Exception) {
             isStreamPiping = false
-            streamPipeStatus = "Không thể chuẩn bị tải video: ${e.message}"
+            streamPipeStatus = "KhÃ´ng thá»ƒ chuáº©n bá»‹ táº£i video: ${e.message}"
             return
         }
         val inputData = androidx.work.Data.Builder()
@@ -3161,7 +3171,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         androidx.work.WorkManager.getInstance(context)
             .enqueueUniqueWork("StreamPipe", androidx.work.ExistingWorkPolicy.REPLACE, workRequest)
 
-        // Lắng nghe tiến trình từ Worker
+        // Láº¯ng nghe tiáº¿n trÃ¬nh tá»« Worker
         streamPipeJob = viewModelScope.launch {
             androidx.work.WorkManager.getInstance(context)
                 .getWorkInfoByIdFlow(workRequest.id)
@@ -3179,22 +3189,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             streamPipeProgress = progress.toFloat() / 100f
                             streamPipeSpeedStr = speedStr
                             streamPipeEtaStr = formatEta(etaSec)
-                            streamPipeStatus = "📡 ${formatFileSize(bytesRead)} / ${if (totalBytes > 0) formatFileSize(totalBytes) else "?"}"
+                            streamPipeStatus = "ðŸ“¡ ${formatFileSize(bytesRead)} / ${if (totalBytes > 0) formatFileSize(totalBytes) else "?"}"
                         }
 
                         if (workInfo.state == androidx.work.WorkInfo.State.SUCCEEDED) {
                             streamPipeProgress = 1f
                             isStreamPiping = false
-                            streamPipeStatus = message.ifEmpty { "✅ Hoàn tất!" }
-                            // Lưu lịch sử
+                            streamPipeStatus = message.ifEmpty { "âœ… HoÃ n táº¥t!" }
+                            // LÆ°u lá»‹ch sá»­
                             val platform = detectSocialPlatform(sourceUrl)
                             socialDownloadHistory = (listOf(SocialDownloadItem(sourceUrl, platform, true)) + socialDownloadHistory).take(50)
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             isStreamPiping = false
-                            streamPipeStatus = "❌ ${message.ifEmpty { "Lỗi truyền video" }}"
+                            streamPipeStatus = "âŒ ${message.ifEmpty { "Lá»—i truyá»n video" }}"
                         } else if (workInfo.state == androidx.work.WorkInfo.State.CANCELLED) {
                             isStreamPiping = false
-                            streamPipeStatus = "🛑 Đã hủy bởi người dùng"
+                            streamPipeStatus = "ðŸ›‘ ÄÃ£ há»§y bá»Ÿi ngÆ°á»i dÃ¹ng"
                             streamPipeProgress = 0f
                         }
                     }
@@ -3202,7 +3212,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    /** Hủy Stream Pipe Worker đang chạy giữa chừng. */
+    /** Há»§y Stream Pipe Worker Ä‘ang cháº¡y giá»¯a chá»«ng. */
     fun cancelStreamPipe() {
         val context = NasApplication.instance.applicationContext
         _activeStreamPipeWorkId?.let { id ->
@@ -3210,11 +3220,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
         streamPipeJob?.cancel()
         isStreamPiping = false
-        streamPipeStatus = "🛑 Đã hủy"
+        streamPipeStatus = "ðŸ›‘ ÄÃ£ há»§y"
         streamPipeProgress = 0f
     }
 
-    // ── Format helpers ────────────────────────────────────────────────────────
+    // â”€â”€ Format helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private fun formatFileSize(bytes: Long): String = com.nas.naswebdav.utils.FormatUtils.formatBytes(bytes)
 
     private fun formatEta(seconds: Long): String = when {
@@ -3225,11 +3235,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     // ==========================================
-    // TRẠNG THÁI GIAO DIỆN SMART SYNC
-    // (Đã xóa SmartSync theo yêu cầu tập trung Auto-Backup)
+    // TRáº NG THÃI GIAO DIá»†N SMART SYNC
+    // (ÄÃ£ xÃ³a SmartSync theo yÃªu cáº§u táº­p trung Auto-Backup)
 
     // ==========================================
-    // PHÂN LOẠI VIDEO CŨ (Legacy Videos)
+    // PHÃ‚N LOáº I VIDEO CÅ¨ (Legacy Videos)
     // ==========================================
     var organizingLegacyRunning by mutableStateOf(false)
         private set
@@ -3246,10 +3256,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         organizingLegacyRunning = true
         organizingLegacyResult = null
 
-        // KIẾN TRÚC MỚI: Đẩy sang LongRunningApiWorker (Foreground Service)
+        // KIáº¾N TRÃšC Má»šI: Äáº©y sang LongRunningApiWorker (Foreground Service)
         val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch (_: Exception) {
             organizingLegacyRunning = false
-            organizingLegacyResult = "Lỗi: Chưa kết nối NAS"
+            organizingLegacyResult = "Lá»—i: ChÆ°a káº¿t ná»‘i NAS"
             return
         }
 
@@ -3257,7 +3267,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             .putString("taskType", "ORGANIZE")
             .putString("apiUrl", "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/tools/organize_legacy_videos")
             .putString("jsonBody", "")
-            .putString("taskLabel", "Gom video cũ")
+            .putString("taskLabel", "Gom video cÅ©")
             .build()
 
         val workRequest = androidx.work.OneTimeWorkRequestBuilder<LongRunningApiWorker>()
@@ -3278,11 +3288,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                         if (workInfo.state == androidx.work.WorkInfo.State.SUCCEEDED) {
                             organizingLegacyRunning = false
-                            organizingLegacyResult = message.ifEmpty { "Hoàn tất!" }
+                            organizingLegacyResult = message.ifEmpty { "HoÃ n táº¥t!" }
                             refresh()
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             organizingLegacyRunning = false
-                            organizingLegacyResult = message.ifEmpty { "Lỗi gom video" }
+                            organizingLegacyResult = message.ifEmpty { "Lá»—i gom video" }
                         }
                     }
                 }
@@ -3309,7 +3319,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
 
                         if (apiResponse.isSuccessful && apiResponse.body != null) {
-                            // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
+                            // CHáº¶N Bá»˜ Lá»ŒC RÃC: Náº¿u NAS tráº£ vá» tá»‡p < 2KB thÃ¬ 99% Ä‘Ã³ lÃ  Icon Play bÃ¡o lá»—i, ta tá»« chá»‘i!
                             if (!isVideo && contentLength in 1L..2000L) {
                                 return@withContext false
                             }
@@ -3327,31 +3337,31 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
     }
-    // TÍNH NĂNG: Cập nhật thủ công (Manual Sync)
-    // BO QUÉT RÁC khoi flow nay theo yeu cau user — Sync Anh chi nen chay AutoBackup
+    // TÃNH NÄ‚NG: Cáº­p nháº­t thá»§ cÃ´ng (Manual Sync)
+    // BO QUÃ‰T RÃC khoi flow nay theo yeu cau user â€” Sync Anh chi nen chay AutoBackup
     // (upload anh moi). Quet trung lap la tac vu nang ca cho phone va NAS, chi chay
     // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.
     fun triggerManualBackup(context: android.content.Context) {
         val workManager = androidx.work.WorkManager.getInstance(context)
         isAutoBackupRunning = true
         autoBackupProgress = 0f
-        autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
-        autoBackupSourcePath = "Thiết bị máy trạm"
+        autoBackupCurrentFile = "Äang xáº¿p hÃ ng Ä‘á»“ng bá»™..."
+        autoBackupSourcePath = "Thiáº¿t bá»‹ mÃ¡y tráº¡m"
         autoBackupDestPath = ""
         autoBackupProcessedCount = 0
         autoBackupTotalCount = 0
         autoBackupElapsedTime = 0L
 
-        // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
+        // KÃ­ch hoáº¡t AutoBackup ngay láº­p tá»©c (upload anh dien thoai len NAS)
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
             .addTag("com.nas.naswebdav.AutoBackupWorker")
             .addTag("MANUAL_AUTO_BACKUP")
             .build()
         workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
-        logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
-        // Cập nhật Toast hoặc Trạng thái UI để User biết
+        logUserAction("AutoBackup", "cháº¡y Ä‘á»“ng bá»™ áº£nh thá»§ cÃ´ng lÃªn NAS.")
+        // Cáº­p nháº­t Toast hoáº·c Tráº¡ng thÃ¡i UI Ä‘á»ƒ User biáº¿t
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-        commonDialogMessage = "Đã ra lệnh đồng bộ ảnh lên NAS!"
+        commonDialogMessage = "ÄÃ£ ra lá»‡nh Ä‘á»“ng bá»™ áº£nh lÃªn NAS!"
         showCommonDialog = true
     }
 
@@ -3359,21 +3369,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val newState = !AutoBackupState.isPaused.value
         AutoBackupState.isPaused.value = newState
         autoBackupIsPaused = newState
-        logUserAction("AutoBackup", if (newState) "tam dung Auto-Backup." else "Tiếp tục Đồng bộ tự động.")
+        logUserAction("AutoBackup", if (newState) "tam dung Auto-Backup." else "Tiáº¿p tá»¥c Äá»“ng bá»™ tá»± Ä‘á»™ng.")
     }
 
     // ==========================================
-    // THIẾT LẬP HOẠT ĐỘNG QUẠT (FAN CONTROL)
+    // THIáº¾T Láº¬P HOáº T Äá»˜NG QUáº T (FAN CONTROL)
     // ==========================================
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
         if (isFanModeUpdating) return
-        
-        // Cập nhật Optimistic UI ngay lập tức trên Main Thread để tránh delay 1-5 frames gây chớp (bounce)
         var optimisticStatus = systemStatus.copy(
             fanMode = mode,
             fanStatus = when (mode) {
-                "off" -> "Dừng"
-                "on" -> "Đang chạy 100%"
+                "off" -> "Dung"
+                "on" -> "Dang chay 100%"
                 else -> systemStatus.fanStatus
             }
         )
@@ -3383,7 +3391,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val oldStatus = systemStatus
         systemStatus = optimisticStatus
         isFanModeUpdating = true
-        
+        var requestSucceeded = false
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/fan/control"
@@ -3392,39 +3400,52 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     jsonBody.put("on_temp", onTemp)
                     jsonBody.put("off_temp", offTemp)
                 }
-                
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
                     .url(url)
                     .post(requestBody)
                     .header("Authorization", okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass))
                     .build()
-
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
+                    val tempPart = if (mode == "custom" && onTemp != null && offTemp != null) " (${onTemp.toInt()}C/${offTemp.toInt()}C)" else ""
+                    val resultPart = if (response.isSuccessful) "thanh cong" else "that bai HTTP ${response.code}"
                     repository.addSystemLog(
                         if (response.isSuccessful) "INFO" else "WARNING",
                         "Fan",
-                        "Người dùng: đặt chế độ quạt '$mode'${if (mode == "custom" && onTemp != null && offTemp != null) " (${onTemp.toInt()}°C/${offTemp.toInt()}°C)" else ""} ${if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"}."
+                        "Nguoi dung: dat che do quat '$mode'$tempPart $resultPart."
                     )
                     if (!response.isSuccessful) {
-                        android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: HTTP ${response.code}")
+                        withContext(Dispatchers.Main) { systemStatus = oldStatus }
+                        android.util.Log.e("NasAPI", "Khong dat duoc che do quat: HTTP " + response.code)
+                        return@use
                     }
+                    requestSucceeded = true
                 }
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "Fan", "Người dùng: đặt chế độ quạt '$mode' thất bại: ${e.message?.take(120)}")
-                android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: ${e.message}")
+                withContext(Dispatchers.Main) { systemStatus = oldStatus }
+                repository.addSystemLog("WARNING", "Fan", "Nguoi dung: dat che do quat '$mode' that bai: ${e.message?.take(120) ?: ""}")
+                android.util.Log.e("NasAPI", "Khong dat duoc che do quat: " + (e.message ?: ""))
             } finally {
-                withContext(Dispatchers.Main) { 
-                    isFanModeUpdating = false 
-                    // Chống bounce: bắt đầu đếm 4s SAU KHI API thực sự chạy xong
-                    lastFanModeSettingTime = System.currentTimeMillis()
+                withContext(Dispatchers.Main) {
+                    isFanModeUpdating = false
+                    if (requestSucceeded) {
+                        lastFanModeSettingTime = System.currentTimeMillis()
+                    } else {
+                        systemStatus = oldStatus
+                    }
                 }
             }
         }
     }
-    
+
     override fun onCleared() {
         super.onCleared()
+        metricsPollingJob?.cancel()
+        dashboardRealtimeJob?.cancel()
+        statusJob?.cancel()
+        foregroundRefreshJob?.cancel()
+        streamPipeJob?.cancel()
+        livestreamObserverJob?.cancel()
         try { webSocket?.close(1000, "ViewModel cleared") } catch (_: Exception) {}
     }
 
@@ -3465,7 +3486,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 isCreatingNasConfigBackup = true
-                nasConfigBackupMessage = "Đang tạo backup..."
+                nasConfigBackupMessage = "Äang táº¡o backup..."
             }
             try {
                 val base = currentUrl.toApiBaseUrl()
@@ -3484,17 +3505,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val text = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(text)
                     val msg = if (resp.isSuccessful) {
-                        "Đã tạo: ${json.optString("filename")} (${json.optString("size_human")})"
+                        "ÄÃ£ táº¡o: ${json.optString("filename")} (${json.optString("size_human")})"
                     } else {
-                        "Lỗi tạo backup: ${json.optString("error", "HTTP ${resp.code}")}"
+                        "Lá»—i táº¡o backup: ${json.optString("error", "HTTP ${resp.code}")}"
                     }
-                    repository.addSystemLog(if (resp.isSuccessful) "SUCCESS" else "WARNING", "NasBackup", "Người dùng: tạo backup cấu hình NAS ${if (resp.isSuccessful) "thành công ${json.optString("filename")}" else "thất bại HTTP ${resp.code}"}.")
+                    repository.addSystemLog(if (resp.isSuccessful) "SUCCESS" else "WARNING", "NasBackup", "NgÆ°á»i dÃ¹ng: táº¡o backup cáº¥u hÃ¬nh NAS ${if (resp.isSuccessful) "thÃ nh cÃ´ng ${json.optString("filename")}" else "tháº¥t báº¡i HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
                 }
                 fetchNasConfigBackups()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "NasBackup", "Người dùng: tạo backup cấu hình NAS thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "NasBackup", "NgÆ°á»i dÃ¹ng: táº¡o backup cáº¥u hÃ¬nh NAS tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lá»—i: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
             }
@@ -3514,16 +3535,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val text = resp.body?.string() ?: "{}"
-                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "NasBackup", "Người dùng: xoá backup cấu hình '$filename' ${if (resp.isSuccessful) "thành công" else "thất bại HTTP ${resp.code}"}.")
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "NasBackup", "NgÆ°á»i dÃ¹ng: xoÃ¡ backup cáº¥u hÃ¬nh '$filename' ${if (resp.isSuccessful) "thÃ nh cÃ´ng" else "tháº¥t báº¡i HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) {
-                        nasConfigBackupMessage = if (resp.isSuccessful) "Đã xoá $filename"
-                        else "Lỗi xoá: ${org.json.JSONObject(text).optString("error","HTTP ${resp.code}")}"
+                        nasConfigBackupMessage = if (resp.isSuccessful) "ÄÃ£ xoÃ¡ $filename"
+                        else "Lá»—i xoÃ¡: ${org.json.JSONObject(text).optString("error","HTTP ${resp.code}")}"
                     }
                 }
                 fetchNasConfigBackups()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "NasBackup", "Người dùng: xoá backup '$filename' thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi xoá: ${e.message}" }
+                repository.addSystemLog("WARNING", "NasBackup", "NgÆ°á»i dÃ¹ng: xoÃ¡ backup '$filename' tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lá»—i xoÃ¡: ${e.message}" }
             }
         }
     }
@@ -3533,7 +3554,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 isRestoringNasConfigBackup = true
-                nasConfigBackupMessage = "Đang khôi phục..."
+                nasConfigBackupMessage = "Äang khÃ´i phá»¥c..."
             }
             try {
                 val base = currentUrl.toApiBaseUrl()
@@ -3552,17 +3573,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val text = resp.body?.string() ?: "{}"
                     val json = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
                     val msg = if (resp.isSuccessful) {
-                        "Đã khôi phục ${json.optInt("restored_count")} file. Services restart: " +
+                        "ÄÃ£ khÃ´i phá»¥c ${json.optInt("restored_count")} file. Services restart: " +
                             (json.optJSONArray("services_restarted")?.toString() ?: "(none)")
                     } else {
-                        "Lỗi khôi phục: ${json.optString("error", "HTTP ${resp.code}")}"
+                        "Lá»—i khÃ´i phá»¥c: ${json.optString("error", "HTTP ${resp.code}")}"
                     }
-                    repository.addSystemLog(if (resp.isSuccessful) "WARNING" else "ERROR", "NasBackup", "Người dùng: khôi phục cấu hình từ '$filename' ${if (resp.isSuccessful) "thành công" else "thất bại HTTP ${resp.code}"}.")
+                    repository.addSystemLog(if (resp.isSuccessful) "WARNING" else "ERROR", "NasBackup", "NgÆ°á»i dÃ¹ng: khÃ´i phá»¥c cáº¥u hÃ¬nh tá»« '$filename' ${if (resp.isSuccessful) "thÃ nh cÃ´ng" else "tháº¥t báº¡i HTTP ${resp.code}"}.")
                     withContext(Dispatchers.Main) { nasConfigBackupMessage = msg }
                 }
             } catch (e: Exception) {
-                repository.addSystemLog("ERROR", "NasBackup", "Người dùng: khôi phục cấu hình từ '$filename' thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi khôi phục: ${e.message}" }
+                repository.addSystemLog("ERROR", "NasBackup", "NgÆ°á»i dÃ¹ng: khÃ´i phá»¥c cáº¥u hÃ¬nh tá»« '$filename' tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lá»—i khÃ´i phá»¥c: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
             }
@@ -3570,7 +3591,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     // ============== DISK HEALTH ==============
-    private fun parseDiskHealth(o: org.json.JSONObject): NasConfigBackup? = null  // placeholder unused
 
     private fun jsonToDiskHealth(o: org.json.JSONObject): DiskHealthSample {
         val warnArr = o.optJSONArray("warnings")
@@ -3600,8 +3620,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     fun fetchDiskHealth() {
         if (isFetchingDiskHealth) return
+        isFetchingDiskHealth = true
         viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isFetchingDiskHealth = true }
             try {
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
@@ -3910,16 +3930,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog(
                         if (ok) "INFO" else "WARNING",
                         "BackupSchedule",
-                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} lịch backup (${if (newSchedule.enabled) "bật" else "tắt"}, ${newSchedule.frequency}, ${newSchedule.hour}h, giữ ${newSchedule.retentionCount} bản)."
+                        "NgÆ°á»i dÃ¹ng: ${if (ok) "lÆ°u" else "lÆ°u tháº¥t báº¡i"} lá»‹ch backup (${if (newSchedule.enabled) "báº­t" else "táº¯t"}, ${newSchedule.frequency}, ${newSchedule.hour}h, giá»¯ ${newSchedule.retentionCount} báº£n)."
                     )
                     withContext(Dispatchers.Main) {
-                        backupScheduleMessage = if (ok) "Đã lưu lịch backup" else "Lỗi lưu"
+                        backupScheduleMessage = if (ok) "ÄÃ£ lÆ°u lá»‹ch backup" else "Lá»—i lÆ°u"
                     }
                 }
                 fetchBackupSchedule()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "BackupSchedule", "Người dùng: lưu lịch backup thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "BackupSchedule", "NgÆ°á»i dÃ¹ng: lÆ°u lá»‹ch backup tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { backupScheduleMessage = "Lá»—i: ${e.message}" }
             }
         }
     }
@@ -3998,7 +4018,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             if (reason == "hop le" || reason.startsWith("hop le")) {
                 val label = dev.optString("label", "")
                 val path = dev.optString("path", "")
-                val name = label.ifBlank { path }.ifBlank { "USB Không tên" }
+                val name = label.ifBlank { path }.ifBlank { "USB KhÃ´ng tÃªn" }
                 devices.add(name)
             }
         }
@@ -4007,15 +4027,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     internal suspend fun fetchUsbImportStatusSuspend(compact: Boolean = false, minIntervalMs: Long = 0L) {
         val now = System.currentTimeMillis()
-        if (usbImportStatusInFlight) return
         if (minIntervalMs > 0L && now - lastUsbImportStatusFetchAt < minIntervalMs) return
-        usbImportStatusInFlight = true
+        if (!usbImportStatusInFlight.compareAndSet(false, true)) return
         lastUsbImportStatusFetchAt = now
         withContext(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = true }
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                if (base.isBlank()) throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 val path = if (compact) "/api/usb_import/status?compact=1" else "/api/usb_import/status"
                 val req = okhttp3.Request.Builder()
                     .url("$base$path")
@@ -4024,7 +4043,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
                     if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i táº£i USB Import: HTTP ${resp.code}" }
                         return@use
                     }
                     val state = parseUsbImportState(org.json.JSONObject(body))
@@ -4034,9 +4053,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+                withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i: ${e.message}" }
             } finally {
-                usbImportStatusInFlight = false
+                usbImportStatusInFlight.set(false)
                 withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = false }
             }
         }
@@ -4050,7 +4069,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                if (base.isBlank()) throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 val body = org.json.JSONObject().apply {
                     put("enabled", settings.enabled)
                     put("dest_folder", settings.destFolder)
@@ -4069,7 +4088,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
                     if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi lưu USB Import: HTTP ${resp.code}" }
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i lÆ°u USB Import: HTTP ${resp.code}" }
                         return@use
                     }
                     val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
@@ -4078,17 +4097,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog(
                         if (ok) "INFO" else "WARNING",
                         "USBImport",
-                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} cấu hình USB Import (${if (settings.enabled) "bật" else "tắt"}, ${settings.copyMode}, đích '${settings.destFolder}', readonly=${settings.mountReadonly})."
+                        "NgÆ°á»i dÃ¹ng: ${if (ok) "lÆ°u" else "lÆ°u tháº¥t báº¡i"} cáº¥u hÃ¬nh USB Import (${if (settings.enabled) "báº­t" else "táº¯t"}, ${settings.copyMode}, Ä‘Ã­ch '${settings.destFolder}', readonly=${settings.mountReadonly})."
                     )
                     withContext(Dispatchers.Main) {
                         if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = if (ok) "Đã lưu cấu hình USB Import" else "Lỗi lưu USB Import"
+                        usbImportMessage = if (ok) "ÄÃ£ lÆ°u cáº¥u hÃ¬nh USB Import" else "Lá»—i lÆ°u USB Import"
                     }
                 }
                 fetchUsbImportStatus()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: lưu cấu hình USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: lÆ°u cáº¥u hÃ¬nh USB Import tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i: ${e.message}" }
             }
         }
     }
@@ -4098,7 +4117,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 withContext(Dispatchers.Main) { isUsbImportLoading = true }
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                if (base.isBlank()) throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/start")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
@@ -4107,21 +4126,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
                     if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi bắt đầu USB Import: HTTP ${resp.code}" }
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i báº¯t Ä‘áº§u USB Import: HTTP ${resp.code}" }
                         return@use
                     }
                     val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
                     val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay (${o.optString("message", "không có phản hồi")}).")
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: yÃªu cáº§u copy USB ngay (${o.optString("message", "khÃ´ng cÃ³ pháº£n há»“i")}).")
                     withContext(Dispatchers.Main) {
                         if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã bắt đầu copy USB" else "Không bắt đầu được")
+                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "ÄÃ£ báº¯t Ä‘áº§u copy USB" else "KhÃ´ng báº¯t Ä‘áº§u Ä‘Æ°á»£c")
                     }
                 }
                 fetchUsbImportStatus()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: yÃªu cáº§u copy USB ngay tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
@@ -4133,7 +4152,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 withContext(Dispatchers.Main) { isUsbImportLoading = true }
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                if (base.isBlank()) throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/cancel")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
@@ -4142,21 +4161,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
                     if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi huỷ USB Import: HTTP ${resp.code}" }
+                        withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i huá»· USB Import: HTTP ${resp.code}" }
                         return@use
                     }
                     val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
                     val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: gửi lệnh hủy USB Import (${if (resp.isSuccessful) "đã gửi" else "thất bại"}).")
+                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: gá»­i lá»‡nh há»§y USB Import (${if (resp.isSuccessful) "Ä‘Ã£ gá»­i" else "tháº¥t báº¡i"}).")
                     withContext(Dispatchers.Main) {
                         if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = if (resp.isSuccessful) "Đã gửi lệnh hủy" else "Không hủy được"
+                        usbImportMessage = if (resp.isSuccessful) "ÄÃ£ gá»­i lá»‡nh há»§y" else "KhÃ´ng há»§y Ä‘Æ°á»£c"
                     }
                 }
                 fetchUsbImportStatus()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: há»§y USB Import tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
@@ -4168,7 +4187,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 withContext(Dispatchers.Main) { isUsbImportLoading = true }
                 val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
+                if (base.isBlank()) throw IllegalStateException("ChÆ°a cÃ³ Ä‘á»‹a chá»‰ NAS há»£p lá»‡")
                 val body = org.json.JSONObject().apply {
                     put("action", action)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
@@ -4184,17 +4203,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog(
                         if (resp.isSuccessful) "INFO" else "WARNING",
                         "USBImport",
-                        "Người dùng: xử lý file trùng USB Import bằng $action (${o.optString("message", "không có phản hồi")})."
+                        "NgÆ°á»i dÃ¹ng: xá»­ lÃ½ file trÃ¹ng USB Import báº±ng $action (${o.optString("message", "khÃ´ng cÃ³ pháº£n há»“i")})."
                     )
                     withContext(Dispatchers.Main) {
                         if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã gửi lệnh xử lý file trùng" else "Không xử lý được file trùng")
+                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "ÄÃ£ gá»­i lá»‡nh xá»­ lÃ½ file trÃ¹ng" else "KhÃ´ng xá»­ lÃ½ Ä‘Æ°á»£c file trÃ¹ng")
                     }
                 }
                 fetchUsbImportStatus()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: xử lý file trùng USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "USBImport", "NgÆ°á»i dÃ¹ng: xá»­ lÃ½ file trÃ¹ng USB Import tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { usbImportMessage = "Lá»—i: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
@@ -4255,16 +4274,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog(
                         if (ok) "INFO" else "WARNING",
                         "SleepSchedule",
-                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} lịch ngủ NAS (${if (newSchedule.enabled) "bật" else "tắt"}, ${newSchedule.mode}, ${newSchedule.startHour}h-${newSchedule.endHour}h, idleOnly=${newSchedule.idleOnly})."
+                        "NgÆ°á»i dÃ¹ng: ${if (ok) "lÆ°u" else "lÆ°u tháº¥t báº¡i"} lá»‹ch ngá»§ NAS (${if (newSchedule.enabled) "báº­t" else "táº¯t"}, ${newSchedule.mode}, ${newSchedule.startHour}h-${newSchedule.endHour}h, idleOnly=${newSchedule.idleOnly})."
                     )
                     withContext(Dispatchers.Main) {
-                        sleepScheduleMessage = if (ok) "Đã lưu lịch ngủ NAS" else "Lỗi lưu"
+                        sleepScheduleMessage = if (ok) "ÄÃ£ lÆ°u lá»‹ch ngá»§ NAS" else "Lá»—i lÆ°u"
                     }
                 }
                 fetchSleepSchedule()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "SleepSchedule", "Người dùng: lưu lịch ngủ NAS thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { sleepScheduleMessage = "Lỗi: ${e.message}" }
+                repository.addSystemLog("WARNING", "SleepSchedule", "NgÆ°á»i dÃ¹ng: lÆ°u lá»‹ch ngá»§ NAS tháº¥t báº¡i: ${e.message?.take(120)}")
+                withContext(Dispatchers.Main) { sleepScheduleMessage = "Lá»—i: ${e.message}" }
             }
         }
     }
@@ -4283,12 +4302,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val o = org.json.JSONObject(body)
                     val ok = o.optBoolean("ok", false)
                     val msg = o.optString("msg", "")
-                    repository.addSystemLog(if (ok) "INFO" else "WARNING", "SleepSchedule", "Người dùng: yêu cầu HDD spindown ngay (${if (ok) "thành công" else "thất bại"}: $msg).")
+                    repository.addSystemLog(if (ok) "INFO" else "WARNING", "SleepSchedule", "NgÆ°á»i dÃ¹ng: yÃªu cáº§u HDD spindown ngay (${if (ok) "thÃ nh cÃ´ng" else "tháº¥t báº¡i"}: $msg).")
                     withContext(Dispatchers.Main) { onDone(ok, msg) }
                 }
                 fetchSleepSchedule()
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "SleepSchedule", "Người dùng: yêu cầu HDD spindown ngay thất bại: ${e.message?.take(120)}")
+                repository.addSystemLog("WARNING", "SleepSchedule", "NgÆ°á»i dÃ¹ng: yÃªu cáº§u HDD spindown ngay tháº¥t báº¡i: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { onDone(false, e.message ?: "error") }
             }
         }
@@ -4326,7 +4345,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 } // end class WebDavViewModel
 
-// LỚP PHỤ TRỢ: Bộ đếm Rate Limiter (2.C)
+// Lá»šP PHá»¤ TRá»¢: Bá»™ Ä‘áº¿m Rate Limiter (2.C)
 // FIX: dung ArrayDeque thay vi MutableList. removeAll{} cu phai duyet toan
 // bo list moi lan goi (O(n)); thay bang pollFirst() khi gia tri dau qua han,
 // chi cham vao timestamp con song -> O(k) voi k la so item bi prune.
@@ -4350,21 +4369,21 @@ class RateLimiter(private val maxRequestsPerMinute: Int) {
 
 fun WebDavViewModel.startBackgroundDuplicateScan(context: android.content.Context, forceRestart: Boolean = false, lightningMode: Boolean = true) {
         commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-        commonDialogMessage = "Đã nhận lệnh! Đang khởi động trình quét rác..."
+        commonDialogMessage = "ÄÃ£ nháº­n lá»‡nh! Äang khá»Ÿi Ä‘á»™ng trÃ¬nh quÃ©t rÃ¡c..."
         showCommonDialog = true
 
         isScanningDuplicates = true
         viewModelScope.launch {
-            repository.addSystemLog("INFO", "DuplicateScan", "Hệ thống: Người dùng đã phân công quét thủ công trùng lặp")
+            repository.addSystemLog("INFO", "DuplicateScan", "Há»‡ thá»‘ng: NgÆ°á»i dÃ¹ng Ä‘Ã£ phÃ¢n cÃ´ng quÃ©t thá»§ cÃ´ng trÃ¹ng láº·p")
         }
         if (isWorkerRunning) return
 
         isWorkerRunning = true
-        scanDuplicatesCurrentFolderUrl = "Đang kết nối..."
-        scanDuplicatesCurrentItemName = "Khởi tạo..."
+        scanDuplicatesCurrentFolderUrl = "Äang káº¿t ná»‘i..."
+        scanDuplicatesCurrentItemName = "Khá»Ÿi táº¡o..."
         scanDuplicatesTotalScanned = 0
         scanDuplicatesFound = 0
-        scanDuplicatesStage = "Khởi động..."
+        scanDuplicatesStage = "Khá»Ÿi Ä‘á»™ng..."
 
         scanJob?.cancel()
         scanJob = viewModelScope.launch(Dispatchers.Main) {
@@ -4383,21 +4402,21 @@ fun WebDavViewModel.startBackgroundDuplicateScan(context: android.content.Contex
 
                 workManager.enqueueUniqueWork("Unique_Scan_V3", androidx.work.ExistingWorkPolicy.REPLACE, scanWorkRequest)
 
-                // Luồng: Lắng nghe trạng thái Worker (Thành công, Thất bại)
+                // Luá»“ng: Láº¯ng nghe tráº¡ng thÃ¡i Worker (ThÃ nh cÃ´ng, Tháº¥t báº¡i)
                 workManager.getWorkInfoByIdFlow(scanWorkRequest.id).collect { workInfo ->
                     if (workInfo != null) {
                         if (workInfo.state == androidx.work.WorkInfo.State.SUCCEEDED) {
-                            scanDuplicatesStage = "Hoàn tất"
-                            scanDuplicatesCurrentFolderUrl = "Hoàn tất!"
-                            scanDuplicatesCurrentItemName = "Đã quét xong toàn bộ."
+                            scanDuplicatesStage = "HoÃ n táº¥t"
+                            scanDuplicatesCurrentFolderUrl = "HoÃ n táº¥t!"
+                            scanDuplicatesCurrentItemName = "ÄÃ£ quÃ©t xong toÃ n bá»™."
                             scanDuplicatesPercent = 1f
                             scanDuplicatesCurrentStagePercent = 1f
                             scanDuplicatesStageNumber = 4
-                            scanDuplicatesStageDescription = "Đã quét xong toàn bộ."
+                            scanDuplicatesStageDescription = "ÄÃ£ quÃ©t xong toÃ n bá»™."
                             isWorkerRunning = false
                             loadDuplicateResultsFromCache(context)
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
-                            scanDuplicatesCurrentFolderUrl = "Gặp lỗi hệ thống!"
+                            scanDuplicatesCurrentFolderUrl = "Gáº·p lá»—i há»‡ thá»‘ng!"
                             isWorkerRunning = false
                         } else if (workInfo.state == androidx.work.WorkInfo.State.CANCELLED) {
                             isWorkerRunning = false
@@ -4418,13 +4437,13 @@ fun WebDavViewModel.loadDuplicateResultsFromCache(context: android.content.Conte
                     duplicateFilesList = duplicates
                     isShowingDuplicates = true
                     if (duplicateFilesList.isEmpty()) {
-                        errorMessage = "NAS đang gọn gàng. Không có tệp trùng lặp."
+                        errorMessage = "NAS Ä‘ang gá»n gÃ ng. KhÃ´ng cÃ³ tá»‡p trÃ¹ng láº·p."
                     } else {
                         errorMessage = ""
                     }
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi nạp danh sách từ DB: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "Lá»—i náº¡p danh sÃ¡ch tá»« DB: ${e.message}" }
             }
         }
     }
@@ -4437,12 +4456,12 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                 val driveName = relativePath.substringBefore('/')
                 val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
 
-                // 1. Kiểm tra nếu file đang ở trong thùng rác rồi thì xoá vĩnh viễn
+                // 1. Kiá»ƒm tra náº¿u file Ä‘ang á»Ÿ trong thÃ¹ng rÃ¡c rá»“i thÃ¬ xoÃ¡ vÄ©nh viá»…n
                 if (file.path.contains(TRASH_FOLDER_NAME)) {
                     webDavManager.deleteFile(file.path)
                 } else {
-                    // 2. Nếu chưa, hãy đảm bảo thư mục thùng rác tồn tại và di chuyển vào đó
-                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* Đã tồn tại */ }
+                    // 2. Náº¿u chÆ°a, hÃ£y Ä‘áº£m báº£o thÆ° má»¥c thÃ¹ng rÃ¡c tá»“n táº¡i vÃ  di chuyá»ƒn vÃ o Ä‘Ã³
+                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* ÄÃ£ tá»“n táº¡i */ }
 
                     val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
                     var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
@@ -4456,7 +4475,7 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                     refresh()
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý thùng rác: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "Lá»—i xá»­ lÃ½ thÃ¹ng rÃ¡c: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoading = false }
             }
@@ -4498,7 +4517,7 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
                     refresh()
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý hàng loạt: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "Lá»—i xá»­ lÃ½ hÃ ng loáº¡t: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isLoading = false }
             }
@@ -4534,16 +4553,16 @@ fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) 
 fun WebDavViewModel.scheduleIdleSpeedTest(context: android.content.Context) {
         val workManager = androidx.work.WorkManager.getInstance(context)
         val constraints = androidx.work.Constraints.Builder()
-            .setRequiresDeviceIdle(true) // ĐIỀU KIỆN 1: Điện thoại đang tắt màn hình, không sử dụng
-            .setRequiresCharging(true)   // ĐIỀU KIỆN 2: Đang cắm sạc (Đảm bảo an toàn pin)
-            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // ĐIỀU KIỆN 3: Có Wi-Fi
+            .setRequiresDeviceIdle(true) // ÄIá»€U KIá»†N 1: Äiá»‡n thoáº¡i Ä‘ang táº¯t mÃ n hÃ¬nh, khÃ´ng sá»­ dá»¥ng
+            .setRequiresCharging(true)   // ÄIá»€U KIá»†N 2: Äang cáº¯m sáº¡c (Äáº£m báº£o an toÃ n pin)
+            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // ÄIá»€U KIá»†N 3: CÃ³ Wi-Fi
             .build()
 
         val inputData = androidx.work.workDataOf(
             "currentUrl" to currentUrl
         )
 
-        // CHU KỲ BẢO VỆ Ổ CỨNG: Chỉ lén chạy Stress Test 30 ngày 1 lần để không làm giảm tuổi thọ ổ đĩa
+        // CHU Ká»² Báº¢O Vá»† á»” Cá»¨NG: Chá»‰ lÃ©n cháº¡y Stress Test 30 ngÃ y 1 láº§n Ä‘á»ƒ khÃ´ng lÃ m giáº£m tuá»•i thá» á»• Ä‘Ä©a
         val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
             30, java.util.concurrent.TimeUnit.DAYS
         )
@@ -4553,21 +4572,21 @@ fun WebDavViewModel.scheduleIdleSpeedTest(context: android.content.Context) {
 
         workManager.enqueueUniquePeriodicWork(
             "Auto_Idle_Speed_Test",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP, // Giữ nguyên lịch trình cũ nếu đã tồn tại
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP, // Giá»¯ nguyÃªn lá»‹ch trÃ¬nh cÅ© náº¿u Ä‘Ã£ tá»“n táº¡i
             periodicSpeedTestRequest
         )
     }
 
-// PHASE 5.B: Lên lịch cho FingerprintWorker chạy mồi vân tay ngầm
+// PHASE 5.B: LÃªn lá»‹ch cho FingerprintWorker cháº¡y má»“i vÃ¢n tay ngáº§m
 fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) {
     val workManager = androidx.work.WorkManager.getInstance(context)
     val constraints = androidx.work.Constraints.Builder()
-        .setRequiresDeviceIdle(true) // Tắt màn hình
-        .setRequiresCharging(true)   // Đang sạc
-        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED) // Có mạng
+        .setRequiresDeviceIdle(true) // Táº¯t mÃ n hÃ¬nh
+        .setRequiresCharging(true)   // Äang sáº¡c
+        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED) // CÃ³ máº¡ng
         .build()
 
-    // Chạy mỗi 24 tiếng để tạo vân tay cho các file ảnh/video vừa upload
+    // Cháº¡y má»—i 24 tiáº¿ng Ä‘á»ƒ táº¡o vÃ¢n tay cho cÃ¡c file áº£nh/video vá»«a upload
     val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
         24, java.util.concurrent.TimeUnit.HOURS
     )
@@ -4581,9 +4600,9 @@ fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) 
     )
 }
 /**
- * Tải video từ NAS về cache rồi mở bằng trình phát cục bộ.
- * Đảm bảo mọi định dạng (.mpg, .avi, .wmv, .flv, ...) đều phát được
- * vì file cục bộ không có vấn đề auth hay streaming.
+ * Táº£i video tá»« NAS vá» cache rá»“i má»Ÿ báº±ng trÃ¬nh phÃ¡t cá»¥c bá»™.
+ * Äáº£m báº£o má»i Ä‘á»‹nh dáº¡ng (.mpg, .avi, .wmv, .flv, ...) Ä‘á»u phÃ¡t Ä‘Æ°á»£c
+ * vÃ¬ file cá»¥c bá»™ khÃ´ng cÃ³ váº¥n Ä‘á» auth hay streaming.
  */
 object VideoDownloadHelper {
 
@@ -4591,16 +4610,16 @@ object VideoDownloadHelper {
     private const val VIDEO_CACHE_DIR = "video_temp"
 
     /**
-     * Tải video về cache và mở bằng trình phát bên ngoài.
-     * Hiển thị progress qua callback.
+     * Táº£i video vá» cache vÃ  má»Ÿ báº±ng trÃ¬nh phÃ¡t bÃªn ngoÃ i.
+     * Hiá»ƒn thá»‹ progress qua callback.
      *
-     * @param onProgress Callback (bytesDownloaded, totalBytes) để cập nhật UI
-     * @param onReady Callback khi file đã sẵn sàng phát
-     * @param onError Callback khi có lỗi
+     * @param onProgress Callback (bytesDownloaded, totalBytes) Ä‘á»ƒ cáº­p nháº­t UI
+     * @param onReady Callback khi file Ä‘Ã£ sáºµn sÃ ng phÃ¡t
+     * @param onError Callback khi cÃ³ lá»—i
      */
-    // FIX A3a: Nhận CoroutineScope từ caller thay vì tự tạo CoroutineScope(IO) riêng.
-    // Scope rời rạc sẽ không bao giờ bị cancel khi ViewModel bị destroy → memory leak.
-    // Caller (thường là ViewModel) phải truyền viewModelScope để lifecycle được quản lý đúng.
+    // FIX A3a: Nháº­n CoroutineScope tá»« caller thay vÃ¬ tá»± táº¡o CoroutineScope(IO) riÃªng.
+    // Scope rá»i ráº¡c sáº½ khÃ´ng bao giá» bá»‹ cancel khi ViewModel bá»‹ destroy â†’ memory leak.
+    // Caller (thÆ°á»ng lÃ  ViewModel) pháº£i truyá»n viewModelScope Ä‘á»ƒ lifecycle Ä‘Æ°á»£c quáº£n lÃ½ Ä‘Ãºng.
     fun downloadAndPlay(
         scope: CoroutineScope,
         context: Context,
@@ -4613,39 +4632,39 @@ object VideoDownloadHelper {
     ): Job {
         return scope.launch(Dispatchers.IO) {
             try {
-                // 1. Tạo thư mục cache cho video
+                // 1. Táº¡o thÆ° má»¥c cache cho video
                 val cacheDir = File(context.cacheDir, VIDEO_CACHE_DIR)
                 if (!cacheDir.exists()) cacheDir.mkdirs()
 
-                // Xóa file cũ để giải phóng bộ nhớ (chỉ giữ file mới nhất)
+                // XÃ³a file cÅ© Ä‘á»ƒ giáº£i phÃ³ng bá»™ nhá»› (chá»‰ giá»¯ file má»›i nháº¥t)
                 cacheDir.listFiles()?.forEach { it.delete() }
 
-                // 2. Lấy tên file từ URL
+                // 2. Láº¥y tÃªn file tá»« URL
                 val fileName = url.substringAfterLast('/').substringBefore('?')
                     .let { java.net.URLDecoder.decode(it, "UTF-8") }
                     .replace("[^a-zA-Z0-9._-]".toRegex(), "_")
                 val targetFile = File(cacheDir, fileName)
 
-                Log.i(TAG, "Đang tải: $url → ${targetFile.absolutePath}")
+                Log.i(TAG, "Äang táº£i: $url â†’ ${targetFile.absolutePath}")
 
-                // 3. Tải file từ NAS với xác thực
+                // 3. Táº£i file tá»« NAS vá»›i xÃ¡c thá»±c
                 val request = okhttp3.Request.Builder()
                     .url(url)
                     .header("Authorization", okhttp3.Credentials.basic(user, pass))
                     .build()
 
-                // FIX A3b: Bọc response trong use {} để đảm bảo body luôn được đóng,
-                // kể cả khi exception xảy ra giữa chừng (tránh connection pool exhaustion).
+                // FIX A3b: Bá»c response trong use {} Ä‘á»ƒ Ä‘áº£m báº£o body luÃ´n Ä‘Æ°á»£c Ä‘Ã³ng,
+                // ká»ƒ cáº£ khi exception xáº£y ra giá»¯a chá»«ng (trÃ¡nh connection pool exhaustion).
                 NasApplication.instance.videoStreamingClient
                     .newBuilder()
-                    .readTimeout(600, java.util.concurrent.TimeUnit.SECONDS) // 10 phút cho file lớn
+                    .readTimeout(600, java.util.concurrent.TimeUnit.SECONDS) // 10 phÃºt cho file lá»›n
                     .build()
                     .newCall(request)
                     .execute()
                     .use { response ->
                         if (!response.isSuccessful) {
                             withContext(Dispatchers.Main) {
-                                onError("NAS trả về lỗi: ${response.code}")
+                                onError("NAS tráº£ vá» lá»—i: ${response.code}")
                             }
                             return@use
                         }
@@ -4653,7 +4672,7 @@ object VideoDownloadHelper {
                         val totalBytes = response.header("Content-Length")?.toLongOrNull() ?: -1L
                         var downloadedBytes = 0L
 
-                        // 4. Ghi file ra cache với progress
+                        // 4. Ghi file ra cache vá»›i progress
                         response.body?.byteStream()?.use { input ->
                             targetFile.outputStream().use { output ->
                                 val buffer = ByteArray(131072) // 128KB buffer
@@ -4681,9 +4700,9 @@ object VideoDownloadHelper {
                             }
                         }
 
-                        Log.i(TAG, "Tải xuống hoàn tất: ${downloadedBytes / 1024}KB")
+                        Log.i(TAG, "Táº£i xuá»‘ng hoÃ n táº¥t: ${downloadedBytes / 1024}KB")
 
-                        // 5. Mở file cục bộ bằng trình phát video
+                        // 5. Má»Ÿ file cá»¥c bá»™ báº±ng trÃ¬nh phÃ¡t video
                         withContext(Dispatchers.Main) {
                             onReady()
                             openLocalFile(context, targetFile)
@@ -4691,18 +4710,18 @@ object VideoDownloadHelper {
                     }
 
             } catch (e: CancellationException) {
-                Log.d(TAG, "Đã hủy tải xuống")
+                Log.d(TAG, "ÄÃ£ há»§y táº£i xuá»‘ng")
             } catch (e: Exception) {
-                Log.e(TAG, "Tải xuống thất bại: ${e.message}")
+                Log.e(TAG, "Táº£i xuá»‘ng tháº¥t báº¡i: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    onError("Lỗi tải video: ${e.message}")
+                    onError("Lá»—i táº£i video: ${e.message}")
                 }
             }
         }
     }
 
 
-    /** Mở file video cục bộ bằng trình phát cài trên máy */
+    /** Má»Ÿ file video cá»¥c bá»™ báº±ng trÃ¬nh phÃ¡t cÃ i trÃªn mÃ¡y */
     private fun openLocalFile(context: Context, file: File) {
         try {
             val uri = FileProvider.getUriForFile(
@@ -4711,7 +4730,7 @@ object VideoDownloadHelper {
                 file
             )
 
-            // Xác định MIME type phù hợp
+            // XÃ¡c Ä‘á»‹nh MIME type phÃ¹ há»£p
             val ext = file.extension.lowercase()
             val mimeType = when (ext) {
                 "mp4", "m4v" -> "video/mp4"
@@ -4732,7 +4751,7 @@ object VideoDownloadHelper {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
 
-            val chooser = Intent.createChooser(intent, "Chọn trình phát video")
+            val chooser = Intent.createChooser(intent, "Chá»n trÃ¬nh phÃ¡t video")
             chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(chooser)
         } catch (e: Exception) {
@@ -4741,9 +4760,9 @@ object VideoDownloadHelper {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// SystemMonitorHelper — Extension functions cho WebDavViewModel
-// ════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// SystemMonitorHelper â€” Extension functions cho WebDavViewModel
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 fun WebDavViewModel.listenToLocalNasApi() {
     statusJob?.cancel()
@@ -4761,10 +4780,10 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             currentDelayMs = 5000L
                             val latency = System.currentTimeMillis() - startedAt
                             val jsonObject = org.json.JSONObject(response.body?.string() ?: "{}")
-                            val tempRaw = jsonObject.optString("temperature", "--°C")
-                            val temp = if (tempRaw != "--°C" && !tempRaw.contains("°")) "${tempRaw}°C" else tempRaw
+                            val tempRaw = jsonObject.optString("temperature", "--Â°C")
+                            val temp = if (tempRaw != "--Â°C" && !tempRaw.contains("Â°")) "${tempRaw}Â°C" else tempRaw
                             val cpu = jsonObject.optString("cpu", "--%")
-                            val cpuTemp = jsonObject.optString("cpu_temp", "--°C")
+                            val cpuTemp = jsonObject.optString("cpu_temp", "--Â°C")
                             var ram = jsonObject.optString("ram", "--")
                             if (ram == "--" || ram.isBlank()) {
                                 val u = jsonObject.optString("ram_used", "").ifBlank { jsonObject.optString("mem_used", "") }
@@ -4778,7 +4797,7 @@ fun WebDavViewModel.listenToLocalNasApi() {
                             var ramPercent = jsonObject.optString("ram_percent", "0")
                             if ((ramPercent == "0" || ramPercent.isBlank()) && ram.contains("/")) { val memPercentApi = jsonObject.optString("mem_percent", ""); if (memPercentApi.isNotBlank()) ramPercent = memPercentApi }
                             val torrentList = mutableListOf<TorrentInfo>()
-                            jsonObject.optJSONArray("torrents")?.let { arr -> for (i in 0 until arr.length()) { val tObj = arr.getJSONObject(i); torrentList.add(TorrentInfo(tObj.optString("name", "Đang tải..."), tObj.optDouble("progress", 0.0).toFloat(), tObj.optString("speed", "0 B/s"), tObj.optString("hash", ""), tObj.optString("state", ""), tObj.optString("save_path", ""))) } }
+                            jsonObject.optJSONArray("torrents")?.let { arr -> for (i in 0 until arr.length()) { val tObj = arr.getJSONObject(i); torrentList.add(TorrentInfo(tObj.optString("name", "Äang táº£i..."), tObj.optDouble("progress", 0.0).toFloat(), tObj.optString("speed", "0 B/s"), tObj.optString("hash", ""), tObj.optString("state", ""), tObj.optString("save_path", ""))) } }
                             val diskPartList = mutableListOf<DiskPart>()
                             jsonObject.optJSONArray("disk_parts")?.let { arr -> for (i in 0 until arr.length()) { val dObj = arr.getJSONObject(i); diskPartList.add(DiskPart(dObj.optString("mount", "/"), dObj.optDouble("percent", 0.0).toFloat(), dObj.optString("total", "0GB"), dObj.optString("used", "0GB"))) } }
                             val fanStatus = jsonObject.optString("fan_status", "--")
@@ -4795,11 +4814,11 @@ fun WebDavViewModel.listenToLocalNasApi() {
                                 apiLatencyMs = latency
                                 apiFailureCount = 0
                                 lastStatusRefreshAt = System.currentTimeMillis()
-                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 15s (để chờ NAS xử lý service tốn thời gian)
+                                // CHá»NG BOUNCE (Debounce): Bá» qua cáº­p nháº­t tráº¡ng thÃ¡i quáº¡t tá»« API náº¿u Ä‘ang gá»­i lá»‡nh HOáº¶C vá»«a set thá»§ cÃ´ng < 15s (Ä‘á»ƒ chá» NAS xá»­ lÃ½ service tá»‘n thá»i gian)
                                 if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 15000L) {
                                     systemStatus = newStatus.copy(
                                         fanMode = systemStatus.fanMode,
-                                        fanStatus = systemStatus.fanStatus, // Bảo toàn chuỗi trạng thái tốc độ quạt ảo
+                                        fanStatus = systemStatus.fanStatus, // Báº£o toÃ n chuá»—i tráº¡ng thÃ¡i tá»‘c Ä‘á»™ quáº¡t áº£o
                                         fanOnTemp = systemStatus.fanOnTemp,
                                         fanOffTemp = systemStatus.fanOffTemp
                                     )
@@ -4808,24 +4827,24 @@ fun WebDavViewModel.listenToLocalNasApi() {
                                 }
                                 
                                 if (hddVal > 0f || cpuVal > 0f) {
-                                    // FIX: temperatureHistory boc trong mutableStateOf — in-place
+                                    // FIX: temperatureHistory boc trong mutableStateOf â€” in-place
                                     // addLast khong trigger recompose. Phai reassign de Compose biet.
-                                    val next = kotlin.collections.ArrayDeque(temperatureHistory)
-                                    next.addLast(Pair(cpuVal, hddVal))
-                                    while (next.size > 40) next.removeFirst()
-                                    temperatureHistory = next
+                                    temperatureHistory.add(Pair(cpuVal, hddVal))
+
+                                    while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
+
                                 }
                             }
                         } else {
-                            withContext(Dispatchers.Main) { apiFailureCount += 1; systemStatus = systemStatus.copy(status = "API từ chối") }
+                            withContext(Dispatchers.Main) { apiFailureCount += 1; systemStatus = systemStatus.copy(status = "API tá»« chá»‘i") }
                             currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
                         }
                     }
                 }
             } catch (e: Exception) {
                 val isTimeout = e is java.net.SocketTimeoutException || e is java.net.ConnectException
-                val msg = if (isTimeout) "Mất kết nối API (${e.javaClass.simpleName})" else "API: ${e.javaClass.simpleName}"
-                android.util.Log.w("NAS_API", "Theo dõi ping thất bại: ${e.message}")
+                val msg = if (isTimeout) "Máº¥t káº¿t ná»‘i API (${e.javaClass.simpleName})" else "API: ${e.javaClass.simpleName}"
+                android.util.Log.w("NAS_API", "Theo dÃµi ping tháº¥t báº¡i: ${e.message}")
                 withContext(Dispatchers.Main) { apiFailureCount += 1; systemStatus = systemStatus.copy(status = msg) }
                 currentDelayMs = (currentDelayMs * 1.5).toLong().coerceAtMost(60_000L)
             }
@@ -4918,10 +4937,10 @@ fun WebDavViewModel.fetchWeeklyReport() {
             localApiClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")
-                    withContext(Dispatchers.Main) { weeklyReportText = "Tuần qua: Chặn ${json.optInt("banned_count", 0)} IP tấn công. Dọn rác giải phóng ${json.optString("freed_space", "0 MB")}." }
+                    withContext(Dispatchers.Main) { weeklyReportText = "Tuáº§n qua: Cháº·n ${json.optInt("banned_count", 0)} IP táº¥n cÃ´ng. Dá»n rÃ¡c giáº£i phÃ³ng ${json.optString("freed_space", "0 MB")}." }
                 }
             }
-        } catch (_: Exception) { withContext(Dispatchers.Main) { weeklyReportText = "Chưa có báo cáo tuần này." } }
+        } catch (_: Exception) { withContext(Dispatchers.Main) { weeklyReportText = "ChÆ°a cÃ³ bÃ¡o cÃ¡o tuáº§n nÃ y." } }
     }
 }
 
@@ -4966,7 +4985,7 @@ fun WebDavViewModel.loadSystemLogs() {
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("NasAPI", "Không tải được nhật ký từ NAS: ${e.message}")
+            android.util.Log.e("NasAPI", "KhÃ´ng táº£i Ä‘Æ°á»£c nháº­t kÃ½ tá»« NAS: ${e.message}")
         }
         allLogs.sortByDescending { it.timestamp }
         withContext(Dispatchers.Main) { 
@@ -4986,16 +5005,16 @@ fun WebDavViewModel.clearSystemLogs() {
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
-                        android.util.Log.e("NasAPI", "Lỗi xóa server logs: ${resp.code}")
+                        android.util.Log.e("NasAPI", "Lá»—i xÃ³a server logs: ${resp.code}")
                     }
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("NasAPI", "Không xóa được nhật ký trên NAS: ${e.message}")
+            android.util.Log.e("NasAPI", "KhÃ´ng xÃ³a Ä‘Æ°á»£c nháº­t kÃ½ trÃªn NAS: ${e.message}")
         }
         withContext(Dispatchers.Main) { 
             systemLogsList = emptyList()
-            commonDialogMessage = "Đã dọn sạch nhật ký hệ thống."
+            commonDialogMessage = "ÄÃ£ dá»n sáº¡ch nháº­t kÃ½ há»‡ thá»‘ng."
             showCommonDialog = true 
         } 
     } 
@@ -5010,12 +5029,12 @@ fun WebDavViewModel.fetchSmartData() {
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "")
                     withContext(Dispatchers.Main) {
-                        smartInfo = SmartInfo(status = json.optString("status", "Không rõ"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
+                        smartInfo = SmartInfo(status = json.optString("status", "KhÃ´ng rÃµ"), temperature = run { val rawTemp = json.optString("temperature", "--"); if (rawTemp != "--" && !rawTemp.contains("Â°")) "${rawTemp}Â°C" else rawTemp }, rawLog = json.optString("raw_log", ""))
                         lastSmartRefreshAt = System.currentTimeMillis()
                     }
-                } else withContext(Dispatchers.Main) { smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}") }
+                } else withContext(Dispatchers.Main) { smartInfo = SmartInfo("Lá»—i káº¿t ná»‘i", "--", "MÃ£ lá»—i: ${response.code}") }
             }
-        } catch (e: Exception) { withContext(Dispatchers.Main) { smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "") } }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { smartInfo = SmartInfo("KhÃ´ng thá»ƒ káº¿t ná»‘i", "--", e.message ?: "") } }
     }
 }
 
@@ -5082,17 +5101,17 @@ fun WebDavViewModel.fetchOmvOverview() {
 }
 
 fun WebDavViewModel.runSpeedTest() {
-    if (isTestingSpeed) return; isTestingSpeed = true; speedTestResult = SpeedTestResult("Đang đo...", "Đang đo...")
+    if (isTestingSpeed) return; isTestingSpeed = true; speedTestResult = SpeedTestResult("Äang Ä‘o...", "Äang Ä‘o...")
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
             val speedTestClient = localApiClient.newBuilder().readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
             speedTestClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: ""); withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult(json.optString("write_speed", "Lỗi"), json.optString("read_speed", "Lỗi")) } }
-                else withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Thất bại", "Thất bại") }
+                if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: ""); withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult(json.optString("write_speed", "Lá»—i"), json.optString("read_speed", "Lá»—i")) } }
+                else withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Tháº¥t báº¡i", "Tháº¥t báº¡i") }
             }
-        } catch (e: Exception) { withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Lỗi", "Lỗi") }; repository.addSystemLog("ERROR", "SpeedTest", "Đo tốc độ thất bại: ${e.message?.take(80)}") }
+        } catch (e: Exception) { withContext(Dispatchers.Main) { speedTestResult = SpeedTestResult("Lá»—i", "Lá»—i") }; repository.addSystemLog("ERROR", "SpeedTest", "Äo tá»‘c Ä‘á»™ tháº¥t báº¡i: ${e.message?.take(80)}") }
         finally { withContext(Dispatchers.Main) { isTestingSpeed = false } }
     }
 }
@@ -5109,9 +5128,9 @@ fun WebDavViewModel.sendWakeOnLan(
         val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr, preferredHost)
         val logType = if (result.success) "INFO" else "ERROR"
         val logMessage = if (result.success) {
-            "Người dùng đã gửi Wake-on-LAN đánh thức NAS tại MAC ${macStr.trim()}: ${result.message}"
+            "NgÆ°á»i dÃ¹ng Ä‘Ã£ gá»­i Wake-on-LAN Ä‘Ã¡nh thá»©c NAS táº¡i MAC ${macStr.trim()}: ${result.message}"
         } else {
-            "Gửi Wake-on-LAN tới MAC ${macStr.trim()} thất bại: ${result.message}"
+            "Gá»­i Wake-on-LAN tá»›i MAC ${macStr.trim()} tháº¥t báº¡i: ${result.message}"
         }
         repository.addSystemLog(logType, "Power", logMessage)
         withContext(Dispatchers.Main) { onResult?.invoke(result) }
@@ -5129,7 +5148,7 @@ private suspend fun WebDavViewModel.refreshWakeOnLanMacFromNas(): String? {
             persistDetectedWakeOnLanMac(network)
         }
     } catch (e: Exception) {
-        android.util.Log.w("WOL", "Không thể lấy MAC Wake-on-LAN trước khi tắt nguồn: ${e.message}")
+        android.util.Log.w("WOL", "KhÃ´ng thá»ƒ láº¥y MAC Wake-on-LAN trÆ°á»›c khi táº¯t nguá»“n: ${e.message}")
         null
     }
 }
@@ -5142,30 +5161,30 @@ fun WebDavViewModel.sendCommandToNas(
         try {
             val host = java.net.URL(webDavManager.currentBaseUrl).host
             val isSleepCommand = endpoint.contains("shutdown") || endpoint.contains("suspend")
-            val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; isSleepCommand -> "Ngủ"; else -> endpoint }
+            val cmdName = when { endpoint.contains("reboot") -> "Khá»Ÿi Ä‘á»™ng láº¡i"; isSleepCommand -> "Ngá»§"; else -> endpoint }
             val savedMac = if (isSleepCommand) refreshWakeOnLanMacFromNas() else null
             if (savedMac != null) {
-                repository.addSystemLog("INFO", "Power", "Đã lưu MAC Wake-on-LAN $savedMac trước khi đưa NAS vào chế độ ngủ")
+                repository.addSystemLog("INFO", "Power", "ÄÃ£ lÆ°u MAC Wake-on-LAN $savedMac trÆ°á»›c khi Ä‘Æ°a NAS vÃ o cháº¿ Ä‘á»™ ngá»§")
             }
-            repository.addSystemLog("WARNING", "Power", "Đã gửi lệnh $cmdName NAS tại $host")
+            repository.addSystemLog("WARNING", "Power", "ÄÃ£ gá»­i lá»‡nh $cmdName NAS táº¡i $host")
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
             localApiClient.newCall(request).execute().use { response ->
                 val ok = response.isSuccessful
                 val suffix = if (isSleepCommand && savedMac != null) " MAC WOL: $savedMac." else ""
                 withContext(Dispatchers.Main) {
-                    onResult?.invoke(ok, if (ok) "Đã gửi lệnh $cmdName NAS.$suffix" else "NAS từ chối lệnh $cmdName (HTTP ${response.code}).")
+                    onResult?.invoke(ok, if (ok) "ÄÃ£ gá»­i lá»‡nh $cmdName NAS.$suffix" else "NAS tá»« chá»‘i lá»‡nh $cmdName (HTTP ${response.code}).")
                 }
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                onResult?.invoke(false, "Không gửi được lệnh nguồn: ${e.message ?: "lỗi mạng"}")
+                onResult?.invoke(false, "KhÃ´ng gá»­i Ä‘Æ°á»£c lá»‡nh nguá»“n: ${e.message ?: "lá»—i máº¡ng"}")
             }
         }
     }
 }
 
 /**
- * Gui lenh power (reboot/shutdown) tu man LoginScreen — KHONG yeu cau da connect.
+ * Gui lenh power (reboot/shutdown) tu man LoginScreen â€” KHONG yeu cau da connect.
  * Dung khi NAS bi loi khong dang nhap duoc nhung van phai khoi dong lai duoc tu xa.
  * Truyen truc tiep IP + user + pass tu form, tu build URL va header auth, khong dua
  * vao webDavManager.currentBaseUrl (luc nay co the rong vi chua connect).
@@ -5181,7 +5200,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
         try {
             val trimmed = ipInput.trim()
             if (trimmed.isEmpty()) {
-                withContext(Dispatchers.Main) { onResult(false, "Vui lòng nhập IP của NAS") }
+                withContext(Dispatchers.Main) { onResult(false, "Vui lÃ²ng nháº­p IP cá»§a NAS") }
                 return@launch
             }
             // Tu IP -> http://<ip>:<API_PORT>
@@ -5190,9 +5209,9 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
             } else trimmed.substringBefore(":")
             val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
             val cmdName = when {
-                endpoint.contains("reboot") -> "Khởi động lại"
-                endpoint.contains("suspend") -> "Ngủ"
-                endpoint.contains("shutdown") -> "Tắt nguồn"
+                endpoint.contains("reboot") -> "Khá»Ÿi Ä‘á»™ng láº¡i"
+                endpoint.contains("suspend") -> "Ngá»§"
+                endpoint.contains("shutdown") -> "Táº¯t nguá»“n"
                 else -> endpoint
             }
             val reqBuilder = okhttp3.Request.Builder()
@@ -5203,7 +5222,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
             }
             // Dung fastApiClient cua NasApplication (KHONG dung localApiClient
             // vi localApiClient co interceptor doc webDavManager.currentUser/pass
-            // — luc nay con rong vi chua connect)
+            // â€” luc nay con rong vi chua connect)
             val client = NasApplication.instance.fastApiClient.newBuilder()
                 .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -5212,14 +5231,14 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
                 val ok = resp.isSuccessful
                 val code = resp.code
                 withContext(Dispatchers.Main) {
-                    if (ok) onResult(true, "Đã gửi lệnh $cmdName NAS!")
-                    else onResult(false, "NAS từ chối (HTTP $code) — kiểm tra IP/tài khoản/mật khẩu")
+                    if (ok) onResult(true, "ÄÃ£ gá»­i lá»‡nh $cmdName NAS!")
+                    else onResult(false, "NAS tá»« chá»‘i (HTTP $code) â€” kiá»ƒm tra IP/tÃ i khoáº£n/máº­t kháº©u")
                 }
-                try { repository.addSystemLog("WARNING", "Power", "LoginScreen: gửi $cmdName NAS tại $host (HTTP $code)") } catch (_: Exception) {}
+                try { repository.addSystemLog("WARNING", "Power", "LoginScreen: gá»­i $cmdName NAS táº¡i $host (HTTP $code)") } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                onResult(false, "Không kết nối được NAS: ${e.message?.take(80) ?: "lỗi mạng"}")
+                onResult(false, "KhÃ´ng káº¿t ná»‘i Ä‘Æ°á»£c NAS: ${e.message?.take(80) ?: "lá»—i máº¡ng"}")
             }
         }
     }
@@ -5244,7 +5263,7 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").post(body).build()
             val client = localApiClient.newBuilder().readTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
             client.newCall(request).execute().use { response ->
-                repository.addSystemLog(if (response.isSuccessful) "INFO" else "WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent ${if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"}.")
+                repository.addSystemLog(if (response.isSuccessful) "INFO" else "WARNING", "Docker", "NgÆ°á»i dÃ¹ng: ${if (turnOn) "báº­t" else "táº¯t"} Docker/qBittorrent ${if (response.isSuccessful) "thÃ nh cÃ´ng" else "tháº¥t báº¡i HTTP ${response.code}"}.")
                 if (response.isSuccessful) {
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")
                     val running = json.optBoolean("running", json.optBoolean("effective_running", false))
@@ -5253,7 +5272,7 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
             }
             checkDockerStatus()
         } catch (e: Exception) {
-            repository.addSystemLog("WARNING", "Docker", "Người dùng: ${if (turnOn) "bật" else "tắt"} Docker/qBittorrent thất bại: ${e.message?.take(120)}")
+            repository.addSystemLog("WARNING", "Docker", "NgÆ°á»i dÃ¹ng: ${if (turnOn) "báº­t" else "táº¯t"} Docker/qBittorrent tháº¥t báº¡i: ${e.message?.take(120)}")
         }
         withContext(Dispatchers.Main) { isTogglingDocker = false }
     }
@@ -5275,7 +5294,7 @@ fun WebDavViewModel.toggleOmvService(serviceName: String, enable: Boolean) {
                 val ok = response.isSuccessful
                 withContext(Dispatchers.Main) {
                     commonDialogType = if (ok) com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                    commonDialogMessage = if (ok) "Đã ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()}." else "Không thể ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()} (HTTP ${response.code})."
+                    commonDialogMessage = if (ok) "ÄÃ£ ${if (enable) "báº­t" else "táº¯t"} dá»‹ch vá»¥ ${serviceName.uppercase()}." else "KhÃ´ng thá»ƒ ${if (enable) "báº­t" else "táº¯t"} dá»‹ch vá»¥ ${serviceName.uppercase()} (HTTP ${response.code})."
                     showCommonDialog = true
                 }
             }
@@ -5283,7 +5302,7 @@ fun WebDavViewModel.toggleOmvService(serviceName: String, enable: Boolean) {
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                commonDialogMessage = "Lỗi điều khiển dịch vụ: ${e.message?.take(120)}"
+                commonDialogMessage = "Lá»—i Ä‘iá»u khiá»ƒn dá»‹ch vá»¥: ${e.message?.take(120)}"
                 showCommonDialog = true
             }
         }
@@ -5298,7 +5317,7 @@ fun WebDavViewModel.approveDeviceIp(ip: String) {
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", true) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "Đã cấp quyền truy cập cho IP: $ip"; showCommonDialog = true }
+            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "ÄÃ£ cáº¥p quyá»n truy cáº­p cho IP: $ip"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
 }
@@ -5311,7 +5330,7 @@ fun WebDavViewModel.denyDeviceIp(ip: String) {
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", false) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "Đã chặn quyền truy cập của IP: $ip"; showCommonDialog = true }
+            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "ÄÃ£ cháº·n quyá»n truy cáº­p cá»§a IP: $ip"; showCommonDialog = true }
         } catch (_: Exception) {}
     }
 }
@@ -5342,9 +5361,9 @@ fun WebDavViewModel.controlDockerContainer(action: String, containerName: String
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// LAN WHITELIST API — Tách logic mạng ra khỏi @Composable
-// ════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// LAN WHITELIST API â€” TÃ¡ch logic máº¡ng ra khá»i @Composable
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 fun WebDavViewModel.loadLanWhitelist() {
     viewModelScope.launch(Dispatchers.IO) {
@@ -5366,11 +5385,11 @@ fun WebDavViewModel.loadLanWhitelist() {
                     if (subsArr != null) { for (i in 0 until subsArr.length()) subnets.add(subsArr.getString(i)) }
                     withContext(Dispatchers.Main) { lanWhitelistIps = ips; lanWhitelistSubnets = subnets }
                 } else {
-                    withContext(Dispatchers.Main) { lanWhitelistError = "Lỗi: ${response.code}" }
+                    withContext(Dispatchers.Main) { lanWhitelistError = "Lá»—i: ${response.code}" }
                 }
             }
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { lanWhitelistError = "Lỗi kết nối: ${e.message}" }
+            withContext(Dispatchers.Main) { lanWhitelistError = "Lá»—i káº¿t ná»‘i: ${e.message}" }
         } finally {
             withContext(Dispatchers.Main) { lanWhitelistLoading = false }
         }
@@ -5381,11 +5400,11 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
     viewModelScope.launch(Dispatchers.IO) {
         var isSuccessLocally = false
         try {
-            withContext(Dispatchers.Main) { lanWhitelistStatus = "Đang thêm..." }
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "Äang thÃªm..." }
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
             val isSubnet = entry.contains("/")
-            // FIX B3: Dùng JSONObject.put() thay vì string interpolation để tránh JSON injection
-            // nếu entry chứa ký tự đặc biệt như dấu ngoặc kép hoặc backslash.
+            // FIX B3: DÃ¹ng JSONObject.put() thay vÃ¬ string interpolation Ä‘á»ƒ trÃ¡nh JSON injection
+            // náº¿u entry chá»©a kÃ½ tá»± Ä‘áº·c biá»‡t nhÆ° dáº¥u ngoáº·c kÃ©p hoáº·c backslash.
             val bodyJson = org.json.JSONObject().apply {
                 if (isSubnet) put("subnet", entry) else put("ip", entry)
             }.toString()
@@ -5397,17 +5416,17 @@ fun WebDavViewModel.addLanWhitelistEntry(entry: String) {
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful) {
                         isSuccessLocally = true
-                        lanWhitelistStatus = "✅ Đã thêm $entry"
-                        repository.addSystemLog("INFO", "Network", "Người dùng đã THÊM IP/Subnet '$entry' vào danh sách LAN Whitelist.")
+                        lanWhitelistStatus = "âœ… ÄÃ£ thÃªm $entry"
+                        repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng Ä‘Ã£ THÃŠM IP/Subnet '$entry' vÃ o danh sÃ¡ch LAN Whitelist.")
                     } else {
-                        lanWhitelistStatus = "❌ Lỗi: ${response.code}"
-                        repository.addSystemLog("WARNING", "Network", "Cố gắng thêm IP/Subnet '$entry' vào LAN Whitelist thất bại.")
+                        lanWhitelistStatus = "âŒ Lá»—i: ${response.code}"
+                        repository.addSystemLog("WARNING", "Network", "Cá»‘ gáº¯ng thÃªm IP/Subnet '$entry' vÃ o LAN Whitelist tháº¥t báº¡i.")
                     }
                 }
             }
             if (isSuccessLocally) loadLanWhitelist()
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { lanWhitelistStatus = "❌ ${e.message}" }
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "âŒ ${e.message}" }
         }
     }
 }
@@ -5416,9 +5435,9 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
     viewModelScope.launch(Dispatchers.IO) {
         var isSuccessLocally = false
         try {
-            withContext(Dispatchers.Main) { lanWhitelistStatus = "Đang xóa..." }
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "Äang xÃ³a..." }
             val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
-            // FIX B3: Dùng JSONObject.put() thay vì string interpolation.
+            // FIX B3: DÃ¹ng JSONObject.put() thay vÃ¬ string interpolation.
             val bodyJson = org.json.JSONObject().apply {
                 if (isSubnet) put("subnet", entry) else put("ip", entry)
             }.toString()
@@ -5430,24 +5449,24 @@ fun WebDavViewModel.removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
                 withContext(Dispatchers.Main) {
                     if (response.isSuccessful) {
                         isSuccessLocally = true
-                        lanWhitelistStatus = "✅ Đã xóa $entry"
-                        repository.addSystemLog("INFO", "Network", "Người dùng đã XÓA IP/Subnet '$entry' khỏi danh sách LAN Whitelist.")
+                        lanWhitelistStatus = "âœ… ÄÃ£ xÃ³a $entry"
+                        repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng Ä‘Ã£ XÃ“A IP/Subnet '$entry' khá»i danh sÃ¡ch LAN Whitelist.")
                     } else {
-                        lanWhitelistStatus = "❌ Lỗi: ${response.code}"
-                        repository.addSystemLog("WARNING", "Network", "Cố gắng xóa IP/Subnet '$entry' khỏi LAN Whitelist thất bại.")
+                        lanWhitelistStatus = "âŒ Lá»—i: ${response.code}"
+                        repository.addSystemLog("WARNING", "Network", "Cá»‘ gáº¯ng xÃ³a IP/Subnet '$entry' khá»i LAN Whitelist tháº¥t báº¡i.")
                     }
                 }
             }
             if (isSuccessLocally) loadLanWhitelist()
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { lanWhitelistStatus = "❌ ${e.message}" }
+            withContext(Dispatchers.Main) { lanWhitelistStatus = "âŒ ${e.message}" }
         }
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// SMART ORGANIZER API — Tách logic mạng ra khỏi @Composable
-// ════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// SMART ORGANIZER API â€” TÃ¡ch logic máº¡ng ra khá»i @Composable
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 fun WebDavViewModel.smartOrganizeScan(filter: OrganizerFilter) {
     viewModelScope.launch(Dispatchers.IO) {
@@ -5499,15 +5518,15 @@ fun WebDavViewModel.smartOrganizeScan(filter: OrganizerFilter) {
                             }
                             organizerScanResult = groups
                         } catch (e: Exception) {
-                            organizerError = "Lỗi phân tích: ${e.message}"
+                            organizerError = "Lá»—i phÃ¢n tÃ­ch: ${e.message}"
                         }
                     } else {
-                        organizerError = "Lỗi NAS: ${response.code}"
+                        organizerError = "Lá»—i NAS: ${response.code}"
                     }
                 }
             }
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" }
+            withContext(Dispatchers.Main) { organizerError = "Lá»—i káº¿t ná»‘i: ${e.message}" }
         } finally {
             withContext(Dispatchers.Main) { organizerScanning = false }
         }
@@ -5545,20 +5564,20 @@ fun WebDavViewModel.smartOrganizeExecute(filter: OrganizerFilter) {
                         try {
                             val json = org.json.JSONObject(responseBody)
                             val count = json.optInt("moved_count", 0)
-                            organizerResult = "Hoàn tất · $count tệp đã sắp xếp"
+                            organizerResult = "HoÃ n táº¥t Â· $count tá»‡p Ä‘Ã£ sáº¯p xáº¿p"
                             organizerScanResult = null
                         } catch (e: Exception) {
-                            organizerError = "Lỗi phản hồi: ${e.message}"
+                            organizerError = "Lá»—i pháº£n há»“i: ${e.message}"
                         }
                     } else {
-                        organizerError = "Lỗi NAS: ${response.code}"
+                        organizerError = "Lá»—i NAS: ${response.code}"
                     }
                 }
             }
-            // Refresh file list sau khi sắp xếp xong
+            // Refresh file list sau khi sáº¯p xáº¿p xong
             refresh()
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" }
+            withContext(Dispatchers.Main) { organizerError = "Lá»—i káº¿t ná»‘i: ${e.message}" }
         } finally {
             withContext(Dispatchers.Main) { organizerExecuting = false }
         }
@@ -5567,9 +5586,9 @@ fun WebDavViewModel.smartOrganizeExecute(filter: OrganizerFilter) {
 
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// PerformanceMonitor — Giám sát hiệu năng ứng dụng
-// ════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// PerformanceMonitor â€” GiÃ¡m sÃ¡t hiá»‡u nÄƒng á»©ng dá»¥ng
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 data class SystemMetrics(
     val totalRamMb: Int = 0, val freeRamMb: Int = 0, val ramUsagePercent: Int = 0,
@@ -5715,7 +5734,7 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                                 startedTs = jobObj.optLong("started_ts", 0L),
                                 fileSize = jobObj.optString("file_size", "0 B"),
                                 duration = jobObj.optString("duration_display", "0h00m00s"),
-                                speed = jobObj.optString("avg_speed", "—"),
+                                speed = jobObj.optString("avg_speed", "â€”"),
                                 outputFile = jobObj.optString("output_file", "")
                             )
                         )
@@ -5785,9 +5804,9 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
                             responseJson.optBoolean("enabled", false) && responseJson.optBoolean("active", false)
                         )
                         isSmbEnabled = effectiveEnabled
-                        onResult(true, if (effectiveEnabled) "SMB đang bật thực tế" else "SMB đang tắt thực tế")
+                        onResult(true, if (effectiveEnabled) "SMB Ä‘ang báº­t thá»±c táº¿" else "SMB Ä‘ang táº¯t thá»±c táº¿")
                     } else {
-                        onResult(false, "Lỗi: $responseBody")
+                        onResult(false, "Lá»—i: $responseBody")
                     }
                 }
                 fetchSmbStatus()
@@ -5797,7 +5816,7 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
             e.printStackTrace()
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 isLoadingSmb = false
-                onResult(false, "Lỗi kết nối: ${e.message}")
+                onResult(false, "Lá»—i káº¿t ná»‘i: ${e.message}")
             }
         }
     }
