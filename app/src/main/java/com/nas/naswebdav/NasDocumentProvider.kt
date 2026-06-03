@@ -268,10 +268,9 @@ class NasDocumentProvider : DocumentsProvider() {
                 try {
                     // FIX: optimizedClient là private — dùng sharedHttpClient với Authorization header thủ công
                     // (cùng logic với preemptive auth interceptor của optimizedClient)
-                    val credential = webDavManager.currentAuthHeader()
                     val request = okhttp3.Request.Builder()
                         .url(url)
-                        .header("Authorization", credential)
+                        .let(WebDavManager::tagCurrentAuth)
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {

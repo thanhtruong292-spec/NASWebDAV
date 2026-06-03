@@ -74,7 +74,7 @@ data class NasFile(
 
 object WebDavManager {
 
-    private data class AuthState(
+    internal data class AuthState(
         val baseUrl: String = "",
         val user: String = "",
         val pass: String = ""
@@ -99,6 +99,14 @@ object WebDavManager {
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
+    }
+
+    fun tagCurrentAuth(builder: Request.Builder): Request.Builder {
+        return builder.tag(AuthState::class.java, authState)
+    }
+
+    fun Request.Builder.withCurrentAuth(): Request.Builder {
+        return tag(AuthState::class.java, authState)
     }
 
     // Káº¿ thá»«a káº¿t ná»‘i (Connection Pooling) & Keep-Alive
@@ -127,7 +135,6 @@ object WebDavManager {
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
-
                     .header("Authorization", credential) // BÆ¡m tháº³ng Preemptive Auth, cá»±c hiá»‡u quáº£ chá»‘ng NAS Server treo khi thiáº¿u Auth
 
                     .build()
@@ -184,15 +191,12 @@ object WebDavManager {
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
-
                     .header("Authorization", credential)
-
                     .build()
 
                 chain.proceed(request)
 
             }
-
             .apply {
 
                 if (AppConfig.ENABLE_CERT_PINNING) {

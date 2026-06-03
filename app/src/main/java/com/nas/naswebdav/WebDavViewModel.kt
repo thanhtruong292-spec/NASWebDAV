@@ -295,9 +295,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             .retryOnConnectionFailure(true)
             // Fix API auth header: attach Authorization to every Local API request
             .addInterceptor { chain ->
+                val auth = chain.request().tag(WebDavManager.AuthState::class.java) ?: return@addInterceptor chain.proceed(chain.request())
                 val requestBuilder = chain.request().newBuilder()
-                val credential = webDavManager.currentAuthHeader()
-                requestBuilder.header("Authorization", credential)
+                requestBuilder.header("Authorization", auth.authHeader)
                 chain.proceed(requestBuilder.build())
             }
             .build()
@@ -1090,7 +1090,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val request = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/download")
                     .post(requestBody)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 val text = localApiClient.newCall(request).execute().use { it.body?.string() ?: "" }
                 withContext(Dispatchers.Main) {
@@ -1146,7 +1146,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/add_file")
                     .post(filePart)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 val client = localApiClient.newBuilder()
                     .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
@@ -3412,7 +3412,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val request = okhttp3.Request.Builder()
                     .url(url)
                     .post(requestBody)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                     val tempPart = if (mode == "custom" && onTemp != null && offTemp != null) " (${onTemp.toInt()}C/${offTemp.toInt()}C)" else ""
@@ -3464,7 +3464,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder()
                     .url("$base/api/backup/list")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(request).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3503,7 +3503,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/backup/create")
                     .post(body)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 // dung client co read timeout dai (60s) vi tar.gz nhieu file co the cham
                 val client = localApiClient.newBuilder()
@@ -3539,7 +3539,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/backup/delete")
                     .post(body)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val text = resp.body?.string() ?: "{}"
@@ -3571,7 +3571,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/backup/restore")
                     .post(body)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 // Restore goi systemctl restart nen co the mat 10-20s
                 val client = localApiClient.newBuilder()
@@ -3634,7 +3634,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/disk/health")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3660,7 +3660,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/disk/health/history?days=$days")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3696,7 +3696,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/system/insights")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3854,7 +3854,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/storage/usage")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3894,7 +3894,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/backup/schedule")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -3934,7 +3934,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/backup/schedule")
                     .post(jsonBody)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -4050,7 +4050,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val path = if (compact) "/api/usb_import/status?compact=1" else "/api/usb_import/status"
                 val req = okhttp3.Request.Builder()
                     .url("$base$path")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -4095,7 +4095,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/settings")
                     .post(body)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
@@ -4133,7 +4133,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/start")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
@@ -4168,7 +4168,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/cancel")
                     .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
@@ -4206,7 +4206,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/usb_import/resolve_conflicts")
                     .post(body)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
@@ -4239,7 +4239,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val base = currentUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/system/sleep_schedule")
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -4278,7 +4278,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/system/sleep_schedule")
                     .post(jsonBody)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -4307,7 +4307,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/system/hdd_spindown_now")
                     .post("".toRequestBody("application/json".toMediaTypeOrNull()))
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     val body = resp.body?.string() ?: "{}"
@@ -4335,7 +4335,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val url = "$base/api/backup/download?filename=$encoded"
                 val req = okhttp3.Request.Builder()
                     .url(url)
-                    .header("Authorization", webDavManager.currentAuthHeader())
+                    .let(WebDavManager::tagCurrentAuth)
                     .build()
                 val client = localApiClient.newBuilder()
                     .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
@@ -4887,7 +4887,7 @@ fun WebDavViewModel.startRealtimeAlerts() {
         val host = java.net.URL(url).host
         // nas_api_server.py chay Tornado WebSocket tren cong AppConfig.WS_PORT (5051)
         val wsUrl = "ws://$host:${com.nas.naswebdav.AppConfig.WS_PORT}/ws/alerts"
-        val wsRequest = okhttp3.Request.Builder().url(wsUrl).header("Authorization", webDavManager.currentAuthHeader()).build()
+        val wsRequest = okhttp3.Request.Builder().url(wsUrl).let(WebDavManager::tagCurrentAuth).build()
         val client = localApiClient.newBuilder()
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .build()
