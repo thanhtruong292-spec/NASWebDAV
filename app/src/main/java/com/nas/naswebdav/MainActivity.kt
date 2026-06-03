@@ -237,114 +237,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         // Báº¯t Intent khá»Ÿi Ä‘á»™ng á»©ng dá»¥ng tá»« tÃ­nh nÄƒng Tá»± Ä‘á»™ng ThÃ´ng bÃ¡o RÃ¡c
 
-        if (intent?.getBooleanExtra("SHOW_DUPLICATES", false) == true) {
-
-            viewModel.shouldAutoOpenDuplicates = true
-
-        }
-
-
-
-        // TÃNH NÄ‚NG SHARE TO APP: Xá»­ lÃ½ tá»‡p chia sáº» tá»« á»©ng dá»¥ng khÃ¡c
-
-        if (intent?.action == android.content.Intent.ACTION_SEND || intent?.action == android.content.Intent.ACTION_SEND_MULTIPLE) {
-
-            val sharedUris = mutableListOf<android.net.Uri>()
-
-            if (intent.action == android.content.Intent.ACTION_SEND) {
-
-                val sharedUri = if (android.os.Build.VERSION.SDK_INT >= 33) {
-
-                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
-
-                } else {
-
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
-
-                }
-                sharedUri?.let { sharedUris.add(it) }
-
-            } else {
-
-                val sharedUriList = if (android.os.Build.VERSION.SDK_INT >= 33) {
-
-                    intent.getParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
-
-                } else {
-
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
-
-                }
-                sharedUriList?.let { sharedUris.addAll(it) }
-
-            }
-
-
-
-            if (sharedUris.isNotEmpty()) {
-
-                // Báº¢O Máº¬T: Äá»c credentials qua SecurePrefsHelper (AES-256 singleton)
-
-                val savedUrl = SecurePrefsHelper.getUrl(applicationContext)
-
-                val savedUser = SecurePrefsHelper.getUser(applicationContext)
-
-                val savedPass = SecurePrefsHelper.getPass(applicationContext)
-
-
-
-                if (savedUrl.isNotEmpty()) {
-
-                    viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
-
-                    // FIX: uploadFile() cáº§n context vÃ  Uri â€” gá»i qua lifecycleScope vÃ¬ lÃ  suspend fun
-                    sharedUris.forEach { uri ->
-                        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try {
-                                val rawName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                                    if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
-                                } ?: uri.lastPathSegment ?: "upload_${System.currentTimeMillis()}"
-                                // FIX: sanitize tÃªn file Ä‘á»ƒ trÃ¡nh path traversal khi ghi tempFile vÃ o cacheDir.
-                                // Loáº¡i bá» '/' '\' vÃ  '..' segment vÃ¬ DISPLAY_NAME cÃ³ thá»ƒ lÃ  malicious.
-                                val fileName = rawName
-                                    .replace('/', '_').replace('\\', '_')
-                                    .replace("..", "_")
-                                    .ifBlank { "upload_${System.currentTimeMillis()}" }
-                                    .take(200)
-                                // FIX #17: URL-encode tÃªn file Ä‘á»ƒ trÃ¡nh lá»—i vá»›i dáº¥u cÃ¡ch/kÃ­ tá»± Ä‘áº·c biá»‡t
-                                val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                                val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
-                                contentResolver.openInputStream(uri)?.use { inputStream ->
-                                    val tempFile = java.io.File(cacheDir, fileName)
-                                    // PhÃ²ng há»™ thÃªm: Ä‘áº£m báº£o path cuá»‘i cÃ¹ng náº±m trong cacheDir
-                                    if (!tempFile.canonicalPath.startsWith(cacheDir.canonicalPath)) {
-                                        throw SecurityException("TÃªn file Ä‘á»™c háº¡i: $rawName")
-                                    }
-                                    tempFile.outputStream().use { inputStream.copyTo(it) }
-                                    val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                                    viewModel.webDavManager.uploadFile(destUrl, tempFile, mimeType)
-                                    tempFile.delete()
-                                }
-                            } catch (e: Exception) {
-                                android.util.Log.e("ShareUpload", "Táº£i lÃªn tháº¥t báº¡i: ${e.message}")
-                            }
-                        }
-                    }
-
-                }
-
-            }
-
-        }
-
-
-
-        // Cáº¤U HÃŒNH Tá»I Æ¯U CHO NAS Yáº¾U (Chainedbox, Rockchip rk3328, v.v...)
-
-        // Giáº£m luá»“ng song song xuá»‘ng tháº¥p (4 luá»“ng/host) Ä‘á»ƒ khÃ´ng lÃ m treo á»• cá»©ng NAS khi vá»«a load áº£nh vá»«a xem Video
+        handleIncomingIntent(intent)
 
         val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }
 
@@ -443,14 +336,91 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onNewIntent(intent)
 
-        // Báº¯t Intent khi App Ä‘ang cháº¡y trong bá»™ nhá»› ná»n 
+        setIntent(intent)
+        handleIncomingIntent(intent)
 
-        if (intent.getBooleanExtra("SHOW_DUPLICATES", false)) {
+    }
 
+    private fun handleIncomingIntent(intent: android.content.Intent?) {
+        val incomingIntent = intent ?: return
+
+        if (incomingIntent.getBooleanExtra("SHOW_DUPLICATES", false)) {
             viewModel.shouldAutoOpenDuplicates = true
-
         }
 
+        handleShareIntent(incomingIntent)
+    }
+
+    private fun handleShareIntent(intent: android.content.Intent) {
+        if (intent.action != android.content.Intent.ACTION_SEND && intent.action != android.content.Intent.ACTION_SEND_MULTIPLE) return
+
+        val sharedUris = mutableListOf<android.net.Uri>()
+        when (intent.action) {
+            android.content.Intent.ACTION_SEND -> {
+                val sharedUri = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+                }
+                sharedUri?.let(sharedUris::add)
+            }
+            android.content.Intent.ACTION_SEND_MULTIPLE -> {
+                val sharedUriList = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+                }
+                sharedUriList?.let(sharedUris::addAll)
+            }
+        }
+
+        if (sharedUris.isEmpty()) return
+
+        val savedUrl = SecurePrefsHelper.getUrl(applicationContext)
+        val savedUser = SecurePrefsHelper.getUser(applicationContext)
+        val savedPass = SecurePrefsHelper.getPass(applicationContext)
+        if (savedUrl.isBlank()) return
+
+        viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
+
+        sharedUris.forEach { uri ->
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                var tempFile: java.io.File? = null
+                try {
+                    val rawName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                        val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
+                    } ?: uri.lastPathSegment ?: "upload_${System.currentTimeMillis()}"
+
+                    // Keep the temp file name local to cacheDir and strip path separators.
+                    val fileName = rawName
+                        .replace('/', '_').replace('\\', '_')
+                        .replace("..", "_")
+                        .ifBlank { "upload_${System.currentTimeMillis()}" }
+                        .take(200)
+
+                    val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
+                    val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
+
+                    contentResolver.openInputStream(uri)?.use { inputStream ->
+                        val temp = java.io.File(cacheDir, fileName)
+                        tempFile = temp
+                        if (!temp.canonicalPath.startsWith(cacheDir.canonicalPath)) {
+                            throw SecurityException("Invalid temp file name: $rawName")
+                        }
+                        temp.outputStream().use { inputStream.copyTo(it) }
+                        val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+                        viewModel.webDavManager.uploadFile(destUrl, temp, mimeType)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
+                } finally {
+                    tempFile?.delete()
+                }
+            }
+        }
     }
 
     private fun requestMediaReadPermissionsIfNeeded() {
