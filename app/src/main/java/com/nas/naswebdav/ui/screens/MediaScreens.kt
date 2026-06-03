@@ -1381,7 +1381,7 @@ fun SmartOrganizerScreen(
     onBack: () -> Unit
 ) {
     // ── STATE ──
-    var sourceUrl by remember { mutableStateOf(viewModel.webDavManager.currentBaseUrl) }
+    val sourceUrl = viewModel.webDavManager.currentBaseUrl
     var selectedFilter by remember { mutableStateOf(OrganizerFilter.ALL) }
     val isScanning = viewModel.organizerScanning
     val isOrganizing = viewModel.organizerExecuting

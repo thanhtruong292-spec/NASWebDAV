@@ -4807,6 +4807,7 @@ def api_disk_health_history():
     cutoff = int(time.time()) - (days * 86400)
     target_device = _target_hdd_device_path()
     items = []
+    conn = None
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cur = conn.cursor()
@@ -4815,7 +4816,6 @@ def api_disk_health_history():
             (cutoff, target_device)
         )
         rows = cur.fetchall()
-        conn.close()
         for row in rows:
             try:
                 items.append(json.loads(row[0]))
@@ -4823,6 +4823,12 @@ def api_disk_health_history():
                 pass
     except Exception as e:
         log.warning("[DiskHealth] Read SQLite history lỗi: %s", e)
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
     return jsonify({
         "days": days,
         "count": len(items),
