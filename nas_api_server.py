@@ -581,16 +581,29 @@ def _apply_iptables_for_whitelist():
 _apply_iptables_for_whitelist()
 
 clients = set()
+clients_lock = threading.Lock()
+
 def broadcast(data):
-    for c in list(clients):
-        try: c.write_message(json.dumps(data))
-        except Exception: clients.discard(c)
+    payload = json.dumps(data)
+    with clients_lock:
+        targets = list(clients)
+    dead = []
+    for c in targets:
+        try: c.write_message(payload)
+        except Exception: dead.append(c)
+    if dead:
+        with clients_lock:
+            for c in dead:
+                clients.discard(c)
 
 class AlertWebSocket(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin): return True
-    def open(self): clients.add(self)
+    def open(self):
+        with clients_lock:
+            clients.add(self)
     def on_close(self):
-        clients.discard(self)
+        with clients_lock:
+            clients.discard(self)
 
 def get_ip_geo(ip):
     if ip.startswith(("192.168.", "10.", "172.", "127.")): return "LOCAL", "LAN"
