@@ -3760,14 +3760,14 @@ def _load_fan_settings():
         if os.path.exists(FAN_SETTINGS_FILE):
             with open(FAN_SETTINGS_FILE, "r") as f:
                 return json.load(f)
-    except Exception: pass
+    except Exception as e: log.debug("[M4] Ignored exception: %s", e)
     return {"mode": "auto", "on_temp": FAN_DEFAULT_ON_TEMP, "off_temp": FAN_DEFAULT_OFF_TEMP}
 
 def _save_fan_settings(settings):
     try:
         with open(FAN_SETTINGS_FILE, "w") as f:
             json.dump(settings, f)
-    except Exception: pass
+    except Exception as e: log.debug("[M4] Ignored exception: %s", e)
 
 
 # ============================================================================
@@ -5461,7 +5461,7 @@ def _create_backup_tarball():
                 tar.add(src, arcname=arcname)
                 sz = 0
                 try: sz = os.path.getsize(src)
-                except Exception: pass
+                except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                 manifest["files"].append({"src": src, "archive_path": arcname, "size": sz})
             except Exception as e:
                 log.warning("[Backup] Skip %s: %s", src, e)
@@ -7153,7 +7153,7 @@ def api_backup_create():
                     tar.add(src, arcname=arcname)
                     sz = 0
                     try: sz = os.path.getsize(src)
-                    except Exception: pass
+                    except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                     manifest["files"].append({
                         "src": src,
                         "archive_path": arcname,
@@ -7327,7 +7327,7 @@ def api_backup_restore():
                     # Backup file dich hien tai truoc khi ghi de (rollback neu can)
                     if os.path.exists(dest):
                         try: os.replace(dest, dest + ".pre-restore")
-                        except Exception: pass
+                        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                     tmp = dest + ".restore-tmp"
                     with open(tmp, "wb") as w:
                         w.write(data)
@@ -7335,10 +7335,10 @@ def api_backup_restore():
                     # Phuc hoi quyen co ban: auth.conf phai chmod 600
                     if dest.endswith("auth.conf"):
                         try: os.chmod(dest, 0o600)
-                        except Exception: pass
+                        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                     if dest.endswith(".sh"):
                         try: os.chmod(dest, 0o755)
-                        except Exception: pass
+                        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                     restored.append(dest)
                 except Exception as e:
                     errors.append({"file": dest, "reason": str(e)[:120]})
@@ -7368,7 +7368,7 @@ def api_backup_restore():
     finally:
         if cleanup_after and src_tar:
             try: os.remove(src_tar)
-            except Exception: pass
+            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
 
 
 @app.route('/api/fan/control', methods=['POST'])
@@ -8892,8 +8892,8 @@ def get_webdav_root():
                         # HOTFIX: Báº¯t buá»™c Ä‘Ã­nh kÃ¨m New folder - OMV WebDAV thá»±c táº¿ trÃªn mÃ¡y ngÆ°á»i dÃ¹ng
                         if os.path.exists(os.path.join(p.mountpoint, "New folder")):
                             best_path = os.path.join(p.mountpoint, "New folder")
-                except Exception: pass
-    except Exception: pass
+                except Exception as e: log.debug("[M4] Ignored exception: %s", e)
+    except Exception as e: log.debug("[M4] Ignored exception: %s", e)
 
     _cached_webdav_root = best_path.rstrip('/')
     return _cached_webdav_root
@@ -8946,7 +8946,7 @@ def generate_fast_index(force=False):
                 yield s
                 if cache_f: cache_f.write(s)
                 total += 1
-            except Exception: pass
+            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
 
     tail = '], "total": %d}' % total
     yield tail
@@ -9619,7 +9619,7 @@ def _thumbnail_generator():
                     ("INFO", "Thumbnail", "ÄÃ£ táº¡o %d/%d áº£nh thu nhá» (lá»—i: %d)." % (generated, total, errors)))
                 conn.commit()
                 conn.close()
-            except Exception: pass
+            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
             
         except Exception as e:
             with _thumb_stats_lock:
@@ -9802,7 +9802,7 @@ def api_docker_power_post():
                 ("INFO", "Docker", "ÄÃ£ báº­t Docker + qBittorrent"))
             conn.commit()
             conn.close()
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         r = subprocess.run(["systemctl", "is-active", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         running = r.stdout.decode().strip() == "active"
         return jsonify({"result": "ok", "action": "started", "running": running, "effective_running": running})
@@ -9818,7 +9818,7 @@ def api_docker_power_post():
                 ("INFO", "Docker", "ÄÃ£ táº¯t Docker Ä‘á»ƒ tiáº¿t kiá»‡m RAM"))
             conn.commit()
             conn.close()
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         r = subprocess.run(["systemctl", "is-active", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         running = r.stdout.decode().strip() == "active"
         return jsonify({"result": "ok", "action": "stopped", "running": running, "effective_running": running})
@@ -9854,7 +9854,7 @@ def api_lan_whitelist_add():
         try:
             subprocess.run(['iptables', '-D', 'INPUT', '-s', subnet, '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
             subprocess.run(['iptables', '-I', 'INPUT', '1', '-s', subnet, '-j', 'ACCEPT'])
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         return jsonify({"result": "ok", "added_subnet": subnet})
     elif ip:
         _lan_whitelist.add(ip)
@@ -9863,7 +9863,7 @@ def api_lan_whitelist_add():
         try:
             subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
             subprocess.run(['iptables', '-I', 'INPUT', '1', '-s', ip, '-j', 'ACCEPT'])
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         return jsonify({"result": "ok", "added_ip": ip})
     else:
         return jsonify({"error": "Thiáº¿u IP hoáº·c subnet"}), 400
@@ -9883,7 +9883,7 @@ def api_lan_whitelist_remove():
         # Go iptables rule cua subnet
         try:
             subprocess.run(['iptables', '-D', 'INPUT', '-s', subnet, '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         return jsonify({"result": "ok", "removed_subnet": subnet})
     elif ip and ip in _lan_whitelist:
         _lan_whitelist.discard(ip)
@@ -9891,7 +9891,7 @@ def api_lan_whitelist_remove():
         # Go iptables rule cua IP
         try:
             subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-j', 'ACCEPT'], stderr=subprocess.DEVNULL)
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         return jsonify({"result": "ok", "removed_ip": ip})
     else:
         return jsonify({"error": "IP/subnet khÃ´ng tá»“n táº¡i trong whitelist"}), 404
@@ -9925,7 +9925,7 @@ def _system_health_watchdog():
                     ("CRITICAL", "Hardware", "Tá»± Ä‘á»™ng reboot NAS do: %s" % reason))
                 conn.commit()
                 conn.close()
-            except Exception: pass
+            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
             
             # Tao file lock de chong bootloop
             os.makedirs(os.path.dirname(REBOOT_LOCK_FILE), exist_ok=True)
@@ -9962,7 +9962,7 @@ def _system_health_watchdog():
                             ("WARNING", "Network", "Tailscale bá»‹ ngáº¯t, há»‡ thá»‘ng RK3328 Ä‘Ã£ tá»± Ä‘á»™ng khá»Ÿi Ä‘á»™ng láº¡i láº§n %d" % _tailscale_restart_count))
                         conn.commit()
                         conn.close()
-                    except Exception: pass
+                    except Exception as e: log.debug("[M4] Ignored exception: %s", e)
             
             # 2. Kiá»ƒm tra nginx process (Dam bao WebDAV an toan, khong bi OMV chet tren boot)
             nginx_res = subprocess.run(["systemctl", "is-active", "nginx"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
@@ -11986,7 +11986,7 @@ def api_livestream_record():
                                     break
                                 next_url = resp.geturl() if resp else current
                                 try: resp.close()
-                                except Exception: pass
+                                except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                                 if not next_url or next_url == current:
                                     break
                                 current = next_url
@@ -12355,7 +12355,7 @@ while True:
                         if len(parts) >= 7 and parts[5] == "ttwid":
                             cookie_header = "Cookie: ttwid=%s" % parts[6] + chr(13) + chr(10)
                             break
-        except Exception: pass
+        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
     crlf = chr(13) + chr(10)
     cmd.extend(["-headers", "Referer: https://www.tiktok.com/" + crlf + cookie_header])
     cmd.extend(["-i", media_url, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
