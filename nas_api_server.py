@@ -13017,7 +13017,12 @@ if __name__ == "__main__":
             pass
         # Signal handler runs while Tornado/background threads may be active.
         # os._exit avoids systemd waiting until TimeoutStopSec and then SIGKILL.
-        os._exit(0)
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(128 + signum)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
 
@@ -13043,21 +13048,66 @@ if __name__ == "__main__":
     # thread ná»n Ä‘Ã£ cháº¡y, process má»›i cÃ³ thá»ƒ Ä‘á»ƒ láº¡i cÃ¡c job trÃ¹ng vÃ  lÃ m app timeout.
     import socket as _socket
     def _force_free_port(port):
-        """Kill báº¥t ká»³ process nÃ o Ä‘ang giá»¯ port nÃ y trÆ°á»›c khi server má»›i bind."""
+        """Terminate only our own stale NAS API listener on port before bind."""
         try:
             test_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
             test_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
             test_sock.bind(('0.0.0.0', port))
             test_sock.close()
+            return
         except OSError:
-            log.warning("[Port %d] Äang bá»‹ chiáº¿m, thá»­ giáº£i phÃ³ng...", port)
+            pass
+        log.warning("[Port %d] Dang bi chiem, kiem tra listener an toan...", port)
+        targets = []
+        seen_pids = set()
+        try:
+            for conn in psutil.net_connections(kind="inet"):
+                if conn.status != psutil.CONN_LISTEN or not conn.laddr or conn.laddr.port != port or not conn.pid:
+                    continue
+                if conn.pid in seen_pids:
+                    continue
+                try:
+                    proc = psutil.Process(conn.pid)
+                    name = (proc.name() or "").lower()
+                    cmdline = " ".join(proc.cmdline()).lower()
+                    exe_name = ""
+                    try:
+                        exe_name = os.path.basename(os.readlink(f"/proc/{proc.pid}/exe")).lower()
+                    except OSError:
+                        pass
+                    if "nas_api_server.py" not in cmdline and "nas_api_server.py" not in exe_name:
+                        log.warning("[Port %d] Skip PID %d (%s) - khong phai NAS API.", port, proc.pid, name)
+                        continue
+                    targets.append(proc)
+                    seen_pids.add(conn.pid)
+                except psutil.NoSuchProcess:
+                    continue
+        except (psutil.Error, OSError) as e:
+            log.warning("[Port %d] Khong doc duoc listener list: %s", port, e)
+            return
+        if not targets:
+            log.warning("[Port %d] Khong tim thay NAS API listener nao, bo qua.", port)
+            return
+        for proc in targets:
             try:
-                subprocess.run(['fuser', '-k', '%d/tcp' % port], stderr=subprocess.DEVNULL, timeout=10)
-                time.sleep(2)
-            except Exception:
-                pass
-            log.info("[Port %d] ÄÃ£ giáº£i phÃ³ng.", port)
-
+                log.warning("[Port %d] Dang terminate PID %d (%s)...", port, proc.pid, proc.name())
+                proc.terminate()
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as e:
+                log.warning("[Port %d] Khong terminate duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
+        _, alive = psutil.wait_procs(targets, timeout=5)
+        for proc in alive:
+            try:
+                log.warning("[Port %d] PID %d chua dung, kill...", port, proc.pid)
+                proc.kill()
+            except psutil.NoSuchProcess:
+                continue
+            except Exception as e:
+                log.warning("[Port %d] Khong kill duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
+        if alive:
+            psutil.wait_procs(alive, timeout=5)
+        log.info("[Port %d] Da giai phong.", port)
     _force_free_port(5050)
     _force_free_port(5051)
 
