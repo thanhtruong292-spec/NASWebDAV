@@ -70,7 +70,7 @@ data class NasFile(
 
 
 
-// Äá»™ng cÆ¡ WebDAV hiá»‡u suáº¥t cao - KhÃ´ng sá»­ dá»¥ng Sardine
+// Động cơ WebDAV hiệu suất cao - Không sử dụng Sardine
 
 object WebDavManager {
 
@@ -109,13 +109,13 @@ object WebDavManager {
         return tag(AuthState::class.java, authState)
     }
 
-    // Káº¿ thá»«a káº¿t ná»‘i (Connection Pooling) & Keep-Alive
+    // Kế thừa kết nối (Connection Pooling) & Keep-Alive
 
     private val optimizedClient: OkHttpClient by lazy {
 
         val dispatcher = Dispatcher().apply {
 
-            maxRequests = 16 // FIX BUG #7: Giáº£m tá»« 64 xuá»‘ng 16 â€” trÃ¡nh quÃ¡ táº£i NAS yáº¿u (Rockchip, Chainedbox)
+            maxRequests = 16 // FIX BUG #7: Giảm từ 64 xuống 16 — tránh quá tải NAS yếu (Rockchip, Chainedbox)
 
             maxRequestsPerHost = 8
 
@@ -123,7 +123,7 @@ object WebDavManager {
 
         NasApplication.instance.sharedHttpClient.newBuilder()
 
-            .followRedirects(false) // FIX Lá»–I P0 CAO Cáº¤P: KhÃ´ng cho phÃ©p tá»± Ã½ chuyá»ƒn PROPFIND thÃ nh GET khi NAS (ngu ngá»‘c) tráº£ vá» HTTP 301 Redirect.
+            .followRedirects(false) // FIX LỖI P0 CAO CẤP: Không cho phép tự ý chuyển PROPFIND thành GET khi NAS (ngu ngốc) trả về HTTP 301 Redirect.
 
             .followSslRedirects(false)
 
@@ -135,7 +135,7 @@ object WebDavManager {
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
-                    .header("Authorization", credential) // BÆ¡m tháº³ng Preemptive Auth, cá»±c hiá»‡u quáº£ chá»‘ng NAS Server treo khi thiáº¿u Auth
+                    .header("Authorization", credential) // Bơm thẳng Preemptive Auth, cực hiệu quả chống NAS Server treo khi thiếu Auth
 
                     .build()
 
@@ -167,15 +167,15 @@ object WebDavManager {
 
 
 
-    // MÃY CHá»¦ SARDINE Äá»˜C Láº¬P (PHÃM 15): KhÃ´ng chia sáº» Client vá»›i há»‡ thá»‘ng Upload/Download
+    // MÁY CHỦ SARDINE ĐỘC LẬP (PHÍM 15): Không chia sẻ Client với hệ thống Upload/Download
 
-    // Nháº±m giáº£i phÃ³ng Sardine khá»i Cáº¥m Redirect vÃ  ChÃ¨n Header BasicAuth sai lá»‡ch
+    // Nhằm giải phóng Sardine khỏi Cấm Redirect và Chèn Header BasicAuth sai lệch
 
     private val sardineClient: OkHttpClient by lazy {
 
         NasApplication.instance.sharedHttpClient.newBuilder()
 
-            .followRedirects(true) // Sardine Ráº¤T Cáº¦N TÃNH NÄ‚NG NÃ€Y (Äá»ƒ báº¯t 301 chuyá»ƒn hÆ°á»›ng thÆ° má»¥c WebDAV)
+            .followRedirects(true) // Sardine RẤT CẦN TÍNH NĂNG NÀY (Để bắt 301 chuyển hướng thư mục WebDAV)
 
             .followSslRedirects(true)
 
@@ -183,9 +183,9 @@ object WebDavManager {
 
             .addInterceptor { chain ->
 
-                // PHASE 17 Tá»I QUAN TRá»ŒNG: Preemptive Authentication (XÃ¡c thá»±c vÆ°á»£t cáº¥p)
+                // PHASE 17 TỐI QUAN TRỌNG: Preemptive Authentication (Xác thực vượt cấp)
 
-                // NAS KHÃ”NG tráº£ vá» 401 Ä‘á»ƒ kÃ­ch hoáº¡t Sardine Authenticator, mÃ  nÃ³ tráº£ vá» thÆ° má»¥c TRá»NG náº¿u khÃ´ng cÃ³ máº­t kháº©u ngay tá»« Ä‘áº§u!
+                // NAS KHÔNG trả về 401 để kích hoạt Sardine Authenticator, mà nó trả về thư mục TRỐNG nếu không có mật khẩu ngay từ đầu!
 
                 val auth = chain.request().tag(AuthState::class.java) ?: authState
                 val credential = auth.authHeader
@@ -213,9 +213,9 @@ object WebDavManager {
 
                 }
 
-                // Khi khÃ´ng báº­t Cert Pinning â†’ sá»­ dá»¥ng há»‡ thá»‘ng Trust Manager máº·c Ä‘á»‹nh (Android CA Store)
+                // Khi không bật Cert Pinning → sử dụng hệ thống Trust Manager mặc định (Android CA Store)
 
-                // KHÃ”NG bypass SSL verification Ä‘á»ƒ trÃ¡nh táº¥n cÃ´ng Man-in-the-Middle
+                // KHÔNG bypass SSL verification để tránh tấn công Man-in-the-Middle
 
             }
 
@@ -241,7 +241,7 @@ object WebDavManager {
 
 
 
-    // TÃNH NÄ‚NG 4.H: Äo lÆ°á»ng Sá»©c Khoáº» Máº¡ng báº±ng HTTP OPTIONS cá»±c nháº¹
+    // TÍNH NĂNG 4.H: Đo lường Sức Khoẻ Mạng bằng HTTP OPTIONS cực nhẹ
 
     suspend fun checkPingServer(): Long? = withContext(Dispatchers.IO) {
 
@@ -279,7 +279,7 @@ object WebDavManager {
 
         } catch (e: Exception) {
 
-            return@withContext -1L // Cháº¿t máº¡ng hoáº·c bá»‹ cháº·n
+            return@withContext -1L // Chết mạng hoặc bị chặn
 
         }
 
@@ -287,7 +287,7 @@ object WebDavManager {
 
 
 
-    // KIáº¾N TRÃšC DOANH NGHIá»†P: Truy váº¥n thÃ´ng sá»‘ tá»‡p (KÃ­ch thÆ°á»›c, ETag) an toÃ n, ÄÃ“NG káº¿t ná»‘i ngay Ä‘á»ƒ trÃ¡nh sáº­p Connection Pool cá»§a OkHttp
+    // KIẾN TRÚC DOANH NGHIỆP: Truy vấn thông số tệp (Kích thước, ETag) an toàn, ĐÓNG kết nối ngay để tránh sập Connection Pool của OkHttp
 
     suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
 
@@ -297,7 +297,7 @@ object WebDavManager {
 
                 .url(url)
 
-                .head() // Lá»‡nh HTTP HEAD nhanh chÃ³ng
+                .head() // Lệnh HTTP HEAD nhanh chóng
 
                 .build()
 
@@ -323,11 +323,11 @@ object WebDavManager {
 
 
 
-    // PHASE 18: KHAI Tá»¬ SARDINE NATIVE. 
+    // PHASE 18: KHAI TỬ SARDINE NATIVE.
 
-    // ThÆ° viá»‡n Sardine-Android quÃ¡ cÅ© (0.8) vÃ  kháº¯t khe vá»›i WebDAV XML Namespace, khiáº¿n NAS tráº£ vá» XML há»£p lá»‡ nhÆ°ng Sardine láº¡i ngáº­m miá»‡ng lá» Ä‘i, táº¡o ra ThÆ° má»¥c Trá»‘ng!
+    // Thư viện Sardine-Android quá cũ (0.8) và khắt khe với WebDAV XML Namespace, khiến NAS trả về XML hợp lệ nhưng Sardine lại ngậm miệng lờ đi, tạo ra Thư mục Trống!
 
-    // Trá»Ÿ láº¡i TrÃ¬nh phÃ¢n tÃ­ch XML tuá»³ chá»‰nh siÃªu cáº¥p (Custom PullParser) gáº¯n vÃ o sardineClient.
+    // Trở lại Trình phân tích XML tuỳ chỉnh siêu cấp (Custom PullParser) gắn vào sardineClient.
 
     suspend fun listFiles(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
@@ -335,7 +335,7 @@ object WebDavManager {
 
         
 
-        // 1. DÃ¹ng sardineClient (Ä‘Ã£ gáº¯n sáºµn Basic Auth)
+        // 1. Dùng sardineClient (đã gắn sẵn Basic Auth)
 
         val request = okhttp3.Request.Builder().withAuth(authState)
 
@@ -355,11 +355,11 @@ object WebDavManager {
 
                 val errorBody = response.body?.string()?.take(200) ?: ""
 
-                throw Exception("MÃ£ lá»—i NAS: ${response.code} - $errorBody")
+                throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
 
             }
 
-            response.body?.string() ?: throw Exception("NAS tráº£ vá» dá»¯ liá»‡u rá»—ng")
+            response.body?.string() ?: throw Exception("NAS trả về dữ liệu rỗng")
 
         }
 
@@ -369,7 +369,7 @@ object WebDavManager {
 
         
 
-        // 2. PhÃ¢n tÃ­ch XML báº±ng tay - Cá»±c ká»³ khoan dung vá»›i má»i loáº¡i NAS
+        // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS
 
         try {
 
@@ -473,7 +473,7 @@ object WebDavManager {
 
                                     if (currentHref.isNotEmpty()) {
 
-                                        // Xá»­ lÃ½ absolute mapping
+                                        // Xử lý absolute mapping
 
                                         val fullUri = if (currentHref.startsWith("http")) {
 
@@ -497,7 +497,7 @@ object WebDavManager {
 
                                         
 
-                                        // Lá»c bá» gá»‘c rá»…
+                                        // Lọc bỏ gốc rễ
 
                                         if (fullUri.trimEnd('/') != safeUrl.trimEnd('/')) {
 
@@ -541,9 +541,9 @@ object WebDavManager {
 
         } catch (e: Exception) {
 
-            android.util.Log.e("NAS_XML", "Lá»—i phÃ¢n tÃ­ch XML thá»§ cÃ´ng", e)
+            android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
 
-            throw Exception("NAS tráº£ vá» cáº¥u trÃºc XML láº¡ khÃ´ng thá»ƒ Ä‘á»c: ${e.message}")
+            throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
 
         }
 
@@ -555,7 +555,7 @@ object WebDavManager {
 
 
 
-    // Táº£i lÃªn trá»±c tiáº¿p luá»“ng (Streaming Upload), khÃ´ng náº¡p file vÃ o RAM
+    // Tải lên trực tiếp luồng (Streaming Upload), không nạp file vào RAM
 
     suspend fun uploadStreamWithProgress(
 
@@ -599,7 +599,7 @@ object WebDavManager {
 
 
 
-                        // Throttle: náº¿u Ä‘ang vÆ°á»£t tá»‘c, chá» cho ká»‹p
+                        // Throttle: nếu đang vượt tốc, chờ cho kịp
 
                         if (speedLimit > 0) {
 
@@ -631,13 +631,13 @@ object WebDavManager {
 
         optimizedClient.newBuilder()
 
-            .writeTimeout(0, TimeUnit.SECONDS) // VÃ´ hiá»‡u hÃ³a timeout cho tá»‡p tin siÃªu lá»›n
+            .writeTimeout(0, TimeUnit.SECONDS) // Vô hiệu hóa timeout cho tệp tin siêu lớn
 
             .build()
 
             .newCall(request).execute().use { response ->
 
-                if (!response.isSuccessful) throw Exception("NAS tá»« chá»‘i tá»‡p: ${response.code}")
+                if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
 
             }
 
@@ -645,9 +645,9 @@ object WebDavManager {
 
 
 
-    // TÃNH NÄ‚NG Má»šI 3.A: GZIP Streaming Upload (NÃ©n luá»“ng thá»i gian thá»±c)
+    // TÍNH NĂNG MỚI 3.A: GZIP Streaming Upload (Nén luồng thời gian thực)
 
-    // Tá»± Ä‘á»™ng bÃ³p mÃ©o luá»“ng dá»¯ liá»‡u thÃ nh Ä‘á»‹nh dáº¡ng GZIP thu nhá» Ä‘áº¿n 80% dung lÆ°á»£ng máº¡ng trÆ°á»›c khi lÃªn sÃ³ng.
+    // Tự động bóp méo luồng dữ liệu thành định dạng GZIP thu nhỏ đến 80% dung lượng mạng trước khi lên sóng.
 
     suspend fun uploadCompressedStream(
 
@@ -661,7 +661,7 @@ object WebDavManager {
 
             override fun contentType() = contentType.toMediaTypeOrNull()
 
-            // Chunked transfer encoding vÃ¬ Ä‘á»™ dÃ i GZIP bá»‹ thay Ä‘á»•i liÃªn tá»¥c, khÃ´ng thá»ƒ biáº¿t trÆ°á»›c khá»‘i lÆ°á»£ng cuá»‘i cÃ¹ng
+            // Chunked transfer encoding vì độ dài GZIP bị thay đổi liên tục, không thể biết trước khối lượng cuối cùng
 
             override fun contentLength() = -1L
 
@@ -689,7 +689,7 @@ object WebDavManager {
 
                         totalBytesRead += readCount
 
-                        // Cáº­p nháº­t tháº» Progress theo má»‘c dung lÆ°á»£ng gá»‘c (Uncompressed)
+                        // Cập nhật thẻ Progress theo mốc dung lượng gốc (Uncompressed)
 
                         onProgress(totalBytesRead, totalUncompressedLength)
 
@@ -713,7 +713,7 @@ object WebDavManager {
 
             .put(requestBody)
 
-            .header("Content-Encoding", "gzip") // KÃ­ch hoáº¡t vÃ²i xáº£ GZIP phÃ­a Server NGINX / NAS
+            .header("Content-Encoding", "gzip") // Kích hoạt vòi xả GZIP phía Server NGINX / NAS
 
             .build()
 
@@ -727,7 +727,7 @@ object WebDavManager {
 
             .newCall(request).execute().use { response ->
 
-                if (!response.isSuccessful) throw Exception("NAS tá»« chá»‘i tá»‡p nÃ©n GZIP: ${response.code}")
+                if (!response.isSuccessful) throw Exception("NAS từ chối tệp nén GZIP: ${response.code}")
 
             }
 
@@ -824,7 +824,7 @@ object WebDavManager {
 
                 if (!response.isSuccessful && response.code != 206) {
 
-                    throw Exception("NAS tá»« chá»‘i Resume: ${response.code}")
+                    throw Exception("NAS từ chối Resume: ${response.code}")
 
                 }
 
@@ -862,7 +862,7 @@ object WebDavManager {
 
 
 
-    // TÃNH NÄ‚NG 7.M: Äá»c lÆ°á»›t ná»™i dung File Text giá»›i háº¡n dÃ²ng (TrÃ¡nh lag RAM)
+    // TÍNH NĂNG 7.M: Đọc lướt nội dung File Text giới hạn dòng (Tránh lag RAM)
 
     suspend fun readFileText(url: String, maxLines: Int = 100): String? = withContext(Dispatchers.IO) {
 
@@ -892,7 +892,7 @@ object WebDavManager {
 
                     }
 
-                    if (!source.exhausted()) sb.append("\n... (ÄÃ£ Cáº¯t Bá»›t Ná»™i Dung VÃ¬ QuÃ¡ DÃ i)")
+                    if (!source.exhausted()) sb.append("\n... (Đã Cắt Bớt Nội Dung Vì Quá Dài)")
 
                     return@withContext sb.toString()
 
@@ -931,7 +931,7 @@ object WebDavManager {
 
         val request = Request.Builder().withAuth(authState).url(url).method("DELETE", null).build()
 
-        // FIX POOL EXHAUSTION: Consume body trÆ°á»›c khi Ä‘Ã³ng
+        // FIX POOL EXHAUSTION: Consume body trước khi đóng
 
         optimizedClient.newCall(request).execute().use { response ->
 
@@ -947,7 +947,7 @@ object WebDavManager {
 
         val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
 
-        // FIX POOL EXHAUSTION: Consume body trÆ°á»›c khi Ä‘Ã³ng
+        // FIX POOL EXHAUSTION: Consume body trước khi đóng
 
         optimizedClient.newCall(request).execute().use { response ->
 
@@ -971,7 +971,7 @@ object WebDavManager {
 
     }
 
-    // HÃ m há»— trá»£ tÆ°Æ¡ng thÃ­ch ngÆ°á»£c cho AutoBackupWorker
+    // Hàm hỗ trợ tương thích ngược cho AutoBackupWorker
 
     suspend fun uploadFile(fileUrl: String, file: java.io.File, contentType: String) = withContext(Dispatchers.IO) {
 
@@ -985,11 +985,11 @@ object WebDavManager {
 
 
 
-    // HÃ m há»— trá»£ tÆ°Æ¡ng thÃ­ch ngÆ°á»£c cho WebDavViewModel
+    // Hàm hỗ trợ tương thích ngược cho WebDavViewModel
 
     fun initConnection() {
 
-        // KhÃ´ng cáº§n lÃ m gÃ¬: Kiáº¿n trÃºc OkHttp má»›i dÃ¹ng Lazy Loading vÃ  tá»± quáº£n lÃ½ Connection Pool an toÃ n
+        // Không cần làm gì: Kiến trúc OkHttp mới dùng Lazy Loading và tự quản lý Connection Pool an toàn
 
     }
 
@@ -1001,7 +1001,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
 
-            if (!response.isSuccessful) throw Exception("Lá»—i táº£i xuá»‘ng: ${response.code}")
+            if (!response.isSuccessful) throw Exception("Lỗi tải xuống: ${response.code}")
 
             val body = response.body ?: throw Exception("Empty body")
 
@@ -1023,7 +1023,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
 
-            if (!response.isSuccessful) throw Exception("Lá»—i táº¡o file: ${response.code}")
+            if (!response.isSuccessful) throw Exception("Lỗi tạo file: ${response.code}")
 
         }
 
@@ -1033,11 +1033,11 @@ object WebDavManager {
 
 
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ════════════════════════════════════════════════════════════════════════════
 
-// WebDavRepository â€” Truy váº¥n dá»¯ liá»‡u qua WebDAV + Room Cache
+// WebDavRepository — Truy vấn dữ liệu qua WebDAV + Room Cache
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ════════════════════════════════════════════════════════════════════════════
 
 
 

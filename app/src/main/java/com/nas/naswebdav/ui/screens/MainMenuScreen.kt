@@ -2464,7 +2464,7 @@ private fun DiskProfileBottomSheet(
     } else 0L
     val livestreamSessionsToday = activeRecordings + completedLivestreamSessionsToday
     val smartTemp = viewModel.smartInfo.temperature
-        .replace("Â°C", "°C")
+        .replace("\u00c2\u00b0C", "\u00b0C")
         .replace("--", "Chưa có dữ liệu")
     val smartStatus = viewModel.smartInfo.status
     val diskHealth = viewModel.diskHealthCurrent

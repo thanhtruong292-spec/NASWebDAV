@@ -2,7 +2,7 @@ package com.nas.naswebdav
 
 
 
-// Import cÃ¡c Composable Ä‘Ã£ tÃ¡ch file
+// Import các Composable đã tách file
 
 import com.nas.naswebdav.ui.screens.MainMenuScreen
 
@@ -68,7 +68,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-    // FIX MEMORY LEAK: Loáº¡i bá» companion object (static state), dÃ¹ng biáº¿n instance thÃ´ng thÆ°á»ng
+    // FIX MEMORY LEAK: Loại bỏ companion object (static state), dùng biến instance thông thường
 
     var isPlayingVideo = false
 
@@ -76,7 +76,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     
 
-    // LÆ°u ViewModel cáº¥p Ä‘á»™ Activity Ä‘á»ƒ nháº­n Intent khi sá»‘ng ná»n
+    // Lưu ViewModel cấp độ Activity để nhận Intent khi sống nền
 
     private val viewModelFactory by lazy(LazyThreadSafetyMode.NONE) {
         object : ViewModelProvider.Factory {
@@ -103,13 +103,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onUserLeaveHint()
 
-        // Tá»° Äá»˜NG THU NHá»Ž VIDEO: KÃ­ch hoáº¡t PiP khi ngÆ°á»i dÃ¹ng báº¥m phÃ­m Home
+        // TỰ ĐỘNG THU NHỎ VIDEO: Kích hoạt PiP khi người dùng bấm phím Home
 
         if (isPlayingVideo && packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
 
             val params = android.app.PictureInPictureParams.Builder()
 
-                // Sá»­a viá»n Ä‘en: DÃ¹ng tá»‰ lá»‡ gá»‘c cá»§a video (set tá»« VideoPlayerScreen) thay vÃ¬ 16:9 cá»©ng
+                // Sửa viền đen: Dùng tỉ lệ gốc của video (set từ VideoPlayerScreen) thay vì 16:9 cứng
 
                 .setAspectRatio(videoAspectRatio)
 
@@ -133,21 +133,21 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onTrimMemory(level)
 
-        // Khi há»‡ thá»‘ng thiáº¿u RAM, chá»§ Ä‘á»™ng giáº£i phÃ³ng bá»™ nhá»› Ä‘á»‡m hÃ¬nh áº£nh
+        // Khi hệ thống thiếu RAM, chủ động giải phóng bộ nhớ đệm hình ảnh
 
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
 
             coil.Coil.imageLoader(this).memoryCache?.clear()
 
-            // FIX BUG #6: XÃ³a System.gc() â€” khÃ´ng hiá»‡u quáº£, gÃ¢y GC pause
+            // FIX BUG #6: Xóa System.gc() — không hiệu quả, gây GC pause
 
         }
 
-        // FIX IMAGE CACHE LEAK: Dá»n disk cache khi bá»™ nhá»› tháº¥p
+        // FIX IMAGE CACHE LEAK: Dọn disk cache khi bộ nhớ thấp
 
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
 
-            // FIX BUG #6: DÃ¹ng lifecycleScope thay vÃ¬ GlobalScope â€” trÃ¡nh rÃ² rá»‰ khi Activity bá»‹ há»§y
+            // FIX BUG #6: Dùng lifecycleScope thay vì GlobalScope — tránh rò rỉ khi Activity bị hủy
 
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
 
@@ -166,7 +166,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // YÃªu cáº§u quyá»n truy cáº­p toÃ n bá»™ táº­p tin (All Files Access) tá»« Android 11+ (API 30+)
+        // Yêu cầu quyền truy cập toàn bộ tập tin (All Files Access) từ Android 11+ (API 30+)
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
 
@@ -227,7 +227,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             } else {
                 android.widget.Toast.makeText(
                     this,
-                    "ChÆ°a cÃ³ quyá»n hiá»ƒn thá»‹ trÃªn cÃ¹ng nÃªn chÆ°a thá»ƒ hiá»‡n REC khi quay.",
+                    "Chưa có quyền hiển thị trên cùng nên chưa thể hiện REC khi quay.",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             }
@@ -235,7 +235,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-        // Báº¯t Intent khá»Ÿi Ä‘á»™ng á»©ng dá»¥ng tá»« tÃ­nh nÄƒng Tá»± Ä‘á»™ng ThÃ´ng bÃ¡o RÃ¡c
+        // Bắt Intent khởi động ứng dụng từ tính năng Tự động Thông báo Rác
 
         handleIncomingIntent(intent)
 
@@ -259,7 +259,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
             .memoryCache {
 
-            // FIX BUG #1: Cache cá»‘ Ä‘á»‹nh theo MB thay vÃ¬ % â€” trÃ¡nh OOM trÃªn thiáº¿t bá»‹ yáº¿u
+            // FIX BUG #1: Cache cố định theo MB thay vì % — tránh OOM trên thiết bị yếu
 
                 val maxHeap = Runtime.getRuntime().maxMemory()
 
@@ -271,7 +271,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     heapMb > 512L -> 200L
 
-                    else -> (heapMb * 15 / 100)  // 15% nhÆ°ng trong bounds an toÃ n
+                    else -> (heapMb * 15 / 100)  // 15% nhưng trong bounds an toàn
 
                 }
 
@@ -289,7 +289,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     .directory(cacheDir.resolve("image_cache"))
 
-                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: TÄƒng lÃªn 800MB (tá»‘i Æ°u cho thumbnail nhiá»u)
+                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: Tăng lên 800MB (tối ưu cho thumbnail nhiều)
 
                     .build()
 
@@ -458,7 +458,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             overlayPermissionLauncher.launch(intent)
             android.widget.Toast.makeText(
                 this,
-                "Báº­t quyá»n hiá»ƒn thá»‹ trÃªn cÃ¹ng Ä‘á»ƒ tháº¥y REC vÃ  thá»i gian khi quay mÃ n hÃ¬nh.",
+                "Bật quyền hiển thị trên cùng để thấy REC và thời gian khi quay màn hình.",
                 android.widget.Toast.LENGTH_LONG
             ).show()
             return
@@ -498,13 +498,13 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // NAVIGATION COMPOSE CHUáº¨N
+    // NAVIGATION COMPOSE CHUẨN
 
     val navController = androidx.navigation.compose.rememberNavController()
 
 
 
-    // KhÃ³a láº¡i ngay khi ngÆ°á»i dÃ¹ng rá»i app. Bá» qua mÃ n Ä‘Äƒng nháº­p vÃ  láº§n resume Ä‘áº§u khi app vá»«a khá»Ÿi Ä‘á»™ng.
+    // Khóa lại ngay khi người dùng rời app. Bỏ qua màn đăng nhập và lần resume đầu khi app vừa khởi động.
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
@@ -569,7 +569,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // ============ DIALOG PHÃŠ DUYá»†T IP Láº  (TOÃ€N Cá»¤C - HIá»‚N THá»Š TRÃŠN Má»ŒI SCREEN) ============
+    // ============ DIALOG PHÊ DUYỆT IP LẠ (TOÀN CỤC - HIỂN THỊ TRÊN MỌI SCREEN) ============
 
     if (viewModel.showApprovalDialog) {
 
@@ -585,7 +585,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // Dialog thÃ´ng bÃ¡o chung tá»« ViewModel (hiá»ƒn thá»‹ toÃ n cá»¥c)
+    // Dialog thông báo chung từ ViewModel (hiển thị toàn cục)
 
     if (viewModel.showCommonDialog) {
 
@@ -623,7 +623,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("main_menu") {
 
-            // VÃ” HIá»†U HÃ“A BACK Cá»¨NG: Cháº·n thoÃ¡t app tá»« Menu chÃ­nh
+            // VÔ HIỆU HÓA BACK CỨNG: Chặn thoát app từ Menu chính
 
             androidx.activity.compose.BackHandler { /* Do nothing */ }
 
@@ -675,7 +675,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     val trashUrl = viewModel.webDavManager.currentBaseUrl + ".trash/"
 
-                    viewModel.openSpecificUrl(trashUrl, "ThÃ¹ng rÃ¡c")
+                    viewModel.openSpecificUrl(trashUrl, "Thùng rác")
 
                     navController.navigate("browser")
 
@@ -691,7 +691,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng '${viewModel.webDavManager.currentUser}' Ä‘Ã£ chá»§ Ä‘á»™ng ÄÄƒng xuáº¥t.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -703,7 +703,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 },
 
-                // â”€â”€ TÃNH NÄ‚NG Má»šI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                // ── TÍNH NĂNG MỚI ─────────────────────────────────────────────────
 
                 onOpenOrganizer = { navController.navigate("smart_organizer") },
 
@@ -745,7 +745,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng '${viewModel.webDavManager.currentUser}' Ä‘Ã£ chá»§ Ä‘á»™ng ÄÄƒng xuáº¥t.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -827,7 +827,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Guest Pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─── TÍNH NĂNG MỚI: Guest Pass ────────────────────────────────────
 
         composable("guest_pass") {
 
@@ -843,7 +843,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Social Extractor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─── TÍNH NĂNG MỚI: Social Extractor ──────────────────────────────
 
         composable("social_extractor") {
 
@@ -859,7 +859,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Smart Organizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ─── TÍNH NĂNG MỚI: Smart Organizer ────────────────────────────────
 
         composable("smart_organizer") {
 
@@ -877,7 +877,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // Hiá»ƒn thá»‹ lá»›p KhÃ³a Sinh tráº¯c há»c Ä‘Ã¨ lÃªn trÃªn má»i giao diá»‡n
+    // Hiển thị lớp Khóa Sinh trắc học đè lên trên mọi giao diện
 
     if (showBiometricLock) {
 
@@ -890,7 +890,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                 showBiometricLock = false
                 requireBiometricOnReturn = false
 
-                // Bá»Ž QUA LOGIN: Náº¿u vá»«a khá»Ÿi Ä‘á»™ng app vÃ  quÃ©t vÃ¢n tay Ä‘Ãºng, tá»± Ä‘á»™ng káº¿t ná»‘i luÃ´n
+                // BỎ QUA LOGIN: Nếu vừa khởi động app và quét vân tay đúng, tự động kết nối luôn
 
                 if (navController.currentDestination?.route == "login" || navController.currentDestination == null) {
 
@@ -1002,13 +1002,13 @@ fun ScreenRecordFloatingOverlay() {
                         Spacer(Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Äang quay mÃ n hÃ¬nh: $timeString",
+                                text = "Đang quay màn hình: $timeString",
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "${networkMode.ifBlank { "NAS" }} - Ä‘oáº¡n ${segIdx + 1}, Ä‘Ã£ gá»­i $uploadedSegments, chá» $pendingSegments",
+                                text = "${networkMode.ifBlank { "NAS" }} - đoạn ${segIdx + 1}, đã gửi $uploadedSegments, chờ $pendingSegments",
                                 color = Color.Gray,
                                 fontSize = 11.sp
                             )
@@ -1026,7 +1026,7 @@ fun ScreenRecordFloatingOverlay() {
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = "Dá»«ng",
+                            text = "Dừng",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
