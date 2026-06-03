@@ -584,13 +584,13 @@ clients = set()
 def broadcast(data):
     for c in list(clients):
         try: c.write_message(json.dumps(data))
-        except Exception: clients.remove(c)
+        except Exception: clients.discard(c)
 
 class AlertWebSocket(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin): return True
     def open(self): clients.add(self)
     def on_close(self):
-        if self in clients: clients.remove(self)
+        clients.discard(self)
 
 def get_ip_geo(ip):
     if ip.startswith(("192.168.", "10.", "172.", "127.")): return "LOCAL", "LAN"
@@ -954,7 +954,7 @@ def _refresh_authorized_ips_cache(force=False):
     now = time.time()
     try:
         cache_ts = float(_AUTHORIZED_IPS_CACHE.get("ts") or 0)
-        if not force and _AUTHORIZED_IPS_CACHE.get("ips") and now - cache_ts < _AUTHORIZED_IPS_CACHE_TTL:
+        if not force and now - cache_ts < _AUTHORIZED_IPS_CACHE_TTL:
             return _AUTHORIZED_IPS_CACHE["ips"]
     except Exception:
         pass
@@ -1079,7 +1079,7 @@ def _request_client_ip():
 # ============ XAC THUC ============
 def check_auth(username, password):
     import hmac
-    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) and hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
+    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) & hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
 
 def requires_auth(f):
     """Robust voi loi disk/DB. Whitelist va cache IP tin cay truoc, DB chi dung de persist IP moi."""
@@ -8623,20 +8623,167 @@ def api_smart_organize_scan():
     })
 
 
+_smart_organize_jobs = {}
+_smart_organize_jobs_lock = threading.Lock()
+
+
+def _smart_organize_job_snapshot(job_id):
+    with _smart_organize_jobs_lock:
+        job = _smart_organize_jobs.get(job_id)
+        return dict(job) if job else None
+
+
+def _smart_organize_job_update(job_id, **fields):
+    with _smart_organize_jobs_lock:
+        job = _smart_organize_jobs.setdefault(job_id, {"job_id": job_id})
+        job.update(fields)
+        job["updated_at"] = time.time()
+        return dict(job)
+
+
+def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
+    import shutil
+
+    moved_count = 0
+    errors = []
+    affected_dirs = set()
+    scanned_entries = 0
+    max_entries = 50000
+    deadline = time.time() + 1800
+
+    try:
+        _smart_organize_job_update(
+            job_id,
+            status="running",
+            started_at=time.time(),
+            base_dir=base_dir,
+            filter=scan_filter,
+            allowed_exts=sorted(allowed_exts),
+            moved_count=0,
+            scanned=0,
+            error_count=0,
+            errors=[],
+        )
+
+        for root, dirs, files in os.walk(base_dir):
+            if time.time() >= deadline:
+                raise TimeoutError("Smart organize timed out")
+            if not _background_heavy_work_allowed():
+                raise RuntimeError("Background heavy work is not allowed right now")
+
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
+
+            for name in files:
+                if name.startswith('.'):
+                    continue
+                if scanned_entries >= max_entries or time.time() >= deadline:
+                    raise TimeoutError("Smart organize limit reached")
+                if scanned_entries % 120 == 0 and not _background_heavy_work_allowed():
+                    raise RuntimeError("Background heavy work is not allowed right now")
+
+                scanned_entries += 1
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in allowed_exts:
+                    continue
+
+                full_path = os.path.join(root, name)
+                try:
+                    st = os.stat(full_path)
+                    mtime = st.st_mtime
+                    dt = datetime.datetime.fromtimestamp(mtime)
+                    label = "%04d/%02d" % (dt.year, dt.month)
+
+                    rel_path = full_path[len(base_dir):]
+                    if not rel_path.startswith("/"):
+                        rel_path = "/" + rel_path
+
+                    parent_dir = os.path.dirname(rel_path).strip("/")
+                    if parent_dir == label or parent_dir.endswith("/" + label):
+                        continue
+
+                    target_dir = os.path.join(base_dir, label)
+                    os.makedirs(target_dir, exist_ok=True)
+                    affected_dirs.add(target_dir)
+
+                    new_path = os.path.join(target_dir, name)
+                    if os.path.exists(new_path):
+                        base_name, ex = os.path.splitext(name)
+                        new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, int(time.time()), ex))
+
+                    shutil.move(full_path, new_path)
+                    moved_count += 1
+                    if moved_count % 100 == 0:
+                        log.info("[SmartOrganize] moved %d files...", moved_count)
+                        _smart_organize_job_update(
+                            job_id,
+                            moved_count=moved_count,
+                            scanned=scanned_entries,
+                            error_count=len(errors),
+                        )
+                except Exception as e:
+                    errors.append(str(e))
+                    if len(errors) <= 20:
+                        _smart_organize_job_update(
+                            job_id,
+                            moved_count=moved_count,
+                            scanned=scanned_entries,
+                            error_count=len(errors),
+                            errors=errors[:20],
+                            last_error=str(e),
+                        )
+
+        if moved_count > 0:
+            for d in affected_dirs:
+                try:
+                    _run_acl_copy(base_dir, d)
+                    subprocess.run(["chown", "-R", "daica:webdav-users", d])
+                    subprocess.run(["chmod", "-R", "2775", d])
+                except Exception as e:
+                    log.warning("[SmartOrganize] ACL error: %s", e)
+
+            _push_alert(
+                "SMART_ORGANIZE",
+                "Smart Organizer: Da sap xep %d tap vao thu muc theo Nam/Thang." % moved_count,
+                "SUCCESS"
+            )
+
+        final_status = "finished_with_errors" if errors else "finished"
+        _smart_organize_job_update(
+            job_id,
+            status=final_status,
+            moved_count=moved_count,
+            scanned=scanned_entries,
+            error_count=len(errors),
+            errors=errors[:20],
+            finished_at=time.time(),
+        )
+        log.info("[SmartOrganize] Done: %d files moved, %d errors.", moved_count, len(errors))
+    except Exception as e:
+        failed_status = "aborted" if isinstance(e, RuntimeError) else "failed"
+        _smart_organize_job_update(
+            job_id,
+            status=failed_status,
+            error=str(e),
+            moved_count=moved_count,
+            scanned=scanned_entries,
+            error_count=len(errors) + 1,
+            errors=(errors[:20] + [str(e)])[:20],
+            finished_at=time.time(),
+        )
+        log.warning("[SmartOrganize] Job %s stopped: %s", job_id, e)
+
+
 @app.route("/api/tools/smart_organize/execute", methods=["POST"])
 @requires_auth
 def api_smart_organize_execute():
     """
-    Thuc thi sap xep: Di chuyen file vao thÆ° má»¥c YYYY/MM.
+    Queue smart organize as a background job.
     Input JSON: { "filter": "all|image|video" }
     """
-    import shutil
-
     data = request.get_json(force=True) or {}
     scan_filter = data.get("filter", "all")
 
     base_dir = get_webdav_root()
-
     if scan_filter == "image":
         allowed_exts = _IMAGE_EXTS
     elif scan_filter == "video":
@@ -8644,73 +8791,63 @@ def api_smart_organize_execute():
     else:
         allowed_exts = _ALL_MEDIA_EXTS
 
-    moved_count = 0
-    errors = []
-    affected_dirs = set()
+    if not _background_heavy_work_allowed():
+        return jsonify({
+            "success": False,
+            "queued": False,
+            "error": "Background heavy work is not allowed right now",
+        }), 429
 
-    for root, dirs, files in os.walk(base_dir):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
-        for name in files:
-            if name.startswith('.'):
-                continue
-            ext = os.path.splitext(name)[1].lower()
-            if ext not in allowed_exts:
-                continue
+    job_id = "smartorg_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
+    _smart_organize_job_update(
+        job_id,
+        status="queued",
+        base_dir=base_dir,
+        filter=scan_filter,
+        allowed_exts=sorted(allowed_exts),
+        moved_count=0,
+        scanned=0,
+        error_count=0,
+        errors=[],
+        queued_at=time.time(),
+    )
+    threading.Thread(
+        target=_smart_organize_worker,
+        args=(job_id, base_dir, allowed_exts, scan_filter),
+        daemon=True,
+        name="SmartOrganizeWorker",
+    ).start()
 
-            full_path = os.path.join(root, name)
-            try:
-                st = os.stat(full_path)
-                mtime = st.st_mtime
-                dt = datetime.datetime.fromtimestamp(mtime)
-                label = "%04d/%02d" % (dt.year, dt.month)
-
-                rel_path = full_path[len(base_dir):]
-                if not rel_path.startswith("/"):
-                    rel_path = "/" + rel_path
-
-                # B? qua file da nam dung thÆ° má»¥c
-                parent_dir = os.path.dirname(rel_path).strip("/")
-                if parent_dir == label or parent_dir.endswith("/" + label):
-                    continue
-
-                target_dir = os.path.join(base_dir, label)
-                os.makedirs(target_dir, exist_ok=True)
-                affected_dirs.add(target_dir)
-
-                new_path = os.path.join(target_dir, name)
-                # Tráº£nh trung ten
-                if os.path.exists(new_path):
-                    base_name, ex = os.path.splitext(name)
-                    new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, int(time.time()), ex))
-
-                shutil.move(full_path, new_path)
-                moved_count += 1
-                if moved_count % 100 == 0:
-                    log.info("[SmartOrganize] ÄÃ£ di chuyá»ƒn %d tá»‡p...", moved_count)
-            except Exception as e:
-                errors.append(str(e))
-
-    # Fix quyen ACL cho WebDAV (giong organize_legacy_videos)
-    if moved_count > 0:
-        for d in affected_dirs:
-            try:
-                _run_acl_copy(base_dir, d)
-                subprocess.run(["chown", "-R", "daica:webdav-users", d])
-                subprocess.run(["chmod", "-R", "2775", d])
-            except Exception as e:
-                log.warning("[SmartOrganize] Lá»—i ACL: %s", e)
-
-        _push_alert(
-            "SMART_ORGANIZE",
-            "Smart Organizer: ÄÃ£ sáº¯p xáº¿p %d tá»‡p vÃ o thÆ° má»¥c theo NÄƒm/ThÃ¡ng." % moved_count,
-            "SUCCESS"
-        )
-
-    log.info("[SmartOrganize] HoÃ n táº¥t: %d tá»‡p Ä‘Ã£ di chuyá»ƒn, %d lá»—i.", moved_count, len(errors))
     return jsonify({
         "success": True,
-        "moved_count": moved_count,
-        "errors": errors[:20]  # Gioi han 20 lá»—i dau tien
+        "queued": True,
+        "job_id": job_id,
+        "status": "running",
+    }), 202
+
+
+@app.route("/api/tools/smart_organize/status/<job_id>", methods=["GET"])
+@requires_auth
+def api_smart_organize_status(job_id):
+    job = _smart_organize_job_snapshot(job_id)
+    if not job:
+        return jsonify({"success": False, "error": "job_not_found", "job_id": job_id}), 404
+
+    status = job.get("status", "queued")
+    terminal = status in ("finished", "finished_with_errors")
+    return jsonify({
+        "success": terminal or status in ("queued", "running"),
+        "job_id": job_id,
+        "status": status,
+        "filter": job.get("filter", "all"),
+        "moved_count": int(job.get("moved_count", 0) or 0),
+        "scanned": int(job.get("scanned", 0) or 0),
+        "error_count": int(job.get("error_count", 0) or 0),
+        "errors": job.get("errors", [])[:20],
+        "error": job.get("error", ""),
+        "started_at": job.get("started_at", 0),
+        "finished_at": job.get("finished_at", 0),
+        "updated_at": job.get("updated_at", 0),
     })
 
 
