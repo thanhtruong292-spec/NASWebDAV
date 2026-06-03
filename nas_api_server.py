@@ -760,7 +760,7 @@ def monitor_journalctl():
                         finally:
                             conn.close()
                         broadcast({"type": "ACCESS_LOG", "message": m_msg})
-                    except: pass
+                    except Exception as e: log.warning("[Monitor] SSH_FAIL log commit failed: %s", e)
                 if main_loop: main_loop.add_callback(_commit_ssh_fail, log_json)
                 continue
                 
@@ -780,7 +780,7 @@ def monitor_journalctl():
                         finally:
                             conn.close()
                         broadcast({"type": "ACCESS_LOG", "message": m_msg})
-                    except: pass
+                    except Exception as e: log.warning("[Monitor] SSH_SUCCESS log commit failed: %s", e)
                 if main_loop: main_loop.add_callback(_commit_ssh_acc, log_json)
                 continue
             
@@ -796,7 +796,7 @@ def monitor_journalctl():
                         finally:
                             conn.close()
                         broadcast({"type": "ACCESS_LOG", "message": m_msg})
-                    except: pass
+                    except Exception as e: log.warning("[Monitor] CPU_TEMP_WARN log commit failed: %s", e)
                 if main_loop: main_loop.add_callback(_commit_cpu_warn, log_json)
                 continue
                 
@@ -815,7 +815,7 @@ def monitor_journalctl():
                         finally:
                             conn.close()
                         broadcast({"type": "ACCESS_LOG", "message": m_msg})
-                    except: pass
+                    except Exception as e: log.warning("[Monitor] SMART_WARN log commit failed: %s", e)
                 if main_loop: main_loop.add_callback(_commit_smart_warn, log_json)
                 continue
 
@@ -9008,7 +9008,8 @@ def api_disk_trash_batch():
     CACHE_FILE = "/tmp/nas_fast_index_cache.json"
     if os.path.exists(CACHE_FILE):
         try: os.remove(CACHE_FILE)
-        except: pass
+        except Exception as e:
+            log.debug("[FastIndex] Could not remove cache file %s: %s", CACHE_FILE, e)
             
     return jsonify({
         "success_count": success,
@@ -12318,7 +12319,8 @@ def get_media_url():
         for url in preferred_unknown:
             if url not in tried_urls:
                 return url
-    except: pass
+    except Exception as e:
+        log.debug("[TikTok] get_media_url failed: %s", e)
     return ""
 
 MAX_WAIT_NO_DATA = 45
