@@ -7900,7 +7900,8 @@ def _media_cache_headers(real_path, file_size, mime_type):
 
 
 def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
-    with open(real_path, "rb") as f:
+    f = open(real_path, "rb")
+    try:
         f.seek(start)
         remaining = end - start + 1
         while remaining > 0:
@@ -7909,6 +7910,8 @@ def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
                 break
             remaining -= len(chunk)
             yield chunk
+    finally:
+        f.close()
 
 
 @app.route("/api/media", methods=["GET", "HEAD"])
