@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import android.annotation.SuppressLint
@@ -49,6 +50,7 @@ import androidx.media3.session.MediaSession
 import android.app.PictureInPictureParams
 import android.util.Rational
 import coil.compose.AsyncImage
+import coil.annotation.ExperimentalCoilApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -87,7 +89,7 @@ private val AccentCyan  = Color(0xFF00D2FF)
 private val TextPrimary = Color(0xFFE8E8E8)
 private val TextSecondary = Color(0xFF8892B0)
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
 @Composable
 fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: String, pass: String, onBack: () -> Unit) {
     val imageFiles = remember(viewModel.fileList) {
@@ -200,7 +202,7 @@ fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: Stri
                     else onBack()
                 }) {
                     Icon(
-                        if (isSlideshowActive) Icons.Default.Stop else Icons.AutoMirrored.Filled.ArrowBack,
+                        if (isSlideshowActive) Icons.Default.Stop else Icons.Default.ArrowBack,
                         "Back", tint = Color.White
                     )
                 }
@@ -631,7 +633,7 @@ private fun AiCategoryPhotoGrid(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White)
+                Icon(Icons.Default.ArrowBack, null, tint = Color.White)
             }
             val icon = categoryIcons[categoryName] ?: "🖼️"
             Text("$icon $categoryName", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary,
@@ -1096,7 +1098,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         onClick = onBack,
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
@@ -1416,7 +1418,7 @@ fun SmartOrganizerScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Quay lại", tint = TextPrimary)
+                        Icon(Icons.Default.ArrowBack, "Quay lại", tint = TextPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
@@ -1932,7 +1934,7 @@ fun SocialExtractorScreen(
                     IconButton(onClick = {
                         viewModel.cancelStreamPipe()
                         onBack()
-                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = SeTextPrimary) }
+                    }) { Icon(Icons.Default.ArrowBack, null, tint = SeTextPrimary) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SeDarkBg)
             )
@@ -2107,7 +2109,6 @@ private fun HiddenExtractorWebView(
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
-                    databaseEnabled = true
                     // User-Agent thật của Chrome Mobile để vượt bot-detection
                     userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 7) " +
                             "AppleWebKit/537.36 (KHTML, like Gecko) " +

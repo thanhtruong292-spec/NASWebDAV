@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
@@ -607,7 +608,7 @@ fun BrowserScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { isSearching = false; searchQuery = "" }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Đóng")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Đóng")
                     }
                 },
                 actions = {
@@ -740,7 +741,7 @@ fun BrowserScreen(
                     IconButton(onClick = {
                         if (!viewModel.goBack()) onBackToMenu()
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Quay lại")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại")
                     }
                 },
                 title = {

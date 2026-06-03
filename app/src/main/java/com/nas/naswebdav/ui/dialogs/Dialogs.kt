@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
@@ -1314,7 +1315,7 @@ fun FolderPickerDialog(
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Quay lại", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(16.dp))
                                     Text(".. (Quay lại)", fontWeight = FontWeight.Medium)
                                 }

@@ -1,4 +1,6 @@
+@file:OptIn(ExperimentalCoilApi::class)
 package com.nas.naswebdav
+
 
 
 
@@ -49,6 +51,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 
 import coil.decode.VideoFrameDecoder
+import coil.annotation.ExperimentalCoilApi
 
 import androidx.navigation.compose.*
 
@@ -129,6 +132,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     }
 
+    @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
 
         super.onTrimMemory(level)
@@ -161,7 +165,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-    @OptIn(ExperimentalMaterial3Api::class)
+    @OptIn(ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
 
         super.onCreate(savedInstanceState)

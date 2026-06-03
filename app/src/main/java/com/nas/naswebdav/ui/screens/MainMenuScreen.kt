@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
@@ -3917,7 +3918,7 @@ fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
     var copiedField by remember { mutableStateOf("") }
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("Local Guest Pass", fontWeight = FontWeight.Bold, color = GpTextPrimary); Text("Cấp vé FTP tạm thời cho khách", fontSize = 11.sp, color = GpTextSecondary) } },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = GpTextPrimary) } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = GpTextPrimary) } },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = GpDarkSurface))
     }, containerColor = GpDarkSurface) { pad ->
         Column(modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -4250,7 +4251,7 @@ fun ProcessListBottomSheet(
                 Text("TIẾN TRÌNH", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.weight(1f))
                 Text(if (sortBy == "cpu") "CPU" else "RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
-            androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
             val displayProcesses = viewModel.systemProcesses.filter {
                 if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
@@ -4403,7 +4404,7 @@ fun SmartDetailBottomSheet(
             }
 
             Spacer(Modifier.height(4.dp))
-            androidx.compose.material3.Divider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
             Spacer(Modifier.height(4.dp))
 
             // Table header

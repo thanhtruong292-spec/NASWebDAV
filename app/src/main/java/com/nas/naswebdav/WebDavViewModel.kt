@@ -5011,7 +5011,7 @@ fun WebDavViewModel.clearSystemLogs() {
             if (webDavManager.currentBaseUrl.isNotEmpty()) {
                 val req = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs/clear")
-                    .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+                    .post(ByteArray(0).toRequestBody(null))
                     .build()
                 localApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
