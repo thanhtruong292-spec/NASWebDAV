@@ -34,11 +34,12 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         private const val TAG = "LocalVideoProxy"
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 30_000
-        private const val SERVER_CLOSE_TIMEOUT_MS = 60_000L // 60s tự đóng nếu không có request
+        private const val SERVER_IDLE_TIMEOUT_MS = 10 * 60_000L // Giữ proxy sống theo phiên phát để seek lại sau pause dài
         private const val BUFFER_SIZE = 65_536 // 64KB buffer cho stream
     }
 
     @Volatile private var serverSocket: ServerSocket? = null
+    @Volatile private var lastActivityAtMs: Long = 0L
 
     /**
      * Khởi động proxy và trả về URL localhost để VLC kết nối.
@@ -53,18 +54,20 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)
         val server = ServerSocket(0).also { serverSocket = it }
         val port = server.localPort
+        lastActivityAtMs = System.currentTimeMillis()
 
         Log.d(TAG, "Proxy started on port $port → $nasUrl")
 
         // Thread daemon: tự kill khi app process chết
         val proxyThread = Thread(null, {
             try {
-                // Đặt timeout để server tự đóng nếu không ai kết nối
-                server.soTimeout = SERVER_CLOSE_TIMEOUT_MS.toInt()
+                // Poll bằng timeout ngắn để chỉ đóng khi thật sự idle quá lâu.
+                server.soTimeout = 15_000
 
                 while (!server.isClosed) {
                     try {
                         val clientSocket = server.accept()
+                        lastActivityAtMs = System.currentTimeMillis()
                         // Spawn thread riêng để xử lý từng request (VLC có thể gọi HEAD + GET)
                         Thread(null, {
                             handleRequest(clientSocket, nasUrl)
@@ -73,10 +76,16 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                             start()
                         }
                     } catch (e: java.net.SocketTimeoutException) {
-                        Log.d(TAG, "Proxy timed out, shutting down")
-                        break
+                        val idleMs = System.currentTimeMillis() - lastActivityAtMs
+                        if (idleMs >= SERVER_IDLE_TIMEOUT_MS) {
+                            Log.d(TAG, "Proxy idle too long, shutting down")
+                            break
+                        }
                     } catch (e: Exception) {
-                        if (!server.isClosed) Log.w(TAG, "Lỗi nhận kết nối: ${e.message}")
+                        if (!server.isClosed) {
+                            Log.w(TAG, "Lỗi nhận kết nối: ${e.message}")
+                            continue
+                        }
                         break
                     }
                 }
@@ -100,8 +109,10 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
      * 3. Stream response body từ NAS xuống client (hỗ trợ Range requests để seek video)
      */
     private fun handleRequest(clientSocket: Socket, nasUrl: String) {
+        var nasConnection: java.net.HttpURLConnection? = null
         try {
             clientSocket.use { client ->
+                lastActivityAtMs = System.currentTimeMillis()
                 val input = client.getInputStream().bufferedReader()
                 val output = client.getOutputStream()
 
@@ -125,8 +136,8 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 val method = requestLine.split(" ").firstOrNull() ?: "GET"
 
                 // Kết nối tới NAS
-                val nasConnection = URL(nasUrl).openConnection() as java.net.HttpURLConnection
-                nasConnection.apply {
+                nasConnection = URL(nasUrl).openConnection() as java.net.HttpURLConnection
+                nasConnection!!.apply {
                     requestMethod = method
                     connectTimeout = CONNECT_TIMEOUT_MS
                     readTimeout = READ_TIMEOUT_MS
@@ -148,7 +159,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
 
                 val nasResponseCode = try {
-                    nasConnection.responseCode
+                    nasConnection!!.responseCode
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot connect to NAS: ${e.message}")
                     sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
@@ -157,7 +168,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
 
                 // Build HTTP response header cho VLC
                 val responseHeaders = StringBuilder()
-                responseHeaders.append("HTTP/1.1 $nasResponseCode ${nasConnection.responseMessage}\r\n")
+                responseHeaders.append("HTTP/1.1 $nasResponseCode ${nasConnection!!.responseMessage}\r\n")
 
                 // Chuyển tiếp các headers quan trọng từ NAS sang VLC
                 val importantHeaders = listOf(
@@ -166,7 +177,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 )
 
                 for (header in importantHeaders) {
-                    nasConnection.getHeaderField(header)?.let { value ->
+                    nasConnection!!.getHeaderField(header)?.let { value ->
                         responseHeaders.append("${header.replaceFirstChar { it.uppercase() }}: $value\r\n")
                     }
                 }
@@ -179,27 +190,27 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 // Stream body (chỉ với GET, không với HEAD)
                 if (method != "HEAD" && nasResponseCode in 200..299) {
                     try {
-                        nasConnection.inputStream.use { nasBody ->
+                        nasConnection!!.inputStream.use { nasBody ->
                             val buffer = ByteArray(BUFFER_SIZE)
                             var bytesRead: Int
                             while (nasBody.read(buffer).also { bytesRead = it } != -1) {
                                 output.write(buffer, 0, bytesRead)
+                                lastActivityAtMs = System.currentTimeMillis()
                             }
                             output.flush()
                         }
                     } catch (e: Exception) {
                         // Client ngắt kết nối khi seek — đây là bình thường với VLC
                         Log.d(TAG, "Stream end (client disconnect): ${e.message}")
-                    } finally {
-                        runCatching { nasConnection.disconnect() }
                     }
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Lỗi xử lý yêu cầu: ${e.message}")
+        } finally {
+            runCatching { nasConnection?.disconnect() }
         }
     }
-
     private fun sendErrorResponse(output: OutputStream, code: Int, message: String) {
         val body = message.toByteArray(Charsets.UTF_8)
         val response = buildString {

@@ -268,7 +268,7 @@ class NasDocumentProvider : DocumentsProvider() {
                 try {
                     // FIX: optimizedClient là private — dùng sharedHttpClient với Authorization header thủ công
                     // (cùng logic với preemptive auth interceptor của optimizedClient)
-                    val credential = okhttp3.Credentials.basic(webDavManager.currentUser, webDavManager.currentPass)
+                    val credential = webDavManager.currentAuthHeader()
                     val request = okhttp3.Request.Builder()
                         .url(url)
                         .header("Authorization", credential)
@@ -310,9 +310,8 @@ class NasDocumentProvider : DocumentsProvider() {
         val newId = "$baseId/${java.net.URLEncoder.encode(displayName, "UTF-8").replace("+", "%20")}"
         val url = resolveDocumentUrl(newId, baseUrl)
 
-        // FIX A4: Thêm withTimeout 10s
-        runBlocking {
-            try {
+        try {
+            runBlocking {
                 kotlinx.coroutines.withTimeout(10_000L) {
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                         webDavManager.createFolder(url)
@@ -320,11 +319,13 @@ class NasDocumentProvider : DocumentsProvider() {
                         webDavManager.createEmptyFile(url)
                     }
                 }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                android.util.Log.w("NasDocProvider", "createDocument timeout")
-            } catch (_: Exception) {}
+            }
+            return newId
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw FileNotFoundException("createDocument timed out")
+        } catch (e: Exception) {
+            throw FileNotFoundException("createDocument failed: ${e.message ?: "unknown error"}")
         }
-        return newId
     }
 
     override fun deleteDocument(documentId: String?) {

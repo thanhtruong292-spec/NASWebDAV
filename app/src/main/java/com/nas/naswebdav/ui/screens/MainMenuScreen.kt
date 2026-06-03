@@ -348,7 +348,7 @@ fun MainMenuScreen(
         viewModel.fetchOmvOverview()
         viewModel.fetchNasInsights()
         viewModel.syncLivestreamStateWithServer(mContext)
-        viewModel.launchDashboardRealtimeScheduler()
+        viewModel.startDashboardMonitoring(resetStatusPoll = false)
     }
 
     // FIX D10: Collect tất cả AutoBackupState values cùng lúc ở top-level Composable.
@@ -709,8 +709,7 @@ fun MainMenuScreen(
         LaunchedEffect(true) {
             viewModel.checkSmartNetwork(mContext)
             viewModel.fetchSmartData()
-            viewModel.listenToLocalNasApi() // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
-            viewModel.launchDashboardRealtimeScheduler()
+            viewModel.startDashboardMonitoring(resetStatusPoll = true) // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
             kotlinx.coroutines.delay(1000)
             pullRefreshState.endRefresh()
         }

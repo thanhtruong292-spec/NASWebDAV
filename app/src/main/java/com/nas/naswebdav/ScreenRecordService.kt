@@ -132,7 +132,12 @@ class ScreenRecordService : Service() {
         )
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-        val data = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        val data = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        }
         apiBase = intent.getStringExtra(EXTRA_API_BASE).orEmpty()
         val user = intent.getStringExtra(EXTRA_USER).orEmpty()
         val pass = intent.getStringExtra(EXTRA_PASS).orEmpty()

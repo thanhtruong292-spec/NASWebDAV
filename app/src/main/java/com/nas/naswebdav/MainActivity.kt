@@ -2,7 +2,7 @@ package com.nas.naswebdav
 
 
 
-// Import các Composable đã tách file
+// Import cÃ¡c Composable Ä‘Ã£ tÃ¡ch file
 
 import com.nas.naswebdav.ui.screens.MainMenuScreen
 
@@ -29,6 +29,7 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.*
@@ -51,6 +52,8 @@ import coil.decode.VideoFrameDecoder
 
 import androidx.navigation.compose.*
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 
 import kotlinx.coroutines.launch
@@ -65,7 +68,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-    // FIX MEMORY LEAK: Loại bỏ companion object (static state), dùng biến instance thông thường
+    // FIX MEMORY LEAK: Loáº¡i bá» companion object (static state), dÃ¹ng biáº¿n instance thÃ´ng thÆ°á»ng
 
     var isPlayingVideo = false
 
@@ -73,9 +76,23 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     
 
-    // Lưu ViewModel cấp độ Activity để nhận Intent khi sống nền
+    // LÆ°u ViewModel cáº¥p Ä‘á»™ Activity Ä‘á»ƒ nháº­n Intent khi sá»‘ng ná»n
 
-    private lateinit var viewModel: WebDavViewModel
+    private val viewModelFactory by lazy(LazyThreadSafetyMode.NONE) {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(WebDavViewModel::class.java)) {
+                    @Suppress("UNCHECKED_CAST")
+                    return WebDavViewModel(
+                        WebDavManager,
+                        WebDavRepository(WebDavManager, NasApplication.instance.database)
+                    ) as T
+                }
+                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
+            }
+        }
+    }
+    private val viewModel: WebDavViewModel by viewModels { viewModelFactory }
     private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
     private lateinit var notificationPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>
     private lateinit var overlayPermissionLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
@@ -86,19 +103,27 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onUserLeaveHint()
 
-        // TỰ ĐỘNG THU NHỎ VIDEO: Kích hoạt PiP khi người dùng bấm phím Home
+        // Tá»° Äá»˜NG THU NHá»Ž VIDEO: KÃ­ch hoáº¡t PiP khi ngÆ°á»i dÃ¹ng báº¥m phÃ­m Home
 
-        if (isPlayingVideo) {
+        if (isPlayingVideo && packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
 
             val params = android.app.PictureInPictureParams.Builder()
 
-                // Sửa viền đen: Dùng tỉ lệ gốc của video (set từ VideoPlayerScreen) thay vì 16:9 cứng
+                // Sá»­a viá»n Ä‘en: DÃ¹ng tá»‰ lá»‡ gá»‘c cá»§a video (set tá»« VideoPlayerScreen) thay vÃ¬ 16:9 cá»©ng
 
                 .setAspectRatio(videoAspectRatio)
 
                 .build()
 
-            enterPictureInPictureMode(params)
+            try {
+
+                enterPictureInPictureMode(params)
+
+            } catch (e: IllegalStateException) {
+
+                android.util.Log.w("MainActivity", "PiP unavailable on user leave", e)
+
+            }
 
         }
 
@@ -108,21 +133,21 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onTrimMemory(level)
 
-        // Khi hệ thống thiếu RAM, chủ động giải phóng bộ nhớ đệm hình ảnh
+        // Khi há»‡ thá»‘ng thiáº¿u RAM, chá»§ Ä‘á»™ng giáº£i phÃ³ng bá»™ nhá»› Ä‘á»‡m hÃ¬nh áº£nh
 
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
 
             coil.Coil.imageLoader(this).memoryCache?.clear()
 
-            // FIX BUG #6: Xóa System.gc() — không hiệu quả, gây GC pause
+            // FIX BUG #6: XÃ³a System.gc() â€” khÃ´ng hiá»‡u quáº£, gÃ¢y GC pause
 
         }
 
-        // FIX IMAGE CACHE LEAK: Dọn disk cache khi bộ nhớ thấp
+        // FIX IMAGE CACHE LEAK: Dá»n disk cache khi bá»™ nhá»› tháº¥p
 
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
 
-            // FIX BUG #6: Dùng lifecycleScope thay vì GlobalScope — tránh rò rỉ khi Activity bị hủy
+            // FIX BUG #6: DÃ¹ng lifecycleScope thay vÃ¬ GlobalScope â€” trÃ¡nh rÃ² rá»‰ khi Activity bá»‹ há»§y
 
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
 
@@ -141,7 +166,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // Yêu cầu quyền truy cập toàn bộ tập tin (All Files Access) từ Android 11+ (API 30+)
+        // YÃªu cáº§u quyá»n truy cáº­p toÃ n bá»™ táº­p tin (All Files Access) tá»« Android 11+ (API 30+)
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
 
@@ -170,13 +195,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         requestMediaReadPermissionsIfNeeded()
 
-        val db = NasApplication.instance.database
-
-        val webDavManager = WebDavManager
-
-        val repository = WebDavRepository(webDavManager, db)
-
-        viewModel = WebDavViewModel(webDavManager, repository)
         screenCaptureLauncher = registerForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -209,7 +227,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             } else {
                 android.widget.Toast.makeText(
                     this,
-                    "Chưa có quyền hiển thị trên cùng nên chưa thể hiện REC khi quay.",
+                    "ChÆ°a cÃ³ quyá»n hiá»ƒn thá»‹ trÃªn cÃ¹ng nÃªn chÆ°a thá»ƒ hiá»‡n REC khi quay.",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
             }
@@ -217,7 +235,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-        // Bắt Intent khởi động ứng dụng từ tính năng Tự động Thông báo Rác
+        // Báº¯t Intent khá»Ÿi Ä‘á»™ng á»©ng dá»¥ng tá»« tÃ­nh nÄƒng Tá»± Ä‘á»™ng ThÃ´ng bÃ¡o RÃ¡c
 
         if (intent?.getBooleanExtra("SHOW_DUPLICATES", false) == true) {
 
@@ -227,7 +245,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-        // TÍNH NĂNG SHARE TO APP: Xử lý tệp chia sẻ từ ứng dụng khác
+        // TÃNH NÄ‚NG SHARE TO APP: Xá»­ lÃ½ tá»‡p chia sáº» tá»« á»©ng dá»¥ng khÃ¡c
 
         if (intent?.action == android.content.Intent.ACTION_SEND || intent?.action == android.content.Intent.ACTION_SEND_MULTIPLE) {
 
@@ -235,11 +253,31 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
             if (intent.action == android.content.Intent.ACTION_SEND) {
 
-                intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)?.let { sharedUris.add(it) }
+                val sharedUri = if (android.os.Build.VERSION.SDK_INT >= 33) {
+
+                    intent.getParcelableExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+
+                } else {
+
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+
+                }
+                sharedUri?.let { sharedUris.add(it) }
 
             } else {
 
-                intent.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)?.let { sharedUris.addAll(it) }
+                val sharedUriList = if (android.os.Build.VERSION.SDK_INT >= 33) {
+
+                    intent.getParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri::class.java)
+
+                } else {
+
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+
+                }
+                sharedUriList?.let { sharedUris.addAll(it) }
 
             }
 
@@ -247,7 +285,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
             if (sharedUris.isNotEmpty()) {
 
-                // BẢO MẬT: Đọc credentials qua SecurePrefsHelper (AES-256 singleton)
+                // Báº¢O Máº¬T: Äá»c credentials qua SecurePrefsHelper (AES-256 singleton)
 
                 val savedUrl = SecurePrefsHelper.getUrl(applicationContext)
 
@@ -261,7 +299,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
 
-                    // FIX: uploadFile() cần context và Uri — gọi qua lifecycleScope vì là suspend fun
+                    // FIX: uploadFile() cáº§n context vÃ  Uri â€” gá»i qua lifecycleScope vÃ¬ lÃ  suspend fun
                     sharedUris.forEach { uri ->
                         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
@@ -269,21 +307,21 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                                     if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
                                 } ?: uri.lastPathSegment ?: "upload_${System.currentTimeMillis()}"
-                                // FIX: sanitize tên file để tránh path traversal khi ghi tempFile vào cacheDir.
-                                // Loại bỏ '/' '\' và '..' segment vì DISPLAY_NAME có thể là malicious.
+                                // FIX: sanitize tÃªn file Ä‘á»ƒ trÃ¡nh path traversal khi ghi tempFile vÃ o cacheDir.
+                                // Loáº¡i bá» '/' '\' vÃ  '..' segment vÃ¬ DISPLAY_NAME cÃ³ thá»ƒ lÃ  malicious.
                                 val fileName = rawName
                                     .replace('/', '_').replace('\\', '_')
                                     .replace("..", "_")
                                     .ifBlank { "upload_${System.currentTimeMillis()}" }
                                     .take(200)
-                                // FIX #17: URL-encode tên file để tránh lỗi với dấu cách/kí tự đặc biệt
+                                // FIX #17: URL-encode tÃªn file Ä‘á»ƒ trÃ¡nh lá»—i vá»›i dáº¥u cÃ¡ch/kÃ­ tá»± Ä‘áº·c biá»‡t
                                 val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
                                 val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
                                 contentResolver.openInputStream(uri)?.use { inputStream ->
                                     val tempFile = java.io.File(cacheDir, fileName)
-                                    // Phòng hộ thêm: đảm bảo path cuối cùng nằm trong cacheDir
+                                    // PhÃ²ng há»™ thÃªm: Ä‘áº£m báº£o path cuá»‘i cÃ¹ng náº±m trong cacheDir
                                     if (!tempFile.canonicalPath.startsWith(cacheDir.canonicalPath)) {
-                                        throw SecurityException("Tên file độc hại: $rawName")
+                                        throw SecurityException("TÃªn file Ä‘á»™c háº¡i: $rawName")
                                     }
                                     tempFile.outputStream().use { inputStream.copyTo(it) }
                                     val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
@@ -291,7 +329,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     tempFile.delete()
                                 }
                             } catch (e: Exception) {
-                                android.util.Log.e("ShareUpload", "Tải lên thất bại: ${e.message}")
+                                android.util.Log.e("ShareUpload", "Táº£i lÃªn tháº¥t báº¡i: ${e.message}")
                             }
                         }
                     }
@@ -304,9 +342,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
 
-        // CẤU HÌNH TỐI ƯU CHO NAS YẾU (Chainedbox, Rockchip rk3328, v.v...)
+        // Cáº¤U HÃŒNH Tá»I Æ¯U CHO NAS Yáº¾U (Chainedbox, Rockchip rk3328, v.v...)
 
-        // Giảm luồng song song xuống thấp (4 luồng/host) để không làm treo ổ cứng NAS khi vừa load ảnh vừa xem Video
+        // Giáº£m luá»“ng song song xuá»‘ng tháº¥p (4 luá»“ng/host) Ä‘á»ƒ khÃ´ng lÃ m treo á»• cá»©ng NAS khi vá»«a load áº£nh vá»«a xem Video
 
         val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }
 
@@ -328,7 +366,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
             .memoryCache {
 
-            // FIX BUG #1: Cache cố định theo MB thay vì % — tránh OOM trên thiết bị yếu
+            // FIX BUG #1: Cache cá»‘ Ä‘á»‹nh theo MB thay vÃ¬ % â€” trÃ¡nh OOM trÃªn thiáº¿t bá»‹ yáº¿u
 
                 val maxHeap = Runtime.getRuntime().maxMemory()
 
@@ -340,7 +378,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     heapMb > 512L -> 200L
 
-                    else -> (heapMb * 15 / 100)  // 15% nhưng trong bounds an toàn
+                    else -> (heapMb * 15 / 100)  // 15% nhÆ°ng trong bounds an toÃ n
 
                 }
 
@@ -358,7 +396,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     .directory(cacheDir.resolve("image_cache"))
 
-                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: Tăng lên 800MB (tối ưu cho thumbnail nhiều)
+                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: TÄƒng lÃªn 800MB (tá»‘i Æ°u cho thumbnail nhiá»u)
 
                     .build()
 
@@ -405,15 +443,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onNewIntent(intent)
 
-        // Bắt Intent khi App đang chạy trong bộ nhớ nền 
+        // Báº¯t Intent khi App Ä‘ang cháº¡y trong bá»™ nhá»› ná»n 
 
         if (intent.getBooleanExtra("SHOW_DUPLICATES", false)) {
 
-            if (::viewModel.isInitialized) {
-
-                viewModel.shouldAutoOpenDuplicates = true
-
-            }
+            viewModel.shouldAutoOpenDuplicates = true
 
         }
 
@@ -454,7 +488,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             overlayPermissionLauncher.launch(intent)
             android.widget.Toast.makeText(
                 this,
-                "Bật quyền hiển thị trên cùng để thấy REC và thời gian khi quay màn hình.",
+                "Báº­t quyá»n hiá»ƒn thá»‹ trÃªn cÃ¹ng Ä‘á»ƒ tháº¥y REC vÃ  thá»i gian khi quay mÃ n hÃ¬nh.",
                 android.widget.Toast.LENGTH_LONG
             ).show()
             return
@@ -494,13 +528,13 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // NAVIGATION COMPOSE CHUẨN
+    // NAVIGATION COMPOSE CHUáº¨N
 
     val navController = androidx.navigation.compose.rememberNavController()
 
 
 
-    // Khóa lại ngay khi người dùng rời app. Bỏ qua màn đăng nhập và lần resume đầu khi app vừa khởi động.
+    // KhÃ³a láº¡i ngay khi ngÆ°á»i dÃ¹ng rá»i app. Bá» qua mÃ n Ä‘Äƒng nháº­p vÃ  láº§n resume Ä‘áº§u khi app vá»«a khá»Ÿi Ä‘á»™ng.
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
@@ -565,7 +599,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // ============ DIALOG PHÊ DUYỆT IP LẠ (TOÀN CỤC - HIỂN THỊ TRÊN MỌI SCREEN) ============
+    // ============ DIALOG PHÃŠ DUYá»†T IP Láº  (TOÃ€N Cá»¤C - HIá»‚N THá»Š TRÃŠN Má»ŒI SCREEN) ============
 
     if (viewModel.showApprovalDialog) {
 
@@ -581,7 +615,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // Dialog thông báo chung từ ViewModel (hiển thị toàn cục)
+    // Dialog thÃ´ng bÃ¡o chung tá»« ViewModel (hiá»ƒn thá»‹ toÃ n cá»¥c)
 
     if (viewModel.showCommonDialog) {
 
@@ -619,7 +653,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("main_menu") {
 
-            // VÔ HIỆU HÓA BACK CỨNG: Chặn thoát app từ Menu chính
+            // VÃ” HIá»†U HÃ“A BACK Cá»¨NG: Cháº·n thoÃ¡t app tá»« Menu chÃ­nh
 
             androidx.activity.compose.BackHandler { /* Do nothing */ }
 
@@ -671,7 +705,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     val trashUrl = viewModel.webDavManager.currentBaseUrl + ".trash/"
 
-                    viewModel.openSpecificUrl(trashUrl, "Thùng rác")
+                    viewModel.openSpecificUrl(trashUrl, "ThÃ¹ng rÃ¡c")
 
                     navController.navigate("browser")
 
@@ -687,7 +721,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng '${viewModel.webDavManager.currentUser}' Ä‘Ã£ chá»§ Ä‘á»™ng ÄÄƒng xuáº¥t.")
 
                     }
 
@@ -699,7 +733,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 },
 
-                // ── TÍNH NĂNG MỚI ─────────────────────────────────────────────────
+                // â”€â”€ TÃNH NÄ‚NG Má»šI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
                 onOpenOrganizer = { navController.navigate("smart_organizer") },
 
@@ -741,7 +775,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "NgÆ°á»i dÃ¹ng '${viewModel.webDavManager.currentUser}' Ä‘Ã£ chá»§ Ä‘á»™ng ÄÄƒng xuáº¥t.")
 
                     }
 
@@ -823,7 +857,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // ─── TÍNH NĂNG MỚI: Guest Pass ────────────────────────────────────
+        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Guest Pass â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         composable("guest_pass") {
 
@@ -839,7 +873,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // ─── TÍNH NĂNG MỚI: Social Extractor ──────────────────────────────
+        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Social Extractor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         composable("social_extractor") {
 
@@ -855,7 +889,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-        // ─── TÍNH NĂNG MỚI: Smart Organizer ────────────────────────────────
+        // â”€â”€â”€ TÃNH NÄ‚NG Má»šI: Smart Organizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
         composable("smart_organizer") {
 
@@ -873,7 +907,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // Hiển thị lớp Khóa Sinh trắc học đè lên trên mọi giao diện
+    // Hiá»ƒn thá»‹ lá»›p KhÃ³a Sinh tráº¯c há»c Ä‘Ã¨ lÃªn trÃªn má»i giao diá»‡n
 
     if (showBiometricLock) {
 
@@ -886,7 +920,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                 showBiometricLock = false
                 requireBiometricOnReturn = false
 
-                // BỎ QUA LOGIN: Nếu vừa khởi động app và quét vân tay đúng, tự động kết nối luôn
+                // Bá»Ž QUA LOGIN: Náº¿u vá»«a khá»Ÿi Ä‘á»™ng app vÃ  quÃ©t vÃ¢n tay Ä‘Ãºng, tá»± Ä‘á»™ng káº¿t ná»‘i luÃ´n
 
                 if (navController.currentDestination?.route == "login" || navController.currentDestination == null) {
 
@@ -998,13 +1032,13 @@ fun ScreenRecordFloatingOverlay() {
                         Spacer(Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "Đang quay màn hình: $timeString",
+                                text = "Äang quay mÃ n hÃ¬nh: $timeString",
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "${networkMode.ifBlank { "NAS" }} - đoạn ${segIdx + 1}, đã gửi $uploadedSegments, chờ $pendingSegments",
+                                text = "${networkMode.ifBlank { "NAS" }} - Ä‘oáº¡n ${segIdx + 1}, Ä‘Ã£ gá»­i $uploadedSegments, chá» $pendingSegments",
                                 color = Color.Gray,
                                 fontSize = 11.sp
                             )
@@ -1022,7 +1056,7 @@ fun ScreenRecordFloatingOverlay() {
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = "Dừng",
+                            text = "Dá»«ng",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -1033,7 +1067,6 @@ fun ScreenRecordFloatingOverlay() {
         }
     }
 }
-
 
 
 
