@@ -34,3 +34,7 @@ temp_patch*.ps1
 REVIEW_PATCH_CHECKLIST.md
 REVIEW_e25d698.md
 
+
+compile_debug_kotlin.log
+
+REVIEW_FIXES_20260603.md
