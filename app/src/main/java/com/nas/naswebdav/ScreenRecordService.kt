@@ -96,7 +96,7 @@ class ScreenRecordService : Service() {
         if (projection != null) return
         createChannel()
         if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
-            logWarn("Kh?ng c? quy?n hi?n th? tr?n c?ng: chip REC s? kh?ng hi?n, quay v?n ti?p t?c")
+            logWarn("Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn tiếp tục")
         }
         isRecordingState.value = true
         elapsedSecondsState.value = 0L
@@ -312,7 +312,7 @@ class ScreenRecordService : Service() {
         for (marker in ready) {
             val mediaFileName = marker.readText().trim()
             if (mediaFileName.isBlank()) {
-                logWarn("B? marker screen-record tr?ng: " + marker.name)
+                logWarn("Bỏ marker screen-record trống: " + marker.name)
                 marker.delete()
                 refreshUploadCounters()
                 progressed = true
@@ -321,7 +321,7 @@ class ScreenRecordService : Service() {
             val mediaFile = File(spoolDir, mediaFileName)
             val idx = mediaFile.name.substringAfter("part_").substringBefore(".").toIntOrNull()
             if (idx == null) {
-                logWarn("B? marker screen-record kh?ng h?p l?: " + marker.name + " -> " + mediaFile.name)
+                logWarn("Bỏ marker screen-record không hợp lệ: " + marker.name + " -> " + mediaFile.name)
                 marker.delete()
                 if (mediaFile.exists()) mediaFile.delete()
                 refreshUploadCounters()
@@ -329,7 +329,7 @@ class ScreenRecordService : Service() {
                 continue
             }
             if (!mediaFile.exists() || mediaFile.length() == 0L) {
-                logWarn("B? marker screen-record m? c?i: " + marker.name + " -> " + mediaFile.name)
+                logWarn("Bỏ marker screen-record mồ côi: " + marker.name + " -> " + mediaFile.name)
                 marker.delete()
                 if (mediaFile.exists()) mediaFile.delete()
                 refreshUploadCounters()
@@ -448,7 +448,7 @@ class ScreenRecordService : Service() {
     }
 
     private fun cancelNasSession() {
-        logWarn("H?y phi?n quay tr?n NAS: $sessionId")
+        logWarn("Hủy phiên quay trên NAS: $sessionId")
         val req = Request.Builder()
             .url("$apiBase/api/screen_record/cancel?session_id=$sessionId")
             .header("Authorization", authHeader)

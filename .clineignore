@@ -172,3 +172,9 @@ Provide only the exact code blocks being replaced.
   - Test quay 5 phút ở 8 Mbps, 10 Mbps, 12 Mbps.
   - Theo dõi backlog segment, HTTP upload timeout, ping tới NAS, và log `ScreenRecordService`.
   - Chỉ nâng bitrate khi backlog luôn 0-1 segment và NAS finalize MP4 ổn định.
+
+
+# 13. MOJIBAKE BAN (STRICT)
+- Do not introduce mojibake in app text, logs, toasts, dialogs, reports, or comments that users will read.
+- All Vietnamese UI/log strings must be written as real UTF-8 characters; never leave ASCII question-mark substitutions like `Kh?ng`, `B?`, `H?y`, `Ch?a`.
+- Before finishing any Kotlin edit, verify user-facing strings render correctly in UTF-8 and the build remains clean.

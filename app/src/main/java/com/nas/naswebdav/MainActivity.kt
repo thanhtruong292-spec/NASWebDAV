@@ -225,7 +225,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             } else {
                 android.widget.Toast.makeText(
                     this,
-                    "Ch?a c?p quy?n th?ng b?o: v?n ti?p t?c chu?n b? quay m?n h?nh, nh?ng th?ng b?o n?n c? th? kh?ng hi?n th? ??y ??.",
+                    "Chưa cấp quyền thông báo: vẫn tiếp tục chuẩn bị quay màn hình, nhưng thông báo nền có thể không hiển thị đầy đủ.",
                     android.widget.Toast.LENGTH_LONG
                 ).show()
                 requestScreenRecordPermissionActual()
@@ -447,7 +447,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) {
             android.widget.Toast.makeText(
                 this,
-                "Kh?ng c? quy?n hi?n th? tr?n c?ng: chip REC s? kh?ng hi?n, quay v?n ho?t ??ng.",
+                "Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn hoạt động.",
                 android.widget.Toast.LENGTH_LONG
             ).show()
         }
