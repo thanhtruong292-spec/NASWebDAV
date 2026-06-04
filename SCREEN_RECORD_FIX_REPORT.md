@@ -38,3 +38,9 @@
 ## 3. K?t qu? Build
 - assembleDebug: BUILD SUCCESSFUL
 - Kotlin warnings: 0
+
+
+## 4. Follow-up Fixes After Review
+- MainActivity: notification permission denial no longer loops; app still proceeds to screen-capture flow.
+- ScreenRecordService: stale `.ready` cleanup now refreshes pending counters immediately.
+- stopRecording(): failure wait uses a small fixed delay instead of an expanding backoff, so stopping stays bounded.

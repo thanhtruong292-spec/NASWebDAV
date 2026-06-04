@@ -219,14 +219,18 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         notificationPermissionLauncher = registerForActivityResult(
             androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-        ) { _ ->
-            requestScreenRecordPermission()
+        ) { granted ->
+            if (granted) {
+                requestScreenRecordPermissionActual()
+            } else {
+                android.widget.Toast.makeText(
+                    this,
+                    "Ch?a c?p quy?n th?ng b?o: v?n ti?p t?c chu?n b? quay m?n h?nh, nh?ng th?ng b?o n?n c? th? kh?ng hi?n th? ??y ??.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                requestScreenRecordPermissionActual()
+            }
         }
-
-
-
-        // Bắt Intent khởi động ứng dụng từ tính năng Tự động Thông báo Rác
-
         handleIncomingIntent(intent)
 
         val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }

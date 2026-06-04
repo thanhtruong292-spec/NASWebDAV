@@ -314,6 +314,7 @@ class ScreenRecordService : Service() {
             if (mediaFileName.isBlank()) {
                 logWarn("B? marker screen-record tr?ng: " + marker.name)
                 marker.delete()
+                refreshUploadCounters()
                 progressed = true
                 continue
             }
@@ -323,6 +324,7 @@ class ScreenRecordService : Service() {
                 logWarn("B? marker screen-record kh?ng h?p l?: " + marker.name + " -> " + mediaFile.name)
                 marker.delete()
                 if (mediaFile.exists()) mediaFile.delete()
+                refreshUploadCounters()
                 progressed = true
                 continue
             }
@@ -330,6 +332,7 @@ class ScreenRecordService : Service() {
                 logWarn("B? marker screen-record m? c?i: " + marker.name + " -> " + mediaFile.name)
                 marker.delete()
                 if (mediaFile.exists()) mediaFile.delete()
+                refreshUploadCounters()
                 progressed = true
                 continue
             }
@@ -498,12 +501,7 @@ class ScreenRecordService : Service() {
                 var waitCount = 0
                 while (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true && waitCount < 30) {
                     val r = uploadReadySegmentsOnce()
-                    if (r.failed) {
-                        val backoffMs = minOf(1000L shl minOf(waitCount, 5), 30_000L)
-                        delay(backoffMs)
-                    } else {
-                        delay(1000)
-                    }
+                    delay(if (r.failed) 1500L else 1000L)
                     waitCount++
                 }
                 if (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
