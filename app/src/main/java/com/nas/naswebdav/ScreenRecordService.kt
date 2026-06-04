@@ -96,24 +96,7 @@ class ScreenRecordService : Service() {
         if (projection != null) return
         createChannel()
         if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                buildNotification("Cần quyền hiển thị trên cùng để hiện REC khi quay"),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            )
-            logError("Không bắt đầu quay vì chưa có quyền hiển thị trên cùng cho chip REC")
-            mainHandler.post {
-                Toast.makeText(
-                    this,
-                    "Cần bật quyền hiển thị trên cùng để hiện REC và thời gian quay.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
+            logWarn("Kh?ng c? quy?n hi?n th? tr?n c?ng: chip REC s? kh?ng hi?n, quay v?n ti?p t?c")
         }
         isRecordingState.value = true
         elapsedSecondsState.value = 0L
@@ -299,34 +282,69 @@ class ScreenRecordService : Service() {
     }
 
     private suspend fun uploadLoop() {
+        var consecutiveFailures = 0
         while (!stopping.get() || spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
-            if (!uploadReadySegmentsOnce()) {
+            val result = uploadReadySegmentsOnce()
+            if (result.failed) {
+                consecutiveFailures++
+                val exponent = (consecutiveFailures - 1).coerceAtMost(5)
+                val backoffMs = minOf(1000L shl exponent, 30_000L)
+                delay(backoffMs)
+            } else if (!result.progressed) {
+                consecutiveFailures = 0
                 delay(1000)
+            } else {
+                consecutiveFailures = 0
             }
         }
     }
 
-    private fun uploadReadySegmentsOnce(): Boolean {
+    private data class UploadPassResult(val progressed: Boolean, val failed: Boolean)
+
+    private fun uploadReadySegmentsOnce(): UploadPassResult {
         val ready = spoolDir.listFiles()
             ?.filter { it.name.endsWith(".ready") }
             ?.sortedBy { it.name }
             ?: emptyList()
-        if (ready.isEmpty()) return false
+        if (ready.isEmpty()) return UploadPassResult(false, false)
+        var progressed = false
+        var failed = false
         for (marker in ready) {
-            val mediaFile = File(spoolDir, marker.readText().trim())
-            val idx = mediaFile.name.substringAfter("part_").substringBefore(".").toIntOrNull() ?: continue
-            if (mediaFile.exists() && uploadSegment(idx, mediaFile)) {
+            val mediaFileName = marker.readText().trim()
+            if (mediaFileName.isBlank()) {
+                logWarn("B? marker screen-record tr?ng: " + marker.name)
+                marker.delete()
+                progressed = true
+                continue
+            }
+            val mediaFile = File(spoolDir, mediaFileName)
+            val idx = mediaFile.name.substringAfter("part_").substringBefore(".").toIntOrNull()
+            if (idx == null) {
+                logWarn("B? marker screen-record kh?ng h?p l?: " + marker.name + " -> " + mediaFile.name)
+                marker.delete()
+                if (mediaFile.exists()) mediaFile.delete()
+                progressed = true
+                continue
+            }
+            if (!mediaFile.exists() || mediaFile.length() == 0L) {
+                logWarn("B? marker screen-record m? c?i: " + marker.name + " -> " + mediaFile.name)
+                marker.delete()
+                if (mediaFile.exists()) mediaFile.delete()
+                progressed = true
+                continue
+            }
+            if (uploadSegment(idx, mediaFile)) {
                 marker.delete()
                 mediaFile.delete()
                 uploadedSegments = maxOf(uploadedSegments, idx + 1)
                 refreshUploadCounters()
+                progressed = true
             } else {
-                return true
+                failed = true
             }
         }
-        return true
+        return UploadPassResult(progressed, failed)
     }
-
     private suspend fun startNasSession() {
         val body = JSONObject()
             .put("session_id", sessionId)
@@ -427,15 +445,14 @@ class ScreenRecordService : Service() {
     }
 
     private fun cancelNasSession() {
-        logWarn("Hủy phiên quay trên NAS: $sessionId")
+        logWarn("H?y phi?n quay tr?n NAS: $sessionId")
         val req = Request.Builder()
             .url("$apiBase/api/screen_record/cancel?session_id=$sessionId")
             .header("Authorization", authHeader)
             .post(ByteArray(0).toRequestBody(null))
             .build()
-        NasApplication.instance.longRunningApiClient.newCall(req).execute().close()
+        NasApplication.instance.longRunningApiClient.newCall(req).execute().use { _ -> }
     }
-
     private fun enforceSpoolLimit() {
         val files = spoolDir.listFiles()?.sortedBy { it.lastModified() } ?: return
         var total = files.filter { it.isFile }.sumOf { it.length() }
@@ -480,8 +497,13 @@ class ScreenRecordService : Service() {
                 }
                 var waitCount = 0
                 while (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true && waitCount < 30) {
-                    uploadReadySegmentsOnce()
-                    delay(1000)
+                    val r = uploadReadySegmentsOnce()
+                    if (r.failed) {
+                        val backoffMs = minOf(1000L shl minOf(waitCount, 5), 30_000L)
+                        delay(backoffMs)
+                    } else {
+                        delay(1000)
+                    }
                     waitCount++
                 }
                 if (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {

@@ -98,7 +98,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     private val viewModel: WebDavViewModel by viewModels { viewModelFactory }
     private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
     private lateinit var notificationPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>
-    private lateinit var overlayPermissionLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
 
 
 
@@ -222,19 +221,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
         ) { _ ->
             requestScreenRecordPermission()
-        }
-        overlayPermissionLauncher = registerForActivityResult(
-            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-        ) {
-            if (android.os.Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(this)) {
-                requestScreenRecordPermissionActual()
-            } else {
-                android.widget.Toast.makeText(
-                    this,
-                    "Chưa có quyền hiển thị trên cùng nên chưa thể hiện REC khi quay.",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
-            }
         }
 
 
@@ -455,17 +441,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
         }
         if (android.os.Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) {
-            val intent = android.content.Intent(
-                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                android.net.Uri.parse("package:$packageName")
-            )
-            overlayPermissionLauncher.launch(intent)
             android.widget.Toast.makeText(
                 this,
-                "Bật quyền hiển thị trên cùng để thấy REC và thời gian khi quay màn hình.",
+                "Kh?ng c? quy?n hi?n th? tr?n c?ng: chip REC s? kh?ng hi?n, quay v?n ho?t ??ng.",
                 android.widget.Toast.LENGTH_LONG
             ).show()
-            return
         }
         requestScreenRecordPermissionActual()
     }
