@@ -72,6 +72,36 @@ data class NasFile(
 
 // Động cơ WebDAV hiệu suất cao - Không sử dụng Sardine
 
+private fun decodeWebDavSegment(segment: String): String {
+    return runCatching { java.net.URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
+}
+
+internal fun encodeWebDavSegment(segment: String): String {
+    return java.net.URLEncoder.encode(decodeWebDavSegment(segment), "UTF-8").replace("+", "%20")
+}
+
+internal fun buildWebDavTrashTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
+    val normalizedBase = baseUrl.trimEnd('/')
+    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
+    val driveName = relativePath.substringBefore('/')
+    val encodedDriveName = encodeWebDavSegment(driveName)
+    val encodedName = encodeWebDavSegment(fileName)
+    var targetUrl = "$normalizedBase/$encodedDriveName/.trash/$encodedName"
+    if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+    return targetUrl
+}
+
+internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
+    val normalizedBase = baseUrl.trimEnd('/')
+    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
+    val driveName = relativePath.substringBefore('/')
+    val encodedDriveName = encodeWebDavSegment(driveName)
+    val encodedName = encodeWebDavSegment(fileName)
+    var targetUrl = "$normalizedBase/$encodedDriveName/$encodedName"
+    if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+    return targetUrl
+}
+
 object WebDavManager {
 
     internal data class AuthState(
@@ -929,51 +959,53 @@ object WebDavManager {
 
     suspend fun deleteFile(url: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(url).method("DELETE", null).build()
-
-        // FIX POOL EXHAUSTION: Consume body trước khi đóng
+        val isDirectory = url.endsWith("/")
+        val builder = Request.Builder().withAuth(authState).url(url).method("DELETE", null)
+        if (isDirectory) {
+            builder.header("Depth", "Infinity")
+        }
+        val request = builder.build()
 
         optimizedClient.newCall(request).execute().use { response ->
-
-            response.body?.close()
-
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
+                android.util.Log.w("WebDAV", "DELETE failed: ${response.code}$suffix")
+                throw java.io.IOException("DELETE failed: ${response.code}$suffix")
+            }
         }
-
     }
-
-
 
     suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
         val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
 
-        // FIX POOL EXHAUSTION: Consume body trước khi đóng
-
         optimizedClient.newCall(request).execute().use { response ->
-
-            response.body?.close()
-
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
+                android.util.Log.w("WebDAV", "MOVE failed: ${response.code}$suffix")
+                throw java.io.IOException("MOVE failed: ${response.code}$suffix")
+            }
         }
-
     }
-
-
 
     suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
         val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
 
         optimizedClient.newCall(request).execute().use { response ->
-
-            response.body?.close()
-
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
+                android.util.Log.w("WebDAV", "COPY failed: ${response.code}$suffix")
+                throw java.io.IOException("COPY failed: ${response.code}$suffix")
+            }
         }
-
     }
 
-    // Hàm hỗ trợ tương thích ngược cho AutoBackupWorker
-
     suspend fun uploadFile(fileUrl: String, file: java.io.File, contentType: String) = withContext(Dispatchers.IO) {
+
 
         java.io.FileInputStream(file).use { inputStream ->
 
