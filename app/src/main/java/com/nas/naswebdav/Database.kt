@@ -318,6 +318,26 @@ interface SyncActionDao {
     fun deleteById(id: Int)
 }
 
+// ================= TRASH META — Lưu path gốc để restore đúng vị trí =================
+@Entity(tableName = "trash_meta")
+data class TrashMeta(
+    @PrimaryKey val trashPath: String,
+    val originalPath: String,
+    val trashTime: Long = System.currentTimeMillis()
+)
+
+@Dao
+interface TrashMetaDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insert(meta: TrashMeta)
+
+    @Query("SELECT * FROM trash_meta WHERE trashPath = :trashPath LIMIT 1")
+    fun findByTrashPath(trashPath: String): TrashMeta?
+
+    @Query("DELETE FROM trash_meta WHERE trashPath = :trashPath")
+    fun deleteByTrashPath(trashPath: String)
+}
+
 /**
  * DATABASE CHANGELOG:
  * v1: files_cache cơ bản (path, name, isDirectory, contentType, parentPath)
@@ -350,9 +370,15 @@ val MIGRATION_11_12 = object : androidx.room.migration.Migration(11, 12) {
     }
 }
 
+val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `trash_meta` (`trashPath` TEXT NOT NULL, `originalPath` TEXT NOT NULL, `trashTime` INTEGER NOT NULL, PRIMARY KEY(`trashPath`))")
+    }
+}
+
 @Database(
-    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class],
-    version = 12,
+    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -363,4 +389,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun fingerprintDao(): FingerprintDao
     abstract fun syncActionDao(): SyncActionDao
     abstract fun hashCacheDao(): HashCacheDao
+    abstract fun trashMetaDao(): TrashMetaDao
 }

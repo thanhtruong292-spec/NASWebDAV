@@ -4,6 +4,18 @@ import android.content.Context
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.URL
+
+private fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
+    val trimmed = rawPath.trim()
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
+        val raw = runCatching { URL(trimmed) }.getOrNull() ?: return trimmed
+        return "${active.protocol}://${active.authority}${raw.path}" + (raw.query?.let { "?$it" } ?: "") + (raw.ref?.let { "#$it" } ?: "")
+    }
+    val base = activeBaseUrl.trimEnd('/')
+    return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
+}
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -17,6 +29,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val db = (applicationContext as NasApplication).database
+        val trashMetaDao = db.trashMetaDao()
         val pendingActions = db.syncActionDao().getAllPendingActions()
         if (pendingActions.isEmpty()) return@withContext Result.success()
         val user = SecurePrefsHelper.getUser(applicationContext)
@@ -32,15 +45,26 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             for (action in pendingActions) {
                 try {
                     when (action.actionType) {
-                        "DELETE" -> webDavManager.deleteFile(action.sourcePath, action.sourcePath.endsWith("/"))
-                        "CREATE_FOLDER" -> webDavManager.createFolder(action.sourcePath)
+                        "DELETE" -> {
+                            val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
+                            webDavManager.deleteFile(sourceUrl, sourceUrl.endsWith("/"))
+                            trashMetaDao.deleteByTrashPath(sourceUrl)
+                        }
+                        "CREATE_FOLDER" -> webDavManager.createFolder(resolveQueuedWebDavPath(action.sourcePath, url))
                         "RENAME", "MOVE" -> {
                             if (action.destPath != null) {
-                                val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
+                                val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
+                                val destUrl = resolveQueuedWebDavPath(action.destPath, url)
+                                val encodedDest = destUrl.split("/").joinToString("/") { segment ->
                                     if (segment.isEmpty() || segment.contains(":")) segment
-                                    else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                                    else encodeWebDavSegment(segment)
                                 }
-                                webDavManager.renameFile(action.sourcePath, encodedDest)
+                                webDavManager.renameFile(sourceUrl, encodedDest)
+                                if (sourceUrl.contains(".trash/") && !encodedDest.contains(".trash/")) {
+                                    trashMetaDao.deleteByTrashPath(sourceUrl)
+                                } else if (!sourceUrl.contains(".trash/") && encodedDest.contains(".trash/")) {
+                                    trashMetaDao.insert(TrashMeta(trashPath = encodedDest, originalPath = sourceUrl))
+                                }
                             }
                         }
                         "UPLOAD" -> {
@@ -49,9 +73,10 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                 if (file.exists()) {
                                     val ext = file.extension.lowercase()
                                     val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-                                    val encodedDest = action.destPath.split("/").joinToString("/") { segment ->
+                                    val destUrl = resolveQueuedWebDavPath(action.destPath, url)
+                                    val encodedDest = destUrl.split("/").joinToString("/") { segment ->
                                         if (segment.isEmpty() || segment.contains(":")) segment
-                                        else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                                        else encodeWebDavSegment(segment)
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
                                 }

@@ -13,6 +13,7 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.URL
 import java.io.File
 
 /**
@@ -59,6 +60,17 @@ class BatchOperationWorker(
         return if (value.length <= maxChars) value else value.take(maxChars) + "..."
     }
 
+    private fun resolveBatchWebDavPath(rawPath: String, activeBaseUrl: String): String {
+        val trimmed = rawPath.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
+            val raw = runCatching { URL(trimmed) }.getOrNull() ?: return trimmed
+            return "${active.protocol}://${active.authority}${raw.path}" + (raw.query?.let { "?$it" } ?: "") + (raw.ref?.let { "#$it" } ?: "")
+        }
+        val base = activeBaseUrl.trimEnd('/')
+        return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
+    }
+
     private fun loadBatchFiles(): Pair<Array<String>, Array<String>> {
         val payloadFile = inputData.getString("payloadFile") ?: ""
         if (payloadFile.isNotEmpty()) {
@@ -92,8 +104,6 @@ class BatchOperationWorker(
         val operation = inputData.getString("operation") ?: return@withContext Result.failure()
         val (filePaths, fileNames) = loadBatchFiles()
         val destUrl = inputData.getString("destUrl") ?: ""
-        val baseUrl = inputData.getString("baseUrl") ?: ""
-
         if (filePaths.isEmpty()) return@withContext Result.success()
 
         // Káº¿t ná»‘i WebDAV â€” sá»­ dá»¥ng SmartNetworkManager Ä‘á»ƒ chá»n URL Ä‘ang hoáº¡t Ä‘á»™ng (LAN hoáº·c Tailscale)
@@ -106,6 +116,9 @@ class BatchOperationWorker(
 
         val webDavManager = WebDavManager
         webDavManager.connect(savedUrl, user, pass)
+        val activeBaseUrl = savedUrl
+        val db = NasApplication.instance.database
+        val trashMetaDao = db.trashMetaDao()
 
         // Táº¡o Foreground Notification
         createChannel(applicationContext)
@@ -186,37 +199,53 @@ class BatchOperationWorker(
             }
 
             try {
+                val sourceUrl = resolveBatchWebDavPath(filePath, activeBaseUrl)
+                val normalizedDestUrl = if (destUrl.isNotBlank()) resolveBatchWebDavPath(destUrl, activeBaseUrl) else ""
+                val isDirectory = sourceUrl.endsWith("/")
+                val isInTrash = sourceUrl.contains(trashFolderName)
                 when (operation) {
                     "COPY" -> {
-                        val safeDestUrl = if (destUrl.endsWith("/")) destUrl else "$destUrl/"
-                        val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        webDavManager.copyFile(filePath, safeDestUrl + encodedName)
+                        val safeDestUrl = if (normalizedDestUrl.endsWith("/")) normalizedDestUrl else "${normalizedDestUrl}/"
+                        val encodedName = encodeWebDavSegment(fileName)
+                        var targetUrl = safeDestUrl + encodedName
+                        if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+                        webDavManager.copyFile(sourceUrl, targetUrl)
                         successCount++
                     }
                     "MOVE" -> {
-                        val safeDestUrl = if (destUrl.endsWith("/")) destUrl else "$destUrl/"
-                        val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        webDavManager.renameFile(filePath, safeDestUrl + encodedName)
+                        val safeDestUrl = if (normalizedDestUrl.endsWith("/")) normalizedDestUrl else "${normalizedDestUrl}/"
+                        val encodedName = encodeWebDavSegment(fileName)
+                        var targetUrl = safeDestUrl + encodedName
+                        if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+                        webDavManager.renameFile(sourceUrl, targetUrl)
+                        if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
+                            trashMetaDao.deleteByTrashPath(sourceUrl)
+                        } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
+                            trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                        }
                         successCount++
                     }
                     "DELETE" -> {
-                        if (!filePath.contains(trashFolderName)) {
-                            // Di chuy?n v?o Th?ng r?c c?a ??ng ? ??a
-                            val trashFolderUrl = buildWebDavTrashTargetUrl(baseUrl, filePath, "", false)
-                            val targetUrl = buildWebDavTrashTargetUrl(baseUrl, filePath, fileName, filePath.endsWith("/"))
+                        if (!isInTrash) {
+                            val trashFolderUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, "", false)
+                            val targetUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                             try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
-                            webDavManager.renameFile(filePath, targetUrl)
+                            webDavManager.renameFile(sourceUrl, targetUrl)
+                            trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
                         } else {
-                            // ?? ? trong Th?ng r?c ? X?a v?nh vi?n
-                            webDavManager.deleteFile(filePath, filePath.endsWith("/"))
+                            webDavManager.deleteFile(sourceUrl, isDirectory)
+                            trashMetaDao.deleteByTrashPath(sourceUrl)
                         }
                         successCount++
                     }
                     "RESTORE" -> {
-                        // T?m th? m?c g?c b?ng c?ch parse filePath
-                        // VD: .../webdav/USB Import/.trash/TestDir/ -> .../webdav/USB Import/TestDir/
-                        val targetUrl = buildWebDavRestoreTargetUrl(baseUrl, filePath, fileName, filePath.endsWith("/"))
-                        webDavManager.renameFile(filePath, targetUrl)
+                        val targetUrl = try {
+                            trashMetaDao.findByTrashPath(sourceUrl)?.originalPath
+                        } catch (_: Exception) {
+                            null
+                        } ?: buildWebDavRestoreTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
+                        webDavManager.renameFile(sourceUrl, targetUrl)
+                        trashMetaDao.deleteByTrashPath(sourceUrl)
                         successCount++
                     }
                     else -> {}

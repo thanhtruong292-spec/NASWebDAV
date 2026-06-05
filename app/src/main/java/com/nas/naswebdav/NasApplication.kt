@@ -89,7 +89,7 @@ class NasApplication : Application(), ImageLoaderFactory {
             AppDatabase::class.java,
             "nas-db"
         )
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12)
+            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
             .fallbackToDestructiveMigration()
             // Đã gỡ bỏ enableMultiInstanceInvalidation() vì nó có nguy cơ gây deadlock Binder IPC 
             // khiến các tác vụ database.withTransaction() bị treo vĩnh viễn (quay vòng vòng trên UI).

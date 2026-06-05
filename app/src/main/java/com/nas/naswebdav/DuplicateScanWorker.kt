@@ -1396,16 +1396,21 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
     }
     private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
         return try {
-            // FIX #19: Không dùng substringBefore cắt chuỗi cứng, dùng currentBaseUrl của WebDavManager
             val rootUrl = manager.currentBaseUrl.trimEnd('/')
-            val trashFolderUrl = "$rootUrl/.trash"
             val authHeader = okhttp3.Credentials.basic(user, pass)
-            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
-            // FIX #19: URL-encode tên file để không bị 400 Bad Request
             val fileName = sourceUrl.substringAfterLast("/")
-            val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-            val destUrl = "$trashFolderUrl/$encodedName"
-            NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
+            val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
+            val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
+            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
+            val success = NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
+            if (success) {
+                try {
+                    NasApplication.instance.database.trashMetaDao().insert(
+                        TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
+                    )
+                } catch (_: Exception) {}
+            }
+            success
         } catch (_: Exception) { false }
     }
 }

@@ -634,12 +634,21 @@ def handle_auth_failure(ip):
     # Co che fail2ban da bi V? HI?U HO? theo yeu cau ng??i dùng.
     # Chi ghi nhan so lan thất bại vao auth_attempts de admin theo doi,
     # KHONG con tu dong th?m banned_ips/iptables DROP nua.
-    conn = sqlite3.connect(DB_PATH, timeout=20.0)
-    cur = conn.cursor()
-    cur.execute('INSERT OR IGNORE INTO auth_attempts VALUES (?, 0)', (ip,))
-    cur.execute('UPDATE auth_attempts SET count = count + 1 WHERE ip=?', (ip,))
-    conn.commit()
-    conn.close()
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        cur.execute('INSERT OR IGNORE INTO auth_attempts VALUES (?, 0)', (ip,))
+        cur.execute('UPDATE auth_attempts SET count = count + 1 WHERE ip=?', (ip,))
+        conn.commit()
+    except Exception as e:
+        log.warning("[Auth] Khong ghi duoc auth_attempts cho IP %s: %s", ip, e)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 recent_auth_ips = {}
 _ARP_LOOKUP_CACHE = {}
@@ -732,6 +741,10 @@ def monitor_scanners():
                                 broadcast({"type": "ACCESS_LOG", "message": m_msg})
                             except Exception:
                                 pass
+                        if main_loop:
+                            main_loop.add_callback(_commit_access_log, log_msg_json)
+                        else:
+                            _commit_access_log(log_msg_json)
                                 
 
 def monitor_journalctl():
@@ -1773,13 +1786,43 @@ def _safe_dir_usage(path, max_files=4000, max_seconds=2.0):
     return total, count, False
 
 
+def _iter_hdd_trash_dirs(webdav_root):
+    """Yield per-drive .trash directories; never use WEBDAV root .trash."""
+    try:
+        root_real = os.path.realpath(webdav_root)
+        for name in os.listdir(webdav_root):
+            drive_dir = os.path.realpath(os.path.join(webdav_root, name))
+            if not os.path.isdir(drive_dir):
+                continue
+            if drive_dir == root_real or not drive_dir.startswith(root_real + os.sep):
+                continue
+            if name.startswith(".") or name in (".nas_meta", ".thumbnails", "@eaDir"):
+                continue
+            yield name, os.path.join(drive_dir, ".trash")
+    except Exception:
+        return
+
+
+def _trash_dir_for_relative_path(webdav_root, rel_path):
+    rel_norm = str(rel_path or "").replace("\\", "/").lstrip("/")
+    drive_name = rel_norm.split("/", 1)[0].strip()
+    if not drive_name or drive_name in (".trash", ".nas_meta", ".thumbnails"):
+        return None
+    root_real = os.path.realpath(webdav_root)
+    drive_dir = os.path.realpath(os.path.join(webdav_root, drive_name))
+    if drive_dir == root_real or not drive_dir.startswith(root_real + os.sep):
+        return None
+    if not os.path.isdir(drive_dir):
+        return None
+    return os.path.join(drive_dir, ".trash")
+
+
 def get_storage_usage_summary():
     """Tóm tắt dung lượng các thư mục lớn để app hiển thị khuyến nghị dọn dẹp."""
     folders = [
         ("Livestream", "Livestream"),
         ("Tải xuống", "Downloads"),
         ("Sao lưu", "Backup"),
-        ("Thùng rác", ".trash"),
     ]
     result = []
     for label, rel in folders:
@@ -1793,6 +1836,22 @@ def get_storage_usage_summary():
             "files": files,
             "partial": partial,
         })
+    trash_size = 0
+    trash_files = 0
+    trash_partial = False
+    for _drive, trash_path in _iter_hdd_trash_dirs(WEBDAV_FILE_ROOT):
+        size, files, partial = _safe_dir_usage(trash_path)
+        trash_size += size
+        trash_files += files
+        trash_partial = trash_partial or partial
+    result.append({
+        "name": "Thùng rác",
+        "path": "*/.trash",
+        "size_bytes": trash_size,
+        "size": format_bytes(trash_size),
+        "files": trash_files,
+        "partial": trash_partial,
+    })
     result.sort(key=lambda x: x.get("size_bytes", 0), reverse=True)
     return result
 
@@ -2109,25 +2168,25 @@ def _push_alert(alert_type, message, severity="INFO"):
 def _clean_trash(webdav_root, max_age_days=30):
     """Xoá các file trong thư mục .trash/ quá N ngày. Không wake spin-up HDD không cần thiết."""
     try:
-        trash_dir = os.path.join(webdav_root, ".trash")
-        if not os.path.exists(trash_dir):
-            return 0
         now = time.time()
         max_age_sec = max_age_days * 86400
         deleted = 0
-        for fname in os.listdir(trash_dir):
-            fpath = os.path.join(trash_dir, fname)
-            try:
-                age = now - os.path.getmtime(fpath)
-                if age > max_age_sec:
-                    if os.path.isdir(fpath):
-                        import shutil
-                        shutil.rmtree(fpath, ignore_errors=True)
-                    else:
-                        os.remove(fpath)
-                    deleted += 1
-            except Exception:
+        for _drive, trash_dir in _iter_hdd_trash_dirs(webdav_root):
+            if not os.path.exists(trash_dir):
                 continue
+            for fname in os.listdir(trash_dir):
+                fpath = os.path.join(trash_dir, fname)
+                try:
+                    age = now - os.path.getmtime(fpath)
+                    if age > max_age_sec:
+                        if os.path.isdir(fpath):
+                            import shutil
+                            shutil.rmtree(fpath, ignore_errors=True)
+                        else:
+                            os.remove(fpath)
+                        deleted += 1
+                except Exception:
+                    continue
         return deleted
     except Exception:
         return 0
@@ -3705,13 +3764,15 @@ def api_auth_authorize():
 
     # 3. Ghi log vao Database
     conn = sqlite3.connect(DB_PATH, timeout=20.0)
-    cur = conn.cursor()
-    _remember_authorized_ip(ip)
-    cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
-    cur.execute('DELETE FROM banned_ips WHERE ip=?', (ip,))
-    cur.execute('DELETE FROM auth_attempts WHERE ip=?', (ip,))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        _remember_authorized_ip(ip)
+        cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
+        cur.execute('DELETE FROM banned_ips WHERE ip=?', (ip,))
+        cur.execute('DELETE FROM auth_attempts WHERE ip=?', (ip,))
+        conn.commit()
+    finally:
+        conn.close()
 
     return jsonify({"status": "Trusted", "result": "ok"})
 
@@ -5630,6 +5691,21 @@ _usb_import_state = {
 }
 
 
+def _usb_import_try_mark_running():
+    global _usb_import_running
+    with _usb_import_lock:
+        if _usb_import_running:
+            return False
+        _usb_import_running = True
+        return True
+
+
+def _usb_import_mark_stopped():
+    global _usb_import_running
+    with _usb_import_lock:
+        _usb_import_running = False
+
+
 def _usb_import_load_settings():
     settings = {
         "enabled": True,
@@ -6787,7 +6863,7 @@ def _usb_import_copy_tree(candidate, settings):
             if ident and status_for_seen in ("done", "needs_action") and ident not in seen:
                 seen.append(ident)
                 _usb_import_state["seen_devices"] = seen[-50:]
-        _usb_import_running = False
+        _usb_import_mark_stopped()
         _usb_import_save_state()
         # Mở khoá thumbnail generator sau khi copy USB xong
         _set_thumbnail_auto_block("usb_import", False)
@@ -6904,7 +6980,7 @@ def _usb_import_resolve_conflicts_worker(action, selected_keys):
     except InterruptedError:
         _usb_import_set_state(status="cancelled", message="Đã huỷ xử lý file trùng.", finished_at=int(time.time()))
     finally:
-        _usb_import_running = False
+        _usb_import_mark_stopped()
         _set_thumbnail_auto_block("usb_import", False)
         _usb_import_save_state()
 
@@ -6938,8 +7014,9 @@ def _usb_import_watchdog():
                     )
                     if candidate_id in seen and not can_resume_seen:
                         continue
+                    if not _usb_import_try_mark_running():
+                        break
                     _usb_import_cancel.clear()
-                    _usb_import_running = True
                     threading.Thread(target=_usb_import_copy_tree, args=(candidate, settings), daemon=True, name="USBImportCopy").start()
                     break
                 else:
@@ -6950,7 +7027,7 @@ def _usb_import_watchdog():
                     elif curr_status in ("copying", "cancelling"):
                         _usb_import_set_state(status="cancelled", message="Đã huỷ", finished_at=int(time.time()))
         except Exception as e:
-            _usb_import_running = False
+            _usb_import_mark_stopped()
             log.error("[USBImport] Watchdog lỗi: %s", e)
             _usb_import_set_state(status="error", message="Lỗi USB import.", last_error=str(e)[:200], finished_at=int(time.time()))
         time.sleep(settings.get("poll_seconds", 15))
@@ -7002,8 +7079,9 @@ def api_usb_import_start():
     candidates = _usb_import_find_candidates(settings)
     if not candidates:
         return jsonify({"ok": False, "message": "Không tìm thấy ổ USB hợp lệ", "state": _usb_import_public_state()}), 404
+    if not _usb_import_try_mark_running():
+        return jsonify({"ok": True, "already_running": True, "message": "USB Import Ä‘ang cháº¡y, khÃ´ng khá»Ÿi táº¡o phiÃªn trÃ¹ng.", "state": _usb_import_public_state()})
     _usb_import_cancel.clear()
-    _usb_import_running = True
     threading.Thread(target=_usb_import_copy_tree, args=(candidates[0], settings), daemon=True, name="USBImportManualCopy").start()
     return jsonify({"ok": True, "message": "Đã bắt đầu copy USB", "state": _usb_import_public_state()})
 
@@ -7036,8 +7114,9 @@ def api_usb_import_resolve_conflicts():
     selected = body.get("items")
     if selected is not None and not isinstance(selected, list):
         return jsonify({"ok": False, "message": "items phải là danh sách rel/dest/source", "state": _usb_import_public_state()}), 400
+    if not _usb_import_try_mark_running():
+        return jsonify({"ok": False, "message": "USB import Ä‘ang cháº¡y", "state": _usb_import_public_state()}), 409
     _usb_import_cancel.clear()
-    _usb_import_running = True
     threading.Thread(
         target=_usb_import_resolve_conflicts_worker,
         args=(action, selected or []),
@@ -7801,6 +7880,7 @@ def api_system_logs():
         return jsonify({"status": "error", "message": "Không tải được nhật ký hệ thống: %s" % normalize_vietnamese_message(str(e))}), 500
 
 @app.route("/api/system_logs/clear", methods=["POST"])
+@requires_auth
 def api_system_logs_clear():
     """Xoa toan bo nhat ky he thong tren NAS."""
     try:
@@ -8009,6 +8089,12 @@ def _screen_record_lock(session_id):
         return lock
 
 
+def _screen_record_drop_lock(session_id):
+    sid = _safe_screen_session_id(session_id)
+    with _screen_record_global_lock:
+        _screen_record_locks.pop(sid, None)
+
+
 def _screen_manifest_path(session_dir):
     return os.path.join(session_dir, "manifest.json")
 
@@ -8200,6 +8286,55 @@ def _screen_record_remux_worker(session_dir, sid, final_ts):
             log.warning("[ScreenRecord] Lỗi unblock thumbnail: %s", e)
 
 
+        _screen_record_drop_lock(sid)
+
+
+def _screen_record_finish_worker(session_dir, sid, total):
+    final_ts = os.path.join(session_dir, "%s.ts" % sid)
+    tmp_ts = final_ts + ".part"
+    segments_dir = os.path.join(session_dir, "segments")
+    try:
+        with open(tmp_ts, "wb") as out:
+            for i in range(total):
+                part = os.path.join(segments_dir, "part_%06d.ts" % i)
+                with open(part, "rb") as f:
+                    shutil.copyfileobj(f, out, 1024 * 1024)
+        os.replace(tmp_ts, final_ts)
+
+        try:
+            shutil.rmtree(segments_dir)
+            log.info("[ScreenRecord] Da don dep thu muc segments tam thoi: %s", segments_dir)
+        except Exception as e:
+            log.warning("[ScreenRecord] Khong the xoa thu muc segments tam thoi: %s", e)
+
+        with _screen_record_lock(sid):
+            manifest = _read_screen_manifest(session_dir)
+            manifest["status"] = "done"
+            manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
+            manifest["missing"] = []
+            manifest["completed_at"] = int(time.time())
+            _write_screen_manifest(session_dir, manifest)
+        threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
+    except Exception as e:
+        log.warning("[ScreenRecord] finish worker loi: %s", e)
+        try:
+            if os.path.exists(tmp_ts):
+                os.remove(tmp_ts)
+        except Exception:
+            pass
+        with _screen_record_lock(sid):
+            manifest = _read_screen_manifest(session_dir)
+            manifest["status"] = "error"
+            manifest["error"] = str(e)[:160]
+            manifest["finished_at"] = int(time.time())
+            _write_screen_manifest(session_dir, manifest)
+        try:
+            _set_thumbnail_auto_block("screen_record", False)
+        except Exception:
+            pass
+        _screen_record_drop_lock(sid)
+
+
 @app.route("/api/screen_record/finish", methods=["POST"])
 @requires_auth
 def api_screen_record_finish():
@@ -8221,6 +8356,9 @@ def api_screen_record_finish():
 
         manifest["status"] = "finishing"
         _write_screen_manifest(session_dir, manifest)
+    threading.Thread(target=_screen_record_finish_worker, args=(session_dir, sid, total), daemon=True).start()
+    return jsonify({"ok": True, "session_id": sid, "status": "processing", "segments": total}), 202
+    if False:
         segments_dir = os.path.join(session_dir, "segments")
         final_ts = os.path.join(session_dir, "%s.ts" % sid)
         tmp_ts = final_ts + ".part"
@@ -8294,6 +8432,7 @@ def api_screen_record_cancel():
                 log.warning("[ScreenRecord] Không thể xóa thư mục segments khi hủy phiên: %s", e)
 
     _set_thumbnail_auto_block("screen_record", False)
+    _screen_record_drop_lock(sid)
     return jsonify({"ok": True, "session_id": sid})
 
 
@@ -8303,6 +8442,36 @@ def api_screen_record_cancel():
 
 
 _transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen }
+_TRANSCODE_SESSION_TTL_SEC = 2 * 3600
+_TRANSCODE_SESSION_MAX = 20
+
+
+def _cleanup_transcode_sessions(force_limit=False):
+    now = time.time()
+    stale = []
+    for sid, session in list(_transcode_sessions.items()):
+        created_at = float(session.get("created_at", 0) or 0)
+        proc = session.get("process")
+        if created_at and now - created_at > _TRANSCODE_SESSION_TTL_SEC:
+            stale.append(sid)
+        elif proc is not None and proc.poll() is not None:
+            session["process"] = None
+    if force_limit and len(_transcode_sessions) - len(stale) > _TRANSCODE_SESSION_MAX:
+        ordered = sorted(
+            _transcode_sessions.items(),
+            key=lambda item: float(item[1].get("last_access", item[1].get("created_at", 0)) or 0)
+        )
+        stale.extend([sid for sid, _session in ordered[:max(0, len(_transcode_sessions) - _TRANSCODE_SESSION_MAX)]])
+    for sid in set(stale):
+        session = _transcode_sessions.pop(sid, None)
+        if not session:
+            continue
+        proc = session.get("process")
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 def _find_source_file(relative_path):
     """Tim file goc tren NAS tu duong dan WebDAV tuong doi.
@@ -8334,6 +8503,7 @@ def _get_video_duration(file_path):
 def api_stream_transcode():
     """Khoi tao session JIT HLS"""
     import hashlib
+    _cleanup_transcode_sessions(force_limit=True)
     relative_path = request.args.get("path", "")
     if not relative_path:
         return jsonify({"error": "Thiếu tham số 'path'"}), 400
@@ -8365,7 +8535,9 @@ def api_stream_transcode():
     _transcode_sessions[session_id] = {
         "file_path": file_path,
         "duration": duration,
-        "process": None
+        "process": None,
+        "created_at": time.time(),
+        "last_access": time.time(),
     }
     log.info("[JIT HLS] Khởi tạo: %s (Duration: %.1fs)", file_path, duration)
 
@@ -8386,6 +8558,7 @@ def api_stream_hls_file(session_id, filename):
         return "", 404
         
     session = _transcode_sessions[session_id]
+    session["last_access"] = time.time()
     hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
 
     if filename == "playlist.m3u8":
@@ -8481,6 +8654,12 @@ def api_stream_hls_file(session_id, filename):
                 wait_count += 1
                 
             if not os.path.exists(file_path):
+                if session["process"] is not None and session["process"].poll() is None:
+                    try:
+                        session["process"].kill()
+                    except Exception:
+                        pass
+                    session["process"] = None
                 log.error("[JIT HLS] Lỗi FFmpeg, không thể tạo %s", filename)
                 return "", 500
 
@@ -8975,12 +9154,6 @@ def api_disk_trash_batch():
         return jsonify({"error": "files must be a list"}), 400
     
     webdav_root = get_webdav_root()
-    trash_dir = os.path.join(webdav_root, ".trash")
-    try:
-        if not os.path.exists(trash_dir):
-            os.makedirs(trash_dir)
-    except Exception as e:
-        return jsonify({"error": "Cannot create .trash: " + str(e)}), 500
         
     success = 0
     errors = []
@@ -8999,6 +9172,17 @@ def api_disk_trash_batch():
             
         if not os.path.abspath(local_path).startswith(os.path.abspath(webdav_root)):
             errors.append({"path": webdav_path, "error": "Path traversal"})
+            continue
+
+        trash_dir = _trash_dir_for_relative_path(webdav_root, rel_path)
+        if not trash_dir:
+            errors.append({"path": webdav_path, "error": "Cannot resolve per-drive trash"})
+            continue
+        try:
+            if not os.path.exists(trash_dir):
+                os.makedirs(trash_dir)
+        except Exception as e:
+            errors.append({"path": webdav_path, "error": "Cannot create per-drive .trash: " + str(e)})
             continue
             
         filename = os.path.basename(local_path)
@@ -13100,7 +13284,7 @@ if __name__ == "__main__":
                     cmdline = " ".join(proc.cmdline()).lower()
                     exe_name = ""
                     try:
-                        exe_name = os.path.basename(os.readlink(f"/proc/{proc.pid}/exe")).lower()
+                        exe_name = os.path.basename(os.readlink("/proc/%s/exe" % proc.pid)).lower()
                     except OSError:
                         pass
                     if "nas_api_server.py" not in cmdline and "nas_api_server.py" not in exe_name:

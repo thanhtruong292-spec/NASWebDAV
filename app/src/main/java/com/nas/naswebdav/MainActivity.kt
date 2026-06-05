@@ -210,8 +210,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
                         putExtra(ScreenRecordService.EXTRA_RESULT_DATA, result.data)
                         putExtra(ScreenRecordService.EXTRA_API_BASE, activeBaseUrl.toApiBaseUrl())
-                        putExtra(ScreenRecordService.EXTRA_USER, viewModel.webDavManager.currentUser)
-                        putExtra(ScreenRecordService.EXTRA_PASS, viewModel.webDavManager.currentPass)
                     }
                     androidx.core.content.ContextCompat.startForegroundService(this@MainActivity, serviceIntent)
                 }
@@ -661,7 +659,12 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onOpenTrash = {
 
-                    val trashUrl = viewModel.webDavManager.currentBaseUrl + ".trash/"
+                    val trashUrl = buildWebDavTrashTargetUrl(
+                        viewModel.webDavManager.currentBaseUrl,
+                        viewModel.currentUrl.ifBlank { viewModel.webDavManager.currentBaseUrl },
+                        "",
+                        false
+                    )
 
                     viewModel.openSpecificUrl(trashUrl, "Thùng rác")
 
@@ -1025,7 +1028,6 @@ fun ScreenRecordFloatingOverlay() {
         }
     }
 }
-
 
 
 

@@ -43,12 +43,76 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 // FIX ERROR HANDLING: Chuyển lỗi kỹ thuật thành thông báo dễ hiểu
+private val WEB_DAV_HTTP_FAILURE_REGEX = Regex("""^([A-Z]+) failed: (\d{3})(?: - (.*))?$""")
+
+// FIX ERROR HANDLING: Convert technical errors into readable messages
 private fun friendlyError(e: Exception): String = when (e) {
     is java.net.SocketTimeoutException -> "Kết nối tới NAS quá chậm hoặc NAS không phản hồi. Vui lòng kiểm tra mạng."
     is java.net.ConnectException -> "Không thể kết nối tới NAS. Kiểm tra NAS đã bật và cùng mạng WiFi."
     is java.net.UnknownHostException -> "Địa chỉ NAS không hợp lệ hoặc mất kết nối mạng."
     is javax.net.ssl.SSLException -> "Lỗi bảo mật kết nối. Kiểm tra cấu hình SSL/TLS của NAS."
+    is java.io.IOException -> {
+        val match = WEB_DAV_HTTP_FAILURE_REGEX.find(e.message.orEmpty())
+        if (match != null) {
+            val method = match.groupValues[1]
+            val code = match.groupValues[2]
+            val detail = match.groupValues.getOrNull(3)?.trim().orEmpty()
+            when (code) {
+                "401" -> "NAS từ chối xác thực (HTTP 401). Kiểm tra tài khoản/mật khẩu."
+                "403" -> "NAS từ chối quyền thao tác (HTTP 403)."
+                "404" -> "Không tìm thấy file/thư mục trên NAS (HTTP 404)."
+                "405" -> "WebDAV không hỗ trợ lệnh $method (HTTP 405)."
+                "409" -> "Xung đột trên NAS (HTTP 409)."
+                "423" -> "Đối tượng đang bị khóa trên NAS (HTTP 423)."
+                else -> "NAS trả về lỗi HTTP $code${if (detail.isNotBlank()) ": $detail" else ""}"
+            }
+        } else {
+            e.message ?: "Lỗi không xác định"
+        }
+    }
     else -> e.message ?: "Lỗi không xác định"
+}
+
+private fun Throwable.isTransientNetworkFailure(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        when (current) {
+            is java.net.SocketTimeoutException,
+            is java.net.ConnectException,
+            is java.net.UnknownHostException,
+            is java.io.InterruptedIOException -> return true
+        }
+        val message = current.message.orEmpty()
+        if (WEB_DAV_HTTP_FAILURE_REGEX.containsMatchIn(message)) return false
+        val lower = message.lowercase()
+        if (listOf(
+                "timeout",
+                "timed out",
+                "failed to connect",
+                "connection refused",
+                "connection reset",
+                "network is unreachable",
+                "no route to host",
+                "broken pipe",
+                "socket closed",
+                "unexpected end of stream",
+                "unable to resolve host",
+                "name not resolved"
+            ).any { it in lower }) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
+}
+
+private fun String.toOfflineQueuePath(baseUrl: String): String {
+    val normalizedBase = baseUrl.trimEnd('/')
+    return if (startsWith(normalizedBase)) {
+        removePrefix(normalizedBase).trimStart('/')
+    } else {
+        this
+    }
 }
 
 private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
@@ -1089,10 +1153,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                             commonDialogMessage = message.ifEmpty { "Giải nén thành công!" }
                             showCommonDialog = true
+                            throw CancellationException("Unzip WorkInfo collector finished")
                         } else if (workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                             commonDialogMessage = message.ifEmpty { "Giải nén thất bại!" }
                             showCommonDialog = true
+                            throw CancellationException("Unzip WorkInfo collector finished")
                         }
                     }
                 }
@@ -1850,7 +1916,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 // LOG + IP: Hiển thị IP NAS sau trạng thái kết nối
                 val nasHost = try { java.net.URL(currentUrl).host } catch (_: Exception) { "" }
-                connectionStatus = if (nasHost.isNotEmpty()) "Đã kết nối LAN: $nasHost" else "Đã kết nối LAN"
+                val onLan = !isTailscaleUrl(currentUrl)
+                connectionStatus = if (nasHost.isNotEmpty()) {
+                    "Đã kết nối ${if (onLan) "LAN" else "Tailscale"}: $nasHost"
+                } else {
+                    "Đã kết nối ${if (onLan) "LAN" else "Tailscale"}"
+                }
             } catch (e: Exception) {
                 connectionStatus = "Lỗi kết nối" // Ép cập nhật trạng thái lỗi ngay lập tức dù có Cache hay không
                 viewModelScope.launch(Dispatchers.IO) {
@@ -1874,17 +1945,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     // HELPER: Chèn Tác vụ vào Hàng đợi Offline WorkManager (TÍNH NĂNG 5.I)
-    private fun enqueueOfflineAction(context: Context, actionType: String, sourcePath: String, destPath: String? = null) {
+    internal fun enqueueOfflineAction(context: Context, actionType: String, sourcePath: String, destPath: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val db = (context.applicationContext as NasApplication).database
+                val queueBaseUrl = webDavManager.currentBaseUrl
+                val normalizedSourcePath = sourcePath.toOfflineQueuePath(queueBaseUrl)
+                val normalizedDestPath = destPath?.toOfflineQueuePath(queueBaseUrl)
                 db.syncActionDao().insert(SyncAction(
                     actionType = actionType,
-                    sourcePath = sourcePath,
-                    destPath = destPath
+                    sourcePath = normalizedSourcePath,
+                    destPath = normalizedDestPath
                 ))
-                
-                // Báo WorkManager chạy khi có mạng
+
+                // B?o WorkManager ch?y khi c? m?ng
                 val constraints = androidx.work.Constraints.Builder()
                     .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
                     .build()
@@ -1896,66 +1970,68 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
                     request
                 )
-                
-                // Hiển thị Dialog báo cho User
+
+                // Hi?n th? Dialog b?o cho User
                 withContext(Dispatchers.Main) {
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                    commonDialogMessage = "Không có kết nối. Lệnh '$actionType' đã được đưa vào hàng đợi ngoại tuyến."
+                    commonDialogMessage = "Kh?ng c? k?t n?i. L?nh '$actionType' ?? ???c ??a v?o h?ng ??i ngo?i tuy?n."
                     showCommonDialog = true
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi khi lưu hàng đợi ngoại tuyến: ${e.message}" }
+                withContext(Dispatchers.Main) { errorMessage = "L?i khi l?u h?ng ??i ngo?i tuy?n: ${e.message}" }
             }
         }
     }
 
     fun deleteFile(context: Context, file: NasFile) {
-        // TỐI ƯU CỰC ĐẠI: UI Lạc quan (Optimistic UI)
-        // Ẩn file ngay lập tức khỏi biến RAM mà CHƯA CẦN đợi NAS phản hồi -> Xóa "Tức thì" (0ms)
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
 
-        // BÓC TÁCH: Đẩy việc liên lạc mạng NAS (chậm) vào luồng ngầm I/O, giải phóng luồng màn hình UI
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // 1. T?m ???ng d?n g?c c?a ? ??a (VD: /Data N300/)
-                val targetUrl = buildWebDavTrashTargetUrl(
-                    webDavManager.currentBaseUrl,
-                    file.path,
-                    file.name,
-                    file.isDirectory
-                )
-                val driveName = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/').substringBefore('/')
-                val trashUrl = webDavManager.currentBaseUrl.trimEnd('/') + "/" + driveName + "/" + TRASH_FOLDER_NAME
+            val trashMetaDao = NasApplication.instance.database.trashMetaDao()
+            val isInTrash = file.path.contains(TRASH_FOLDER_NAME)
+            val trashFolderUrl = buildWebDavTrashTargetUrl(
+                webDavManager.currentBaseUrl,
+                file.path,
+                "",
+                false
+            )
+            val trashTargetUrl = if (!isInTrash) buildWebDavTrashTargetUrl(
+                webDavManager.currentBaseUrl,
+                file.path,
+                file.name,
+                file.isDirectory
+            ) else file.path
 
-                // 2. Ch?n xo? v?nh vi?n n?u ch?a n?m trong th?ng r?c
-                if (!file.path.contains(TRASH_FOLDER_NAME)) {
-                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) {}
-                    webDavManager.renameFile(file.path, targetUrl)
-                    repository.addSystemLog("WARNING", "File Ops", "?? di chuy?n t?p '${file.name}' v?o Th?ng r?c ? $driveName.")
-                } else {
+            try {
+                if (isInTrash) {
                     webDavManager.deleteFile(file.path, file.isDirectory)
-                    repository.addSystemLog("WARNING", "File Ops", "?? X?A V?NH VI?N t?p '${file.name}'.")
-                }
-                // TRIỆT TIÊU refresh() VĨNH VIỄN: Tránh tải lại 5000 file chỉ vì xóa 1 thẻ
-            } catch (e: Exception) {
-                // Nh?i l?i file v?o giao di?n n?u r?t m?ng
-                withContext(Dispatchers.Main) { fileList = oldList }
-                
-                // T?NH N?NG 5.I: B?y l?i v? t?ng v?o H?ng ??i Offline
-                repository.addSystemLog("WARNING", "File Ops", "X?a t?p '${file.name}' th?t b?i, ?? ??a v?o h?ng ??i ngo?i tuy?n: ${e.message?.take(80)}")
-                val driveName = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/').substringBefore('/')
-                val trashUrl = webDavManager.currentBaseUrl.trimEnd('/') + "/" + driveName + "/" + TRASH_FOLDER_NAME
-                
-                if (!file.path.contains(TRASH_FOLDER_NAME)) {
-                    enqueueOfflineAction(
-                        context,
-                        "RENAME",
-                        file.path,
-                        buildWebDavTrashTargetUrl(webDavManager.currentBaseUrl, file.path, file.name, file.isDirectory)
-                    )
+                    trashMetaDao.deleteByTrashPath(file.path)
+                    repository.addSystemLog("WARNING", "File Ops", "Đã xóa vĩnh viễn tệp '${file.name}'.")
                 } else {
-                    enqueueOfflineAction(context, "DELETE", file.path)
+                    try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                    webDavManager.renameFile(file.path, trashTargetUrl)
+                    trashMetaDao.insert(TrashMeta(trashPath = trashTargetUrl, originalPath = file.path))
+                    repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác.")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { fileList = oldList }
+
+                val message = friendlyError(e)
+                if (e.isTransientNetworkFailure()) {
+                    repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                    if (isInTrash) {
+                        enqueueOfflineAction(context, "DELETE", file.path)
+                    } else {
+                        enqueueOfflineAction(context, "RENAME", file.path, trashTargetUrl)
+                    }
+                } else {
+                    repository.addSystemLog("ERROR", "File Ops", "Xóa tệp '${file.name}' thất bại: ${message.take(120)}")
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                        commonDialogMessage = "Không thể xóa '${file.name}': $message"
+                        showCommonDialog = true
+                    }
                 }
             }
         }
@@ -2054,10 +2130,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             workInfo.state == androidx.work.WorkInfo.State.FAILED) {
                             batchProcessProgress = 1f
                             isBatchProcessing = false
-                            // Làm mới danh sách file sau khi Worker hoàn tất
-                            if (operation == "COPY" || (operation == "MOVE" && destUrl.startsWith(currentUrl))) {
+                            val failCount = workInfo.progress.getInt("failCount", 0)
+                            val shouldRefresh = when (operation) {
+                                "COPY", "DELETE", "RESTORE" -> true
+                                "MOVE" -> destUrl.startsWith(currentUrl) || failCount > 0
+                                else -> false
+                            }
+                            if (shouldRefresh) {
                                 refresh()
                             }
+                            throw CancellationException("Batch WorkInfo collector finished")
                         }
                     }
                 }
@@ -2065,26 +2147,37 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun restoreFile(context: Context, file: NasFile) {
-        // Optimistic UI for single restore from trash.
+        // Optimistic UI: keep instant feel while remote move happens in background.
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
-
-        val targetUrl = buildWebDavRestoreTargetUrl(
-            webDavManager.currentBaseUrl,
-            file.path,
-            file.name,
-            file.isDirectory
-        )
-
         viewModelScope.launch(Dispatchers.IO) {
+            val trashMetaDao = NasApplication.instance.database.trashMetaDao()
+            val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
+            val targetUrl = meta?.originalPath ?: buildWebDavRestoreTargetUrl(
+                webDavManager.currentBaseUrl,
+                file.path,
+                file.name,
+                file.isDirectory
+            )
             try {
                 webDavManager.renameFile(file.path, targetUrl)
-                repository.addSystemLog("INFO", "File Ops", "?? kh?i ph?c t?p '${file.name}' t? Th?ng r?c.")
+                trashMetaDao.deleteByTrashPath(file.path)
+                repository.addSystemLog("INFO", "File Ops", "Đã khôi phục tệp '${file.name}' từ Thùng rác.")
                 // Keep current list; no full refresh needed here.
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { fileList = oldList }
-                repository.addSystemLog("WARNING", "File Ops", "Kh?i ph?c t?p '${file.name}' th?t b?i, ?? ??a v?o h?ng ??i ngo?i tuy?n: ${e.message?.take(80)}")
-                enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
+                val message = friendlyError(e)
+                if (e.isTransientNetworkFailure()) {
+                    repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                    enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
+                } else {
+                    repository.addSystemLog("ERROR", "File Ops", "Khôi phục tệp '${file.name}' thất bại: ${message.take(120)}")
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                        commonDialogMessage = "Không thể khôi phục '${file.name}': $message"
+                        showCommonDialog = true
+                    }
+                }
             }
         }
     }
@@ -2092,17 +2185,19 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun restoreMultipleFiles(context: Context, filesToRestore: List<NasFile>) {
         if (filesToRestore.isEmpty()) return
 
-        // TỐI ƯU CỰC ĐẠI: UI Lạc quan cho HÀNG LOẠT FILE
+        // Optimistic UI for bulk restore.
         val pathsToRestore = filesToRestore.map { it.path }.toSet()
         fileList = fileList.filter { it.path !in pathsToRestore }
 
-        // KIẾN TRÚC MỚI: Đẩy tác vụ sang BatchOperationWorker (Foreground Service)
+        // Push heavy work to Foreground Worker.
         enqueueBatchOperation(context, "RESTORE", filesToRestore, "")
     }
+
     fun renameFile(context: Context, file: NasFile, newName: String) {
-        // TỐI ƯU CỰC ĐẠI: Đổi tên ảo trên bộ nhớ RAM -> Tốc độ hiển thị 0s
+        // Optimistic UI: update RAM first, commit to NAS in background.
         val oldList = fileList
-        val newUrl = currentUrl + newName
+        var newUrl = currentUrl + encodeWebDavSegment(newName)
+        if (file.isDirectory && !newUrl.endsWith("/")) newUrl += "/"
         val renamedFile = file.copy(name = newName, path = newUrl)
         fileList = oldList.map { if (it.path == file.path) renamedFile else it }
 
@@ -2110,32 +2205,54 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 webDavManager.renameFile(file.path, newUrl)
                 repository.addSystemLog("INFO", "File Ops", "Đổi tên tệp '${file.name}' thành '${newName}'.")
-                // Không refresh() để chống khựng giao diện
+                // No refresh() to keep UI smooth.
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { fileList = oldList } // Hoàn nguyên tên cũ
-                repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
-                enqueueOfflineAction(context, "RENAME", file.path, newUrl)
+                withContext(Dispatchers.Main) { fileList = oldList } // rollback
+                val message = friendlyError(e)
+                if (e.isTransientNetworkFailure()) {
+                    repository.addSystemLog("WARNING", "File Ops", "Đổi tên '${file.name}' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                    enqueueOfflineAction(context, "RENAME", file.path, newUrl)
+                } else {
+                    repository.addSystemLog("ERROR", "File Ops", "Đổi tên '${file.name}' thất bại: ${message.take(120)}")
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                        commonDialogMessage = "Không thể đổi tên '${file.name}': $message"
+                        showCommonDialog = true
+                    }
+                }
             }
         }
     }
+
     fun createFolder(context: Context, folderName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
-                // Đảm bảo URL thư mục mới kết thúc bằng dấu gạch chéo '/'
-                val newFolderUrl = currentUrl + folderName + "/"
+                // Keep URL segment encoded to avoid MOVE/MKCOL failures on spaces/unicode.
+                val newFolderUrl = currentUrl + encodeWebDavSegment(folderName) + "/"
                 webDavManager.createFolder(newFolderUrl)
                 repository.addSystemLog("SUCCESS", "File Ops", "Đã tạo thư mục mới: '$folderName'")
-                withContext(Dispatchers.Main) { refresh() } // Tải lại danh sách sau khi tạo thành công
+                withContext(Dispatchers.Main) { refresh() } // reload after success
             } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
-                val newFolderUrl = currentUrl + folderName + "/"
-                enqueueOfflineAction(context, "CREATE_FOLDER", newFolderUrl)
+                val message = friendlyError(e)
+                if (e.isTransientNetworkFailure()) {
+                    repository.addSystemLog("WARNING", "File Ops", "Tạo thư mục '$folderName' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                    val newFolderUrl = currentUrl + encodeWebDavSegment(folderName) + "/"
+                    enqueueOfflineAction(context, "CREATE_FOLDER", newFolderUrl)
+                } else {
+                    repository.addSystemLog("ERROR", "File Ops", "Tạo thư mục '$folderName' thất bại: ${message.take(120)}")
+                    withContext(Dispatchers.Main) {
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                        commonDialogMessage = "Không thể tạo thư mục '$folderName': $message"
+                        showCommonDialog = true
+                    }
+                }
             } finally {
                 withContext(Dispatchers.Main) { isLoading = false }
             }
         }
     }
+
     // === Đã gỡ bỏ tính năng Upload lẻ tẻ và Đồng bộ ===
 
     /**
@@ -2237,10 +2354,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             withContext(Dispatchers.Main) {
                 AppConfig.IS_APP_FOREGROUND = true
                 checkSmartNetwork(context)
-                startDashboardMonitoring(resetStatusPoll = false)
-                restoreLivestreamStateIfRunning(context)
                 fetchSmartData()
+            }
+
+            delay(200L)
+            withContext(Dispatchers.Main) {
+                startDashboardMonitoring(resetStatusPoll = false)
                 fetchThumbStatus()
+            }
+
+            delay(500L)
+            withContext(Dispatchers.Main) {
+                restoreLivestreamStateIfRunning(context)
                 fetchLivestreamStatusOnly(context)
                 fetchTikTokLiveWatch(context)
                 refresh()
@@ -2591,7 +2716,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     val ms = webDavManager.checkPingServer()
                     withContext(Dispatchers.Main) { networkPingMs = ms }
                     // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
-                    kotlinx.coroutines.delay(3000)
+                    val intervalMs = if (AppConfig.IS_APP_FOREGROUND) 3000L else 30_000L
+                    kotlinx.coroutines.delay(intervalMs)
                 } else {
                     // Nếu chưa Login xong thì đợi 1s hỏi lại, tránh việc bắt User đợi tận 30s mới chọc Ping
                     kotlinx.coroutines.delay(1000)
@@ -2612,6 +2738,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     fun startDashboardMonitoring(resetStatusPoll: Boolean = false) {
         android.util.Log.d("DashboardMonitor", "startDashboardMonitoring resetStatusPoll=$resetStatusPoll statusActive=${statusJob?.isActive}")
+        if (!resetStatusPoll && statusJob?.isActive == true) return
         listenToLocalNasApi(forceRestart = resetStatusPoll)
     }
 
@@ -3218,6 +3345,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             isStreamPiping = false
                             streamPipeStatus = "🛑 Đã hủy bởi người dùng"
                             streamPipeProgress = 0f
+                        }
+                        if (workInfo.state.isFinished) {
+                            throw CancellationException("StreamPipe WorkInfo collector finished")
                         }
                     }
                 }
@@ -4421,23 +4551,33 @@ fun WebDavViewModel.loadDuplicateResultsFromCache(context: android.content.Conte
 
 fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
         viewModelScope.launch(Dispatchers.IO) {
+            val appContext = NasApplication.instance.applicationContext
+            val trashMetaDao = NasApplication.instance.database.trashMetaDao()
+            val isInTrash = file.path.contains(TRASH_FOLDER_NAME)
+            val trashFolderUrl = buildWebDavTrashTargetUrl(
+                webDavManager.currentBaseUrl,
+                file.path,
+                "",
+                false
+            )
+            val trashTargetUrl = if (!isInTrash) buildWebDavTrashTargetUrl(
+                webDavManager.currentBaseUrl,
+                file.path,
+                file.name,
+                file.isDirectory
+            ) else file.path
+
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
-                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
-                val driveName = relativePath.substringBefore('/')
-                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
-
-                // 1. Kiểm tra nếu file đang ở trong thùng rác rồi thì xoá vĩnh viễn
-                if (file.path.contains(TRASH_FOLDER_NAME)) {
+                if (isInTrash) {
                     webDavManager.deleteFile(file.path, file.isDirectory)
+                    trashMetaDao.deleteByTrashPath(file.path)
+                    repository.addSystemLog("WARNING", "DuplicateScan", "Đã xóa vĩnh viễn duplicate '${file.name}'.")
                 } else {
-                    // 2. Nếu chưa, hãy đảm bảo thư mục thùng rác tồn tại và di chuyển vào đó
-                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* Đã tồn tại */ }
-
-                    val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
-                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                    webDavManager.renameFile(file.path, targetUrl)
+                    try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                    webDavManager.renameFile(file.path, trashTargetUrl)
+                    trashMetaDao.insert(TrashMeta(trashPath = trashTargetUrl, originalPath = file.path))
+                    repository.addSystemLog("WARNING", "DuplicateScan", "Đã chuyển duplicate '${file.name}' vào Thùng rác.")
                 }
 
                 repository.removeDuplicateFromDb(file.path)
@@ -4446,7 +4586,23 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
                     refresh()
                 }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý thùng rác: ${e.message}" }
+                val message = friendlyError(e)
+                if (e.isTransientNetworkFailure()) {
+                    repository.addSystemLog("WARNING", "DuplicateScan", "Xóa duplicate '${file.name}' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                    if (isInTrash) {
+                        enqueueOfflineAction(appContext, "DELETE", file.path)
+                    } else {
+                        enqueueOfflineAction(appContext, "RENAME", file.path, trashTargetUrl)
+                    }
+                    repository.removeDuplicateFromDb(file.path)
+                    withContext(Dispatchers.Main) {
+                        duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
+                        refresh()
+                    }
+                } else {
+                    repository.addSystemLog("ERROR", "DuplicateScan", "Xóa duplicate '${file.name}' thất bại: ${message.take(120)}")
+                    withContext(Dispatchers.Main) { errorMessage = "Xóa duplicate '${file.name}' thất bại: $message" }
+                }
             } finally {
                 withContext(Dispatchers.Main) { isLoading = false }
             }
@@ -4454,38 +4610,75 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
     }
 
 fun WebDavViewModel.deleteSelectedDuplicates() {
+
         val filesToDelete = selectedDuplicates.toList()
         if (filesToDelete.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
+            val appContext = NasApplication.instance.applicationContext
+            val trashMetaDao = NasApplication.instance.database.trashMetaDao()
+            val completedPaths = linkedSetOf<String>()
+            var hardError: String? = null
             try {
                 withContext(Dispatchers.Main) { isLoading = true }
                 var processed = 0
                 for (file in filesToDelete) {
-                    val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
-                    val driveName = relativePath.substringBefore('/')
-                    val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
-                    
-                    try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
-                    
-                    if (file.path.contains(TRASH_FOLDER_NAME)) {
-                        webDavManager.deleteFile(file.path, file.isDirectory)
-                    } else {
-                        val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                        var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
-                        if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                        webDavManager.renameFile(file.path, targetUrl)
+                    val isInTrash = file.path.contains(TRASH_FOLDER_NAME)
+                    val trashFolderUrl = buildWebDavTrashTargetUrl(
+                        webDavManager.currentBaseUrl,
+                        file.path,
+                        "",
+                        false
+                    )
+                    val trashTargetUrl = if (!isInTrash) buildWebDavTrashTargetUrl(
+                        webDavManager.currentBaseUrl,
+                        file.path,
+                        file.name,
+                        file.isDirectory
+                    ) else file.path
+
+                    try {
+                        if (isInTrash) {
+                            webDavManager.deleteFile(file.path, file.isDirectory)
+                            trashMetaDao.deleteByTrashPath(file.path)
+                            repository.addSystemLog("WARNING", "DuplicateScan", "Đã xóa vĩnh viễn duplicate '${file.name}'.")
+                        } else {
+                            try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                            webDavManager.renameFile(file.path, trashTargetUrl)
+                            trashMetaDao.insert(TrashMeta(trashPath = trashTargetUrl, originalPath = file.path))
+                            repository.addSystemLog("WARNING", "DuplicateScan", "Đã chuyển duplicate '${file.name}' vào Thùng rác.")
+                        }
+                        completedPaths += file.path
+                    } catch (e: Exception) {
+                        val message = friendlyError(e)
+                        if (e.isTransientNetworkFailure()) {
+                            repository.addSystemLog("WARNING", "DuplicateScan", "Xóa duplicate '${file.name}' thất bại, đã được đưa vào hàng đợi ngoại tuyến: ${message.take(80)}")
+                            if (isInTrash) {
+                                enqueueOfflineAction(appContext, "DELETE", file.path)
+                            } else {
+                                enqueueOfflineAction(appContext, "RENAME", file.path, trashTargetUrl)
+                            }
+                            completedPaths += file.path
+                        } else {
+                            hardError = message
+                            repository.addSystemLog("ERROR", "DuplicateScan", "Xóa duplicate '${file.name}' thất bại: ${message.take(120)}")
+                        }
                     }
+
                     processed++
                     if (processed % 5 == 0) kotlinx.coroutines.delay(10)
                 }
 
-                val deletedPaths = filesToDelete.map { it.path }.toSet()
+                val deletedPaths = completedPaths.toSet()
                 for (path in deletedPaths) { repository.removeDuplicateFromDb(path) }
 
                 withContext(Dispatchers.Main) {
                     duplicateFilesList = duplicateFilesList.filter { it.path !in deletedPaths }
                     selectedDuplicates.clear()
                     refresh()
+                }
+
+                if (hardError != null) {
+                    withContext(Dispatchers.Main) { errorMessage = "Có lỗi khi xử lý một số duplicate: $hardError" }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { errorMessage = "Lỗi xử lý hàng loạt: ${e.message}" }
@@ -4496,6 +4689,7 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
     }
 
 fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) {
+
         val workManager = androidx.work.WorkManager.getInstance(context)
         val constraints = androidx.work.Constraints.Builder()
             .setRequiresDeviceIdle(true)

@@ -123,8 +123,9 @@ class ScreenRecordService : Service() {
             intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
         apiBase = intent.getStringExtra(EXTRA_API_BASE).orEmpty()
-        val user = intent.getStringExtra(EXTRA_USER).orEmpty()
-        val pass = intent.getStringExtra(EXTRA_PASS).orEmpty()
+            .ifEmpty { SecurePrefsHelper.getUrl(this).toApiBaseUrl() }
+        val user = SecurePrefsHelper.getUser(this)
+        val pass = SecurePrefsHelper.getPass(this)
         authHeader = okhttp3.Credentials.basic(user, pass)
         sessionId = "screen_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         spoolDir = File(cacheDir, "screen_record_spool/$sessionId")
@@ -154,9 +155,9 @@ class ScreenRecordService : Service() {
 
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = if (data != null) manager.getMediaProjection(resultCode, data) else null
-        if (projection == null || apiBase.isBlank()) {
-            Log.e(TAG, "Cannot start screen recording: projection=${projection != null}, apiBaseBlank=${apiBase.isBlank()}")
-            logError("Không thể bắt đầu quay: thiếu quyền MediaProjection hoặc API base rỗng")
+        if (projection == null || apiBase.isBlank() || user.isBlank() || pass.isBlank()) {
+            Log.e(TAG, "Cannot start screen recording: projection=${projection != null}, apiBaseBlank=${apiBase.isBlank()}, authBlank=${user.isBlank() || pass.isBlank()}")
+            logError("Không thể bắt đầu quay: thiếu quyền MediaProjection, API base hoặc thông tin đăng nhập")
             hideRecordingOverlay()
             stopSelf()
             return
@@ -734,8 +735,6 @@ class ScreenRecordService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_API_BASE = "api_base"
-        const val EXTRA_USER = "user"
-        const val EXTRA_PASS = "pass"
         private const val CHANNEL_ID = "screen_record_nas"
         private const val NOTIFICATION_ID = 2219
         private const val TAG = "ScreenRecordService"
