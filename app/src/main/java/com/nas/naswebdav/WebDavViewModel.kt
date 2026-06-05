@@ -2729,9 +2729,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
 
-        // Khởi động vòng lặp lấy metrics biểu đồ:
-        // Chờ cho URL sẵn sàng rồi mới fetch lần đầu, sau đó poll mỗi 30s
-        startDashboardMonitoring(resetStatusPoll = false)
+        // Dashboard monitoring is started once above; later foreground/resume events call
+        // startDashboardMonitoring(), whose guard keeps the single polling job alive.
     }
 
     // Dọn các listener (nếu có)

@@ -584,7 +584,7 @@ fun MainMenuScreen(
                         .setConstraints(constraints)
                         .addTag("com.nas.naswebdav.AutoBackupWorker")
                         .build()
-                        androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
+                    androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
                         "AutoBackupWork",
                         androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
                         backupWorkRequest
@@ -730,6 +730,155 @@ fun MainMenuScreen(
         ) {
         Spacer(Modifier.height(24.dp))
 
+        MainDashboardHeader(
+            viewModel = viewModel,
+            realtimeNow = realtimeNow,
+            showPowerMenu = showPowerMenu,
+            onPowerMenuChange = { showPowerMenu = it },
+            onLogout = onLogout,
+            onReboot = { showRebootConfirm = true },
+            onShutdown = { showShutdownConfirm = true }
+        )
+
+            Spacer(Modifier.height(8.dp))
+
+        DashboardSystemOverviewCard(
+            viewModel = viewModel,
+            realtimeNow = realtimeNow,
+            onShowProcessList = { sortType ->
+                processSortType = sortType
+                showProcessDialog = true
+            },
+            onOpenNewDiskProfile = { showNewDiskProfileSheet = true },
+            onOpenSmartDetails = { showSmartDialog = true }
+        )
+
+        OmvServicesHardwarePanel(viewModel = viewModel)
+
+        // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
+        Spacer(Modifier.height(8.dp))
+        com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
+        Spacer(Modifier.height(8.dp))
+        NasInsightsSummaryCard(
+            viewModel = viewModel,
+            onOpen = {
+                viewModel.fetchNasInsights(minIntervalMs = 0L)
+                showNasInsightsDialog = true
+            }
+        )
+        Spacer(Modifier.height(4.dp))
+
+        SystemStatusCards(
+            viewModel = viewModel,
+            mContext = mContext,
+            onOpenAutoBackup = { showAutoBackupDialog = true },
+            onOpenLivestream = { showLivestreamDialog = true },
+            onOpenUsbImport = {
+                viewModel.fetchUsbImportStatus()
+                showUsbImportDialog = true
+            },
+            onOpenDuplicateScan = {
+                when {
+                    viewModel.isWorkerRunning || viewModel.isScanningDuplicates -> viewModel.isScanningDuplicates = true
+                    viewModel.duplicateFilesList.isNotEmpty() -> viewModel.isShowingDuplicates = true
+                    else -> showDuplicateScanDialog = true
+                }
+            }
+        )
+        SystemLogsSummaryCard(viewModel)
+
+        TorrentActivityCard(
+            viewModel = viewModel,
+            onOpenFolder = onOpenFolder,
+            onGlobalSearch = onGlobalSearch
+        )
+
+
+
+        QuickAccessSection(
+            slot2Id = slot2Id,
+            slot3Id = slot3Id,
+            slot4Id = slot4Id,
+            editingSlot = editingSlot,
+            sharedPrefs = sharedPrefs,
+            onEditingSlotChange = { editingSlot = it },
+            onSlot2Change = { slot2Id = it },
+            onSlot3Change = { slot3Id = it },
+            onSlot4Change = { slot4Id = it },
+            onQuickAction = handleQuickAction,
+            onOpenFiles = onOpenFiles,
+            onOpenLatestPhotos = onOpenLatestPhotos,
+            onOpenRecentVideos = onOpenRecentVideos,
+            onOpenToolbox = { showToolboxDialog = true }
+        )
+        Spacer(Modifier.height(6.dp))
+
+        // THÔNG BÁO DIALOG
+        if (showCommonDialog) {
+            AppStatusDialog(
+                type = commonDialogType,
+                message = commonDialogMessage,
+                onDismiss = { showCommonDialog = false }
+            )
+        }
+        // DIALOG THÔNG BÁO TỪ VIEWMODEL
+        if (viewModel.showCommonDialog) {
+            AppStatusDialog(
+                type = viewModel.commonDialogType,
+                message = viewModel.commonDialogMessage,
+                onDismiss = { viewModel.showCommonDialog = false }
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
+
+    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+    androidx.compose.material3.pulltorefresh.PullToRefreshContainer(
+        state = pullRefreshState,
+        modifier = Modifier.align(Alignment.TopCenter),
+        containerColor = DarkCard,
+        contentColor = AccentCyan
+    )
+    }
+
+    // Đã HỘP CÔNG CỤ TOOLBOX Đã
+    if (showToolboxDialog) {
+        ToolboxDialog(
+            viewModel = viewModel,
+            sharedPrefs = sharedPrefs,
+            context = mContext,
+            onDismiss = { showToolboxDialog = false },
+            onOpenLatestPhotos = onOpenLatestPhotos,
+            onOpenRecentVideos = onOpenRecentVideos,
+            onOpenTrash = onOpenTrash,
+            showAutoBackupDialog = { showAutoBackupDialog = true },
+            showLanWhitelistDialog = { showLanWhitelistDialog = true },
+            showLivestreamDialog = { showLivestreamDialog = true },
+            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
+            showDiskHealthDialog = { showDiskHealthDialog = true },
+            showSleepScheduleDialog = { showSleepScheduleDialog = true },
+            showBandwidthDialog = { showBandwidthDialog = true },
+            showUsbImportDialog = { viewModel.fetchUsbImportStatus(); showUsbImportDialog = true },
+            showDownloadDialog = { showDownloadDialog = true },
+            showSmbDialog = { viewModel.fetchSmbStatus(); showSmbDialog = true },
+            showDuplicateScanDialog = { showDuplicateScanDialog = true }
+        )
+    }
+    DuplicateScanGlobalUI(viewModel, mContext)
+}
+
+
+@Composable
+private fun MainDashboardHeader(
+    viewModel: WebDavViewModel,
+    realtimeNow: Long,
+    showPowerMenu: Boolean,
+    onPowerMenuChange: (Boolean) -> Unit,
+    onLogout: () -> Unit,
+    onReboot: () -> Unit,
+    onShutdown: () -> Unit,
+) {
         // ═══ HEADER ═══
         Row(
             Modifier.fillMaxWidth(),
@@ -821,38 +970,45 @@ fun MainMenuScreen(
             
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { showPowerMenu = true },
+                    modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
                     
                     DropdownMenu(
                         expanded = showPowerMenu,
-                        onDismissRequest = { showPowerMenu = false },
+                        onDismissRequest = { onPowerMenuChange(false) },
                         modifier = Modifier.background(DarkCard)
                     ) {
                         DropdownMenuItem(
                             text = { Text("Đăng xuất", color = AccentOrange) },
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
-                            onClick = { showPowerMenu = false; onLogout() }
+                            onClick = { onPowerMenuChange(false); onLogout() }
                         )
                         DropdownMenuItem(
                             text = { Text("Khởi động lại NAS", color = AccentGreen) },
                             leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
-                            onClick = { showPowerMenu = false; showRebootConfirm = true }
+                            onClick = { onPowerMenuChange(false); onReboot() }
                         )
                         DropdownMenuItem(
                             text = { Text("Ngủ NAS", color = AccentCyan) },
                             leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
-                            onClick = { showPowerMenu = false; showShutdownConfirm = true }
+                            onClick = { onPowerMenuChange(false); onShutdown() }
                         )
                     }
                 }
             }
         }
-            
-            Spacer(Modifier.height(8.dp))
+}
 
+@Composable
+private fun DashboardSystemOverviewCard(
+    viewModel: WebDavViewModel,
+    realtimeNow: Long,
+    onShowProcessList: (String) -> Unit,
+    onOpenNewDiskProfile: () -> Unit,
+    onOpenSmartDetails: () -> Unit,
+) {
             // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -875,8 +1031,7 @@ fun MainMenuScreen(
                         gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
                         modifier = Modifier.weight(1f),
                         onClick = {
-                            processSortType = "cpu"
-                            showProcessDialog = true
+                            onShowProcessList("cpu")
                         }
                     )
                     GaugeCard(
@@ -886,8 +1041,7 @@ fun MainMenuScreen(
                         modifier = Modifier.weight(1f),
                         overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
                         onClick = {
-                            processSortType = "mem"
-                            showProcessDialog = true
+                            onShowProcessList("mem")
                         }
                     )
                     
@@ -905,7 +1059,7 @@ fun MainMenuScreen(
                             gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
                             modifier = Modifier.weight(1f),
                             overridePercent = hddDisk.percent,
-                            onClick = { showNewDiskProfileSheet = true }
+                            onClick = onOpenNewDiskProfile
                         )
                     } else Spacer(Modifier.weight(1f))
                     
@@ -935,12 +1089,15 @@ fun MainMenuScreen(
                         gradientColors = smartColors,
                         modifier = Modifier.weight(1f),
                         overridePercent = smartPercent,
-                        onClick = { showSmartDialog = true }
+                        onClick = onOpenSmartDetails
                     )
                 }
             }
         }
+}
 
+@Composable
+private fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
         var pendingServiceName by remember { mutableStateOf("") }
         var pendingServiceTitle by remember { mutableStateOf("") }
@@ -1202,39 +1359,14 @@ fun MainMenuScreen(
                 }
             }
         }
-        
-        // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
-        Spacer(Modifier.height(8.dp))
-        com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
-        Spacer(Modifier.height(8.dp))
-        NasInsightsSummaryCard(
-            viewModel = viewModel,
-            onOpen = {
-                viewModel.fetchNasInsights(minIntervalMs = 0L)
-                showNasInsightsDialog = true
-            }
-        )
-        Spacer(Modifier.height(4.dp))
-        
-        SystemStatusCards(
-            viewModel = viewModel,
-            mContext = mContext,
-            onOpenAutoBackup = { showAutoBackupDialog = true },
-            onOpenLivestream = { showLivestreamDialog = true },
-            onOpenUsbImport = {
-                viewModel.fetchUsbImportStatus()
-                showUsbImportDialog = true
-            },
-            onOpenDuplicateScan = {
-                when {
-                    viewModel.isWorkerRunning || viewModel.isScanningDuplicates -> viewModel.isScanningDuplicates = true
-                    viewModel.duplicateFilesList.isNotEmpty() -> viewModel.isShowingDuplicates = true
-                    else -> showDuplicateScanDialog = true
-                }
-            }
-        )
-        SystemLogsSummaryCard(viewModel)
+}
 
+@Composable
+private fun TorrentActivityCard(
+    viewModel: WebDavViewModel,
+    onOpenFolder: (webdavPath: String) -> Unit,
+    onGlobalSearch: (String) -> Unit,
+) {
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
             val s = t.state
@@ -1369,9 +1501,25 @@ fun MainMenuScreen(
             }
             Spacer(Modifier.height(8.dp))
         }
+}
 
-
-
+@Composable
+private fun QuickAccessSection(
+    slot2Id: String,
+    slot3Id: String,
+    slot4Id: String,
+    editingSlot: Int?,
+    sharedPrefs: android.content.SharedPreferences,
+    onEditingSlotChange: (Int?) -> Unit,
+    onSlot2Change: (String) -> Unit,
+    onSlot3Change: (String) -> Unit,
+    onSlot4Change: (String) -> Unit,
+    onQuickAction: (String) -> Unit,
+    onOpenFiles: () -> Unit,
+    onOpenLatestPhotos: () -> Unit,
+    onOpenRecentVideos: () -> Unit,
+    onOpenToolbox: () -> Unit,
+) {
         // Đã DANH MỤC TRUY CẬP NHANH Đã 
         Text("TRUY CẬP NHANH", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitlePurple, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 6.dp))
 
@@ -1379,14 +1527,14 @@ fun MainMenuScreen(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
-            BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s2.id) }, onLongClick = { editingSlot = 2 })
+            BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val s3 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot3Id } ?: AVAILABLE_QUICK_ACTIONS[1]
-            BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s3.id) }, onLongClick = { editingSlot = 3 })
+            BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s3.id) }, onLongClick = { onEditingSlotChange(3) })
             val s4 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot4Id } ?: AVAILABLE_QUICK_ACTIONS[2]
-            BigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { handleQuickAction(s4.id) }, onLongClick = { editingSlot = 4 })
+            BigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s4.id) }, onLongClick = { onEditingSlotChange(4) })
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1397,28 +1545,37 @@ fun MainMenuScreen(
         if (editingSlot != null) {
             QuickActionSelectorDialog(
                 currentSlots = setOf(slot2Id, slot3Id, slot4Id),
-                onDismiss = { editingSlot = null },
+                onDismiss = { onEditingSlotChange(null) },
                 onSelect = { newId ->
-                    val edit = sharedPrefs.edit()
+                    var nextSlot2 = slot2Id
+                    var nextSlot3 = slot3Id
+                    var nextSlot4 = slot4Id
                     when (editingSlot) {
                         2 -> {
-                            if (slot3Id == newId) { slot3Id = slot2Id; edit.putString("qa_slot3", slot3Id) }
-                            if (slot4Id == newId) { slot4Id = slot2Id; edit.putString("qa_slot4", slot4Id) }
-                            slot2Id = newId; edit.putString("qa_slot2", slot2Id)
+                            if (nextSlot3 == newId) nextSlot3 = nextSlot2
+                            if (nextSlot4 == newId) nextSlot4 = nextSlot2
+                            nextSlot2 = newId
                         }
                         3 -> {
-                            if (slot2Id == newId) { slot2Id = slot3Id; edit.putString("qa_slot2", slot2Id) }
-                            if (slot4Id == newId) { slot4Id = slot3Id; edit.putString("qa_slot4", slot4Id) }
-                            slot3Id = newId; edit.putString("qa_slot3", slot3Id)
+                            if (nextSlot2 == newId) nextSlot2 = nextSlot3
+                            if (nextSlot4 == newId) nextSlot4 = nextSlot3
+                            nextSlot3 = newId
                         }
                         4 -> {
-                            if (slot2Id == newId) { slot2Id = slot4Id; edit.putString("qa_slot2", slot2Id) }
-                            if (slot3Id == newId) { slot3Id = slot4Id; edit.putString("qa_slot3", slot3Id) }
-                            slot4Id = newId; edit.putString("qa_slot4", slot4Id)
+                            if (nextSlot2 == newId) nextSlot2 = nextSlot4
+                            if (nextSlot3 == newId) nextSlot3 = nextSlot4
+                            nextSlot4 = newId
                         }
                     }
-                    edit.apply()
-                    editingSlot = null
+                    sharedPrefs.edit()
+                        .putString("qa_slot2", nextSlot2)
+                        .putString("qa_slot3", nextSlot3)
+                        .putString("qa_slot4", nextSlot4)
+                        .apply()
+                    onSlot2Change(nextSlot2)
+                    onSlot3Change(nextSlot3)
+                    onSlot4Change(nextSlot4)
+                    onEditingSlotChange(null)
                 }
             )
         }
@@ -1427,7 +1584,7 @@ fun MainMenuScreen(
         
         // Nút mở Toolbox mở rộng
         Button(
-            onClick = { showToolboxDialog = true },
+            onClick = { onOpenToolbox() },
             modifier = Modifier.fillMaxWidth().height(42.dp),
             colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
             shape = RoundedCornerShape(10.dp)
@@ -1438,61 +1595,6 @@ fun MainMenuScreen(
                 Text("Công cụ & Cài đặt", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
             }
         }
-        Spacer(Modifier.height(6.dp))
-
-        // THÔNG BÁO DIALOG
-        if (showCommonDialog) {
-            AppStatusDialog(
-                type = commonDialogType,
-                message = commonDialogMessage,
-                onDismiss = { showCommonDialog = false }
-            )
-        }
-        // DIALOG THÔNG BÁO TỪ VIEWMODEL
-        if (viewModel.showCommonDialog) {
-            AppStatusDialog(
-                type = viewModel.commonDialogType,
-                message = viewModel.commonDialogMessage,
-                onDismiss = { viewModel.showCommonDialog = false }
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-    }
-    
-    @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-    androidx.compose.material3.pulltorefresh.PullToRefreshContainer(
-        state = pullRefreshState,
-        modifier = Modifier.align(Alignment.TopCenter),
-        containerColor = DarkCard,
-        contentColor = AccentCyan
-    )
-    }
-
-    // Đã HỘP CÔNG CỤ TOOLBOX Đã 
-    if (showToolboxDialog) {
-        ToolboxDialog(
-            viewModel = viewModel,
-            sharedPrefs = sharedPrefs,
-            context = mContext,
-            onDismiss = { showToolboxDialog = false },
-            onOpenLatestPhotos = onOpenLatestPhotos,
-            onOpenRecentVideos = onOpenRecentVideos,
-            onOpenTrash = onOpenTrash,
-            showAutoBackupDialog = { showAutoBackupDialog = true },
-            showLanWhitelistDialog = { showLanWhitelistDialog = true },
-            showLivestreamDialog = { showLivestreamDialog = true },
-            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
-            showDiskHealthDialog = { showDiskHealthDialog = true },
-            showSleepScheduleDialog = { showSleepScheduleDialog = true },
-            showBandwidthDialog = { showBandwidthDialog = true },
-            showUsbImportDialog = { viewModel.fetchUsbImportStatus(); showUsbImportDialog = true },
-            showDownloadDialog = { showDownloadDialog = true },
-            showSmbDialog = { viewModel.fetchSmbStatus(); showSmbDialog = true },
-            showDuplicateScanDialog = { showDuplicateScanDialog = true }
-        )
-    }
-    DuplicateScanGlobalUI(viewModel, mContext)
 }
 
 

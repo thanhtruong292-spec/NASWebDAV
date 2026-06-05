@@ -20,6 +20,8 @@
 -keep @androidx.room.Dao interface * { *; }
 -keep @androidx.room.Database class * { *; }
 -keepclassmembers @androidx.room.Entity class * { *; }
+-keep class **_Impl { *; }
+-keep class androidx.work.impl.WorkDatabase_Impl { *; }
 
 # ─── WorkManager Workers ─────────────────────────────────────────────────────
 # R8 sẽ xóa Worker class nếu không có rules này → WorkManager crash khi enqueue

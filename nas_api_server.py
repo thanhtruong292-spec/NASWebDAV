@@ -8,7 +8,7 @@ Cài đặt: pip3 install flask psutil tornado
 Chạy:    python3 nas_api_server.py
 Tự động: Thêm vào /etc/rc.local hoặc tạo systemd service
 
-Port: 5000 (HTTP)
+Port: 5050 (HTTP API), 5051 (WebSocket)
 """
 
 import os
@@ -27,6 +27,7 @@ import logging
 import re as _re_module
 import shutil
 import hashlib
+import tempfile
 from functools import wraps
 import sqlite3
 import base64
@@ -607,6 +608,8 @@ class AlertWebSocket(tornado.websocket.WebSocketHandler):
 
 def get_ip_geo(ip):
     if ip.startswith(("192.168.", "10.", "172.", "127.")): return "LOCAL", "LAN"
+    if os.environ.get("NAS_ENABLE_EXTERNAL_IP_GEO", "").lower() not in ("1", "true", "yes"):
+        return "UN", "Unknown"
     try:
         import urllib.request
         resp = urllib.request.urlopen("http://ip-api.com/json/{}".format(ip), timeout=2)
@@ -3402,7 +3405,11 @@ def api_processes():
     try:
         global _processes_cache
         sort_by = request.args.get("sort", "cpu")
-        limit = int(request.args.get("limit", 100))
+        try:
+            limit = int(request.args.get("limit", 100))
+        except Exception:
+            limit = 100
+        limit = max(1, min(limit, 200))
         num_cores = psutil.cpu_count() or 1
         
         with _processes_lock:
@@ -3853,9 +3860,9 @@ def _pwm_write(node, value):
     try:
         if not os.path.exists(path):
             return False
-        # subprocess voi sh -c de chac chan kernel nhin thay file write
-        # (mot so kernel khong cho python ghi truc tiep voi PermissionDenied).
-        subprocess.run(["sh", "-c", "echo %s > %s" % (value, path)], check=False)
+        # Write sysfs directly; avoid invoking a shell for fixed hardware paths.
+        with open(path, "w") as f:
+            f.write(str(value))
         return True
     except Exception as e:
         log.warning("[Fan] PWM write %s=%s lỗi: %s", node, value, e)
@@ -3868,7 +3875,8 @@ def _pwm_export_if_needed():
         if not os.path.isdir(PWM_PATH):
             export_path = "/sys/class/pwm/pwmchip0/export"
             if os.path.exists(export_path):
-                subprocess.run(["sh", "-c", "echo 0 > %s" % export_path], check=False)
+                with open(export_path, "w") as f:
+                    f.write("0")
     except Exception:
         pass
 
@@ -7178,6 +7186,8 @@ def api_backup_schedule_set():
 import tarfile
 
 _BACKUP_DIR = "/etc/nas/backups"
+_BACKUP_RESTORE_MAX_MEMBER_BYTES = 64 * 1024 * 1024
+_BACKUP_RESTORE_COPY_CHUNK = 1024 * 1024
 _BACKUP_FILES = [
     # (source_path, relative_path_in_tar, critical)
     # critical = True -> bao lỗi neu thieu khi restore
@@ -7210,6 +7220,25 @@ def _ensure_backup_dir():
     except Exception as e:
         log.error("[Backup] Không tạo được thư mục: %s", e)
         return False
+
+
+
+def _backup_file_path(filename):
+    filename = (filename or "").strip()
+    if not filename:
+        return None
+    if os.path.basename(filename) != filename:
+        return None
+    if not filename.startswith("Backup_NAS") or not filename.endswith(".tar.gz"):
+        return None
+    backup_root = os.path.realpath(_BACKUP_DIR)
+    full = os.path.realpath(os.path.join(backup_root, filename))
+    expected = os.path.join(backup_root, filename)
+    if full != expected:
+        return None
+    if not (full == backup_root or full.startswith(backup_root + os.sep)):
+        return None
+    return full
 
 
 @app.route('/api/backup/create', methods=['POST'])
@@ -7312,38 +7341,35 @@ def api_backup_list():
 def api_backup_download():
     """Stream 1 file backup ve client."""
     filename = request.args.get("filename", "").strip()
-    if not filename or "/" in filename or ".." in filename:
-        return jsonify({"error": "Filename không hợp lệ"}), 400
-    full = os.path.join(_BACKUP_DIR, filename)
+    full = _backup_file_path(filename)
+    if not full:
+        return jsonify({"error": "Filename khong hop le"}), 400
     if not os.path.exists(full):
-        return jsonify({"error": "File không tồn tại"}), 404
+        return jsonify({"error": "File khong ton tai"}), 404
     try:
         from flask import send_file
         return send_file(full, mimetype="application/gzip",
                          as_attachment=True, attachment_filename=filename)
     except TypeError:
-        # Flask cu khong co attachment_filename keyword
         from flask import send_file
         return send_file(full, mimetype="application/gzip", as_attachment=True)
-
 
 @app.route('/api/backup/delete', methods=['POST'])
 @requires_auth
 def api_backup_delete():
     body = request.get_json(force=True) or {}
     filename = (body.get("filename") or "").strip()
-    if not filename or "/" in filename or ".." in filename:
-        return jsonify({"error": "Filename không hợp lệ"}), 400
-    full = os.path.join(_BACKUP_DIR, filename)
+    full = _backup_file_path(filename)
+    if not full:
+        return jsonify({"error": "Filename khong hop le"}), 400
     if not os.path.exists(full):
-        return jsonify({"error": "File không tồn tại"}), 404
+        return jsonify({"error": "File khong ton tai"}), 404
     try:
         os.remove(full)
-        log.info("[Backup] Đã xoá %s", filename)
+        log.info("[Backup] Deleted %s", filename)
         return jsonify({"status": "deleted", "filename": filename})
     except Exception as e:
-        return jsonify({"error": "Không xoá được: %s" % str(e)[:200]}), 500
-
+        return jsonify({"error": "Khong xoa duoc: %s" % str(e)[:200]}), 500
 
 @app.route('/api/backup/restore', methods=['POST'])
 @requires_auth
@@ -7359,7 +7385,9 @@ def api_backup_restore():
     try:
         if request.files and "file" in request.files:
             up = request.files["file"]
-            tmp = os.path.join("/tmp", "restore_upload_%d.tar.gz" % int(time.time()))
+            tmp_file = tempfile.NamedTemporaryFile(prefix="nas_restore_", suffix=".tar.gz", dir="/tmp", delete=False)
+            tmp = tmp_file.name
+            tmp_file.close()
             up.save(tmp)
             src_tar = tmp
             cleanup_after = True
@@ -7368,8 +7396,7 @@ def api_backup_restore():
             try: body = request.get_json(silent=True) or {}
             except Exception: body = {}
             filename = (body.get("filename") or "").strip()
-            if filename and "/" not in filename and ".." not in filename:
-                src_tar = os.path.join(_BACKUP_DIR, filename)
+            src_tar = _backup_file_path(filename)
         if not src_tar or not os.path.exists(src_tar):
             return jsonify({"error": "Không tìm thấy file backup để khôi phục"}), 400
 
@@ -7380,6 +7407,8 @@ def api_backup_restore():
             # Đọc manifest truoc
             try:
                 m_member = tar.getmember("manifest.json")
+                if m_member.size > _BACKUP_RESTORE_MAX_MEMBER_BYTES:
+                    raise ValueError("manifest too large")
                 m_file = tar.extractfile(m_member)
                 if m_file:
                     manifest = json.loads(m_file.read().decode("utf-8"))
@@ -7400,6 +7429,9 @@ def api_backup_restore():
                 if not dest:
                     errors.append({"file": member.name, "reason": "không xác định được đường dẫn đích"})
                     continue
+                if member.size > _BACKUP_RESTORE_MAX_MEMBER_BYTES:
+                    errors.append({"file": member.name, "reason": "file backup vuot gioi han restore"})
+                    continue
                 try:
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                 except Exception as e:
@@ -7410,14 +7442,13 @@ def api_backup_restore():
                     if f is None:
                         errors.append({"file": dest, "reason": "tar không Đọc được"})
                         continue
-                    data = f.read()
                     # Backup file dich hien tai truoc khi ghi de (rollback neu can)
                     if os.path.exists(dest):
                         try: os.replace(dest, dest + ".pre-restore")
                         except Exception as e: log.debug("[M4] Ignored exception: %s", e)
                     tmp = dest + ".restore-tmp"
-                    with open(tmp, "wb") as w:
-                        w.write(data)
+                    with f, open(tmp, "wb") as w:
+                        shutil.copyfileobj(f, w, length=_BACKUP_RESTORE_COPY_CHUNK)
                     os.replace(tmp, dest)
                     # Phuc hoi quyen co ban: auth.conf phai chmod 600
                     if dest.endswith("auth.conf"):
@@ -8442,7 +8473,8 @@ def api_screen_record_cancel():
 # ExoPlayer tren Android không gi?i mở được MPEG-2 (.mpg) tren nhieu thiet bi
 
 
-_transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen }
+_transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen, "lock": Lock }
+_transcode_sessions_lock = threading.Lock()
 _TRANSCODE_SESSION_TTL_SEC = 2 * 3600
 _TRANSCODE_SESSION_MAX = 20
 
@@ -8450,24 +8482,29 @@ _TRANSCODE_SESSION_MAX = 20
 def _cleanup_transcode_sessions(force_limit=False):
     now = time.time()
     stale = []
-    for sid, session in list(_transcode_sessions.items()):
-        created_at = float(session.get("created_at", 0) or 0)
-        proc = session.get("process")
-        if created_at and now - created_at > _TRANSCODE_SESSION_TTL_SEC:
-            stale.append(sid)
-        elif proc is not None and proc.poll() is not None:
-            session["process"] = None
-    if force_limit and len(_transcode_sessions) - len(stale) > _TRANSCODE_SESSION_MAX:
-        ordered = sorted(
-            _transcode_sessions.items(),
-            key=lambda item: float(item[1].get("last_access", item[1].get("created_at", 0)) or 0)
-        )
-        stale.extend([sid for sid, _session in ordered[:max(0, len(_transcode_sessions) - _TRANSCODE_SESSION_MAX)]])
-    for sid in set(stale):
-        session = _transcode_sessions.pop(sid, None)
-        if not session:
-            continue
-        proc = session.get("process")
+    procs_to_kill = []
+    with _transcode_sessions_lock:
+        for sid, session in list(_transcode_sessions.items()):
+            created_at = float(session.get("created_at", 0) or 0)
+            proc = session.get("process")
+            if created_at and now - created_at > _TRANSCODE_SESSION_TTL_SEC:
+                stale.append(sid)
+            elif proc is not None and proc.poll() is not None:
+                session["process"] = None
+        if force_limit and len(_transcode_sessions) - len(stale) > _TRANSCODE_SESSION_MAX:
+            ordered = sorted(
+                _transcode_sessions.items(),
+                key=lambda item: float(item[1].get("last_access", item[1].get("created_at", 0)) or 0)
+            )
+            stale.extend([sid for sid, _session in ordered[:max(0, len(_transcode_sessions) - _TRANSCODE_SESSION_MAX)]])
+        for sid in set(stale):
+            session = _transcode_sessions.pop(sid, None)
+            if not session:
+                continue
+            proc = session.get("process")
+            if proc is not None and proc.poll() is None:
+                procs_to_kill.append(proc)
+    for proc in procs_to_kill:
         if proc is not None and proc.poll() is None:
             try:
                 proc.kill()
@@ -8533,13 +8570,22 @@ def api_stream_transcode():
     # L?y tong thoi gian cua video
     duration = _get_video_duration(file_path)
     
-    _transcode_sessions[session_id] = {
-        "file_path": file_path,
-        "duration": duration,
-        "process": None,
-        "created_at": time.time(),
-        "last_access": time.time(),
-    }
+    with _transcode_sessions_lock:
+        session = _transcode_sessions.get(session_id)
+        if session:
+            session["file_path"] = file_path
+            session["duration"] = duration
+            session["last_access"] = time.time()
+            session.setdefault("lock", threading.Lock())
+        else:
+            _transcode_sessions[session_id] = {
+                "file_path": file_path,
+                "duration": duration,
+                "process": None,
+                "created_at": time.time(),
+                "last_access": time.time(),
+                "lock": threading.Lock(),
+            }
     log.info("[JIT HLS] Khởi tạo: %s (Duration: %.1fs)", file_path, duration)
 
     # Redirect den file m3u8 — ExoPlayer se call tiep vao /api/stream/hls/
@@ -8550,21 +8596,19 @@ def api_stream_transcode():
 @app.route("/api/stream/hls/<session_id>/<filename>")
 @requires_auth
 def api_stream_hls_file(session_id, filename):
-    """
-    Just-in-Time HLS Server.
-    - Neu request playlist.m3u8: tr? v? file VOD fake day du tất c? c?c segment.
-    - Neu request seg00100.ts: kiểm tra neu co, gui ve. Neu ch?a co, chay FFmpeg tu -ss 400.
-    """
-    if session_id not in _transcode_sessions:
-        return "", 404
-        
-    session = _transcode_sessions[session_id]
-    session["last_access"] = time.time()
+    with _transcode_sessions_lock:
+        session = _transcode_sessions.get(session_id)
+        if not session:
+            return "", 404
+        session["last_access"] = time.time()
+        session_lock = session.get("lock")
+        if session_lock is None:
+            session_lock = threading.Lock()
+            session["lock"] = session_lock
+        duration = session.get("duration", 0)
     hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
 
     if filename == "playlist.m3u8":
-        # Tao playlist M3U8 kieu VOD co day du tất c? segments
-        duration = session["duration"]
         lines = [
             "#EXTM3U",
             "#EXT-X-VERSION:3",
@@ -8572,55 +8616,47 @@ def api_stream_hls_file(session_id, filename):
             "#EXT-X-MEDIA-SEQUENCE:0",
             "#EXT-X-PLAYLIST-TYPE:VOD"
         ]
-        
         seg_duration = 4.0
-        total_segs = int(duration / seg_duration)
+        total_segs = int(float(duration or 0) / seg_duration)
         for i in range(total_segs):
             lines.append("#EXTINF:%.6f," % seg_duration)
             lines.append("seg%05d.ts" % i)
-            
-        rem = duration - (total_segs * seg_duration)
+        rem = float(duration or 0) - (total_segs * seg_duration)
         if rem > 0:
             lines.append("#EXTINF:%.6f," % rem)
             lines.append("seg%05d.ts" % total_segs)
-            
         lines.append("#EXT-X-ENDLIST")
-        playlist_text = "\n".join(lines)
-        
-        from flask import make_response
-        response = make_response(playlist_text)
+
+        response = Response("\n".join(lines))
         response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
-        # Chong cache de trảnh lỗi
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 
-    if filename.endswith(".ts"):
-        # L?y so index xuong doan ts (vi du seg00100.ts -> 100)
-        import re
-        match = re.search(r"seg(\d+)\.ts", filename)
-        if not match:
-            return "", 404
-            
-        seg_idx = int(match.group(1))
-        file_path = os.path.join(hls_dir, filename)
+    if not filename.endswith(".ts"):
+        return "", 404
 
-        # Neu file da được transcode roi thi gui luon
+    import re
+    match = re.search(r"seg(\d+)\.ts", filename)
+    if not match:
+        return "", 404
+
+    seg_idx = int(match.group(1))
+    file_path = os.path.join(hls_dir, filename)
+
+    with session_lock:
         if not os.path.exists(file_path):
-            # Tinh gio bat dau
             start_time = seg_idx * 4.0
-            
-            # Kill tien trinh FFmpeg cu neu co (do ng??i dùng vua tua)
-            if session["process"] is not None:
+            proc = session.get("process")
+            if proc is not None and proc.poll() is None:
                 try:
-                    session["process"].kill()
-                    session["process"] = None
+                    proc.kill()
                 except Exception:
                     pass
-            
-            # Chay FFmpeg tu diem start_time
+                session["process"] = None
+
             cmd = [
                 "/usr/bin/ffmpeg",
-                "-ss", str(start_time),     # Tua file goc den ??ng v? tr? can transcode (fast seek)
+                "-ss", str(start_time),
                 "-i", session["file_path"],
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
@@ -8630,47 +8666,40 @@ def api_stream_hls_file(session_id, filename):
                 "-f", "hls",
                 "-hls_time", "4",
                 "-hls_list_size", "0",
-                "-start_number", str(seg_idx), # De file ra dung ten seg%05d.ts tuong ung
+                "-start_number", str(seg_idx),
                 "-hls_segment_filename", os.path.join(hls_dir, "seg%05d.ts"),
                 "-y",
                 os.path.join(hls_dir, "dummy.m3u8")
             ]
-            
             log.info("[JIT HLS] %s | Bat dau transcode tu giay %ds...", filename, start_time)
             session["process"] = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # Cho den khi FFmpeg ghi xong file TS do:
-            # Vi FFmpeg 3.2 không hỗ trợ temp_file, no ghi truc tiep vao segXXXXX.ts
-            # Nen ta biet no ghi xong khi file KẾ TIẾP (segXXXXX+1.ts) xuat hien, hoac FFmpeg thoat
+
             next_seg = os.path.join(hls_dir, "seg%05d.ts" % (seg_idx + 1))
             wait_count = 0
             while wait_count < 60:
-                if session["process"].poll() is not None:
-                    # Tien trinh FFmpeg da thoat (co the do xong file hoac lỗi)
-                    break 
+                proc = session.get("process")
+                if proc is None or proc.poll() is not None:
+                    break
                 if os.path.exists(next_seg):
-                    # File tiep theo da ton tai -> file hien tai chac chan da ghi xong 100%
                     break
                 time.sleep(0.5)
                 wait_count += 1
-                
+
             if not os.path.exists(file_path):
-                if session["process"] is not None and session["process"].poll() is None:
+                proc = session.get("process")
+                if proc is not None and proc.poll() is None:
                     try:
-                        session["process"].kill()
+                        proc.kill()
                     except Exception:
                         pass
-                    session["process"] = None
-                log.error("[JIT HLS] Lỗi FFmpeg, không thể tạo %s", filename)
+                session["process"] = None
+                log.error("[JIT HLS] Khong the tao %s", filename)
                 return "", 500
 
-        # Tra file ts ve
-        from flask import send_file as flask_send_file
-        response = make_response(flask_send_file(file_path, mimetype="video/mp2t"))
-        response.headers["Cache-Control"] = "public, max-age=31536000" # Cache file video mai mai
-        return response
-
-    return "", 404
+    from flask import send_file as flask_send_file
+    response = flask_send_file(file_path, mimetype="video/mp2t")
+    response.headers["Cache-Control"] = "public, max-age=31536000"
+    return response
 
 
 @app.route("/api/tools/organize_legacy_videos", methods=["POST"])
@@ -11047,7 +11076,8 @@ def _fan_controller_watchdog():
             if duty > 0:
                 _fan_power_set(True)
                 _pwm_write("enable", 1)
-                subprocess.run(["sh", "-c", "echo %s > /sys/class/pwm/pwmchip0/pwm0/duty_cycle" % duty])
+                with open("/sys/class/pwm/pwmchip0/pwm0/duty_cycle", "w") as f:
+                    f.write(str(duty))
             else:
                 _pwm_apply_off()
             last_applied_percent = target_percent

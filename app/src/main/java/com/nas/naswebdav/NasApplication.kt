@@ -35,6 +35,7 @@ import coil.memory.MemoryCache
  * Application class cung cấp singleton Database và OkHttpClient cho toàn bộ ứng dụng.
  * Tránh tạo nhiều Database/OkHttpClient instance trong mỗi Worker/Activity.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class NasApplication : Application(), ImageLoaderFactory {
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -89,8 +90,20 @@ class NasApplication : Application(), ImageLoaderFactory {
             AppDatabase::class.java,
             "nas-db"
         )
-            .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
-            .fallbackToDestructiveMigration()
+            .addMigrations(
+                MIGRATION_1_10,
+                MIGRATION_2_10,
+                MIGRATION_3_10,
+                MIGRATION_4_10,
+                MIGRATION_5_10,
+                MIGRATION_6_10,
+                MIGRATION_7_10,
+                MIGRATION_8_10,
+                MIGRATION_9_10,
+                MIGRATION_10_11,
+                MIGRATION_11_12,
+                MIGRATION_12_13
+            )
             // Đã gỡ bỏ enableMultiInstanceInvalidation() vì nó có nguy cơ gây deadlock Binder IPC 
             // khiến các tác vụ database.withTransaction() bị treo vĩnh viễn (quay vòng vòng trên UI).
             .build()
@@ -171,14 +184,14 @@ class NasApplication : Application(), ImageLoaderFactory {
     }
 
     /** Bandwidth meter toàn cục — đo tốc độ mạng qua nhiều phiên xem video */
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
     val bandwidthMeter: DefaultBandwidthMeter by lazy {
         DefaultBandwidthMeter.Builder(this)
             .setResetOnNetworkTypeChange(false) // Giữ lại dữ liệu tốc độ khi đổi mạng
             .build()
     }
 
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
     val videoCache: SimpleCache by lazy {
         val cacheDirectory = File(cacheDir, "exoplayer_video_cache")
         val evictor = LeastRecentlyUsedCacheEvictor(2L * 1024 * 1024 * 1024) // 2GB Cache
@@ -186,7 +199,7 @@ class NasApplication : Application(), ImageLoaderFactory {
         SimpleCache(cacheDirectory, evictor, databaseProvider)
     }
 
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
     fun buildCacheDataSourceFactory(user: String, pass: String): CacheDataSource.Factory {
         // TỐI ƯU: Dùng OkHttpDataSource thay vì DefaultHttpDataSource
         // → Tái sử dụng Connection Pool (15 kết nối, keep-alive 5 phút)
@@ -407,10 +420,9 @@ object SecurePrefsHelper {
     private fun getSecurePrefs(context: Context): SharedPreferences {
         return securePrefs ?: synchronized(this) {
             securePrefs ?: run {
-                var prefs: SharedPreferences? = null
-                try {
+                val prefs = try {
                     val masterKey = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
-                    prefs = EncryptedSharedPreferences.create(
+                    EncryptedSharedPreferences.create(
                         PREFS_NAME,
                         masterKey,
                         context.applicationContext,
@@ -418,14 +430,13 @@ object SecurePrefsHelper {
                         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("SecurePrefs", "Lỗi tạo KeyStore, chuyển sang SharedPreferences thường", e)
-                    // FIX #16: Đánh dấu flag để UI có thể hiển thị cảnh báo bảo mật cho user
+                    android.util.Log.e("SecurePrefs", "EncryptedSharedPreferences init failed; refusing plaintext credential fallback", e)
                     isUsingFallbackPrefs = true
-                    prefs = context.getSharedPreferences("nas_prefs_fallback", Context.MODE_PRIVATE)
+                    throw IllegalStateException("Secure credential storage is unavailable", e)
                 }
                 migrateOldCredentialsIfNeeded(context, prefs)
                 securePrefs = prefs
-                prefs ?: throw IllegalStateException("SecurePrefs init failed")
+                prefs
             }
         }
     }

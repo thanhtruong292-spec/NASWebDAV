@@ -144,6 +144,7 @@ class LivestreamMonitorWorker(
         return buildForegroundInfo(notifId, "Đang ghi hình...", "Đang khởi động...")
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val jobId    = inputData.getString(KEY_JOB_ID)    ?: return@withContext Result.failure()
         val nasHost  = inputData.getString(KEY_NAS_HOST)  ?: return@withContext Result.failure()

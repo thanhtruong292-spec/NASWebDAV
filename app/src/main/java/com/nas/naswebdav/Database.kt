@@ -352,11 +352,66 @@ interface TrashMetaDao {
  * v10: Thêm sync_queue chuẩn bị bộ giáp Offline-First Sync cho ứng dụng
  * v11: PHASE 5 - Thêm thuộc tính imageFingerprint trực tiếp vào files_cache
  *
- * MIGRATION: fallbackToDestructiveMigration() — chấp nhận mất cache khi upgrade.
- * Dữ liệu cache sẽ tự rebuild khi user duyệt lại thư mục.
+ * MIGRATION: explicit migrations only; destructive fallback is disabled.
+ * Cache can rebuild, but logs, checkpoints, offline queue, and trash metadata must not be dropped silently.
  */
 
 // PHASE 5: MIGRATION 10 -> 11 (Bảo vệ dữ liệu không bị xóa khi upgrade db)
+
+private fun androidx.sqlite.db.SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean {
+    query("PRAGMA table_info(`$table`)").use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        while (cursor.moveToNext()) {
+            if (cursor.getString(nameIndex) == column) return true
+        }
+    }
+    return false
+}
+
+private fun androidx.sqlite.db.SupportSQLiteDatabase.addColumnIfMissing(
+    table: String,
+    column: String,
+    definition: String
+) {
+    if (!hasColumn(table, column)) {
+        execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $definition")
+    }
+}
+
+private fun migrateLegacyDatabaseTo10(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+    db.addColumnIfMissing("files_cache", "contentLength", "INTEGER NOT NULL DEFAULT 0")
+    db.addColumnIfMissing("files_cache", "lastModified", "INTEGER NOT NULL DEFAULT 0")
+    db.addColumnIfMissing("files_cache", "partialHash", "TEXT")
+    db.addColumnIfMissing("files_cache", "fullHash", "TEXT")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_files_cache_parentPath` ON `files_cache` (`parentPath`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_files_cache_contentLength` ON `files_cache` (`contentLength`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_files_cache_isDirectory` ON `files_cache` (`isDirectory`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_files_cache_name` ON `files_cache` (`name`)")
+    db.execSQL("CREATE TABLE IF NOT EXISTS `system_logs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `type` TEXT NOT NULL, `module` TEXT NOT NULL, `message` TEXT NOT NULL)")
+    db.execSQL("CREATE TABLE IF NOT EXISTS `scan_checkpoints` (`workerName` TEXT NOT NULL, `lastProcessedFolder` TEXT NOT NULL, `scannedCount` INTEGER NOT NULL, `foundCount` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`workerName`))")
+    db.execSQL("CREATE TABLE IF NOT EXISTS `thumbnail_cache` (`url` TEXT NOT NULL, `localFilePath` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`url`))")
+    db.execSQL("CREATE TABLE IF NOT EXISTS `file_fingerprints` (`filePath` TEXT NOT NULL, `hash` TEXT NOT NULL, `fileName` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, PRIMARY KEY(`filePath`))")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_file_fingerprints_hash` ON `file_fingerprints` (`hash`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_file_fingerprints_fileName` ON `file_fingerprints` (`fileName`)")
+    db.execSQL("CREATE TABLE IF NOT EXISTS `sync_queue` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `actionType` TEXT NOT NULL, `sourcePath` TEXT NOT NULL, `destPath` TEXT, `status` TEXT NOT NULL, `timestamp` INTEGER NOT NULL)")
+}
+
+private fun legacyTo10Migration(from: Int) = object : androidx.room.migration.Migration(from, 10) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        migrateLegacyDatabaseTo10(db)
+    }
+}
+
+val MIGRATION_1_10 = legacyTo10Migration(1)
+val MIGRATION_2_10 = legacyTo10Migration(2)
+val MIGRATION_3_10 = legacyTo10Migration(3)
+val MIGRATION_4_10 = legacyTo10Migration(4)
+val MIGRATION_5_10 = legacyTo10Migration(5)
+val MIGRATION_6_10 = legacyTo10Migration(6)
+val MIGRATION_7_10 = legacyTo10Migration(7)
+val MIGRATION_8_10 = legacyTo10Migration(8)
+val MIGRATION_9_10 = legacyTo10Migration(9)
+
 val MIGRATION_10_11 = object : androidx.room.migration.Migration(10, 11) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `files_cache` ADD COLUMN `imageFingerprint` TEXT")
@@ -379,7 +434,7 @@ val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
     version = 13,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileDao(): FileDao

@@ -100,6 +100,7 @@ class BatchOperationWorker(
         return filePaths to fileNames
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val operation = inputData.getString("operation") ?: return@withContext Result.failure()
         val (filePaths, fileNames) = loadBatchFiles()

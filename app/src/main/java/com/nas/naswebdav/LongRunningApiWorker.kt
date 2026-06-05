@@ -57,6 +57,7 @@ class LongRunningApiWorker(
         return if (value.length <= maxChars) value else value.take(maxChars) + "..."
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val taskType = inputData.getString("taskType") ?: return@withContext Result.failure()
         val apiUrl = inputData.getString("apiUrl") ?: return@withContext Result.failure()

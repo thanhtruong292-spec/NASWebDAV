@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- LAN-only exception for the current NAS deployment. Prefer HTTPS for any public host. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.100.254</domain>
+    </domain-config>
+</network-security-config>

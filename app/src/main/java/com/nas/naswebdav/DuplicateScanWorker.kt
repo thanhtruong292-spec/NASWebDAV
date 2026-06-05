@@ -401,7 +401,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         
                         val currentFolders = mutableListOf<String>()
                         while (folderQueue.isNotEmpty()) {
-                        if (!isActive) break
+                            if (!isActive) break
                             folderQueue.poll()?.let { currentFolders.add(it) }
                         }
                         
@@ -420,7 +420,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             val localBatch = mutableListOf<CachedFile>()
                                             
                                             for (file in files) {
-                            if (!isActive) break
+                                                if (!isActive) break
                                                 totalFilesIndexed.incrementAndGet()
                                                 currentFileName.set(file.name)
         
@@ -557,7 +557,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                             if (anchorFile != null) {
                                 val anchorFP = anchorFile.imageFingerprint ?: continue
                                 for (file in group) {
-                                if (!isActive) break
+                                    if (!isActive) break
                                     val cachedHash = db.hashCacheDao().getHash(file.path, file.contentLength, file.lastModified)
                                     if (cachedHash != null) {
                                         pendingHashUpdates.add(Pair(file.path, cachedHash))
@@ -589,7 +589,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         if (filesNeedHash.isNotEmpty()) {
                             if (isLightningMode) {
                                 for (file in filesNeedHash) {
-                            if (!isActive) break
+                                    if (!isActive) break
                                     val pseudoHash = "LGH_${file.contentLength}_${file.lastModified}"
                                     pendingHashUpdates.add(Pair(file.path, pseudoHash))
                                 }
@@ -941,6 +941,7 @@ object UploadNotificationHelper {
 // ════════════════════════════════════════════════════════════════════════════
 
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
+    @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager

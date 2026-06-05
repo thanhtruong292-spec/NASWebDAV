@@ -1,23 +1,41 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
 
-val releaseStoreFilePath: String? =
-    providers.gradleProperty("NAS_RELEASE_STORE_FILE").orNull ?: System.getenv("NAS_RELEASE_STORE_FILE")
-val releaseStorePassword: String? =
-    providers.gradleProperty("NAS_RELEASE_STORE_PASSWORD").orNull ?: System.getenv("NAS_RELEASE_STORE_PASSWORD")
-val releaseKeyAlias: String? =
-    providers.gradleProperty("NAS_RELEASE_KEY_ALIAS").orNull ?: System.getenv("NAS_RELEASE_KEY_ALIAS")
-val releaseKeyPassword: String? =
-    providers.gradleProperty("NAS_RELEASE_KEY_PASSWORD").orNull ?: System.getenv("NAS_RELEASE_KEY_PASSWORD")
+val localReleaseSigningPropsFile = rootProject.file(".secrets/release-signing.properties")
+val localReleaseSigningProps = Properties().apply {
+    if (localReleaseSigningPropsFile.isFile) {
+        localReleaseSigningPropsFile.inputStream().use { stream -> load(stream) }
+    }
+}
+
+fun releaseSigningValue(name: String): String? =
+    providers.gradleProperty(name).orNull
+        ?: System.getenv(name)
+        ?: localReleaseSigningProps.getProperty(name)
+
+val releaseStoreFilePath: String? = releaseSigningValue("NAS_RELEASE_STORE_FILE")
+val releaseStorePassword: String? = releaseSigningValue("NAS_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias: String? = releaseSigningValue("NAS_RELEASE_KEY_ALIAS")
+val releaseKeyPassword: String? = releaseSigningValue("NAS_RELEASE_KEY_PASSWORD")
 val hasReleaseSigning = listOf(
     releaseStoreFilePath,
     releaseStorePassword,
     releaseKeyAlias,
     releaseKeyPassword
 ).all { !it.isNullOrBlank() }
+
+gradle.taskGraph.whenReady {
+    if (allTasks.any { it.name.contains("Release") } && !hasReleaseSigning) {
+        throw org.gradle.api.GradleException(
+            "Release signing is required. Set NAS_RELEASE_STORE_FILE, NAS_RELEASE_STORE_PASSWORD, NAS_RELEASE_KEY_ALIAS, and NAS_RELEASE_KEY_PASSWORD."
+        )
+    }
+}
 
 android {
     namespace = "com.nas.naswebdav"
@@ -59,6 +77,11 @@ android {
     }
     kotlin {
         jvmToolchain(17)
+    }
+    sourceSets {
+        getByName("androidTest") {
+            assets.setSrcDirs(listOf("$projectDir/schemas"))
+        }
     }
 }
 
@@ -102,6 +125,9 @@ dependencies {
     implementation("androidx.room:room-ktx:$room_version")
     implementation("androidx.room:room-paging:$room_version")
     ksp("androidx.room:room-compiler:$room_version")
+    androidTestImplementation("androidx.room:room-testing:$room_version")
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 
     // AndroidX Core
     implementation(libs.androidx.core.ktx)

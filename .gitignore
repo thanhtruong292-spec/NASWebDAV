@@ -27,6 +27,8 @@ AGENTS.md
 .android-sdk/
 .kotlin/
 .tools/
+.secrets/
+*.jks
 nas_*.png
 nas_*.xml
 NASWebDAV-screen-record-optimized-debug.apk
