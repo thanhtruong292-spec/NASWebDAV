@@ -4,6 +4,21 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val releaseStoreFilePath: String? =
+    providers.gradleProperty("NAS_RELEASE_STORE_FILE").orNull ?: System.getenv("NAS_RELEASE_STORE_FILE")
+val releaseStorePassword: String? =
+    providers.gradleProperty("NAS_RELEASE_STORE_PASSWORD").orNull ?: System.getenv("NAS_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias: String? =
+    providers.gradleProperty("NAS_RELEASE_KEY_ALIAS").orNull ?: System.getenv("NAS_RELEASE_KEY_ALIAS")
+val releaseKeyPassword: String? =
+    providers.gradleProperty("NAS_RELEASE_KEY_PASSWORD").orNull ?: System.getenv("NAS_RELEASE_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.nas.naswebdav"
     compileSdk = 35 // Dùng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
@@ -17,12 +32,25 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFilePath!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

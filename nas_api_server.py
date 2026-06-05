@@ -7865,6 +7865,7 @@ def api_cron_trash_clean():
         return jsonify({"result": "error", "message": "Không dọn được Thùng rác: %s" % normalize_vietnamese_message(str(e))}), 500
 
 @app.route("/api/system_logs", methods=["GET"])
+@requires_auth
 def api_system_logs():
     """Tr? v? danh sách nhat ky h? thỏng (AccessLog, DuplicateScan...) tu NAS."""
     try:
@@ -9165,12 +9166,13 @@ def api_disk_trash_batch():
         if rel_path.startswith("/"):
             rel_path = rel_path[1:]
             
-        local_path = os.path.join(webdav_root, rel_path)
+        local_path = os.path.realpath(os.path.join(webdav_root, rel_path))
+        root_real = os.path.realpath(webdav_root)
         if not os.path.exists(local_path):
             errors.append({"path": webdav_path, "error": "Not found"})
             continue
             
-        if not os.path.abspath(local_path).startswith(os.path.abspath(webdav_root)):
+        if local_path != root_real and not local_path.startswith(root_real + os.sep):
             errors.append({"path": webdav_path, "error": "Path traversal"})
             continue
 

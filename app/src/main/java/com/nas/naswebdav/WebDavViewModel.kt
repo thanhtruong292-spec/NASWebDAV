@@ -359,9 +359,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             .retryOnConnectionFailure(true)
             // Fix API auth header: attach Authorization to every Local API request
             .addInterceptor { chain ->
-                val auth = chain.request().tag(WebDavManager.AuthState::class.java) ?: return@addInterceptor chain.proceed(chain.request())
+                val authHeader = chain.request().tag(WebDavManager.AuthState::class.java)?.authHeader
+                    ?: WebDavManager.currentAuthHeader().takeIf {
+                        WebDavManager.currentUser.isNotEmpty() || WebDavManager.currentPass.isNotEmpty()
+                    }
+                    ?: return@addInterceptor chain.proceed(chain.request())
                 val requestBuilder = chain.request().newBuilder()
-                requestBuilder.header("Authorization", auth.authHeader)
+                requestBuilder.header("Authorization", authHeader)
                 chain.proceed(requestBuilder.build())
             }
             .build()

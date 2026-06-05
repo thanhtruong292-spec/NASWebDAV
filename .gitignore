@@ -25,6 +25,10 @@ __pycache__/
 AGENTS.md
 
 .android-sdk/
+.kotlin/
+.tools/
+nas_*.png
+nas_*.xml
 NASWebDAV-screen-record-optimized-debug.apk
 *tmp_kt_diff.txt
 *tmp_py_diff.txt
