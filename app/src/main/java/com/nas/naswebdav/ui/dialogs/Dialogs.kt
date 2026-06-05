@@ -2354,13 +2354,6 @@ fun LivestreamRecordDialog(
                                 onDismiss()
                             } else {
                                 viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality)
-                                // Sau khi bắt đầu ghi một user TikTok bằng URL trực tiếp, thêm luôn vào
-                                // danh sách theo dõi (NAS deduplicate theo username). Không làm nếu user
-                                // đã có sẵn trong list để tránh log spam.
-                                if (!tiktokUsername.isNullOrBlank() &&
-                                    viewModel.tiktokLiveWatchUsers.none { it.username.equals(tiktokUsername, ignoreCase = true) }) {
-                                    viewModel.addTikTokLiveWatchUser(context, tiktokUsername)
-                                }
                             }
                         }
                     },
@@ -3081,6 +3074,7 @@ fun DiskHealthDialog(
     onDismiss: () -> Unit
 ) {
     LaunchedEffect(Unit) {
+        viewModel.fetchDiskHealth(minIntervalMs = 0L)
         viewModel.fetchNasInsights(minIntervalMs = 0L)
         viewModel.fetchDiskHealthHistory(7)
     }
@@ -3106,7 +3100,7 @@ fun DiskHealthDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Sức khoẻ ổ cứng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchNasInsights(minIntervalMs = 0L); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { viewModel.fetchDiskHealth(minIntervalMs = 0L); viewModel.fetchNasInsights(minIntervalMs = 0L); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }

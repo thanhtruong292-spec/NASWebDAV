@@ -114,7 +114,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 for (item in trashItems) {
                     if (!isActive) break
                     if (now - item.lastModified > sevenDaysInMillis) {
-                        webDavManager.deleteFile(item.path)
+                        webDavManager.deleteFile(item.path, item.isDirectory)
                     }
                 }
             } catch (e: Exception) { }

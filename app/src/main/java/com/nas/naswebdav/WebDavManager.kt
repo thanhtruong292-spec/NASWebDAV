@@ -547,7 +547,7 @@ object WebDavManager {
 
                                             
 
-                                            result.add(NasFile(extractedName, fullUri, isDir, currentType, currentLength, currentModTime))
+                                            val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri; result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
 
                                         }
 
@@ -957,11 +957,11 @@ object WebDavManager {
 
     }
 
-    suspend fun deleteFile(url: String) = withContext(Dispatchers.IO) {
-
-        val isDirectory = url.endsWith("/")
-        val builder = Request.Builder().withAuth(authState).url(url).method("DELETE", null)
-        if (isDirectory) {
+    suspend fun deleteFile(url: String, isDirectory: Boolean = false) = withContext(Dispatchers.IO) {
+        val actualIsDir = isDirectory || url.endsWith("/")
+        val normUrl = if (actualIsDir && !url.endsWith("/")) "$url/" else url
+        val builder = Request.Builder().withAuth(authState).url(normUrl).method("DELETE", null)
+        if (actualIsDir) {
             builder.header("Depth", "Infinity")
         }
         val request = builder.build()

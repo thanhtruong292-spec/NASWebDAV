@@ -31,6 +31,7 @@ import com.nas.naswebdav.utils.SystemLogger
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -208,6 +209,8 @@ class ScreenRecordService : Service() {
                 uploadJob = launch { uploadLoop() }
                 launch { tickerLoop() }
                 segmentJob = launch { segmentLoop() }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 failRecording("Không thể tạo phiên quay trên NAS", e)
             }
@@ -245,6 +248,8 @@ class ScreenRecordService : Service() {
                 segmentIndex = nextIndex
                 enforceSpoolLimit()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             failRecording("Lỗi ghi đoạn quay màn hình", e)
         }
@@ -544,6 +549,7 @@ class ScreenRecordService : Service() {
         try { stopSegment() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
         scope.cancel()
+        try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
         super.onDestroy()
     }
 

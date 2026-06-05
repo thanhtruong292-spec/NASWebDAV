@@ -86,7 +86,7 @@ class VideoPlayerActivity : ComponentActivity() {
                     .build()
                 enterPictureInPictureMode(params)
             } catch (e: Exception) {
-                // Ignore PiP errors on unsupported devices
+                android.util.Log.w("VideoPlayerActivity", "PiP không khả dụng: ${e.message}", e)
             }
         }
     }

@@ -32,7 +32,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             for (action in pendingActions) {
                 try {
                     when (action.actionType) {
-                        "DELETE" -> webDavManager.deleteFile(action.sourcePath)
+                        "DELETE" -> webDavManager.deleteFile(action.sourcePath, action.sourcePath.endsWith("/"))
                         "CREATE_FOLDER" -> webDavManager.createFolder(action.sourcePath)
                         "RENAME", "MOVE" -> {
                             if (action.destPath != null) {

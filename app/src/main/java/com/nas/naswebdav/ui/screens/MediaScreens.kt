@@ -751,18 +751,19 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
     // ═══ PHÁT HIỆN ĐỊNH DẠNG LEGACY NGAY LÚC MỞ PLAYER ═══
     // Formats ExoPlayer KHÔNG decode được (MPEG-2, WMV, v.v.)
     // → Chuyển thẳng sang URL transcode trên NAS (FFmpeg → MP4)
-    val effectiveUrl = remember(url) {
+    val isLegacyFormat = remember(url) {
         val urlLower = url.lowercase()
-        val isLegacyFormat = urlLower.endsWith(".mpg") || urlLower.endsWith(".mpeg") ||
+        urlLower.endsWith(".mpg") || urlLower.endsWith(".mpeg") ||
                 urlLower.endsWith(".avi") || urlLower.endsWith(".wmv") ||
                 urlLower.endsWith(".flv") || urlLower.endsWith(".asf")
+    }
 
+    val effectiveUrl = remember(url, isLegacyFormat) {
         if (isLegacyFormat) {
             // Xây dựng URL transcode: http://host:5050/api/stream/transcode?path=/đường/dẫn/file
             // FIX: Dùng android.net.Uri thay vì java.net.URI để tránh crash URISyntaxException khi có khoảng trắng
             val uri = android.net.Uri.parse(url)
             val relativePath = uri.path?.substringAfter("/webdav") ?: ""
-            val apiHost = uri.host
             val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
             val transcodeUrl = "${url.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
             android.util.Log.i("VideoPlayer", "Legacy format → transcode: $transcodeUrl")
@@ -772,8 +773,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         }
     }
 
-    // Xác định xem có đang dùng transcode hay không
-    val isTranscoding = effectiveUrl != url
+    // Chỉ coi là transcode khi thật sự đi vào endpoint transcode/HLS.
+    // /api/media cho MP4 thường cũng đổi URL nhưng vẫn là progressive stream, không phải manifest.
+    val isTranscoding = isLegacyFormat
 
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->
@@ -844,14 +846,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
 
         // 6. MIME TYPE cho format gốc (nếu không dùng transcode)
         val mimeType = if (isTranscoding) {
-            androidx.media3.common.MimeTypes.APPLICATION_M3U8  // Transcode output = HLS Playlist
+            androidx.media3.common.MimeTypes.APPLICATION_M3U8  // Transcode only for legacy formats
         } else {
-            val urlLower = url.lowercase()
-            when {
-                urlLower.endsWith(".mpg") || urlLower.endsWith(".mpeg") -> androidx.media3.common.MimeTypes.VIDEO_MPEG
-                urlLower.endsWith(".ts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
-                else -> null
-            }
+            null  // Let ExoPlayer auto-detect for all modern formats (mp4, mkv, mov, webm, ts)
         }
 
         val mediaItem = MediaItem.Builder()
@@ -1013,7 +1010,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
         }
 
         onDispose {
-            try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+            try { context.unregisterReceiver(receiver) } catch (e: Exception) {
+                android.util.Log.d("VideoPlayer", "Receiver đã được gỡ hoặc không tồn tại: ${e.message}")
+            }
             exoPlayer.release()
             mediaSession.release()
         }

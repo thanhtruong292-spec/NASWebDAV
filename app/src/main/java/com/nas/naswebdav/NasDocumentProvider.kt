@@ -68,12 +68,13 @@ class NasDocumentProvider : DocumentsProvider() {
     private fun toDocumentId(absoluteUrl: String, baseUrl: String): String {
         return if (absoluteUrl.startsWith(baseUrl)) {
             val relativePath = absoluteUrl.substring(baseUrl.length)
-            if (relativePath.isEmpty()) ROOT_DOC_ID else relativePath
+            if (relativePath.isEmpty()) ROOT_DOC_ID else relativePath.split("/").joinToString("/") { segment ->
+                if (segment.isEmpty()) "" else java.net.URLDecoder.decode(segment, "UTF-8")
+            }
         } else {
             ROOT_DOC_ID
         }
     }
-
     private val DEFAULT_DOCUMENT_PROJECTION = arrayOf(
         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
         DocumentsContract.Document.COLUMN_MIME_TYPE,
@@ -306,7 +307,7 @@ class NasDocumentProvider : DocumentsProvider() {
         var baseId = parentDocumentId.trimEnd('/')
         if (baseId == ROOT_DOC_ID) baseId = ""
 
-        val newId = "$baseId/${java.net.URLEncoder.encode(displayName, "UTF-8").replace("+", "%20")}"
+        val newId = "$baseId/${displayName}"
         val url = resolveDocumentUrl(newId, baseUrl)
 
         try {
@@ -326,21 +327,23 @@ class NasDocumentProvider : DocumentsProvider() {
             throw FileNotFoundException("createDocument failed: ${e.message ?: "unknown error"}")
         }
     }
-
     override fun deleteDocument(documentId: String?) {
-        val targetId = documentId ?: return
+        val targetId = documentId ?: throw FileNotFoundException("Document ID rỗng")
         val baseUrl = initAndGetBaseUrl()
-        if (baseUrl.isEmpty()) return
+        if (baseUrl.isEmpty()) throw FileNotFoundException("Chưa đăng nhập")
         val url = resolveDocumentUrl(targetId, baseUrl)
-        // FIX A4: Thêm withTimeout 10s
-        runBlocking {
-            try {
+
+        try {
+            runBlocking {
                 kotlinx.coroutines.withTimeout(10_000L) {
-                    webDavManager.deleteFile(url)
+                    webDavManager.deleteFile(url, url.endsWith("/"))
                 }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                android.util.Log.w("NasDocProvider", "deleteDocument timeout")
-            } catch (_: Exception) {}
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw FileNotFoundException("deleteDocument timed out")
+        } catch (e: Exception) {
+            throw FileNotFoundException("deleteDocument failed: ${e.message ?: "unknown error"}")
         }
     }
+
 }

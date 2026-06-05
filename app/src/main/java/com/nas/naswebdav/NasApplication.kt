@@ -367,9 +367,15 @@ fun String.toApiBaseUrl(): String {
 fun String.toFastMediaUrl(): String {
     val apiBase = toApiBaseUrl()
     if (apiBase.isEmpty()) return this
-    val p = try { java.net.URL(this) } catch (e: Exception) { return this }
-    val path = p.path ?: return this
-    val encodedPath = java.net.URLEncoder.encode(path, "UTF-8")
+
+    val trimmed = trim()
+    val parsedPath = runCatching { android.net.Uri.parse(trimmed).path }.getOrNull()
+        ?: runCatching { java.net.URL(trimmed).path }.getOrNull()
+        ?: return this
+
+    if (parsedPath.isBlank()) return this
+
+    val encodedPath = java.net.URLEncoder.encode(parsedPath, "UTF-8").replace("+", "%20")
     return "$apiBase/api/media?path=$encodedPath"
 }
 

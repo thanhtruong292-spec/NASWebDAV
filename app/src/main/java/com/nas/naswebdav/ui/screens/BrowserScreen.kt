@@ -1592,7 +1592,9 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
             useOriginalFallback = true
             // Xóa cache rác (nếu trước đó NAS đã lỡ lưu cái Icon Play lỗi vào db)
             withContext(Dispatchers.IO) {
-                try { thumbnailDao.deleteThumbnail(url) } catch (_: Exception) {}
+                try { thumbnailDao.deleteThumbnail(url) } catch (e: Exception) {
+                    android.util.Log.d("BrowserScreen", "Không xoá được thumbnail cache rác cho $url: ${e.message}")
+                }
             }
             return@LaunchedEffect
         }
@@ -1742,6 +1744,7 @@ fun openExternalVideoPlayer(
         chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(chooser)
     } catch (e: Exception) {
+        android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
         onError()
     }
 }

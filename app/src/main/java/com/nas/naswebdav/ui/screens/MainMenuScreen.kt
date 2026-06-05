@@ -345,9 +345,10 @@ fun MainMenuScreen(
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
         viewModel.checkSmartNetwork(mContext)
-        viewModel.fetchSmartData()
-        viewModel.fetchOmvOverview()
-        viewModel.fetchNasInsights()
+        viewModel.fetchStorageUsage(minIntervalMs = 0L)
+        viewModel.fetchSmartData(minIntervalMs = 0L)
+        viewModel.fetchOmvOverview(minIntervalMs = 0L)
+        viewModel.fetchNasInsights(minIntervalMs = 0L)
         viewModel.syncLivestreamStateWithServer(mContext)
         viewModel.startDashboardMonitoring(resetStatusPoll = false)
     }
@@ -698,7 +699,7 @@ fun MainMenuScreen(
             "trash" -> onOpenTrash()
             "organizer" -> onOpenOrganizer()
             "guest" -> onOpenGuestPass()
-            "log" -> { viewModel.loadSystemLogs(); viewModel.showLogDialog = true }
+            "log" -> { viewModel.loadSystemLogs(minIntervalMs = 0L); viewModel.showLogDialog = true }
             "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
             "smb" -> { viewModel.fetchSmbStatus(); showSmbDialog = true }
             "duplicate" -> showDuplicateScanDialog = true
@@ -709,7 +710,10 @@ fun MainMenuScreen(
     if (pullRefreshState.isRefreshing) {
         LaunchedEffect(true) {
             viewModel.checkSmartNetwork(mContext)
-            viewModel.fetchSmartData()
+            viewModel.fetchStorageUsage(minIntervalMs = 0L)
+            viewModel.fetchNasInsights(minIntervalMs = 0L)
+            viewModel.fetchOmvOverview(minIntervalMs = 0L)
+            viewModel.fetchSmartData(minIntervalMs = 0L)
             viewModel.startDashboardMonitoring(resetStatusPoll = true) // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
             kotlinx.coroutines.delay(1000)
             pullRefreshState.endRefresh()
@@ -1206,7 +1210,7 @@ fun MainMenuScreen(
         NasInsightsSummaryCard(
             viewModel = viewModel,
             onOpen = {
-                viewModel.fetchNasInsights()
+                viewModel.fetchNasInsights(minIntervalMs = 0L)
                 showNasInsightsDialog = true
             }
         )
@@ -2595,10 +2599,6 @@ private fun DiskProfileBottomSheet(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.fetchSmartData()
-        viewModel.fetchNasInsights()
-        viewModel.fetchOmvOverview()
-        viewModel.fetchStorageUsage()
         viewModel.loadSystemLogs()
     }
 

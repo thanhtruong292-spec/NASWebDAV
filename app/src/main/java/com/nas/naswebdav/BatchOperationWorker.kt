@@ -1,4 +1,4 @@
-package com.nas.naswebdav
+﻿package com.nas.naswebdav
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,19 +16,19 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * BatchOperationWorker — Foreground Worker chạy ngầm cho các tác vụ Copy/Move/Delete/Restore hàng loạt.
+ * BatchOperationWorker â€” Foreground Worker cháº¡y ngáº§m cho cÃ¡c tÃ¡c vá»¥ Copy/Move/Delete/Restore hÃ ng loáº¡t.
  *
- * Ưu điểm so với viewModelScope.launch:
- * - Tiến trình KHÔNG BỊ HỦY khi người dùng tắt App hoặc thu nhỏ ứng dụng.
- * - Hiển thị thanh tiến trình trên Notification Bar (Thanh thông báo) theo thời gian thực.
- * - Hệ điều hành Android cấp phát ưu tiên cao (Foreground Service) → Tránh bị OOM Killer xóa sổ.
+ * Æ¯u Ä‘iá»ƒm so vá»›i viewModelScope.launch:
+ * - Tiáº¿n trÃ¬nh KHÃ”NG Bá»Š Há»¦Y khi ngÆ°á»i dÃ¹ng táº¯t App hoáº·c thu nhá» á»©ng dá»¥ng.
+ * - Hiá»ƒn thá»‹ thanh tiáº¿n trÃ¬nh trÃªn Notification Bar (Thanh thÃ´ng bÃ¡o) theo thá»i gian thá»±c.
+ * - Há»‡ Ä‘iá»u hÃ nh Android cáº¥p phÃ¡t Æ°u tiÃªn cao (Foreground Service) â†’ TrÃ¡nh bá»‹ OOM Killer xÃ³a sá»•.
  *
  * Input Data:
  *   - "operation" : "COPY" | "MOVE" | "DELETE" | "RESTORE"
- *   - "filePaths" : String[] — danh sách đường dẫn WebDAV đầy đủ (source)
- *   - "fileNames" : String[] — tên hiển thị tương ứng
- *   - "destUrl"   : String   — thư mục đích (cho COPY/MOVE, không cần cho DELETE)
- *   - "baseUrl"   : String   — WebDAV base URL hiện tại (để tính trash path)
+ *   - "filePaths" : String[] â€” danh sÃ¡ch Ä‘Æ°á»ng dáº«n WebDAV Ä‘áº§y Ä‘á»§ (source)
+ *   - "fileNames" : String[] â€” tÃªn hiá»ƒn thá»‹ tÆ°Æ¡ng á»©ng
+ *   - "destUrl"   : String   â€” thÆ° má»¥c Ä‘Ã­ch (cho COPY/MOVE, khÃ´ng cáº§n cho DELETE)
+ *   - "baseUrl"   : String   â€” WebDAV base URL hiá»‡n táº¡i (Ä‘á»ƒ tÃ­nh trash path)
  */
 class BatchOperationWorker(
     appContext: Context,
@@ -43,10 +43,10 @@ class BatchOperationWorker(
         fun createChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "Tác vụ hàng loạt",
+                    CHANNEL_ID, "TÃ¡c vá»¥ hÃ ng loáº¡t",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Hiển thị tiến trình Copy/Move/Delete file trên NAS"
+                    description = "Hiá»ƒn thá»‹ tiáº¿n trÃ¬nh Copy/Move/Delete file trÃªn NAS"
                     setShowBadge(false)
                 }
                 (context.getSystemService(NotificationManager::class.java))
@@ -96,10 +96,10 @@ class BatchOperationWorker(
 
         if (filePaths.isEmpty()) return@withContext Result.success()
 
-        // Kết nối WebDAV — sử dụng SmartNetworkManager để chọn URL đang hoạt động (LAN hoặc Tailscale)
+        // Káº¿t ná»‘i WebDAV â€” sá»­ dá»¥ng SmartNetworkManager Ä‘á»ƒ chá»n URL Ä‘ang hoáº¡t Ä‘á»™ng (LAN hoáº·c Tailscale)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        // FIX D3: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
+        // FIX D3: ÄÃ£ trong withContext(IO) â†’ gá»i suspend fun trá»±c tiáº¿p, khÃ´ng cáº§n runBlocking
         val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
@@ -107,27 +107,27 @@ class BatchOperationWorker(
         val webDavManager = WebDavManager
         webDavManager.connect(savedUrl, user, pass)
 
-        // Tạo Foreground Notification
+        // Táº¡o Foreground Notification
         createChannel(applicationContext)
         val operationLabel = when (operation) {
-            "COPY" -> "Sao chép"
-            "MOVE" -> "Di chuyển"
-            "DELETE" -> "Xóa"
-            "RESTORE" -> "Khôi phục"
-            else -> "Xử lý"
+            "COPY" -> "Sao chÃ©p"
+            "MOVE" -> "Di chuyá»ƒn"
+            "DELETE" -> "XÃ³a"
+            "RESTORE" -> "KhÃ´i phá»¥c"
+            else -> "Xá»­ lÃ½"
         }
 
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("$operationLabel ${filePaths.size} tệp")
+            .setContentTitle("$operationLabel ${filePaths.size} tá»‡p")
             .setProgress(100, 0, true)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         try {
-            // Từ Android 10 (Q) trở lên bắt buộc khai báo foregroundServiceType
-            // khớp manifest, nếu không sẽ ném MissingForegroundServiceTypeException.
+            // Tá»« Android 10 (Q) trá»Ÿ lÃªn báº¯t buá»™c khai bÃ¡o foregroundServiceType
+            // khá»›p manifest, náº¿u khÃ´ng sáº½ nÃ©m MissingForegroundServiceTypeException.
             setForeground(
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                     ForegroundInfo(
@@ -150,7 +150,7 @@ class BatchOperationWorker(
         var failCount = 0
         val trashFolderName = ".trash/"
 
-        // Bỏ việc chuẩn bị Thùng rác dùng chung ở đây vì Trash giờ phụ thuộc từng ổ đĩa
+        // Bá» viá»‡c chuáº©n bá»‹ ThÃ¹ng rÃ¡c dÃ¹ng chung á»Ÿ Ä‘Ã¢y vÃ¬ Trash giá» phá»¥ thuá»™c tá»«ng á»• Ä‘Ä©a
         
         var lastNotifyUpdate = 0L
 
@@ -165,7 +165,7 @@ class BatchOperationWorker(
             if (now - lastNotifyUpdate > 200 || index == 0 || index == total - 1) {
                 lastNotifyUpdate = now
 
-                // Cập nhật Notification Bar
+                // Cáº­p nháº­t Notification Bar
                 notificationBuilder
                     .setContentTitle("$operationLabel (${ index + 1 }/$total)")
                     .setContentText(displayName)
@@ -175,7 +175,7 @@ class BatchOperationWorker(
                         .notify(NOTIFICATION_ID, notificationBuilder.build())
                 } catch (_: SecurityException) {}
 
-                // Báo cáo tiến trình cho UI (nếu App đang mở)
+                // BÃ¡o cÃ¡o tiáº¿n trÃ¬nh cho UI (náº¿u App Ä‘ang má»Ÿ)
                 setProgress(workDataOf(
                     "completed" to index,
                     "total" to total,
@@ -201,43 +201,28 @@ class BatchOperationWorker(
                     }
                     "DELETE" -> {
                         if (!filePath.contains(trashFolderName)) {
-                            // Di chuyển vào Thùng rác của đúng ổ đĩa
-                            val relativePath = filePath.removePrefix(baseUrl).trimStart('/')
-                            val driveName = relativePath.substringBefore('/')
-                            val trashUrl = baseUrl + driveName + "/" + trashFolderName
-                            
-                            try { webDavManager.createFolder(trashUrl) } catch (_: Exception) {}
-                            
-                            val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                            var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
-                            // Nếu file gốc là thư mục (có dấu / cuối), đích cũng phải có /
-                            if (filePath.endsWith("/") && !targetUrl.endsWith("/")) targetUrl += "/"
-                            
+                            // Di chuy?n v?o Th?ng r?c c?a ??ng ? ??a
+                            val trashFolderUrl = buildWebDavTrashTargetUrl(baseUrl, filePath, "", false)
+                            val targetUrl = buildWebDavTrashTargetUrl(baseUrl, filePath, fileName, filePath.endsWith("/"))
+                            try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
                             webDavManager.renameFile(filePath, targetUrl)
                         } else {
-                            // Đã ở trong Thùng rác → Xóa vĩnh viễn
-                            webDavManager.deleteFile(filePath)
+                            // ?? ? trong Th?ng r?c ? X?a v?nh vi?n
+                            webDavManager.deleteFile(filePath, filePath.endsWith("/"))
                         }
                         successCount++
                     }
                     "RESTORE" -> {
-                        val encodedName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        
-                        // Tìm thư mục gốc bằng cách parse filePath
+                        // T?m th? m?c g?c b?ng c?ch parse filePath
                         // VD: .../webdav/USB Import/.trash/TestDir/ -> .../webdav/USB Import/TestDir/
-                        val relativePath = filePath.removePrefix(baseUrl).trimStart('/')
-                        val driveName = relativePath.substringBefore('/')
-                        
-                        val targetUrl = baseUrl + driveName + "/" + encodedName
-                        var finalTarget = targetUrl
-                        if (filePath.endsWith("/") && !finalTarget.endsWith("/")) finalTarget += "/"
-                        
-                        webDavManager.renameFile(filePath, finalTarget)
+                        val targetUrl = buildWebDavRestoreTargetUrl(baseUrl, filePath, fileName, filePath.endsWith("/"))
+                        webDavManager.renameFile(filePath, targetUrl)
                         successCount++
                     }
+                    else -> {}
                 }
             } catch (e: Exception) {
-                android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
+                android.util.Log.e(TAG, "Lá»—i $operation file: $fileName", e)
                 failCount++
             }
             
@@ -245,39 +230,39 @@ class BatchOperationWorker(
             kotlinx.coroutines.delay(100L)
         }
 
-        // Báo cáo kết quả cuối cùng cho UI
+        // BÃ¡o cÃ¡o káº¿t quáº£ cuá»‘i cÃ¹ng cho UI
         setProgress(workDataOf(
             "completed" to total,
             "total" to total,
-            "currentFile" to "Hoàn tất",
+            "currentFile" to "HoÃ n táº¥t",
             "operation" to operation,
             "percent" to 100,
             "successCount" to successCount,
             "failCount" to failCount
         ))
 
-        // Ghi log hệ thống
+        // Ghi log há»‡ thá»‘ng
         try {
             val db = NasApplication.instance.database
             val logType = if (failCount == 0) "SUCCESS" else "WARNING"
             val logMsg = if (failCount == 0) {
-                "$operationLabel thành công $successCount/$total tệp."
+                "$operationLabel thÃ nh cÃ´ng $successCount/$total tá»‡p."
             } else {
-                "$operationLabel: $successCount thành công, $failCount thất bại."
+                "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount tháº¥t báº¡i."
             }
-            db.logDao().insertLog(SystemLog(type = logType, module = "Hàng loạt", message = logMsg))
+            db.logDao().insertLog(SystemLog(type = logType, module = "HÃ ng loáº¡t", message = logMsg))
         } catch (_: Exception) {}
 
-        // Hiển thị thông báo hoàn tất (không còn ongoing)
+        // Hiá»ƒn thá»‹ thÃ´ng bÃ¡o hoÃ n táº¥t (khÃ´ng cÃ²n ongoing)
         val resultText = if (failCount == 0) {
-            "Hoàn tất $operationLabel $successCount tệp ✅"
+            "HoÃ n táº¥t $operationLabel $successCount tá»‡p âœ…"
         } else {
-            "$operationLabel: $successCount thành công, $failCount lỗi"
+            "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount lá»—i"
         }
         val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle(resultText)
-            .setContentText(if (failCount > 0) "Một số tệp không thể xử lý." else "Tất cả tệp đã được xử lý thành công!")
+            .setContentText(if (failCount > 0) "Má»™t sá»‘ tá»‡p khÃ´ng thá»ƒ xá»­ lÃ½." else "Táº¥t cáº£ tá»‡p Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½ thÃ nh cÃ´ng!")
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         try {

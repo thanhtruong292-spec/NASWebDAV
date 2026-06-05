@@ -3779,8 +3779,8 @@ def _save_fan_settings(settings):
 # ============================================================================
 PWM_PATH = "/sys/class/pwm/pwmchip0/pwm0"
 FAN_POWER_GPIO = "79"
-FAN_DEFAULT_ON_TEMP = 35.0
-FAN_DEFAULT_OFF_TEMP = 32.0
+FAN_DEFAULT_ON_TEMP = 42.0
+FAN_DEFAULT_OFF_TEMP = 38.0
 FAN_CPU_FORCE_ON_TEMP = 70.0
 FAN_HDD_FORCE_ON_TEMP = 45.0
 FAN_MAX_RPM = 4300

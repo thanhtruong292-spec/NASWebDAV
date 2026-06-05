@@ -384,8 +384,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var diskHealthCurrent by mutableStateOf<DiskHealthSample?>(null)
     var diskHealthHistory by mutableStateOf<List<DiskHealthSample>>(emptyList())
     var isFetchingDiskHealth by mutableStateOf(false)
+    var lastDiskHealthRefreshAt by mutableStateOf(0L)
     var storageFolderUsage by mutableStateOf<List<StorageFolderUsage>>(emptyList())
     var isFetchingStorageUsage by mutableStateOf(false)
+    var isFetchingOmvOverview by mutableStateOf(false)
 
     // TÍNH NĂNG SMB
     var isSmbEnabled by mutableStateOf(false)
@@ -498,6 +500,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var nasInsights by mutableStateOf(NasInsights())
     var isFetchingNasInsights by mutableStateOf(false)
     private var lastNasInsightsFetchAt = 0L
+
+    fun resetDashboardRefreshGuards() {
+        lastDailyReportFetchAt = 0L
+        lastDiskHealthRefreshAt = 0L
+        lastLogsRefreshAt = 0L
+        lastNasInsightsFetchAt = 0L
+        lastOmvOverviewFetchAt = 0L
+        lastSmartRefreshAt = 0L
+        lastSmartRefreshAtVm = 0L
+        lastStorageRefreshAt = 0L
+    }
 
     // Sleep Schedule (HDD spindown / suspend) state
     data class SleepSchedule(
@@ -774,7 +787,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         }
                         }                    }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.w("WebDavViewModel", "fetchThumbStatus failed", e)
+        }
         }
     }
 
@@ -997,7 +1012,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         )
                     }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                Log.w("WebDavViewModel", "fetchThumbnailAudit failed", e)
+            }
         }
     }
 
@@ -1020,7 +1037,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 localApiClient.newCall(request).execute().use { }
                 kotlinx.coroutines.delay(1000)
                 fetchThumbnailAudit()
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                Log.w("WebDavViewModel", "triggerThumbnailScan failed", e)
+            }
         }
     }
 
@@ -1899,39 +1918,42 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // BÓC TÁCH: Đẩy việc liên lạc mạng NAS (chậm) vào luồng ngầm I/O, giải phóng luồng màn hình UI
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 1. Tìm đường dẫn gốc của ổ đĩa (VD: /Data N300/)
-                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
-                val driveName = relativePath.substringBefore('/')
-                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
+                // 1. T?m ???ng d?n g?c c?a ? ??a (VD: /Data N300/)
+                val targetUrl = buildWebDavTrashTargetUrl(
+                    webDavManager.currentBaseUrl,
+                    file.path,
+                    file.name,
+                    file.isDirectory
+                )
+                val driveName = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/').substringBefore('/')
+                val trashUrl = webDavManager.currentBaseUrl.trimEnd('/') + "/" + driveName + "/" + TRASH_FOLDER_NAME
 
-                // 2. Chặn xoá vĩnh viễn nếu chưa nằm trong thùng rác
+                // 2. Ch?n xo? v?nh vi?n n?u ch?a n?m trong th?ng r?c
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) {}
-                    val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
-                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
                     webDavManager.renameFile(file.path, targetUrl)
-                    repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác ổ $driveName.")
+                    repository.addSystemLog("WARNING", "File Ops", "?? di chuy?n t?p '${file.name}' v?o Th?ng r?c ? $driveName.")
                 } else {
-                    webDavManager.deleteFile(file.path)
-                    repository.addSystemLog("WARNING", "File Ops", "Đã XÓA VĨNH VIỄN tệp '${file.name}'.")
+                    webDavManager.deleteFile(file.path, file.isDirectory)
+                    repository.addSystemLog("WARNING", "File Ops", "?? X?A V?NH VI?N t?p '${file.name}'.")
                 }
                 // TRIỆT TIÊU refresh() VĨNH VIỄN: Tránh tải lại 5000 file chỉ vì xóa 1 thẻ
             } catch (e: Exception) {
-                // Nhồi lại file vào giao diện nếu rớt mạng
+                // Nh?i l?i file v?o giao di?n n?u r?t m?ng
                 withContext(Dispatchers.Main) { fileList = oldList }
                 
-                // TÍNH NĂNG 5.I: Bẫy lỗi và tống vào Hàng Đợi Offline
-                repository.addSystemLog("WARNING", "File Ops", "Xóa tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
-                val relativePath = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/')
-                val driveName = relativePath.substringBefore('/')
-                val trashUrl = webDavManager.currentBaseUrl + driveName + "/" + TRASH_FOLDER_NAME
+                // T?NH N?NG 5.I: B?y l?i v? t?ng v?o H?ng ??i Offline
+                repository.addSystemLog("WARNING", "File Ops", "X?a t?p '${file.name}' th?t b?i, ?? ??a v?o h?ng ??i ngo?i tuy?n: ${e.message?.take(80)}")
+                val driveName = file.path.removePrefix(webDavManager.currentBaseUrl).trimStart('/').substringBefore('/')
+                val trashUrl = webDavManager.currentBaseUrl.trimEnd('/') + "/" + driveName + "/" + TRASH_FOLDER_NAME
                 
                 if (!file.path.contains(TRASH_FOLDER_NAME)) {
-                    val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
-                    var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
-                    if (file.isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                    enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
+                    enqueueOfflineAction(
+                        context,
+                        "RENAME",
+                        file.path,
+                        buildWebDavTrashTargetUrl(webDavManager.currentBaseUrl, file.path, file.name, file.isDirectory)
+                    )
                 } else {
                     enqueueOfflineAction(context, "DELETE", file.path)
                 }
@@ -2043,21 +2065,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun restoreFile(context: Context, file: NasFile) {
-        // TỐI ƯU CỰC ĐẠI: Xóa ảo tức thì khỏi giao diện Thùng rác
+        // Optimistic UI for single restore from trash.
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
 
+        val targetUrl = buildWebDavRestoreTargetUrl(
+            webDavManager.currentBaseUrl,
+            file.path,
+            file.name,
+            file.isDirectory
+        )
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // KHÔI PHỤC: Di chuyển file từ rác về thư mục gốc của NAS
-                val targetUrl = webDavManager.currentBaseUrl + file.name
                 webDavManager.renameFile(file.path, targetUrl)
-                repository.addSystemLog("INFO", "File Ops", "Đã khôi phục tệp '${file.name}' từ Thùng rác.")
-                // Bỏ refresh()
+                repository.addSystemLog("INFO", "File Ops", "?? kh?i ph?c t?p '${file.name}' t? Th?ng r?c.")
+                // Keep current list; no full refresh needed here.
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { fileList = oldList }
-                repository.addSystemLog("WARNING", "File Ops", "Khôi phục tệp '${file.name}' thất bại, đã đưa vào hàng đợi ngoại tuyến: ${e.message?.take(80)}")
-                val targetUrl = webDavManager.currentBaseUrl + file.name
+                repository.addSystemLog("WARNING", "File Ops", "Kh?i ph?c t?p '${file.name}' th?t b?i, ?? ??a v?o h?ng ??i ngo?i tuy?n: ${e.message?.take(80)}")
                 enqueueOfflineAction(context, "RENAME", file.path, targetUrl)
             }
         }
@@ -2715,7 +2741,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    fun fetchDailyReport(date: String = "") {
+    private var lastDailyReportFetchAt = 0L
+    fun fetchDailyReport(date: String = "", minIntervalMs: Long = 30_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastDailyReportFetchAt < minIntervalMs) return
+        lastDailyReportFetchAt = now
         viewModelScope.launch(Dispatchers.IO) {
             val baseUrl = webDavManager.currentBaseUrl
             if (baseUrl.isEmpty()) return@launch
@@ -3600,8 +3630,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         )
     }
 
-    fun fetchDiskHealth() {
+    fun fetchDiskHealth(minIntervalMs: Long = 30_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastDiskHealthRefreshAt < minIntervalMs) return
         if (isFetchingDiskHealth) return
+        lastDiskHealthRefreshAt = now
         isFetchingDiskHealth = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -3770,7 +3803,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         listenToLocalNasApi(forceRestart = false)
     }
 
-    fun fetchStorageUsage() {
+    fun fetchStorageUsage(minIntervalMs: Long = 30_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastStorageRefreshAt < minIntervalMs) return
         if (isFetchingStorageUsage) return
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isFetchingStorageUsage = true }
@@ -4394,7 +4429,7 @@ fun WebDavViewModel.deleteDuplicateFile(file: NasFile) {
 
                 // 1. Kiểm tra nếu file đang ở trong thùng rác rồi thì xoá vĩnh viễn
                 if (file.path.contains(TRASH_FOLDER_NAME)) {
-                    webDavManager.deleteFile(file.path)
+                    webDavManager.deleteFile(file.path, file.isDirectory)
                 } else {
                     // 2. Nếu chưa, hãy đảm bảo thư mục thùng rác tồn tại và di chuyển vào đó
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { /* Đã tồn tại */ }
@@ -4433,7 +4468,7 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
                     try { webDavManager.createFolder(trashUrl) } catch(e: Exception) { }
                     
                     if (file.path.contains(TRASH_FOLDER_NAME)) {
-                        webDavManager.deleteFile(file.path)
+                        webDavManager.deleteFile(file.path, file.isDirectory)
                     } else {
                         val encodedName = java.net.URLEncoder.encode(file.name, "UTF-8").replace("+", "%20")
                         var targetUrl = if (trashUrl.endsWith("/")) trashUrl + encodedName else "$trashUrl/$encodedName"
@@ -4805,6 +4840,7 @@ fun WebDavViewModel.listenToLocalNasApi(forceRestart: Boolean = false) {
                 if (alertsStartedForBaseUrl != activeBaseUrl) {
                     alertsStartedForBaseUrl = activeBaseUrl
                     startRealtimeAlerts()
+                    resetDashboardRefreshGuards()
                     lastRealtimeMetricAt = 0L
                     lastMetricsHistoryAt = 0L
                     lastHeavyRefreshAt = 0L
@@ -4954,7 +4990,10 @@ fun WebDavViewModel.fetchWeeklyReport() {
     }
 }
 
-fun WebDavViewModel.loadSystemLogs() {
+fun WebDavViewModel.loadSystemLogs(minIntervalMs: Long = 15_000L) {
+    val now = System.currentTimeMillis()
+    if (minIntervalMs > 0L && now - lastLogsRefreshAt < minIntervalMs) return
+    lastLogsRefreshAt = now
     viewModelScope.launch(Dispatchers.IO) {
         val localLogs = repository.getSystemLogs()
         val allLogs = localLogs.toMutableList()
@@ -5030,7 +5069,11 @@ fun WebDavViewModel.clearSystemLogs() {
     } 
 }
 
-fun WebDavViewModel.fetchSmartData() {
+private var lastSmartRefreshAtVm = 0L
+fun WebDavViewModel.fetchSmartData(minIntervalMs: Long = 15_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastSmartRefreshAtVm < minIntervalMs) return
+        lastSmartRefreshAtVm = now
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
@@ -5048,7 +5091,13 @@ fun WebDavViewModel.fetchSmartData() {
     }
 }
 
-fun WebDavViewModel.fetchOmvOverview() {
+private var lastOmvOverviewFetchAt = 0L
+fun WebDavViewModel.fetchOmvOverview(minIntervalMs: Long = 15_000L) {
+    val now = System.currentTimeMillis()
+    if (minIntervalMs > 0L && now - lastOmvOverviewFetchAt < minIntervalMs) return
+    if (isFetchingOmvOverview) return
+    lastOmvOverviewFetchAt = now
+    isFetchingOmvOverview = true
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
@@ -5107,6 +5156,7 @@ fun WebDavViewModel.fetchOmvOverview() {
                 }
             }
         } catch (_: Exception) { }
+        finally { withContext(Dispatchers.Main) { isFetchingOmvOverview = false } }
     }
 }
 
@@ -5764,7 +5814,7 @@ fun WebDavViewModel.fetchSystemProcesses(sortBy: String = "cpu") {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("WebDavViewModel", "fetchSystemProcesses failed", e)
         } finally {
             withContext(Dispatchers.Main) { isLoadingProcesses = false }
         }
@@ -5829,7 +5879,9 @@ fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) 
                     }
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w("WebDavViewModel", "fetchLivestreamStatusOnly failed", e)
+        }
     }
 }
 
@@ -5854,7 +5906,7 @@ fun WebDavViewModel.fetchSmbStatus() {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("WebDavViewModel", "fetchSmbStatus failed", e)
         }
     }
 }
@@ -5888,7 +5940,7 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
                 fetchOmvOverview()
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("WebDavViewModel", "toggleSmbShare failed", e)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 isLoadingSmb = false
                 onResult(false, "Lỗi kết nối: ${e.message}")
