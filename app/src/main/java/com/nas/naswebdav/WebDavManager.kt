@@ -102,6 +102,73 @@ internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fi
     return targetUrl
 }
 
+private fun extractWebDavPath(rawPath: String): String {
+    val trimmed = rawPath.trim().substringBefore('?').substringBefore('#')
+    if (trimmed.isBlank()) return ""
+    val parsedPath = runCatching { java.net.URI(trimmed).rawPath }.getOrNull()?.takeIf { it.isNotBlank() }
+    return (parsedPath ?: trimmed).trimStart('/')
+}
+
+internal fun normalizeWebDavRelativePath(baseUrl: String, sourcePath: String): String {
+    val normalizedBase = baseUrl.trimEnd('/')
+    val trimmedSource = sourcePath.trim().substringBefore('?').substringBefore('#')
+    val relative = when {
+        normalizedBase.isNotBlank() && trimmedSource.startsWith(normalizedBase) -> {
+            trimmedSource.removePrefix(normalizedBase).trimStart('/')
+        }
+        normalizedBase.isNotBlank() && trimmedSource.startsWith("$normalizedBase/") -> {
+            trimmedSource.removePrefix("$normalizedBase/").trimStart('/')
+        }
+        else -> extractWebDavPath(trimmedSource)
+    }
+    if (relative.isBlank()) return ""
+    return relative.split('/')
+        .filter { it.isNotBlank() }
+        .joinToString("/") { encodeWebDavSegment(it) }
+}
+
+internal fun buildWebDavTrashRootUrl(baseUrl: String): String {
+    val normalizedBase = baseUrl.trimEnd('/')
+    return "$normalizedBase/.trash/"
+}
+
+internal fun buildWebDavTrashParentUrl(baseUrl: String, sourcePath: String): String {
+    val trashRoot = buildWebDavTrashRootUrl(baseUrl)
+    val relativePath = normalizeWebDavRelativePath(baseUrl, sourcePath)
+    val parentRelative = relativePath.substringBeforeLast('/', "")
+    return if (parentRelative.isBlank()) trashRoot else "$trashRoot${parentRelative.trimStart('/')}/"
+}
+
+internal suspend fun WebDavManager.ensureFolderHierarchy(folderUrl: String) {
+    val safeUrl = folderUrl.trim().substringBefore('?').substringBefore('#')
+    if (safeUrl.isBlank()) return
+    val normalizedFolderUrl = if (safeUrl.endsWith('/')) safeUrl else "$safeUrl/"
+    val schemeIndex = normalizedFolderUrl.indexOf("://")
+    if (schemeIndex < 0) {
+        runCatching { createFolder(normalizedFolderUrl) }
+        return
+    }
+    val pathStart = normalizedFolderUrl.indexOf('/', schemeIndex + 3)
+    if (pathStart < 0) {
+        runCatching { createFolder(normalizedFolderUrl) }
+        return
+    }
+    val root = normalizedFolderUrl.substring(0, pathStart + 1)
+    val segments = normalizedFolderUrl.substring(pathStart + 1)
+        .trim('/')
+        .split('/')
+        .filter { it.isNotBlank() }
+    if (segments.isEmpty()) {
+        runCatching { createFolder(normalizedFolderUrl) }
+        return
+    }
+    var current = root
+    for (segment in segments) {
+        current += segment + "/"
+        runCatching { createFolder(current) }
+    }
+}
+
 object WebDavManager {
 
     internal data class AuthState(
@@ -120,23 +187,25 @@ object WebDavManager {
         get() = authState.baseUrl
 
     val currentUser: String
-        get() = authState.user
+        get() = currentAuthState().user
 
     val currentPass: String
-        get() = authState.pass
+        get() = currentAuthState().pass
 
-    fun currentAuthHeader(): String = authState.authHeader
+    fun currentAuthHeader(): String = currentAuthState().authHeader
+
+    internal fun currentAuthState(): AuthState = authState
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
     }
 
     fun tagCurrentAuth(builder: Request.Builder): Request.Builder {
-        return builder.tag(AuthState::class.java, authState)
+        return builder.tag(AuthState::class.java, currentAuthState())
     }
 
     fun Request.Builder.withCurrentAuth(): Request.Builder {
-        return tag(AuthState::class.java, authState)
+        return tag(AuthState::class.java, currentAuthState())
     }
 
     // Kế thừa kết nối (Connection Pooling) & Keep-Alive
@@ -161,7 +230,7 @@ object WebDavManager {
 
             .addInterceptor { chain ->
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: currentAuthState()
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -217,7 +286,7 @@ object WebDavManager {
 
                 // NAS KHÔNG trả về 401 để kích hoạt Sardine Authenticator, mà nó trả về thư mục TRỐNG nếu không có mật khẩu ngay từ đầu!
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: currentAuthState()
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -275,7 +344,7 @@ object WebDavManager {
 
     suspend fun checkPingServer(): Long? = withContext(Dispatchers.IO) {
 
-        val auth = authState
+        val auth = currentAuthState()
 
         if (auth.baseUrl.isEmpty()) return@withContext null
 
@@ -898,7 +967,7 @@ object WebDavManager {
 
         try {
 
-            val request = Request.Builder().withAuth(authState).url(url).build()
+            val request = Request.Builder().withAuth(currentAuthState()).url(url).build()
 
             optimizedClient.newCall(request).execute().use { response ->
 
@@ -944,7 +1013,7 @@ object WebDavManager {
 
         val safeUrl = if (url.endsWith("/")) url else "$url/"
 
-        val request = Request.Builder().withAuth(authState).url(safeUrl).method("MKCOL", null).build()
+        val request = Request.Builder().withAuth(currentAuthState()).url(safeUrl).method("MKCOL", null).build()
 
         // Fail fast so callers can detect folder-create errors.
         optimizedClient.newCall(request).execute().use { response ->
@@ -978,7 +1047,7 @@ object WebDavManager {
 
     suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(currentAuthState()).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -992,7 +1061,7 @@ object WebDavManager {
 
     suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(currentAuthState()).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -1029,7 +1098,7 @@ object WebDavManager {
 
     suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(url).build()
+        val request = Request.Builder().withAuth(currentAuthState()).url(url).build()
 
         optimizedClient.newCall(request).execute().use { response ->
 

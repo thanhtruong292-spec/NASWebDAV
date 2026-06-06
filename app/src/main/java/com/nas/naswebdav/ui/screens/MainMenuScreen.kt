@@ -5078,7 +5078,8 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                                                 val isSelected = viewModel.selectedDuplicates.contains(dupFile)
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                                val auth = okhttp3.Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+                                                val authSnapshot = viewModel.webDavManager.currentAuthState()
+                                                val auth = okhttp3.Credentials.basic(authSnapshot.user, authSnapshot.pass)
 
                                                 Box(
                                                     modifier = Modifier

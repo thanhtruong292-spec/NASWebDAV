@@ -682,7 +682,8 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        val auth = viewModel.webDavManager.currentAuthState()
+                        viewModel.repository.addSystemLog("INFO", "Network", "Ng??i d?ng '${auth.user}' ?? ch? ??ng ??ng xu?t.")
 
                     }
 
@@ -736,7 +737,8 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        val auth = viewModel.webDavManager.currentAuthState()
+                        viewModel.repository.addSystemLog("INFO", "Network", "Ng??i d?ng '${auth.user}' ?? ch? ??ng ??ng xu?t.")
 
                     }
 
@@ -780,13 +782,15 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("video") {
 
+            val auth = viewModel.webDavManager.currentAuthState()
+
             com.nas.naswebdav.ui.screens.VideoPlayerScreen(
 
                 url = mediaUrl,
 
-                user = viewModel.webDavManager.currentUser,
+                user = auth.user,
 
-                pass = viewModel.webDavManager.currentPass,
+                pass = auth.pass,
 
                 viewModel = viewModel,
 
@@ -800,15 +804,17 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("image") {
 
+            val auth = viewModel.webDavManager.currentAuthState()
+
             com.nas.naswebdav.ui.screens.ImageViewerScreen(
 
                 initialUrl = mediaUrl,
 
                 viewModel = viewModel,
 
-                user = viewModel.webDavManager.currentUser,
+                user = auth.user,
 
-                pass = viewModel.webDavManager.currentPass,
+                pass = auth.pass,
 
                 onBack = { navController.popBackStack() }
 
@@ -1028,6 +1034,4 @@ fun ScreenRecordFloatingOverlay() {
         }
     }
 }
-
-
 

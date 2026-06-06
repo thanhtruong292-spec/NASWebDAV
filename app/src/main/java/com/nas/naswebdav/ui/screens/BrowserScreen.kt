@@ -422,9 +422,8 @@ fun BrowserScreen(
                             isOrganizing = true
                             coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 try {
-                                    val user = viewModel.webDavManager.currentUser
-                                    val pass = viewModel.webDavManager.currentPass
-                                    val urlStr = viewModel.webDavManager.currentBaseUrl
+                                    val authSnapshot = viewModel.webDavManager.currentAuthState()
+                                    val urlStr = authSnapshot.baseUrl
                                     
                                     val host = java.net.URL(urlStr).host ?: "127.0.0.1"
                                     val apiUrl = "${urlStr.toApiBaseUrl()}/api/tools/organize_legacy_videos"
@@ -432,7 +431,7 @@ fun BrowserScreen(
                                     val request = okhttp3.Request.Builder()
                                         .url(apiUrl)
                                         .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                                        .header("Authorization", authSnapshot.authHeader)
                                         .build()
                                         
                                     // Tăng timeout lên 5 phút vì thao tác quét và chép file toàn bộ NAS có thể lâu hơn 30s
@@ -1209,7 +1208,8 @@ fun FileItemGridCell(
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+    val authSnapshot = viewModel.webDavManager.currentAuthState()
+    val auth = Credentials.basic(authSnapshot.user, authSnapshot.pass)
 
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1217,6 +1217,8 @@ fun FileItemGridCell(
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showPropertiesDialog by remember { mutableStateOf(false) }
+    var showTransferPickerDialog by remember { mutableStateOf(false) }
+    var pendingTransferOperation by remember { mutableStateOf("") }
     var newFileName by remember { mutableStateOf(file.name) }
 
     // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
@@ -1259,6 +1261,26 @@ fun FileItemGridCell(
                 viewModel.deleteFile(context, file)
             },
             onDismiss = { showDeleteDialog = false }
+        )
+    }
+
+    if (showTransferPickerDialog) {
+        com.nas.naswebdav.ui.dialogs.FolderPickerDialog(
+            viewModel = viewModel,
+            startingUrl = viewModel.webDavManager.currentBaseUrl,
+            onDismiss = {
+                showTransferPickerDialog = false
+                pendingTransferOperation = ""
+            },
+            onFolderSelected = { destUrl ->
+                showTransferPickerDialog = false
+                val filesToProcess = listOf(file)
+                when (pendingTransferOperation) {
+                    "COPY" -> viewModel.batchCopyFiles(context, filesToProcess, destUrl)
+                    "MOVE" -> viewModel.batchMoveFiles(context, filesToProcess, destUrl)
+                }
+                pendingTransferOperation = ""
+            }
         )
     }
 
@@ -1336,7 +1358,17 @@ fun FileItemGridCell(
                 commonDialogMessage = "Đã sao chép liên kết tệp!"
                 showCommonDialog = true
             })
-            // Chỉ hiện nút Khôi phục nếu đang đứng trong Thùng rác
+            // Ch? hi?n n?t Kh?i ph?c n?u ?ang ??ng trong Th?ng r?c
+            DropdownMenuItem(text = { Text("Sao chép…") }, onClick = {
+                showMenu = false
+                pendingTransferOperation = "COPY"
+                showTransferPickerDialog = true
+            })
+            DropdownMenuItem(text = { Text("Di chuyển…") }, onClick = {
+                showMenu = false
+                pendingTransferOperation = "MOVE"
+                showTransferPickerDialog = true
+            })
             if (viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác") {
                 DropdownMenuItem(
                     text = { Text("Khôi phục") },
@@ -1363,11 +1395,12 @@ fun FileItemGridCell(
                     text = { Text("Mở bằng ứng dụng ngoài", color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
+                        val authSnapshot = viewModel.webDavManager.currentAuthState()
                         openExternalVideoPlayer(
                             context = context,
                             url = file.path,
-                            user = viewModel.webDavManager.currentUser,
-                            pass = viewModel.webDavManager.currentPass,
+                            user = authSnapshot.user,
+                            pass = authSnapshot.pass,
                             onError = {
                                 commonDialogType = DialogType.ERROR
                                 commonDialogMessage = "Không tìm thấy trình phát video ngoài nào!"

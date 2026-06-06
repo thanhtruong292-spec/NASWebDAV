@@ -360,9 +360,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             // Fix API auth header: attach Authorization to every Local API request
             .addInterceptor { chain ->
                 val authHeader = chain.request().tag(WebDavManager.AuthState::class.java)?.authHeader
-                    ?: WebDavManager.currentAuthHeader().takeIf {
-                        WebDavManager.currentUser.isNotEmpty() || WebDavManager.currentPass.isNotEmpty()
-                    }
+                    ?: WebDavManager.currentAuthState().takeIf {
+                        it.user.isNotEmpty() || it.pass.isNotEmpty()
+                    }?.authHeader
                     ?: return@addInterceptor chain.proceed(chain.request())
                 val requestBuilder = chain.request().newBuilder()
                 requestBuilder.header("Authorization", authHeader)
@@ -2286,11 +2286,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
 
                 // Nếu URL thực tế khác URL đang dùng → tự động reconnect mượt
-                val currentBase = webDavManager.currentBaseUrl
+                val auth = webDavManager.currentAuthState()
+                val currentBase = auth.baseUrl
                 val safeActive = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
                 if (safeActive != currentBase && currentBase.isNotEmpty()) {
-                    val user = webDavManager.currentUser
-                    val pass = webDavManager.currentPass
+                    val user = auth.user
+                    val pass = auth.pass
                     withContext(Dispatchers.Main) {
                         connectionStatus = if (onLan) "Chuyển sang LAN - Gigabit" else "Chuyển sang Tailscale VPN"
                     }
@@ -2302,7 +2303,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             // Gọi authorize để IP mới được thêm vào whitelist/iptables trên NAS
                             val host = java.net.URL(safeActive).host
                             if (!host.isNullOrEmpty()) {
-                                val authHeader = okhttp3.Credentials.basic(user, pass)
+                                val authHeader = auth.authHeader
                                 val authRequest = okhttp3.Request.Builder()
                                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
                                     .header("Authorization", authHeader)

@@ -509,12 +509,13 @@ private fun AiCategoryOverview(
         // FIX: dung key callback de tranh recompose toan bo grid khi 1 cat doi
         items(count = cats.size, key = { idx -> cats[idx].key }) { idx ->
             val (catName, urls) = cats[idx]
+            val authSnapshot = viewModel.webDavManager.currentAuthState()
             AiCategoryCard(
                 name = catName,
                 count = urls.size,
                 previewUrl = if (urls.isNotEmpty()) buildFullUrl(urls[0], viewModel.webDavManager.currentBaseUrl) else null,
-                user = viewModel.webDavManager.currentUser,
-                pass = viewModel.webDavManager.currentPass,
+                user = authSnapshot.user,
+                pass = authSnapshot.pass,
                 onClick = { onCategoryClick(catName) }
             )
         }
