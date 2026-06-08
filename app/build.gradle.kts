@@ -39,7 +39,7 @@ gradle.taskGraph.whenReady {
 
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
+    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"
@@ -146,6 +146,9 @@ dependencies {
     // Chucker for in-app network inspection
     debugImplementation("com.github.chuckerteam.chucker:library:4.0.0")
     releaseImplementation("com.github.chuckerteam.chucker:library-no-op:4.0.0")
+
+    // Unit tests (JVM, không cần device)
+    testImplementation("junit:junit:4.13.2")
 }
 
 ksp {
