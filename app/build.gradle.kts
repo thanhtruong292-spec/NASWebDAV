@@ -83,6 +83,11 @@ android {
             assets.setSrcDirs(listOf("$projectDir/schemas"))
         }
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -149,6 +154,11 @@ dependencies {
 
     // Unit tests (JVM, không cần device)
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("io.mockk:mockk:1.13.13")
+    testImplementation("androidx.room:room-testing:$room_version")
 }
 
 ksp {
