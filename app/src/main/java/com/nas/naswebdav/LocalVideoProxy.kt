@@ -1,31 +1,30 @@
 package com.nas.naswebdav
 
 import android.util.Log
-import java.io.InputStream
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URL
-import javax.net.ssl.HttpsURLConnection
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
- * LocalVideoProxy — HTTP proxy cục bộ chạy trên localhost
+ * LocalVideoProxy ? HTTP proxy c?c b? ch?y tr?n localhost
  *
- * Kiến trúc:
- *   VLC / MX Player → http://127.0.0.1:<port>/<encoded_url>
- *   → LocalVideoProxy → NAS WebDAV with Authorization header
+ * Ki?n tr?c:
+ *   VLC / MX Player ? http://127.0.0.1:<port>/<encoded_url>
+ *   ? LocalVideoProxy ? NAS WebDAV with Authorization header
  *
- * Tại sao cần proxy thay vì nhúng auth vào URL?
- * - VLC/MX Player không hỗ trợ URL có dạng http://user:pass@host/... một cách đáng tin cậy
- * - Nhúng password vào URL có thể bị lộ qua log của player
- * - Proxy cho phép truyền header Authorization chuẩn HTTP, hỗ trợ mọi player
+ * V?ng ??i:
+ * - [start] t?o ServerSocket tr?n port ng?u nhi?n, spawn thread nh?n request, tr? v? localUrl
+ * - ServerSocket t? ??ng sau khi ph?c v? 1 request ho?c sau timeout 10 ph?t
+ * - [stop] ??ng socket + d?n pool handler ?? tr?nh leak thread khi start() l?p l?i
  *
- * Vòng đời:
- * - [start] tạo ServerSocket trên port ngẫu nhiên, spawn thread nhận request, trả về localUrl
- * - ServerSocket tự đóng sau khi phục vụ 1 request hoặc sau timeout 30 giây
- * - Không cần [stop] thủ công — nếu app bị kill, socket sẽ tự đóng theo process
- *
- * @param user  WebDAV username (dùng để tạo Basic Auth header)
+ * @param user  WebDAV username (d?ng ?? t?o Basic Auth header)
  * @param pass  WebDAV password
  */
 class LocalVideoProxy(private val user: String, private val pass: String) {
@@ -34,48 +33,73 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         private const val TAG = "LocalVideoProxy"
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 30_000
-        private const val SERVER_IDLE_TIMEOUT_MS = 10 * 60_000L // Giữ proxy sống theo phiên phát để seek lại sau pause dài
-        private const val BUFFER_SIZE = 65_536 // 64KB buffer cho stream
+        private const val SERVER_IDLE_TIMEOUT_MS = 10 * 60_000L
+        private const val BUFFER_SIZE = 65_536
+        private const val MAX_HANDLER_THREADS = 4
+        private const val MAX_HANDLER_QUEUE = 8
     }
 
     @Volatile private var serverSocket: ServerSocket? = null
+    @Volatile private var requestExecutor: ThreadPoolExecutor? = null
     @Volatile private var lastActivityAtMs: Long = 0L
 
+    private fun createRequestExecutor(): ThreadPoolExecutor {
+        val factory = ThreadFactory { runnable ->
+            Thread(runnable, "LocalVideoProxy-handler").apply { isDaemon = true }
+        }
+        return ThreadPoolExecutor(
+            2,
+            MAX_HANDLER_THREADS,
+            30,
+            TimeUnit.SECONDS,
+            ArrayBlockingQueue(MAX_HANDLER_QUEUE),
+            factory,
+            ThreadPoolExecutor.AbortPolicy()
+        ).apply {
+            allowCoreThreadTimeOut(true)
+        }
+    }
+
     /**
-     * Khởi động proxy và trả về URL localhost để VLC kết nối.
+     * Kh?i ??ng proxy v? tr? v? URL localhost ?? VLC k?t n?i.
      *
-     * @param nasUrl URL gốc của file trên NAS (có dạng http://192.168.x.x:5005/webdav/...)
-     * @return URL localhost dạng http://127.0.0.1:<port>/ mà VLC sẽ mở
+     * @param nasUrl URL g?c c?a file tr?n NAS (c? d?ng http://192.168.x.x:5005/webdav/...)
+     * @return URL localhost d?ng http://127.0.0.1:<port>/ m? VLC s? m?
      */
     fun start(nasUrl: String): String {
-        // FIX: đóng proxy cũ (nếu có) trước khi tạo mới để tránh leak
-        // thread/socket khi caller goi start() nhieu lan tren cung instance.
         stop()
-        // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)
+
         val server = ServerSocket(0).also { serverSocket = it }
         val port = server.localPort
         lastActivityAtMs = System.currentTimeMillis()
+        requestExecutor = createRequestExecutor()
 
-        Log.d(TAG, "Proxy started on port $port → $nasUrl")
+        Log.d(TAG, "Proxy started on port $port ? $nasUrl")
 
-        // Thread daemon: tự kill khi app process chết
-        val proxyThread = Thread(null, {
+        Thread(null, {
             try {
-                // Poll bằng timeout ngắn để chỉ đóng khi thật sự idle quá lâu.
                 server.soTimeout = 15_000
 
                 while (!server.isClosed) {
                     try {
                         val clientSocket = server.accept()
                         lastActivityAtMs = System.currentTimeMillis()
-                        // Spawn thread riêng để xử lý từng request (VLC có thể gọi HEAD + GET)
-                        Thread(null, {
-                            handleRequest(clientSocket, nasUrl)
-                        }, "LocalVideoProxy-handler").apply {
-                            isDaemon = true
-                            start()
+
+                        val executor = requestExecutor
+                        if (executor == null || executor.isShutdown) {
+                            runCatching { clientSocket.close() }
+                            continue
                         }
-                    } catch (e: java.net.SocketTimeoutException) {
+
+                        try {
+                            executor.execute {
+                                handleRequest(clientSocket, nasUrl)
+                            }
+                        } catch (_: RejectedExecutionException) {
+                            Log.w(TAG, "Proxy overload, reject client")
+                            runCatching { clientSocket.close() }
+                        }
+                    } catch (_: SocketTimeoutException) {
                         val idleMs = System.currentTimeMillis() - lastActivityAtMs
                         if (idleMs >= SERVER_IDLE_TIMEOUT_MS) {
                             Log.d(TAG, "Proxy idle too long, shutting down")
@@ -83,7 +107,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                         }
                     } catch (e: Exception) {
                         if (!server.isClosed) {
-                            Log.w(TAG, "Lỗi nhận kết nối: ${e.message}")
+                            Log.w(TAG, "L?i nh?n k?t n?i: ${e.message}")
                             continue
                         }
                         break
@@ -91,6 +115,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
             } finally {
                 runCatching { server.close() }
+                runCatching { requestExecutor?.shutdownNow() }
+                serverSocket = null
+                requestExecutor = null
                 Log.d(TAG, "Proxy server closed")
             }
         }, "LocalVideoProxy-server").apply {
@@ -98,15 +125,14 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
             start()
         }
 
-        // Trả về URL để VLC mở — player sẽ kết nối tới proxy trên localhost
         return "http://127.0.0.1:$port/"
     }
 
     /**
-     * Xử lý 1 request từ VLC:
-     * 1. Đọc request line + headers từ client
-     * 2. Mở kết nối tới NAS với Authorization header
-     * 3. Stream response body từ NAS xuống client (hỗ trợ Range requests để seek video)
+     * X? l? 1 request t? VLC:
+     * 1. ??c request line + headers t? client
+     * 2. M? k?t n?i t?i NAS v?i Authorization header
+     * 3. Stream response body t? NAS xu?ng client (h? tr? Range requests ?? seek video)
      */
     private fun handleRequest(clientSocket: Socket, nasUrl: String) {
         var nasConnection: java.net.HttpURLConnection? = null
@@ -116,11 +142,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 val input = client.getInputStream().bufferedReader()
                 val output = client.getOutputStream()
 
-                // Đọc request line (ví dụ: "GET / HTTP/1.1" hoặc "HEAD / HTTP/1.1")
                 val requestLine = input.readLine() ?: return
                 Log.d(TAG, "Proxy got: $requestLine")
 
-                // Đọc tất cả headers từ VLC (cần lấy Range header để hỗ trợ seek)
                 val clientHeaders = mutableMapOf<String, String>()
                 var line = input.readLine()
                 while (!line.isNullOrBlank()) {
@@ -135,24 +159,14 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
 
                 val method = requestLine.split(" ").firstOrNull() ?: "GET"
 
-                // Kết nối tới NAS
                 nasConnection = URL(nasUrl).openConnection() as java.net.HttpURLConnection
                 nasConnection!!.apply {
                     requestMethod = method
                     connectTimeout = CONNECT_TIMEOUT_MS
                     readTimeout = READ_TIMEOUT_MS
                     instanceFollowRedirects = true
-
-                    // Xác thực với NAS
-                    setRequestProperty(
-                        "Authorization",
-                        okhttp3.Credentials.basic(user, pass)
-                    )
-
-                    // Chuyển tiếp Range header từ VLC để hỗ trợ seek
+                    setRequestProperty("Authorization", okhttp3.Credentials.basic(user, pass))
                     clientHeaders["range"]?.let { setRequestProperty("Range", it) }
-
-                    // Headers chuẩn
                     setRequestProperty("User-Agent", "NASWebDAV-Proxy/1.0")
                     setRequestProperty("Accept", "*/*")
                     setRequestProperty("Connection", "keep-alive")
@@ -162,15 +176,13 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                     nasConnection!!.responseCode
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot connect to NAS: ${e.message}")
-                    sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
+                    sendErrorResponse(output, 502, "L?i proxy video: ${e.message}")
                     return
                 }
 
-                // Build HTTP response header cho VLC
                 val responseHeaders = StringBuilder()
                 responseHeaders.append("HTTP/1.1 $nasResponseCode ${nasConnection!!.responseMessage}\r\n")
 
-                // Chuyển tiếp các headers quan trọng từ NAS sang VLC
                 val importantHeaders = listOf(
                     "content-type", "content-length", "content-range",
                     "accept-ranges", "last-modified", "etag", "cache-control"
@@ -187,7 +199,6 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 output.write(responseHeaders.toString().toByteArray(Charsets.US_ASCII))
                 output.flush()
 
-                // Stream body (chỉ với GET, không với HEAD)
                 if (method != "HEAD" && nasResponseCode in 200..299) {
                     try {
                         nasConnection!!.inputStream.use { nasBody ->
@@ -200,17 +211,17 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                             output.flush()
                         }
                     } catch (e: Exception) {
-                        // Client ngắt kết nối khi seek — đây là bình thường với VLC
                         Log.d(TAG, "Stream end (client disconnect): ${e.message}")
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Lỗi xử lý yêu cầu: ${e.message}")
+            Log.w(TAG, "L?i x? l? y?u c?u: ${e.message}")
         } finally {
             runCatching { nasConnection?.disconnect() }
         }
     }
+
     private fun sendErrorResponse(output: OutputStream, code: Int, message: String) {
         val body = message.toByteArray(Charsets.UTF_8)
         val response = buildString {
@@ -227,8 +238,11 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         }
     }
 
-    /** Dừng proxy thủ công (tùy chọn — proxy tự đóng sau timeout) */
+    /** D?ng proxy th? c?ng (t?y ch?n ? proxy t? ??ng sau timeout) */
     fun stop() {
         runCatching { serverSocket?.close() }
+        runCatching { requestExecutor?.shutdownNow() }
+        serverSocket = null
+        requestExecutor = null
     }
 }

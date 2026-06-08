@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalCoilApi::class)
+﻿@file:OptIn(ExperimentalCoilApi::class)
 package com.nas.naswebdav
 
 
@@ -376,6 +376,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         if (savedUrl.isBlank()) return
 
         viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
+        val repository = WebDavRepository(viewModel.webDavManager, NasApplication.instance.database)
 
         sharedUris.forEach { uri ->
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -397,7 +398,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
 
                     contentResolver.openInputStream(uri)?.use { inputStream ->
-                        val temp = java.io.File(cacheDir, fileName)
+                        val temp = java.io.File.createTempFile("share_", "_$fileName", cacheDir)
                         tempFile = temp
                         if (!temp.canonicalPath.startsWith(cacheDir.canonicalPath)) {
                             throw SecurityException("Invalid temp file name: $rawName")
@@ -405,6 +406,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         temp.outputStream().use { inputStream.copyTo(it) }
                         val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
                         viewModel.webDavManager.uploadFile(destUrl, temp, mimeType)
+                        runCatching { repository.removeCachedPath(destUrl) }
+                            .onFailure { android.util.Log.w("ShareUpload", "Cache clear failed for $destUrl", it) }
+                        runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(destUrl))) }
+                            .onFailure { android.util.Log.w("ShareUpload", "Folder refresh failed for $destUrl", it) }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
@@ -683,7 +688,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                     viewModel.viewModelScope.launch {
 
                         val auth = viewModel.webDavManager.currentAuthState()
-                        viewModel.repository.addSystemLog("INFO", "Network", "Ng??i d?ng '${auth.user}' ?? ch? ??ng ??ng xu?t.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${auth.user}' đã chủ động đăng xuất.")
 
                     }
 
@@ -738,7 +743,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                     viewModel.viewModelScope.launch {
 
                         val auth = viewModel.webDavManager.currentAuthState()
-                        viewModel.repository.addSystemLog("INFO", "Network", "Ng??i d?ng '${auth.user}' ?? ch? ??ng ??ng xu?t.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${auth.user}' đã chủ động đăng xuất.")
 
                     }
 
@@ -1034,4 +1039,3 @@ fun ScreenRecordFloatingOverlay() {
         }
     }
 }
-

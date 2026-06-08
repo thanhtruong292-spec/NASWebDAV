@@ -15,295 +15,662 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.URL
 import java.io.File
+import okhttp3.Credentials
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * BatchOperationWorker â€” Foreground Worker cháº¡y ngáº§m cho cÃ¡c tÃ¡c vá»¥ Copy/Move/Delete/Restore hÃ ng loáº¡t.
+ * BatchOperationWorker - foreground worker chạy ngầm cho tác vụ Copy/Move/Delete/Restore hàng loạt.
  *
- * Æ¯u Ä‘iá»ƒm so vá»›i viewModelScope.launch:
- * - Tiáº¿n trÃ¬nh KHÃ”NG Bá»Š Há»¦Y khi ngÆ°á»i dÃ¹ng táº¯t App hoáº·c thu nhá» á»©ng dá»¥ng.
- * - Hiá»ƒn thá»‹ thanh tiáº¿n trÃ¬nh trÃªn Notification Bar (Thanh thÃ´ng bÃ¡o) theo thá»i gian thá»±c.
- * - Há»‡ Ä‘iá»u hÃ nh Android cáº¥p phÃ¡t Æ°u tiÃªn cao (Foreground Service) â†’ TrÃ¡nh bá»‹ OOM Killer xÃ³a sá»•.
+ * Ưu điểm so với viewModelScope.launch:
+ * - Tiến trình không bị hủy khi người dùng tắt app hoặc thu nhỏ ứng dụng.
+ * - Hiển thị thanh tiến trình trên notification bar theo thời gian thực.
+ * - Chạy dưới dạng foreground service để giảm nguy cơ bị hệ điều hành dọn tiến trình.
  *
- * Input Data:
- *   - "operation" : "COPY" | "MOVE" | "DELETE" | "RESTORE"
- *   - "filePaths" : String[] â€” danh sÃ¡ch Ä‘Æ°á»ng dáº«n WebDAV Ä‘áº§y Ä‘á»§ (source)
- *   - "fileNames" : String[] â€” tÃªn hiá»ƒn thá»‹ tÆ°Æ¡ng á»©ng
- *   - "destUrl"   : String   â€” thÆ° má»¥c Ä‘Ã­ch (cho COPY/MOVE, khÃ´ng cáº§n cho DELETE)
- *   - "baseUrl"   : String   â€” WebDAV base URL hiá»‡n táº¡i (Ä‘á»ƒ tÃ­nh trash path)
+ * Input data:
+ *   - "operation": "COPY" | "MOVE" | "DELETE" | "RESTORE"
+ *   - "filePaths": String[] - danh sách đường dẫn WebDAV đầy đủ (source)
+ *   - "fileNames": String[] - tên hiển thị tương ứng
+ *   - "destUrl": String - thư mục đích (cho COPY/MOVE, không cần cho DELETE)
+ *   - "baseUrl": String - WebDAV base URL hiện tại (để tính trash path)
  */
+
 class BatchOperationWorker(
+
     appContext: Context,
+
     workerParams: WorkerParameters
+
 ) : CoroutineWorker(appContext, workerParams) {
 
+
+
     companion object {
+
         const val CHANNEL_ID = "batch_operation_channel"
+
         const val NOTIFICATION_ID = 9010
+
         private const val TAG = "BatchOp"
 
+
+
         fun createChannel(context: Context) {
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "TÃ¡c vá»¥ hÃ ng loáº¡t",
+
+                    CHANNEL_ID, "Tác vụ hàng loạt",
+
                     NotificationManager.IMPORTANCE_LOW
+
                 ).apply {
-                    description = "Hiá»ƒn thá»‹ tiáº¿n trÃ¬nh Copy/Move/Delete file trÃªn NAS"
+
+                    description = "Hiển thị tiến trình Copy/Move/Delete file trên NAS"
+
                     setShowBadge(false)
+
                 }
+
                 (context.getSystemService(NotificationManager::class.java))
+
                     ?.createNotificationChannel(channel)
+
             }
+
         }
+
     }
 
+
+
     private fun safeDataText(value: String, maxChars: Int = 180): String {
+
         return if (value.length <= maxChars) value else value.take(maxChars) + "..."
+
+    }
+
+
+
+
+    private suspend fun setThumbnailActivity(source: String, active: Boolean) = withContext(Dispatchers.IO) {
+        val activeBaseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val user = SecurePrefsHelper.getUser(applicationContext)
+        val pass = SecurePrefsHelper.getPass(applicationContext)
+        if (activeBaseUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext
+        runCatching {
+            val body = JSONObject()
+                .put("source", source)
+                .put("active", active)
+                .toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val request = Request.Builder()
+                .url("${activeBaseUrl.toApiBaseUrl()}/api/thumb/activity")
+                .post(body)
+                .header("Authorization", Credentials.basic(user, pass))
+                .build()
+            NasApplication.instance.sharedHttpClient.newCall(request).execute().use { }
+        }
     }
 
     private fun resolveBatchWebDavPath(rawPath: String, activeBaseUrl: String): String {
+
         val trimmed = rawPath.trim()
+
         if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+
             val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
+
             val raw = runCatching { URL(trimmed) }.getOrNull() ?: return trimmed
+
             return "${active.protocol}://${active.authority}${raw.path}" + (raw.query?.let { "?$it" } ?: "") + (raw.ref?.let { "#$it" } ?: "")
+
         }
+
         val base = activeBaseUrl.trimEnd('/')
+
         return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
+
     }
+
+
 
     private fun loadBatchFiles(): Pair<Array<String>, Array<String>> {
+
         val payloadFile = inputData.getString("payloadFile") ?: ""
+
         if (payloadFile.isNotEmpty()) {
+
             try {
+
                 val file = File(payloadFile)
+
                 if (file.exists()) {
+
                     val items = JSONObject(file.readText()).optJSONArray("files")
+
                     if (items != null) {
+
                         val paths = ArrayList<String>(items.length())
+
                         val names = ArrayList<String>(items.length())
+
                         for (i in 0 until items.length()) {
+
                             val item = items.optJSONObject(i) ?: continue
+
                             val path = item.optString("path", "")
+
                             if (path.isEmpty()) continue
+
                             paths.add(path)
+
                             names.add(item.optString("name", path.substringAfterLast("/")))
+
                         }
+
                         return paths.toTypedArray() to names.toTypedArray()
+
                     }
+
                 }
+
             } catch (e: Exception) {
+
                 android.util.Log.e(TAG, "Cannot read batch payload", e)
+
             }
+
         }
+
         val filePaths = inputData.getStringArray("filePaths") ?: emptyArray()
+
         val fileNames = inputData.getStringArray("fileNames") ?: emptyArray()
+
         return filePaths to fileNames
+
     }
+
+
 
     @android.annotation.SuppressLint("MissingPermission")
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+
         val operation = inputData.getString("operation") ?: return@withContext Result.failure()
+
         val (filePaths, fileNames) = loadBatchFiles()
+
         val destUrl = inputData.getString("destUrl") ?: ""
+
         if (filePaths.isEmpty()) return@withContext Result.success()
 
-        // Káº¿t ná»‘i WebDAV â€” sá»­ dá»¥ng SmartNetworkManager Ä‘á»ƒ chá»n URL Ä‘ang hoáº¡t Ä‘á»™ng (LAN hoáº·c Tailscale)
+
+
+        // Kết nối WebDAV - sử dụng SmartNetworkManager để chọn URL đang hoạt động (LAN hoặc Tailscale)
+
         val user = SecurePrefsHelper.getUser(applicationContext)
+
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        // FIX D3: ÄÃ£ trong withContext(IO) â†’ gá»i suspend fun trá»±c tiáº¿p, khÃ´ng cáº§n runBlocking
+
+        // FIX D3: Đã trong withContext(IO) -> gọi suspend fun trực tiếp, không cần runBlocking
+
         val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+
         if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
 
+
+
         val webDavManager = WebDavManager
+
         webDavManager.connect(savedUrl, user, pass)
+
         val activeBaseUrl = savedUrl
+
         val db = NasApplication.instance.database
+
         val trashMetaDao = db.trashMetaDao()
 
-        // Táº¡o Foreground Notification
+        val repository = WebDavRepository(webDavManager, db)
+
+        setThumbnailActivity("sync", true)
+
+        try {
+
+
+
+        // Tạo Foreground Notification
+
         createChannel(applicationContext)
+
         val operationLabel = when (operation) {
-            "COPY" -> "Sao chÃ©p"
-            "MOVE" -> "Di chuyá»ƒn"
-            "DELETE" -> "XÃ³a"
-            "RESTORE" -> "KhÃ´i phá»¥c"
-            else -> "Xá»­ lÃ½"
+
+            "COPY" -> "Sao chép"
+
+            "MOVE" -> "Di chuyển"
+
+            "DELETE" -> "Xóa"
+
+            "RESTORE" -> "Khôi phục"
+
+            else -> "Xử lý"
+
         }
+
+
 
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("$operationLabel ${filePaths.size} tá»‡p")
+
+            .setContentTitle("$operationLabel ${filePaths.size} tệp")
+
             .setProgress(100, 0, true)
+
             .setOngoing(true)
+
             .setSilent(true)
+
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
+
+
         try {
-            // Tá»« Android 10 (Q) trá»Ÿ lÃªn báº¯t buá»™c khai bÃ¡o foregroundServiceType
-            // khá»›p manifest, náº¿u khÃ´ng sáº½ nÃ©m MissingForegroundServiceTypeException.
+
+            // Từ Android 10 (Q) trở lên bắt buộc khai báo foregroundServiceType
+
+            // khớp manifest, nếu không sẽ ném MissingForegroundServiceTypeException.
+
             setForeground(
+
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+
                     ForegroundInfo(
+
                         NOTIFICATION_ID, notificationBuilder.build(),
+
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+
                     )
+
                 } else {
+
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
+
                 }
+
             )
+
         } catch (e: Exception) {
+
             try {
+
                 androidx.core.app.NotificationManagerCompat.from(applicationContext)
+
                     .notify(NOTIFICATION_ID, notificationBuilder.build())
+
             } catch (_: Exception) {}
+
         }
+
+
 
         val total = filePaths.size
+
         var successCount = 0
+
         var failCount = 0
+
         val trashFolderName = ".trash/"
 
-        // Bá» viá»‡c chuáº©n bá»‹ ThÃ¹ng rÃ¡c dÃ¹ng chung á»Ÿ Ä‘Ã¢y vÃ¬ Trash giá» phá»¥ thuá»™c tá»«ng á»• Ä‘Ä©a
+
+
+        // Bỏ việc chuẩn bị Thùng rác dùng chung ở đây vì Trash giờ phụ thuộc từng ổ đĩa
+
         
+
         var lastNotifyUpdate = 0L
 
+        val refreshTargets = linkedSetOf<String>()
+
+
+
         for ((index, filePath) in filePaths.withIndex()) {
+
             if (isStopped) break
 
+
+
             val fileName = fileNames.getOrElse(index) { filePath.substringAfterLast("/") }
+
             val displayName = safeDataText(fileName)
+
             val percentDone = ((index.toFloat() / total) * 100).toInt()
 
+
+
             val now = System.currentTimeMillis()
+
             if (now - lastNotifyUpdate > 200 || index == 0 || index == total - 1) {
+
                 lastNotifyUpdate = now
 
-                // Cáº­p nháº­t Notification Bar
+
+
+                // Cập nhật Notification Bar
+
                 notificationBuilder
+
                     .setContentTitle("$operationLabel (${ index + 1 }/$total)")
+
                     .setContentText(displayName)
+
                     .setProgress(100, percentDone, false)
+
                 try {
+
                     NotificationManagerCompat.from(applicationContext)
+
                         .notify(NOTIFICATION_ID, notificationBuilder.build())
+
                 } catch (_: SecurityException) {}
 
-                // BÃ¡o cÃ¡o tiáº¿n trÃ¬nh cho UI (náº¿u App Ä‘ang má»Ÿ)
+
+
+                // Báo cáo tiến trình cho UI (nếu app đang mở)
+
                 setProgress(workDataOf(
+
                     "completed" to index,
+
                     "total" to total,
+
                     "currentFile" to displayName,
+
                     "operation" to operation,
+
                     "percent" to percentDone
+
                 ))
+
             }
+
+
 
             try {
+
                 val sourceUrl = resolveBatchWebDavPath(filePath, activeBaseUrl)
+
                 val normalizedDestUrl = if (destUrl.isNotBlank()) resolveBatchWebDavPath(destUrl, activeBaseUrl) else ""
+
                 val isDirectory = sourceUrl.endsWith("/")
+
                 val isInTrash = sourceUrl.contains(trashFolderName)
+
                 when (operation) {
+
                     "COPY" -> {
+
                         val safeDestUrl = if (normalizedDestUrl.endsWith("/")) normalizedDestUrl else "${normalizedDestUrl}/"
+
                         val encodedName = encodeWebDavSegment(fileName)
+
                         var targetUrl = safeDestUrl + encodedName
+
                         if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+
                         webDavManager.copyFile(sourceUrl, targetUrl)
+
+                        refreshTargets.add(webDavParentFolderUrl(targetUrl))
+
+                        if (isDirectory) {
+
+                            refreshTargets.add(normalizeWebDavFolderUrl(targetUrl))
+
+                        }
+
                         successCount++
+
                     }
+
                     "MOVE" -> {
+
                         val safeDestUrl = if (normalizedDestUrl.endsWith("/")) normalizedDestUrl else "${normalizedDestUrl}/"
+
                         val encodedName = encodeWebDavSegment(fileName)
+
                         var targetUrl = safeDestUrl + encodedName
+
                         if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
+
                         webDavManager.renameFile(sourceUrl, targetUrl)
+
                         if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
+
                             trashMetaDao.deleteByTrashPath(sourceUrl)
+
                         } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
+
                             trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+
                         }
+
+                        repository.removeCachedPath(sourceUrl)
+
+                        refreshTargets.add(webDavParentFolderUrl(sourceUrl))
+
+                        refreshTargets.add(webDavParentFolderUrl(targetUrl))
+
+                        if (isDirectory) {
+
+                            refreshTargets.add(normalizeWebDavFolderUrl(targetUrl))
+
+                        }
+
                         successCount++
+
                     }
+
                     "DELETE" -> {
+
                         if (!isInTrash) {
-                            val trashFolderUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, "", false)
+
+                            val trashFolderUrl = buildWebDavTrashParentUrl(activeBaseUrl, sourceUrl)
+
                             val targetUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
-                            try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+
+                            webDavManager.ensureFolderHierarchy(trashFolderUrl)
+
                             webDavManager.renameFile(sourceUrl, targetUrl)
+
                             trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+
+                            repository.removeCachedPath(sourceUrl)
+
+                            refreshTargets.add(webDavParentFolderUrl(sourceUrl))
+
+                            refreshTargets.add(webDavParentFolderUrl(targetUrl))
+
+                            if (isDirectory) {
+
+                                refreshTargets.add(normalizeWebDavFolderUrl(targetUrl))
+
+                            }
+
                         } else {
+
                             webDavManager.deleteFile(sourceUrl, isDirectory)
+
                             trashMetaDao.deleteByTrashPath(sourceUrl)
+
+                            repository.removeCachedPath(sourceUrl)
+
+                            refreshTargets.add(webDavParentFolderUrl(sourceUrl))
+
                         }
+
                         successCount++
+
                     }
+
                     "RESTORE" -> {
+
                         val targetUrl = try {
+
                             trashMetaDao.findByTrashPath(sourceUrl)?.originalPath
+
                         } catch (_: Exception) {
+
                             null
+
                         } ?: buildWebDavRestoreTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
+
                         webDavManager.renameFile(sourceUrl, targetUrl)
+
                         trashMetaDao.deleteByTrashPath(sourceUrl)
+
+                        repository.removeCachedPath(sourceUrl)
+
+                        refreshTargets.add(webDavParentFolderUrl(sourceUrl))
+
+                        refreshTargets.add(webDavParentFolderUrl(targetUrl))
+
+                        if (isDirectory) {
+
+                            refreshTargets.add(normalizeWebDavFolderUrl(targetUrl))
+
+                        }
+
                         successCount++
+
                     }
+
                     else -> {}
+
                 }
+
             } catch (e: Exception) {
-                android.util.Log.e(TAG, "Lá»—i $operation file: $fileName", e)
+
+                android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
+
                 failCount++
+
             }
+
             
+
             // UX-01: Delay 100ms to prevent NAS WebDAV daemon from hanging during mass I/O
+
             kotlinx.coroutines.delay(100L)
+
         }
 
-        // BÃ¡o cÃ¡o káº¿t quáº£ cuá»‘i cÃ¹ng cho UI
+
+
+        // Báo cáo kết quả cuối cùng cho UI
+
+        runCatching { repository.refreshFolderCaches(refreshTargets) }
+
         setProgress(workDataOf(
+
             "completed" to total,
+
             "total" to total,
-            "currentFile" to "HoÃ n táº¥t",
+
+            "currentFile" to "Hoàn tất",
+
             "operation" to operation,
+
             "percent" to 100,
+
             "successCount" to successCount,
+
             "failCount" to failCount
+
         ))
 
-        // Ghi log há»‡ thá»‘ng
+
+
+        // Ghi log hệ thống
+
         try {
+
             val db = NasApplication.instance.database
+
             val logType = if (failCount == 0) "SUCCESS" else "WARNING"
+
             val logMsg = if (failCount == 0) {
-                "$operationLabel thÃ nh cÃ´ng $successCount/$total tá»‡p."
+
+                "$operationLabel thành công $successCount/$total tệp."
+
             } else {
-                "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount tháº¥t báº¡i."
+
+                "$operationLabel: $successCount thành công, $failCount thất bại."
+
             }
-            db.logDao().insertLog(SystemLog(type = logType, module = "HÃ ng loáº¡t", message = logMsg))
+
+            db.logDao().insertLog(SystemLog(type = logType, module = "Hàng loạt", message = logMsg))
+
         } catch (_: Exception) {}
 
-        // Hiá»ƒn thá»‹ thÃ´ng bÃ¡o hoÃ n táº¥t (khÃ´ng cÃ²n ongoing)
+
+
+        // Hiển thị thông báo hoàn tất (không còn ongoing)
+
         val resultText = if (failCount == 0) {
-            "HoÃ n táº¥t $operationLabel $successCount tá»‡p âœ…"
+
+            "Hoàn tất $operationLabel $successCount tệp ✅"
+
         } else {
-            "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount lá»—i"
+
+            "$operationLabel: $successCount thành công, $failCount lỗi"
+
         }
+
         val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+
             .setContentTitle(resultText)
-            .setContentText(if (failCount > 0) "Má»™t sá»‘ tá»‡p khÃ´ng thá»ƒ xá»­ lÃ½." else "Táº¥t cáº£ tá»‡p Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½ thÃ nh cÃ´ng!")
+
+            .setContentText(if (failCount > 0) "Một số tệp không thể xử lý." else "Tất cả tệp đã được xử lý thành công!")
+
             .setAutoCancel(true)
+
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
         try {
+
             NotificationManagerCompat.from(applicationContext)
+
                 .notify(NOTIFICATION_ID, doneNotification.build())
+
         } catch (_: SecurityException) {}
 
+
+
         try {
+
             inputData.getString("payloadFile")?.let { File(it).delete() }
+
         } catch (_: Exception) {}
 
+
+
         return@withContext Result.success()
+
+        } finally {
+
+            setThumbnailActivity("sync", false)
+
+        }
+
     }
+
 }
+

@@ -256,22 +256,25 @@ class NasApplication : Application(), ImageLoaderFactory {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             try {
-                // FIX #21: Ghi DB trên main thread trong crash handler có thể gây ANR nếu DB lỗi.
-                // Dùng runBlocking với timeout ngắn để tránh ANR — nếu timeout thì bỏ qua log.
-                val logResult = java.util.concurrent.Executors.newSingleThreadExecutor().submit<Boolean> {
-                      try {
+                // FIX #21: Ghi DB tr?n main thread trong crash handler c? th? g?y ANR n?u DB l?i.
+                // D?ng 1 thread ri?ng, join ng?n r?i tr? v? default handler.
+                val crashLogThread = Thread {
+                    try {
                         database.logDao().insertLog(
                             SystemLog(
-                            type = "CRASH",
-                            module = "CrashHandler",
-                            message = "${exception.javaClass.simpleName}: ${exception.message}"
-                        ))
-                        true
-                    } catch (e: Exception) { false }
+                                type = "CRASH",
+                                module = "CrashHandler",
+                                message = "${exception.javaClass.simpleName}: ${exception.message}"
+                            )
+                        )
+                    } catch (_: Exception) {}
+                }.apply {
+                    name = "CrashLogger"
+                    isDaemon = true
                 }
-                // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
-                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: Exception) {}
-            } catch (e: Exception) {}
+                crashLogThread.start()
+                try { crashLogThread.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            } catch (_: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
@@ -459,7 +462,7 @@ object SecurePrefsHelper {
     }
 
     fun getUrl(context: Context): String =
-        getSecurePrefs(context).getString(KEY_URL, "") ?: ""
+        getUrlList(context).firstOrNull() ?: ""
 
     fun getUser(context: Context): String =
         getSecurePrefs(context).getString(KEY_USER, "") ?: ""
@@ -516,7 +519,11 @@ object SecurePrefsHelper {
         val tail = prefs.getString(KEY_TAILSCALE_URL, "") ?: ""
         if (lan.isNotEmpty()) result.add(lan)
         if (tail.isNotEmpty() && tail != lan) result.add(tail)
-        return result
+        val filtered = result.filter { isLanOrTailscaleWebDavUrl(it) }
+        if (filtered.size != result.size) {
+            android.util.Log.w("SecurePrefs", "?? ch?n URL NAS kh?ng an to?n kh?i danh s?ch ??ng nh?p ?? l?u")
+        }
+        return filtered
     }
 
     sealed class AuthData {

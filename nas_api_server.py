@@ -856,6 +856,33 @@ def monitor_journalctl():
 #   WEBDAV_USER=daica
 #   WEBDAV_PASS=your_password_here
 AUTH_CONFIG_PATH = "/etc/nas/auth.conf"
+QBITTORRENT_CONFIG_PATH = "/etc/nas/qbittorrent.conf"
+
+def _load_qbittorrent_credentials():
+    """??c qBittorrent user/pass t? file c?u h?nh ho?c bi?n m?i tr??ng."""
+    user = os.environ.get("QBITTORRENT_USER", "") or os.environ.get("QBT_USER", "")
+    passwd = os.environ.get("QBITTORRENT_PASS", "") or os.environ.get("QBT_PASS", "")
+    try:
+        if os.path.exists(QBITTORRENT_CONFIG_PATH):
+            with open(QBITTORRENT_CONFIG_PATH) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key, val = key.strip(), val.strip()
+                    if key == "QBITTORRENT_USER":
+                        user = val
+                    elif key == "QBITTORRENT_PASS":
+                        passwd = val
+    except Exception as e:
+        log.error("Kh?ng ??c ???c %s: %s", QBITTORRENT_CONFIG_PATH, e)
+    if not user or not passwd:
+        log.warning("Ch?a c?u h?nh QBITTORRENT_USER/QBITTORRENT_PASS. H?y t?o file %s v?i QBITTORRENT_USER=... QBITTORRENT_PASS=...", QBITTORRENT_CONFIG_PATH)
+    return user, passwd
+
+QBITTORRENT_USER, QBITTORRENT_PASS = _load_qbittorrent_credentials()
+
 
 # Chi l?y S.M.A.R.T cua o dữ liệu NAS. Khong quet /dev/sdb vi day co the la
 # o USB import, lam nhieu dashboard bang trạng thái cua o ngoai.
@@ -966,6 +993,45 @@ WEBDAV_USER, WEBDAV_PASS = _load_credentials()
 
 _AUTHORIZED_IPS_CACHE = {"ts": 0.0, "ips": set()}
 _AUTHORIZED_IPS_CACHE_TTL = 30.0
+_AUTH_FAILURES = {"ts": 0.0, "ips": {}}
+_AUTH_FAILURES_LOCK = threading.Lock()
+_AUTH_FAILURE_WINDOW = 60.0
+_AUTH_FAILURE_MAX = 8
+
+def _auth_rate_limit_key(ip):
+    return ip or "unknown"
+
+def _auth_rate_limited(key):
+    if not key:
+        return False
+    now = time.time()
+    with _AUTH_FAILURES_LOCK:
+        buckets = _AUTH_FAILURES.setdefault("ips", {})
+        attempts = [ts for ts in buckets.get(key, []) if now - ts < _AUTH_FAILURE_WINDOW]
+        if attempts:
+            buckets[key] = attempts
+        else:
+            buckets.pop(key, None)
+        return len(attempts) >= _AUTH_FAILURE_MAX
+
+def _record_auth_failure(key):
+    if not key:
+        return
+    now = time.time()
+    with _AUTH_FAILURES_LOCK:
+        buckets = _AUTH_FAILURES.setdefault("ips", {})
+        attempts = [ts for ts in buckets.get(key, []) if now - ts < _AUTH_FAILURE_WINDOW]
+        attempts.append(now)
+        buckets[key] = attempts
+        _AUTH_FAILURES["ts"] = now
+
+def _clear_auth_failures(key):
+    if not key:
+        return
+    with _AUTH_FAILURES_LOCK:
+        buckets = _AUTH_FAILURES.setdefault("ips", {})
+        buckets.pop(key, None)
+
 _TRUSTED_PROXY_CACHE = {"ts": 0.0, "nets": []}
 _TRUSTED_PROXY_CACHE_TTL = 60.0
 _TRUSTED_PROXY_KEYS = ("TRUSTED_PROXY_CIDRS", "TRUSTED_PROXY_IPS", "TRUSTED_PROXIES")
@@ -1005,6 +1071,9 @@ def _refresh_authorized_ips_cache(force=False):
             log.warning("[Auth] Khong load duoc authorized_ips cache: %s", e)
         except Exception:
             pass
+        _AUTHORIZED_IPS_CACHE["ips"] = set()
+        _AUTHORIZED_IPS_CACHE["ts"] = now
+
     return _AUTHORIZED_IPS_CACHE.get("ips", set())
 
 def _load_trusted_proxy_networks(force=False):
@@ -1108,7 +1177,7 @@ def _request_client_ip():
 # ============ XAC THUC ============
 def check_auth(username, password):
     import hmac
-    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) & hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
+    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) and hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
 
 def requires_auth(f):
     """Robust voi loi disk/DB. Whitelist va cache IP tin cay truoc, DB chi dung de persist IP moi."""
@@ -1120,15 +1189,22 @@ def requires_auth(f):
         if _ip_in_whitelist(ip):
             return f(*args, **kwargs)
 
+        auth_key = _auth_rate_limit_key(ip or getattr(request, "remote_addr", ""))
+        if _auth_rate_limited(auth_key):
+            return jsonify({"detail": "Too many auth failures"}), 429
+
         # RAM cache: khong mo SQLite moi request
         if ip and ip in _refresh_authorized_ips_cache():
+            _clear_auth_failures(auth_key)
             return f(*args, **kwargs)
 
         auth = request.authorization
         if not auth:
+            _record_auth_failure(auth_key)
             return jsonify({"detail": "Chua xac thuc"}), 401
 
         if check_auth(auth.username, auth.password):
+            _clear_auth_failures(auth_key)
             if ip:
                 _remember_authorized_ip(ip)
                 try:
@@ -1146,6 +1222,7 @@ def requires_auth(f):
                         pass
             return f(*args, **kwargs)
 
+        _record_auth_failure(auth_key)
         return jsonify({"detail": "Sai mat khau"}), 401
 
     return decorated
@@ -7578,15 +7655,20 @@ def api_torrent_control():
 
         qbt_base = "http://127.0.0.1:8080/api/v2"
 
-        # Stệp 1: Login to qBittorrent to get SID cookie
-        login_data = urllib.parse.urlencode({"username": "admin", "password": "adminadmin"}).encode("utf-8")
+        # St?p 1: Login to qBittorrent to get SID cookie
+        if not QBITTORRENT_USER or not QBITTORRENT_PASS:
+            return jsonify({"error": "Ch?a c?u h?nh qBittorrent credentials"}), 500
+        login_data = urllib.parse.urlencode({"username": QBITTORRENT_USER, "password": QBITTORRENT_PASS}).encode("utf-8")
         login_req = urllib.request.Request("%s/auth/login" % qbt_base, data=login_data)
-        login_resp = urllib.request.urlopen(login_req, timeout=5)
         sid_cookie = ""
-        for header in login_resp.info().get_all("Set-Cookie") or []:
-            if "SID=" in header:
-                sid_cookie = header.split("SID=")[1].split(";")[0]
-                break
+        with urllib.request.urlopen(login_req, timeout=5) as login_resp:
+            for header in login_resp.info().get_all("Set-Cookie") or []:
+                if "SID=" in header:
+                    sid_cookie = header.split("SID=")[1].split(";")[0]
+                    break
+        if not sid_cookie:
+            return jsonify({"error": "Kh?ng ??ng nh?p ???c qBittorrent"}), 502
+
 
         # Stệp 2: Map Android actions to qBittorrent v5 API endpoints
         # qBt v5.x renamed: pause -> stop, resume -> start
@@ -9599,12 +9681,7 @@ def _thumbnail_generator():
                         cursor_seen = True
                     thumb_path = _get_thumb_path(base_dir, full_path)
                     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                        # REVERT: KHONG retry placeholder nua. Threshold 2200 truoc
-                        # day khien daemon kick ffmpeg cho 3400+ file moi vong quet
-                        # -> I/O burst lien tuc -> SATA timeout -> corrupt FS.
-                        # Logic seek thong minh trong _generate_video_thumb VAN giu
-                        # cho file MOI; nhung không dùng de spam retry file cu.
-                        # Khi nao disk on dinh thi user co the xoá .thumbs/ thu cong
+                        # Khi nao disk on dinh thi user co the xo? .thumbs/ thu cong
                         # de retry toan bo.
                         already_done += 1
                         continue
@@ -9900,8 +9977,10 @@ def api_thumb():
             return jsonify({"error": "Không hỗ trợ"}), 415
     
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+        with open(thumb_path, 'rb') as f:
+            thumb_bytes = f.read()
         return Response(
-            open(thumb_path, 'rb').read(),
+            thumb_bytes,
             mimetype='image/jpeg',
             headers={'Cache-Control': 'public, max-age=86400'}
         )

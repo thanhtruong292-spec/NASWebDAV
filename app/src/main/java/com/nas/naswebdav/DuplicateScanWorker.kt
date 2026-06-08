@@ -1,4 +1,4 @@
-package com.nas.naswebdav
+﻿package com.nas.naswebdav
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -80,6 +80,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         webDavManager.connect(currentUrl, user, pass)
         setThumbnailActivity("sync", true)
         val db = NasApplication.instance.database
+        val repository = WebDavRepository(webDavManager, db)
 
         // KHỞI TẠO HỆ THỐNG THÔNG BÁO ĐỘNG (DYNAMIC NOTIFICATION)
         val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
@@ -115,6 +116,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     if (!isActive) break
                     if (now - item.lastModified > sevenDaysInMillis) {
                         webDavManager.deleteFile(item.path, item.isDirectory)
+                        runCatching { repository.removeCachedPath(item.path) }
+                        runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(item.path))) }
                     }
                 }
             } catch (e: Exception) { }
@@ -966,6 +969,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             return@withContext Result.failure()
         }
         val db = NasApplication.instance.database
+        val repository = WebDavRepository(webDavManager, db)
+        val refreshTargets = linkedSetOf<String>()
         try {
             val backupFolderBase = if (baseUrl.endsWith("/")) "${baseUrl}AutoBackup/" else "$baseUrl/AutoBackup/"
             try { webDavManager.createFolder(backupFolderBase) } catch (_: Exception) {}
@@ -1135,6 +1140,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     }
                                 }
                             }
+                            runCatching { repository.removeCachedPath(targetFileNasPath) }
+                            refreshTargets.add(normalizeWebDavFolderUrl(targetFolder))
+                            refreshTargets.add(webDavParentFolderUrl(targetFolder))
 
                             val uploadVerified = try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
@@ -1168,6 +1176,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.resultSkipped.value = skippedCount
             AutoBackupState.resultFailed.value = failedCount
             AutoBackupState.showResultDialog.value = true
+            runCatching { repository.refreshFolderCaches(refreshTargets) }
+                .onFailure {
+                    SystemLogger.log("WARNING", "AutoBackup", "Làm mới cache hậu backup lỗi: ${it.message}")
+                }
             
             return@withContext Result.success()
         } catch (e: Exception) {
@@ -1327,6 +1339,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
             // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.
             db.withTransaction { db.fileDao().clearAllFiles() }
+            QueryCache.invalidate("duplicates")
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
@@ -1358,6 +1371,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     reader.endObject()
                 } else throw Exception("Không thể kết nối FastPath API")
             }
+            QueryCache.invalidate("duplicates")
             val duplicateSizes = db.fileDao().getDuplicateSizes()
             var movedCount = 0; var savedBytes = 0L; var totalDuplicatesFound = 0
             for (size in duplicateSizes) {
@@ -1400,9 +1414,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             val rootUrl = manager.currentBaseUrl.trimEnd('/')
             val authHeader = okhttp3.Credentials.basic(user, pass)
             val fileName = sourceUrl.substringAfterLast("/")
-            val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
+            val trashFolderUrl = buildWebDavTrashParentUrl(rootUrl, sourceUrl)
             val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
-            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
+            try { manager.ensureFolderHierarchy(trashFolderUrl) } catch (_: Exception) {}
+            val repository = WebDavRepository(manager, NasApplication.instance.database)
             val success = NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
             if (success) {
                 try {
@@ -1410,6 +1425,8 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
                     )
                 } catch (_: Exception) {}
+                runCatching { repository.removeCachedPath(sourceUrl) }
+                runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(sourceUrl), webDavParentFolderUrl(destUrl))) }
             }
             success
         } catch (_: Exception) { false }

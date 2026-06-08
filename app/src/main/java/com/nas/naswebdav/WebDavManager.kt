@@ -1,4 +1,4 @@
-package com.nas.naswebdav
+﻿package com.nas.naswebdav
 
 
 
@@ -80,26 +80,78 @@ internal fun encodeWebDavSegment(segment: String): String {
     return java.net.URLEncoder.encode(decodeWebDavSegment(segment), "UTF-8").replace("+", "%20")
 }
 
+internal fun isLanOrTailscaleWebDavUrl(rawUrl: String): Boolean {
+    val trimmed = rawUrl.trim()
+    if (trimmed.isBlank()) return false
+    val parsed = runCatching { URL(trimmed) }.getOrNull() ?: return false
+    if (parsed.protocol.equals("https", ignoreCase = true)) return true
+
+    val host = parsed.host.lowercase(java.util.Locale.US)
+    if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+    if (host.contains("tailscale", ignoreCase = true) || host.endsWith(".ts.net")) return true
+
+    return runCatching {
+        val address = java.net.InetAddress.getByName(parsed.host)
+        when (address) {
+            is java.net.Inet4Address -> {
+                val octets = address.address.map { it.toInt() and 0xFF }
+                when {
+                    octets[0] == 10 -> true
+                    octets[0] == 172 && octets[1] in 16..31 -> true
+                    octets[0] == 192 && octets[1] == 168 -> true
+                    octets[0] == 169 && octets[1] == 254 -> true
+                    octets[0] == 100 && octets[1] in 64..127 -> true
+                    else -> false
+                }
+            }
+            else -> {
+                address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress ||
+                    address.hostAddress.startsWith("fc") || address.hostAddress.startsWith("fd")
+            }
+        }
+    }.getOrDefault(false)
+}
+
 internal fun buildWebDavTrashTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
-    val normalizedBase = baseUrl.trimEnd('/')
-    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
-    val driveName = relativePath.substringBefore('/')
-    val encodedDriveName = encodeWebDavSegment(driveName)
-    val encodedName = encodeWebDavSegment(fileName)
-    var targetUrl = "$normalizedBase/$encodedDriveName/.trash/$encodedName"
-    if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-    return targetUrl
+    val trashRoot = buildWebDavTrashRootUrl(baseUrl)
+    val relativePath = normalizeWebDavRelativePath(baseUrl, sourcePath).trim('/')
+    val sourceIsDirectory = isDirectory || sourcePath.trim().endsWith("/")
+
+    val itemRelativePath = when {
+        sourceIsDirectory -> relativePath
+        relativePath.isBlank() -> ""
+        else -> relativePath.substringBeforeLast("/", "")
+    }
+
+    val targetBase = if (itemRelativePath.isBlank()) trashRoot else "$trashRoot${itemRelativePath.trimStart('/')}/"
+
+    if (sourceIsDirectory) {
+        return if (targetBase.endsWith("/")) targetBase else "$targetBase/"
+    }
+
+    val encodedName = if (fileName.isBlank()) "" else encodeWebDavSegment(fileName)
+    if (encodedName.isBlank()) return targetBase
+
+    val targetUrl = "$targetBase$encodedName"
+    return if (isDirectory && !targetUrl.endsWith("/")) "$targetUrl/" else targetUrl
 }
 
 internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
     val normalizedBase = baseUrl.trimEnd('/')
-    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
-    val driveName = relativePath.substringBefore('/')
-    val encodedDriveName = encodeWebDavSegment(driveName)
-    val encodedName = encodeWebDavSegment(fileName)
-    var targetUrl = "$normalizedBase/$encodedDriveName/$encodedName"
-    if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-    return targetUrl
+    val relativePath = normalizeWebDavRelativePath(baseUrl, sourcePath)
+        .removePrefix(".trash/")
+        .trimStart('/')
+
+    val targetRelativePath = when {
+        relativePath.isNotBlank() -> relativePath
+        fileName.isNotBlank() -> encodeWebDavSegment(fileName)
+        else -> ""
+    }
+
+    val targetUrl = if (targetRelativePath.isBlank()) normalizedBase else "$normalizedBase/$targetRelativePath"
+    return if (isDirectory || sourcePath.trim().endsWith("/")) {
+        if (targetUrl.endsWith("/")) targetUrl else "$targetUrl/"
+    } else targetUrl
 }
 
 private fun extractWebDavPath(rawPath: String): String {
@@ -137,6 +189,41 @@ internal fun buildWebDavTrashParentUrl(baseUrl: String, sourcePath: String): Str
     val relativePath = normalizeWebDavRelativePath(baseUrl, sourcePath)
     val parentRelative = relativePath.substringBeforeLast('/', "")
     return if (parentRelative.isBlank()) trashRoot else "$trashRoot${parentRelative.trimStart('/')}/"
+}
+
+internal fun normalizeWebDavResourcePath(rawPath: String): String {
+    return rawPath.trim().substringBefore('?').substringBefore('#')
+}
+
+internal fun normalizeWebDavFolderUrl(rawPath: String): String {
+    val trimmed = normalizeWebDavResourcePath(rawPath)
+    if (trimmed.isBlank()) return ""
+    return if (trimmed.endsWith('/')) trimmed else "$trimmed/"
+}
+
+internal fun escapeSqlLikePrefix(rawValue: String): String {
+    return rawValue.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+}
+
+internal fun webDavParentFolderUrl(rawPath: String): String {
+    val trimmed = normalizeWebDavResourcePath(rawPath)
+    if (trimmed.isBlank()) return ""
+    val parsed = runCatching { URL(trimmed) }.getOrNull()
+    if (parsed != null && parsed.protocol.isNotBlank() && parsed.authority.isNotBlank()) {
+        val pathPart = parsed.path.ifBlank { "/" }
+        val normalizedPath = if (pathPart.endsWith('/')) pathPart.dropLast(1) else pathPart
+        val parentPath = normalizedPath.substringBeforeLast('/', "")
+        val resolvedPath = if (parentPath.isBlank()) "/" else "$parentPath/"
+        return "${parsed.protocol}://${parsed.authority}$resolvedPath"
+    }
+    val normalized = trimmed.trimEnd('/')
+    val parent = normalized.substringBeforeLast('/', "")
+    return if (parent.isBlank()) "$normalized/" else "$parent/"
+}
+
+internal fun webDavSubtreePrefix(rawPath: String): String {
+    val trimmed = normalizeWebDavResourcePath(rawPath).trimEnd('/')
+    return if (trimmed.isBlank()) "" else "${escapeSqlLikePrefix("$trimmed/")}%"
 }
 
 internal suspend fun WebDavManager.ensureFolderHierarchy(folderUrl: String) {
@@ -195,6 +282,32 @@ object WebDavManager {
     fun currentAuthHeader(): String = currentAuthState().authHeader
 
     internal fun currentAuthState(): AuthState = authState
+
+    private fun escapeLikePattern(value: String): String {
+        val escape = 92.toChar()
+        val out = StringBuilder(value.length * 2)
+        value.trim().forEach { ch ->
+            when (ch) {
+                escape -> {
+                    out.append(escape)
+                    out.append(escape)
+                }
+                '%' -> {
+                    out.append(escape)
+                    out.append(ch)
+                }
+                '_' -> {
+                    out.append(escape)
+                    out.append(ch)
+                }
+                else -> out.append(ch)
+            }
+        }
+        return out.toString()
+    }
+
+
+
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
@@ -328,10 +441,21 @@ object WebDavManager {
     fun connect(url: String, user: String, pass: String) {
 
         val safeUrl = if (url.isNotEmpty() && !url.endsWith("/")) "$url/" else url
+        if (safeUrl.isNotBlank() && !isLanOrTailscaleWebDavUrl(safeUrl)) {
+            throw IllegalArgumentException("Ch? cho ph?p URL HTTPS ho?c LAN/Tailscale cho k?t n?i NAS")
+        }
 
-        authState = AuthState(safeUrl, user, pass)
+        val newState = AuthState(safeUrl, user, pass)
+        val oldState = authState
+        if (oldState == newState) return
+
+        authState = newState
+        runCatching { cancelActiveCalls() }
+        runCatching { optimizedClient.connectionPool.evictAll() }
+        runCatching { sardineClient.connectionPool.evictAll() }
 
     }
+
 
     fun cancelActiveCalls() {
         optimizedClient.dispatcher.cancelAll()
@@ -1178,6 +1302,8 @@ class WebDavRepository(
 
     suspend fun getRemoteFilesAndCache(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
+        QueryCache.invalidate("duplicates")
+
         val remoteFiles = kotlinx.coroutines.withTimeout(120000L) { webDavManager.listFiles(url) }
 
         kotlinx.coroutines.withTimeout(45000L) {
@@ -1200,7 +1326,83 @@ class WebDavRepository(
 
         }
 
+        QueryCache.invalidate("duplicates")
+
         remoteFiles
+
+    }
+
+    suspend fun refreshFolderCache(url: String) = refreshFolderCaches(listOf(url))
+
+    suspend fun refreshFolderCaches(urls: Collection<String>) = withContext(Dispatchers.IO) {
+
+        urls.asSequence()
+
+            .map { normalizeWebDavFolderUrl(it) }
+
+            .filter { it.isNotBlank() }
+
+            .distinct()
+
+            .forEach { folderUrl ->
+
+                runCatching { getRemoteFilesAndCache(folderUrl) }
+
+            }
+
+        QueryCache.invalidate("duplicates")
+
+    }
+
+    suspend fun removeCachedPath(path: String) = withContext(Dispatchers.IO) {
+
+        val normalizedPath = normalizeWebDavResourcePath(path)
+
+        if (normalizedPath.isBlank()) return@withContext
+
+        val isDirectory = normalizedPath.endsWith('/')
+
+        val subtreePrefix = if (isDirectory) webDavSubtreePrefix(normalizedPath) else ""
+
+        val thumbnailsToDelete = mutableListOf<ThumbnailCache>()
+
+        if (isDirectory && subtreePrefix.isNotBlank()) {
+
+            thumbnailsToDelete += database.thumbnailDao().getThumbnailsByPrefix(subtreePrefix)
+
+        } else {
+
+            database.thumbnailDao().getThumbnail(normalizedPath)?.let(thumbnailsToDelete::add)
+
+        }
+
+        database.withTransaction {
+
+            database.fileDao().deleteFileByPath(normalizedPath)
+
+            if (isDirectory && subtreePrefix.isNotBlank()) {
+
+                database.fileDao().deleteByPathPrefix(subtreePrefix)
+
+            }
+
+            database.thumbnailDao().deleteThumbnail(normalizedPath)
+
+            if (isDirectory && subtreePrefix.isNotBlank()) {
+
+                database.thumbnailDao().deleteThumbnailsByPrefix(subtreePrefix)
+
+            }
+
+        }
+
+        thumbnailsToDelete.distinctBy { it.localFilePath }.forEach { thumb ->
+
+            runCatching { java.io.File(thumb.localFilePath).delete() }
+
+        }
+
+        QueryCache.invalidate("duplicates")
 
     }
 
@@ -1236,7 +1438,27 @@ class WebDavRepository(
 
     suspend fun searchGlobal(keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        val escapedKeyword = buildString {
+            val escape = 92.toChar()
+            keyword.trim().forEach { ch ->
+                when (ch) {
+                    escape -> {
+                        append(escape)
+                        append(escape)
+                    }
+                    '%' -> {
+                        append(escape)
+                        append(ch)
+                    }
+                    '_' -> {
+                        append(escape)
+                        append(ch)
+                    }
+                    else -> append(ch)
+                }
+            }
+        }
+        database.fileDao().searchFiles(escapedKeyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
@@ -1252,7 +1474,7 @@ class WebDavRepository(
 
     suspend fun clearSystemLogs() = withContext(Dispatchers.IO) { database.logDao().clearAllLogs() }
 
-    suspend fun removeDuplicateFromDb(path: String) = withContext(Dispatchers.IO) { database.fileDao().deleteFileByPath(path) }
+    suspend fun removeDuplicateFromDb(path: String) = removeCachedPath(path)
 
 }
 
@@ -1268,6 +1490,10 @@ object QueryCache {
     // Khi hai coroutine dong thoi thay cache miss -> deu goi loader() -> duplicate work.
     // ConcurrentHashMap chi an toan cho single operations, khong cho compound check-then-put.
     private val mutex = kotlinx.coroutines.sync.Mutex()
+
+    fun invalidate(key: String) {
+        cache.remove(key)
+    }
 
     suspend fun <T> cached(key: String, loader: suspend () -> T): T {
 

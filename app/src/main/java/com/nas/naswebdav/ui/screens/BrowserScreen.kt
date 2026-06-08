@@ -1,4 +1,4 @@
-@file:Suppress("DEPRECATION")
+﻿@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
@@ -1358,7 +1358,7 @@ fun FileItemGridCell(
                 commonDialogMessage = "Đã sao chép liên kết tệp!"
                 showCommonDialog = true
             })
-            // Ch? hi?n n?t Kh?i ph?c n?u ?ang ??ng trong Th?ng r?c
+            // Chỉ hiện nút Khôi phục nếu đang ở trong Thùng rác
             DropdownMenuItem(text = { Text("Sao chép…") }, onClick = {
                 showMenu = false
                 pendingTransferOperation = "COPY"
@@ -1433,7 +1433,7 @@ fun FileItemGridCell(
         ) {
             if (isMedia) {
                 // MEDIA: Thumbnail edge-to-edge, sạch sẽ
-                WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
+                WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
 
                 // Badge video play icon
                 if (isVideo) {
@@ -1605,29 +1605,28 @@ private val mediaThumbClient by lazy {
 }
 
 @Composable
-fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier: Modifier) {
+fun WebDavCachedThumbnail(
+    url: String,
+    auth: String,
+    isVideo: Boolean,
+    modifier: Modifier,
+    viewModel: WebDavViewModel
+) {
     val context = LocalContext.current
-    var localThumbPath by remember { mutableStateOf<String?>(null) }
-    var isError by remember { mutableStateOf(false) }
-
-    // Cờ dự phòng: Khi NAS lỗi (hoặc định dạng dị), tự động dùng Coil tải ảnh gốc thu nhỏ
-    var useOriginalFallback by remember { mutableStateOf(false) }
+    var localThumbPath by remember(url, auth, isVideo) { mutableStateOf<String?>(null) }
+    var isError by remember(url, auth, isVideo) { mutableStateOf(false) }
+    var useOriginalFallback by remember(url, auth, isVideo) { mutableStateOf(false) }
 
     val thumbnailDao = remember { NasApplication.instance.database.thumbnailDao() }
-    val fingerprintDao = remember { NasApplication.instance.database.fingerprintDao() }
 
-    LaunchedEffect(url) {
-        // TỐI ƯU: Bypass (Bỏ qua) NAS API đối với các định dạng ảnh dễ làm server lỗi (PNG alpha, HEIC Apple)
+    LaunchedEffect(url, auth, isVideo) {
         val ext = url.substringAfterLast('.', "").substringBefore("?").lowercase()
         val isProblematicForNas = ext in listOf("png", "heic", "heif", "gif", "bmp")
 
         if (!isVideo && isProblematicForNas) {
             useOriginalFallback = true
-            // Xóa cache rác (nếu trước đó NAS đã lỡ lưu cái Icon Play lỗi vào db)
             withContext(Dispatchers.IO) {
-                try { thumbnailDao.deleteThumbnail(url) } catch (e: Exception) {
-                    android.util.Log.d("BrowserScreen", "Không xoá được thumbnail cache rác cho $url: ${e.message}")
-                }
+                runCatching { thumbnailDao.deleteThumbnail(url) }
             }
             return@LaunchedEffect
         }
@@ -1635,76 +1634,37 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
         withContext(Dispatchers.IO) {
             try {
                 thumbnailSemaphore.withPermit {
-                    var attempts = 0
-                    val maxAttempts = 1
-                    while (attempts < maxAttempts) {
-                        attempts++
-                        try {
-                            // 1. Kiểm tra nhanh DB
-                            val cached = thumbnailDao.getThumbnail(url)
-                            if (cached != null) {
-                                val file = File(cached.localFilePath)
-                                if (file.exists() && file.length() > 0) {
-                                    localThumbPath = file.absolutePath
-                                    return@withPermit
-                                } else {
-                                    thumbnailDao.deleteThumbnail(url)
-                                }
-                            }
-
-                            // 2. Kiểm tra File nháp
-                            val safeHash = Integer.toHexString(url.hashCode())
-                            val thumbDir = context.getDir("persistent_thumbnails", android.content.Context.MODE_PRIVATE)
-                            val thumbFile = File(thumbDir, "thumb_$safeHash.jpg")
-
-                            if (thumbFile.exists() && thumbFile.length() > 0) {
-                                localThumbPath = thumbFile.absolutePath
-                                thumbnailDao.saveThumbnail(com.nas.naswebdav.ThumbnailCache(url, thumbFile.absolutePath))
-                                return@withPermit
-                            }
-
-                            // 3. Gọi API NAS (/api/thumb)
-                            val parsedUrl = java.net.URL(url)
-                            val nasHost = parsedUrl.host
-                            val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
-                            val apiThumbUrl = "${url.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
-
-                            val apiRequest = okhttp3.Request.Builder()
-                                .url(apiThumbUrl)
-                                .header("Authorization", auth)
-                                .build()
-
-                            mediaThumbClient.newCall(apiRequest).execute().use { apiResponse ->
-                                val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
-
-                                if (apiResponse.isSuccessful && apiResponse.body != null) {
-                                    // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
-                                    if (!isVideo && contentLength in 1L..2000L) {
-                                        throw Exception("NAS trả về Icon báo lỗi thay vì Thumbnail thật")
-                                    }
-
-                                    // FIX: thay !! bang null check phong cao bang isSuccessful=true voi body rong
-                                    val stream = apiResponse.body?.byteStream() ?: throw Exception("Phản hồi rỗng từ NAS")
-                                    stream.use { input ->
-                                        java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
-                                        if (thumbFile.length() > 0) {
-                                            localThumbPath = thumbFile.absolutePath
-                                            thumbnailDao.saveThumbnail(com.nas.naswebdav.ThumbnailCache(url, thumbFile.absolutePath))
-                                            return@withPermit
-                                        }
-                                    }
-                                } else {
-                                    throw Exception("NAS API từ chối tạo thumbnail")
-                                }
-                            }
-                        } catch (e: Exception) {
-                            if (!isVideo) {
-                                useOriginalFallback = true
-                            } else {
-                                isError = true
-                            }
-                            break
+                    val cached = thumbnailDao.getThumbnail(url)
+                    if (cached != null) {
+                        val file = File(cached.localFilePath)
+                        if (file.exists() && file.length() > 0) {
+                            localThumbPath = file.absolutePath
+                            return@withPermit
                         }
+                        thumbnailDao.deleteThumbnail(url)
+                    }
+
+                    val safeHash = Integer.toHexString(url.hashCode())
+                    val thumbDir = context.getDir("persistent_thumbnails", android.content.Context.MODE_PRIVATE)
+                    val thumbFile = File(thumbDir, "thumb_$safeHash.jpg")
+
+                    if (thumbFile.exists() && thumbFile.length() > 0) {
+                        localThumbPath = thumbFile.absolutePath
+                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath)) }
+                        return@withPermit
+                    }
+
+                    val downloaded = viewModel.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
+                    if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
+                        localThumbPath = thumbFile.absolutePath
+                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath)) }
+                        return@withPermit
+                    }
+
+                    if (!isVideo) {
+                        useOriginalFallback = true
+                    } else {
+                        isError = true
                     }
                 }
             } catch (e: Exception) {
@@ -1713,7 +1673,6 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
         }
     }
 
-    // ═══ LOGIC RENDER UI ═══
     if (localThumbPath != null) {
         AsyncImage(
             model = coil.request.ImageRequest.Builder(LocalContext.current).data(File(localThumbPath!!)).crossfade(true).build(),
@@ -1722,7 +1681,6 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
             contentScale = ContentScale.Crop
         )
     } else if (useOriginalFallback) {
-        // CỨU CHỮA KHI NAS API CHẾT: Ép Coil tải trực tiếp link WebDAV (size 300x300 để giải cứu RAM)
         AsyncImage(
             model = coil.request.ImageRequest.Builder(LocalContext.current)
                 .data(url.toFastMediaUrl())
@@ -1743,7 +1701,7 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
                     }
                     val ext = url.substringAfterLast(".", "").substringBefore("?").uppercase()
                     if (ext.isNotEmpty() && ext.length <= 5) {
-                        Text(text = ".$ext", color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(text = ".${ext}", color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             } else {
@@ -1752,9 +1710,6 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
         }
     }
 }
-// --- HÀM HELPER HỖ TRỢ MỞ VIDEO BẰNG EXTERNAL PLAYERS (VLC, MX PLAYER) ---
-// KIẾN TRÚC MỚI: Dùng Local HTTP Proxy thay vì nhúng auth vào URL
-// → VLC kết nối tới localhost (không cần auth) → Proxy chuyển tiếp tới NAS với header chuẩn
 fun openExternalVideoPlayer(
     context: android.content.Context,
     url: String,

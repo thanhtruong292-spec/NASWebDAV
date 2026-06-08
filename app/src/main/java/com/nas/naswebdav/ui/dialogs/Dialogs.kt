@@ -1923,7 +1923,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                                                 // 1. Lớp Ảnh Nền (TỐI ƯU HÓA DB CACHE MỚI CHO TẤT CẢ MEDIA)
                                                 if (isImage || isVideo) {
                                                     Box(modifier = Modifier.fillMaxSize()) {
-                                                        WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
+                                                        WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
                                                     }
                                                 } else {
                                                     Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
