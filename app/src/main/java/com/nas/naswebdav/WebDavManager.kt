@@ -1,7 +1,5 @@
 ﻿package com.nas.naswebdav
 
-
-
 import android.util.Xml
 
 import kotlinx.coroutines.Dispatchers
@@ -48,8 +46,6 @@ import kotlinx.coroutines.sync.Mutex
 
 import kotlinx.coroutines.sync.withLock
 
-
-
 data class NasFile(
 
     val name: String,
@@ -67,8 +63,6 @@ data class NasFile(
     val partialHash: String? = null
 
 )
-
-
 
 // Động cơ WebDAV hiệu suất cao - Không sử dụng Sardine
 
@@ -306,9 +300,6 @@ object WebDavManager {
         return out.toString()
     }
 
-
-
-
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
     }
@@ -377,8 +368,6 @@ object WebDavManager {
 
     }
 
-
-
     // MÁY CHỦ SARDINE ĐỘC LẬP (PHÍM 15): Không chia sẻ Client với hệ thống Upload/Download
 
     // Nhằm giải phóng Sardine khỏi Cấm Redirect và Chèn Header BasicAuth sai lệch
@@ -435,8 +424,6 @@ object WebDavManager {
 
     }
 
-
-
     @Synchronized
     fun connect(url: String, user: String, pass: String) {
 
@@ -456,13 +443,10 @@ object WebDavManager {
 
     }
 
-
     fun cancelActiveCalls() {
         optimizedClient.dispatcher.cancelAll()
         sardineClient.dispatcher.cancelAll()
     }
-
-
 
     // TÍNH NĂNG 4.H: Đo lường Sức Khoẻ Mạng bằng HTTP OPTIONS cực nhẹ
 
@@ -508,8 +492,6 @@ object WebDavManager {
 
     }
 
-
-
     // KIẾN TRÚC DOANH NGHIỆP: Truy vấn thông số tệp (Kích thước, ETag) an toàn, ĐÓNG kết nối ngay để tránh sập Connection Pool của OkHttp
 
     suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
@@ -544,8 +526,6 @@ object WebDavManager {
 
     }
 
-
-
     // PHASE 18: KHAI TỬ SARDINE NATIVE.
 
     // Thư viện Sardine-Android quá cũ (0.8) và khắt khe với WebDAV XML Namespace, khiến NAS trả về XML hợp lệ nhưng Sardine lại ngậm miệng lờ đi, tạo ra Thư mục Trống!
@@ -555,8 +535,6 @@ object WebDavManager {
     suspend fun listFiles(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
         val safeUrl = if (url.endsWith("/")) url else "$url/"
-
-        
 
         // 1. Dùng sardineClient (đã gắn sẵn Basic Auth)
 
@@ -569,8 +547,6 @@ object WebDavManager {
             .header("Depth", "1")
 
             .build()
-
-            
 
         val xmlString = sardineClient.newCall(request).execute().use { response ->
 
@@ -586,11 +562,7 @@ object WebDavManager {
 
         }
 
-
-
         val result = mutableListOf<NasFile>()
-
-        
 
         // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS
 
@@ -604,8 +576,6 @@ object WebDavManager {
 
             parser.setInput(java.io.StringReader(xmlString))
 
-
-
             var eventType = parser.eventType
 
             var currentHref = ""
@@ -618,13 +588,9 @@ object WebDavManager {
 
             var currentModTime = 0L
 
-            
-
             var insideResponse = false
 
             var textBuffer = ""
-
-
 
             while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
 
@@ -718,8 +684,6 @@ object WebDavManager {
 
                                         }
 
-                                        
-
                                         // Lọc bỏ gốc rễ
 
                                         if (fullUri.trimEnd('/') != safeUrl.trimEnd('/')) {
@@ -737,8 +701,6 @@ object WebDavManager {
                                                 extractedName = fullUri.trimEnd('/').substringAfterLast('/')
 
                                             }
-
-                                            
 
                                             val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri; result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
 
@@ -770,13 +732,9 @@ object WebDavManager {
 
         }
 
-        
-
         result
 
     }
-
-
 
     // Tải lên trực tiếp luồng (Streaming Upload), không nạp file vào RAM
 
@@ -810,8 +768,6 @@ object WebDavManager {
 
                     val throttleStartTime = System.currentTimeMillis()
 
-
-
                     while (source.read(sink.buffer, bufferSize).also { readCount = it } != -1L) {
 
                         sink.emit()
@@ -819,8 +775,6 @@ object WebDavManager {
                         totalBytesRead += readCount
 
                         onProgress(totalBytesRead, totalContentLength)
-
-
 
                         // Throttle: nếu đang vượt tốc, chờ cho kịp
 
@@ -848,8 +802,6 @@ object WebDavManager {
 
         }
 
-
-
         val request = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody).build()
 
         optimizedClient.newBuilder()
@@ -865,8 +817,6 @@ object WebDavManager {
             }
 
     }
-
-
 
     // TÍNH NĂNG MỚI 3.A: GZIP Streaming Upload (Nén luồng thời gian thực)
 
@@ -888,15 +838,11 @@ object WebDavManager {
 
             override fun contentLength() = -1L
 
-            
-
             override fun writeTo(sink: BufferedSink) {
 
                 val gzipSink = okio.GzipSink(sink)
 
                 val bufferedGzip = gzipSink.buffer()
-
-                
 
                 inputStream.source().use { source ->
 
@@ -928,8 +874,6 @@ object WebDavManager {
 
         }
 
-
-
         val request = Request.Builder().withAuth(authState)
 
             .url(fileUrl)
@@ -939,8 +883,6 @@ object WebDavManager {
             .header("Content-Encoding", "gzip") // Kích hoạt vòi xả GZIP phía Server NGINX / NAS
 
             .build()
-
-
 
         optimizedClient.newBuilder()
 
@@ -976,8 +918,6 @@ object WebDavManager {
         }
 
         val remainingBytes = totalContentLength - uploadedBytes
-
-
 
         val requestBody = object : RequestBody() {
 
@@ -1023,8 +963,6 @@ object WebDavManager {
 
         }
 
-
-
         val request = Request.Builder().withAuth(authState)
 
             .url(fileUrl)
@@ -1034,8 +972,6 @@ object WebDavManager {
             .put(requestBody)
 
             .build()
-
-
 
         optimizedClient.newBuilder()
 
@@ -1054,8 +990,6 @@ object WebDavManager {
             }
 
     }
-
-
 
     suspend fun getPartialHashStream(url: String): String? = withContext(Dispatchers.IO) {
 
@@ -1082,8 +1016,6 @@ object WebDavManager {
         } catch (e: Exception) { null }
 
     }
-
-
 
     // TÍNH NĂNG 7.M: Đọc lướt nội dung File Text giới hạn dòng (Tránh lag RAM)
 
@@ -1130,8 +1062,6 @@ object WebDavManager {
         }
 
     }
-
-
 
     suspend fun createFolder(url: String) = withContext(Dispatchers.IO) {
 
@@ -1199,7 +1129,6 @@ object WebDavManager {
 
     suspend fun uploadFile(fileUrl: String, file: java.io.File, contentType: String) = withContext(Dispatchers.IO) {
 
-
         java.io.FileInputStream(file).use { inputStream ->
 
             uploadStreamWithProgress(fileUrl, inputStream, file.length(), contentType) { _, _ -> }
@@ -1208,8 +1137,6 @@ object WebDavManager {
 
     }
 
-
-
     // Hàm hỗ trợ tương thích ngược cho WebDavViewModel
 
     fun initConnection() {
@@ -1217,8 +1144,6 @@ object WebDavManager {
         // Không cần làm gì: Kiến trúc OkHttp mới dùng Lazy Loading và tự quản lý Connection Pool an toàn
 
     }
-
-
 
     suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
 
@@ -1256,15 +1181,11 @@ object WebDavManager {
 
 }
 
-
-
 // ════════════════════════════════════════════════════════════════════════════
 
 // WebDavRepository — Truy vấn dữ liệu qua WebDAV + Room Cache
 
 // ════════════════════════════════════════════════════════════════════════════
-
-
 
 class WebDavRepository(
 
@@ -1279,8 +1200,6 @@ class WebDavRepository(
         database.fileDao().getFiles(url)
 
     }
-
-
 
     fun getFilesStream(url: String): Flow<PagingData<NasFile>> {
 
@@ -1297,8 +1216,6 @@ class WebDavRepository(
         }
 
     }
-
-
 
     suspend fun getRemoteFilesAndCache(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
@@ -1406,8 +1323,6 @@ class WebDavRepository(
 
     }
 
-
-
     suspend fun getDuplicateFiles(): List<NasFile> = withContext(Dispatchers.IO) {
 
         QueryCache.cached("duplicates") {
@@ -1418,23 +1333,17 @@ class WebDavRepository(
 
     }
 
-
-
     suspend fun getLatestPhotos(): List<NasFile> = withContext(Dispatchers.IO) {
 
         database.fileDao().getLatestPhotos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
-
-
     suspend fun getRecentVideos(): List<NasFile> = withContext(Dispatchers.IO) {
 
         database.fileDao().getRecentVideos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
-
-
 
     suspend fun searchGlobal(keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
 
@@ -1462,8 +1371,6 @@ class WebDavRepository(
 
     }
 
-
-
     suspend fun getSystemLogs(): List<SystemLog> = withContext(Dispatchers.IO) { database.logDao().getRecentLogs() }
 
     suspend fun addSystemLog(type: String, module: String, message: String) = withContext(Dispatchers.IO) {
@@ -1477,8 +1384,6 @@ class WebDavRepository(
     suspend fun removeDuplicateFromDb(path: String) = removeCachedPath(path)
 
 }
-
-
 
 object QueryCache {
 
