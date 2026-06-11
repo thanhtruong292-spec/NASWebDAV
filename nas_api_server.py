@@ -7596,8 +7596,10 @@ def api_fan_control():
 
         elif mode == 'custom':
             settings['mode'] = 'custom'
-            settings['on_temp'] = data.get('on_temp', settings.get('on_temp', FAN_DEFAULT_ON_TEMP))
-            settings['off_temp'] = data.get('off_temp', settings.get('off_temp', FAN_DEFAULT_OFF_TEMP))
+            settings['on_temp'] = float(data.get('on_temp', settings.get('on_temp', FAN_DEFAULT_ON_TEMP)) or FAN_DEFAULT_ON_TEMP)
+            settings['off_temp'] = float(data.get('off_temp', settings.get('off_temp', FAN_DEFAULT_OFF_TEMP)) or FAN_DEFAULT_OFF_TEMP)
+            if settings['off_temp'] >= settings['on_temp']:
+                settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
             # Watchdog se quyet dinh duty 0/10000 theo hysteresis. Cho phep
@@ -11087,6 +11089,16 @@ def _fan_controller_watchdog():
             control_temp = hdd_temp
 
             force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
+
+            # FIX: Khi không đọc được nhiệt HDD (ổ đang ngủ / smartctl/hddtemp/drivetemp
+            # đều thất bại) get_hdd_temp() trả "--°C" -> _fan_temp_value = 0.0. Trước đây
+            # control_temp = 0 bị coi là "mát" (<= off_temp) nên quạt bị ép TẮT, khiến tính
+            # năng chạy quạt theo nhiệt HDD không hoạt động. Giữ nguyên trạng thái quạt hiện
+            # tại khi nhiệt HDD chưa xác định; CPU force-on (>=70°C) bên dưới vẫn là chốt an toàn.
+            if not force_hot and control_temp <= 0:
+                time.sleep(1)
+                continue
+
             if force_hot:
                 target_percent = 100
                 target_since_ts = now_ts
