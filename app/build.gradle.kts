@@ -159,6 +159,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("androidx.room:room-testing:$room_version")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 ksp {
