@@ -104,8 +104,10 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                         }
                     }
                     db.syncActionDao().deleteById(action.id)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     allSuccess = false
+                    SystemLogger.log("WARNING", "OfflineSync",
+                        "Thao tác ${action.actionType} thất bại (${action.sourcePath}): ${e.message?.take(120)}")
                 }
             }
             runCatching { repository.refreshFolderCaches(refreshTargets) }

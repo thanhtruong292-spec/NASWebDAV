@@ -8472,32 +8472,6 @@ def api_screen_record_finish():
         _write_screen_manifest(session_dir, manifest)
     threading.Thread(target=_screen_record_finish_worker, args=(session_dir, sid, total), daemon=True).start()
     return jsonify({"ok": True, "session_id": sid, "status": "processing", "segments": total}), 202
-    if False:
-        segments_dir = os.path.join(session_dir, "segments")
-        final_ts = os.path.join(session_dir, "%s.ts" % sid)
-        tmp_ts = final_ts + ".part"
-        with open(tmp_ts, "wb") as out:
-            for i in range(total):
-                part = os.path.join(segments_dir, "part_%06d.ts" % i)
-                with open(part, "rb") as f:
-                    shutil.copyfileobj(f, out, 1024 * 1024)
-        os.replace(tmp_ts, final_ts)
-        
-        # Xóa các segment riêng lẻ để giải phóng bộ nhớ đĩa ngay lập tức
-        try:
-            shutil.rmtree(segments_dir)
-            log.info("[ScreenRecord] Đã dọn dẹp thư mục segments tạm thời: %s", segments_dir)
-        except Exception as e:
-            log.warning("[ScreenRecord] Không thể xóa thư mục segments tạm thời: %s", e)
-
-        manifest["status"] = "done"
-        manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
-        manifest["missing"] = []
-        manifest["completed_at"] = int(time.time())
-        _write_screen_manifest(session_dir, manifest)
-    # KHÔNG giải phóng block thumbnail ở đây, remux_worker sẽ giải phóng trong khối finally khi xong
-    threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
-    return jsonify({"ok": True, "session_id": sid, "final_ts": manifest["final_ts"], "segments": total})
 
 
 @app.route("/api/screen_record/status", methods=["GET"])
@@ -10471,6 +10445,11 @@ def api_guest_create():
 
         if not ok_user:
             return jsonify({"error": "Không thể tạo user Linux. Kiểm tra quyền root."}), 500
+
+        if not ok_ftp:
+            # Cau hinh FTP that bai -> don user vua tao de tranh tai khoan mo coi, bao loi that.
+            _delete_linux_user(username)
+            return jsonify({"error": "Không thể cấu hình FTP cho guest. Kiểm tra vsftpd."}), 500
 
         with _guest_lock:
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
