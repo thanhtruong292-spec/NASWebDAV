@@ -116,7 +116,7 @@ private fun isNasTargetDisk(disk: OmvDiskInfo): Boolean {
         "N300" in blob
 }
 
-private fun selectNasTargetDisk(disks: List<OmvDiskInfo>): OmvDiskInfo? =
+internal fun selectNasTargetDisk(disks: List<OmvDiskInfo>): OmvDiskInfo? =
     disks.firstOrNull { isNasTargetDisk(it) } ?:
         disks.firstOrNull { !it.isRoot && !it.isUsbImport && it.name != "sdb" && it.device != "/dev/sdb" }
 

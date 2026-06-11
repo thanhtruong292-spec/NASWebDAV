@@ -87,7 +87,7 @@ import androidx.compose.foundation.lazy.items
 
 private const val VIEWED_FILES_LIMIT = 5000
 
-private fun markBrowserFilesViewed(
+internal fun markBrowserFilesViewed(
     prefs: android.content.SharedPreferences,
     paths: Collection<String>
 ) {

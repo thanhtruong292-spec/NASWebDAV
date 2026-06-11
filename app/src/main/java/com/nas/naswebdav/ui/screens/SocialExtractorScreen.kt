@@ -946,3 +946,4 @@ private fun platformColor(platform: String): Color = when (platform) {
     "YouTube"  -> Color(0xFFFF0000)
     "Instagram"-> Color(0xFFE1306C)
     else       -> Color(0xFF8892B0)
+}

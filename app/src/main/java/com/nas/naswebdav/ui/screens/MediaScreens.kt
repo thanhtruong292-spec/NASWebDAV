@@ -83,11 +83,11 @@ private val categoryColors = mapOf(
     "Thể Thao"           to listOf(Color(0xFF56AB2F), Color(0xFFA8E063))
 )
 
-private val DarkSurface = Color.Black
-private val DarkCard    = Color.Black
-private val AccentCyan  = Color(0xFF00D2FF)
-private val TextPrimary = Color(0xFFE8E8E8)
-private val TextSecondary = Color(0xFF8892B0)
+private val MvDarkSurface = Color.Black
+private val MvDarkCard    = Color.Black
+private val MvAccentCyan  = Color(0xFF00D2FF)
+private val MvTextPrimary = Color(0xFFE8E8E8)
+private val MvTextSecondary = Color(0xFF8892B0)
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
 @Composable
@@ -181,13 +181,13 @@ fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: Stri
     Column(
         Modifier
             .fillMaxSize()
-            .background(DarkSurface)
+            .background(MvDarkSurface)
     ) {
         // ============ HEADER + TABS ============
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(DarkCard)
+                .background(MvDarkCard)
         ) {
             // Top bar
             Row(
@@ -230,7 +230,7 @@ fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: Stri
                 } else {
                     // Tab Khám Phá: nút Refresh + Trigger AI
                     IconButton(onClick = { viewModel.fetchAiTags() }) {
-                        Icon(Icons.Default.Refresh, null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.Refresh, null, tint = MvAccentCyan, modifier = Modifier.size(22.dp))
                     }
                     IconButton(onClick = { viewModel.triggerAiScan(context) }) {
                         Icon(Icons.Default.AutoAwesome, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(22.dp))
@@ -241,15 +241,15 @@ fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: Stri
             // Tab Row
             TabRow(
                 selectedTabIndex = selectedTab,
-                containerColor = DarkCard,
-                contentColor = AccentCyan,
+                containerColor = MvDarkCard,
+                contentColor = MvAccentCyan,
                 indicator = { tabPositions ->
                     Box(
                         Modifier
                             .tabIndicatorOffset(tabPositions[selectedTab])
                             .height(2.dp)
                             .padding(horizontal = 16.dp)
-                            .background(AccentCyan, RoundedCornerShape(1.dp))
+                            .background(MvAccentCyan, RoundedCornerShape(1.dp))
                     )
                 }
             ) {
@@ -262,11 +262,11 @@ fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: Stri
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 if (idx == 1) {
                                     Icon(Icons.Default.AutoAwesome, null,
-                                        tint = if (selectedTab == 1) AccentCyan else TextSecondary,
+                                        tint = if (selectedTab == 1) MvAccentCyan else MvTextSecondary,
                                         modifier = Modifier.size(14.dp))
                                 }
                                 Text(label, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedTab == idx) AccentCyan else TextSecondary,
+                                    color = if (selectedTab == idx) MvAccentCyan else MvTextSecondary,
                                     fontSize = 13.sp)
                             }
                         }
@@ -457,7 +457,7 @@ private fun AiCategoryOverview(
     onCategoryClick: (String) -> Unit
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().background(DarkSurface),
+        modifier = Modifier.fillMaxSize().background(MvDarkSurface),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -469,17 +469,17 @@ private fun AiCategoryOverview(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("🤖 AI Gallery", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text("🤖 AI Gallery", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MvTextPrimary)
                     if (viewModel.aiLastScan.isNotEmpty()) {
-                        Text("Lần quét cuối: ${viewModel.aiLastScan}", fontSize = 11.sp, color = TextSecondary)
+                        Text("Lần quét cuối: ${viewModel.aiLastScan}", fontSize = 11.sp, color = MvTextSecondary)
                     }
                 }
                 if (viewModel.aiTotal > 0) {
                     Box(
-                        Modifier.clip(RoundedCornerShape(12.dp)).background(AccentCyan.copy(alpha = 0.15f))
+                        Modifier.clip(RoundedCornerShape(12.dp)).background(MvAccentCyan.copy(alpha = 0.15f))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("${viewModel.aiTotal} ảnh", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
+                        Text("${viewModel.aiTotal} ảnh", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MvAccentCyan)
                     }
                 }
             }
@@ -491,9 +491,9 @@ private fun AiCategoryOverview(
                 viewModel.isLoadingAiTags -> {
                     Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = AccentCyan, modifier = Modifier.size(40.dp))
+                            CircularProgressIndicator(color = MvAccentCyan, modifier = Modifier.size(40.dp))
                             Spacer(Modifier.height(12.dp))
-                            Text("Đang tải dữ liệu AI...", color = TextSecondary, fontSize = 13.sp)
+                            Text("Đang tải dữ liệu AI...", color = MvTextSecondary, fontSize = 13.sp)
                         }
                     }
                 }
@@ -533,7 +533,7 @@ private fun AiCategoryCard(
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        colors = CardDefaults.cardColors(containerColor = MvDarkCard),
         shape = RoundedCornerShape(16.dp)
     ) {
         Row(Modifier.fillMaxWidth().height(80.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -560,7 +560,7 @@ private fun AiCategoryCard(
                 Box(
                     Modifier.fillMaxSize()
                         .background(
-                            Brush.horizontalGradient(listOf(Color.Transparent, DarkCard.copy(alpha = 0.3f))),
+                            Brush.horizontalGradient(listOf(Color.Transparent, MvDarkCard.copy(alpha = 0.3f))),
                             RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
                         ),
                     contentAlignment = Alignment.Center
@@ -575,12 +575,12 @@ private fun AiCategoryCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(icon, fontSize = 16.sp)
                     Spacer(Modifier.width(6.dp))
-                    Text(name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                    Text(name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MvTextPrimary)
                 }
                 Spacer(Modifier.height(4.dp))
-                Text("$count ảnh", fontSize = 12.sp, color = TextSecondary)
+                Text("$count ảnh", fontSize = 12.sp, color = MvTextSecondary)
             }
-            Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.padding(end = 16.dp))
+            Icon(Icons.Default.ChevronRight, null, tint = MvTextSecondary, modifier = Modifier.padding(end = 16.dp))
         }
     }
 }
@@ -595,7 +595,7 @@ private fun AiEmptyState(status: String, aiRunning: Boolean) {
         Spacer(Modifier.height(8.dp))
         Text(
             if (aiRunning) "AI đang phân loại ảnh..." else "Chưa có dữ liệu AI",
-            fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary,
+            fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MvTextPrimary,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(8.dp))
@@ -604,15 +604,15 @@ private fun AiEmptyState(status: String, aiRunning: Boolean) {
                 "NAS đang quét và phân loại ảnh theo thư mục. Hãy quay lại sau vài phút."
             else
                 "Chưa quét ảnh lần nào.\nNhấn nút ✨ để bắt đầu phân loại ảnh.",
-            fontSize = 13.sp, color = TextSecondary, textAlign = TextAlign.Center
+            fontSize = 13.sp, color = MvTextSecondary, textAlign = TextAlign.Center
         )
         if (aiRunning) {
             Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(color = AccentCyan, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)))
+            LinearProgressIndicator(color = MvAccentCyan, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)))
         }
         if (status.isNotEmpty() && status != "ok") {
             Spacer(Modifier.height(12.dp))
-            Text(status, fontSize = 11.sp, color = TextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+            Text(status, fontSize = 11.sp, color = MvTextSecondary.copy(alpha = 0.7f), textAlign = TextAlign.Center)
         }
     }
 }
@@ -625,11 +625,11 @@ private fun AiCategoryPhotoGrid(
     user: String, pass: String,
     onBack: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().background(DarkSurface)) {
+    Column(Modifier.fillMaxSize().background(MvDarkSurface)) {
         // Header
         Row(
             Modifier.fillMaxWidth().statusBarsPadding()
-                .background(DarkCard)
+                .background(MvDarkCard)
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -637,13 +637,13 @@ private fun AiCategoryPhotoGrid(
                 Icon(Icons.Default.ArrowBack, null, tint = Color.White)
             }
             val icon = categoryIcons[categoryName] ?: "🖼️"
-            Text("$icon $categoryName", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary,
+            Text("$icon $categoryName", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MvTextPrimary,
                 modifier = Modifier.weight(1f))
             Box(
-                Modifier.clip(RoundedCornerShape(12.dp)).background(AccentCyan.copy(alpha = 0.15f))
+                Modifier.clip(RoundedCornerShape(12.dp)).background(MvAccentCyan.copy(alpha = 0.15f))
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
-                Text("${relativePaths.size}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AccentCyan)
+                Text("${relativePaths.size}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MvAccentCyan)
             }
         }
 

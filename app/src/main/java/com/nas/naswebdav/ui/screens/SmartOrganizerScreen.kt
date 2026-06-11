@@ -58,20 +58,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // ── Màu dùng chung (nhân bản private từ MediaScreens.kt để giữ self-contained, không đổi giá trị) ──
-private val DarkSurface = Color.Black
-private val DarkCard    = Color.Black
-private val AccentCyan  = Color(0xFF00D2FF)
-private val TextPrimary = Color(0xFFE8E8E8)
-private val TextSecondary = Color(0xFF8892B0)
+private val SoDarkSurface = Color.Black
+private val SoDarkCard    = Color.Black
+private val SoAccentCyan  = Color(0xFF00D2FF)
+private val SoTextPrimary = Color(0xFFE8E8E8)
+private val SoTextSecondary = Color(0xFF8892B0)
 
 // ════════════════════════════════════════════════════════════════════════════
 // SmartOrganizerScreen.kt
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Bảng màu bổ sung cho SmartOrganizer ──
-private val AccentGreen = Color(0xFF00E676)
-private val AccentOrange = Color(0xFFFF9100)
-private val AccentRed = Color(0xFFFF1744)
+private val SoAccentGreen = Color(0xFF00E676)
+private val SoAccentOrange = Color(0xFFFF9100)
+private val SoAccentRed = Color(0xFFFF1744)
 
 
 
@@ -107,23 +107,23 @@ fun SmartOrganizerScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Smart Organizer", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = TextPrimary)
+                        Text("Smart Organizer", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = SoTextPrimary)
                         Text(
                             "Tự động phân loại tệp theo năm / tháng",
                             fontSize = 12.sp,
-                            color = TextSecondary
+                            color = SoTextSecondary
                         )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, "Quay lại", tint = TextPrimary)
+                        Icon(Icons.Default.ArrowBack, "Quay lại", tint = SoTextPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SoDarkSurface)
             )
         },
-        containerColor = DarkSurface
+        containerColor = SoDarkSurface
     ) { padding ->
         Column(
             modifier = Modifier
@@ -137,11 +137,11 @@ fun SmartOrganizerScreen(
             // ═══ THẺ THƯ MỤC NGUỒN ═══
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
+                colors = CardDefaults.cardColors(containerColor = SoDarkCard),
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(Modifier.padding(10.dp)) {
-                    Text("Thư mục nguồn", fontSize = 12.sp, color = TextSecondary)
+                    Text("Thư mục nguồn", fontSize = 12.sp, color = SoTextSecondary)
                     Spacer(Modifier.height(8.dp))
 
                     val context = androidx.compose.ui.platform.LocalContext.current
@@ -151,7 +151,7 @@ fun SmartOrganizerScreen(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color(0xFF0D1B2A))
-                            .border(1.dp, AccentCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                            .border(1.dp, SoAccentCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
                             .clickable {
                                 android.widget.Toast.makeText(context, "Sẽ sớm hỗ trợ chọn thư mục con!", android.widget.Toast.LENGTH_SHORT).show()
                             }
@@ -163,7 +163,7 @@ fun SmartOrganizerScreen(
                         Text(
                             sourceUrl.ifEmpty { "Chưa kết nối" },
                             fontSize = 14.sp,
-                            color = TextPrimary,
+                            color = SoTextPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -172,7 +172,7 @@ fun SmartOrganizerScreen(
                     Spacer(Modifier.height(8.dp))
 
                     // ═══ BỘ LỌC ═══
-                    Text("Loại file", fontSize = 12.sp, color = TextSecondary)
+                    Text("Loại file", fontSize = 12.sp, color = SoTextSecondary)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         data class FilterOpt(val filter: OrganizerFilter, val label: String)
@@ -187,14 +187,14 @@ fun SmartOrganizerScreen(
                                 onClick = { selectedFilter = opt.filter },
                                 label = { Text(opt.label, fontSize = 13.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AccentCyan.copy(alpha = 0.2f),
-                                    selectedLabelColor = AccentCyan
+                                    selectedContainerColor = SoAccentCyan.copy(alpha = 0.2f),
+                                    selectedLabelColor = SoAccentCyan
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
                                     selected = selectedFilter == opt.filter,
-                                    borderColor = TextSecondary.copy(alpha = 0.3f),
-                                    selectedBorderColor = AccentCyan.copy(alpha = 0.5f)
+                                    borderColor = SoTextSecondary.copy(alpha = 0.3f),
+                                    selectedBorderColor = SoAccentCyan.copy(alpha = 0.5f)
                                 )
                             )
                         }
@@ -208,23 +208,23 @@ fun SmartOrganizerScreen(
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         enabled = !isScanning && !isOrganizing && sourceUrl.isNotEmpty(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AccentCyan,
-                            disabledContainerColor = AccentCyan.copy(alpha = 0.5f)
+                            containerColor = SoAccentCyan,
+                            disabledContainerColor = SoAccentCyan.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         if (isScanning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(22.dp),
-                                color = DarkSurface.copy(alpha = 0.8f),
+                                color = SoDarkSurface.copy(alpha = 0.8f),
                                 strokeWidth = 2.5.dp
                             )
                             Spacer(Modifier.width(10.dp))
-                            Text("Đang quét...", color = DarkSurface.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
+                            Text("Đang quét...", color = SoDarkSurface.copy(alpha = 0.8f), fontWeight = FontWeight.Bold)
                         } else {
-                            Icon(Icons.Default.Search, null, tint = DarkSurface, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Search, null, tint = SoDarkSurface, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Quét & Xem trước", color = DarkSurface, fontWeight = FontWeight.Bold)
+                            Text("Quét & Xem trước", color = SoDarkSurface, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -236,22 +236,22 @@ fun SmartOrganizerScreen(
             if (isScanning) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
-                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = SoDarkCard),
+                    border = BorderStroke(1.dp, SoAccentCyan.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
                         Modifier.padding(12.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("Phân tích cấu trúc thư mục NAS...", fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                        Text("Phân tích cấu trúc thư mục NAS...", fontSize = 14.sp, color = SoTextPrimary, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth()
                                 .height(6.dp)
                                 .clip(RoundedCornerShape(3.dp)),
-                            color = AccentCyan,
-                            trackColor = DarkSurface
+                            color = SoAccentCyan,
+                            trackColor = SoDarkSurface
                         )
                     }
                 }
@@ -262,13 +262,13 @@ fun SmartOrganizerScreen(
             if (errorMessage != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = AccentRed.copy(alpha = 0.15f)),
+                    colors = CardDefaults.cardColors(containerColor = SoAccentRed.copy(alpha = 0.15f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.ErrorOutline, null, tint = AccentRed, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.ErrorOutline, null, tint = SoAccentRed, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(10.dp))
-                        Text(errorMessage!!, color = AccentRed, fontSize = 13.sp)
+                        Text(errorMessage!!, color = SoAccentRed, fontSize = 13.sp)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -278,16 +278,16 @@ fun SmartOrganizerScreen(
             if (organizeResult != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = AccentGreen.copy(alpha = 0.12f)),
+                    colors = CardDefaults.cardColors(containerColor = SoAccentGreen.copy(alpha = 0.12f)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
                         Modifier.padding(20.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.CheckCircle, null, tint = AccentGreen, modifier = Modifier.size(48.dp))
+                        Icon(Icons.Default.CheckCircle, null, tint = SoAccentGreen, modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(12.dp))
-                        Text(organizeResult!!, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentGreen)
+                        Text(organizeResult!!, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SoAccentGreen)
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
@@ -295,12 +295,12 @@ fun SmartOrganizerScreen(
                                 viewModel.organizerScanResult = null
                                 viewModel.organizerError = null
                             },
-                            border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f)),
+                            border = BorderStroke(1.dp, SoAccentCyan.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(Icons.Default.Refresh, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Refresh, null, tint = SoAccentCyan, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Sắp xếp thư mục khác", color = AccentCyan)
+                            Text("Sắp xếp thư mục khác", color = SoAccentCyan)
                         }
                     }
                 }
@@ -311,28 +311,28 @@ fun SmartOrganizerScreen(
             if (isOrganizing) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
-                    border = BorderStroke(1.dp, AccentCyan.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = SoDarkCard),
+                    border = BorderStroke(1.dp, SoAccentCyan.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(
                         Modifier.padding(12.dp).fillMaxWidth(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("Đang di chuyển tệp vào đúng thư mục...", fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                        Text("Đang di chuyển tệp vào đúng thư mục...", fontSize = 14.sp, color = SoTextPrimary, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth()
                                 .height(6.dp)
                                 .clip(RoundedCornerShape(3.dp)),
-                            color = AccentCyan,
-                            trackColor = DarkSurface
+                            color = SoAccentCyan,
+                            trackColor = SoDarkSurface
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Quá trình này tùy thuộc vào số lượng và dung lượng tệp",
                             fontSize = 12.sp,
-                            color = TextSecondary
+                            color = SoTextSecondary
                         )
                     }
                 }
@@ -346,7 +346,7 @@ fun SmartOrganizerScreen(
                 // Header
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                    colors = CardDefaults.cardColors(containerColor = SoDarkCard),
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(Modifier.padding(10.dp)) {
@@ -360,16 +360,16 @@ fun SmartOrganizerScreen(
                                     "Bản xem trước — $totalFiles tệp",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = TextPrimary
+                                    color = SoTextPrimary
                                 )
                                 Text(
                                     "${groups.size} nhóm",
                                     fontSize = 12.sp,
-                                    color = TextSecondary
+                                    color = SoTextSecondary
                                 )
                             }
                             if (totalFiles > 0) {
-                                Icon(Icons.Default.FolderSpecial, null, tint = AccentOrange, modifier = Modifier.size(28.dp))
+                                Icon(Icons.Default.FolderSpecial, null, tint = SoAccentOrange, modifier = Modifier.size(28.dp))
                             }
                         }
 
@@ -378,7 +378,7 @@ fun SmartOrganizerScreen(
                             Text(
                                 "✅ Tất cả tệp đã được sắp xếp đúng thư mục!",
                                 fontSize = 14.sp,
-                                color = AccentGreen,
+                                color = SoAccentGreen,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -401,14 +401,14 @@ fun SmartOrganizerScreen(
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         enabled = !isScanning && !isOrganizing,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = AccentGreen,
-                            disabledContainerColor = AccentGreen.copy(alpha = 0.5f)
+                            containerColor = SoAccentGreen,
+                            disabledContainerColor = SoAccentGreen.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Icon(Icons.Default.DriveFileMove, null, tint = DarkSurface, modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.DriveFileMove, null, tint = SoDarkSurface, modifier = Modifier.size(22.dp))
                         Spacer(Modifier.width(10.dp))
-                        Text("Bắt đầu sắp xếp", color = DarkSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("Bắt đầu sắp xếp", color = SoDarkSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -418,7 +418,7 @@ fun SmartOrganizerScreen(
                         onClick = { viewModel.organizerScanResult = null },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Hủy tác vụ", color = TextSecondary)
+                        Text("Hủy tác vụ", color = SoTextSecondary)
                     }
                 }
             }
@@ -449,7 +449,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .clickable { expanded = !expanded },
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        colors = CardDefaults.cardColors(containerColor = SoDarkCard),
         shape = RoundedCornerShape(14.dp)
     ) {
         Column {
@@ -480,13 +480,13 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         "$monthLabel $year",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
-                        color = TextPrimary
+                        color = SoTextPrimary
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
                         "${group.count} tệp · ${formatSize(group.size)}",
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        color = SoTextSecondary
                     )
                     // Sample file names
                     if (!expanded && group.sampleFiles.isNotEmpty()) {
@@ -494,7 +494,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         Text(
                             group.sampleFiles.take(3).joinToString(", "),
                             fontSize = 10.sp,
-                            color = TextSecondary.copy(alpha = 0.7f),
+                            color = SoTextSecondary.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -505,7 +505,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
 
                 // Badge count
                 Surface(
-                    color = AccentCyan.copy(alpha = 0.15f),
+                    color = SoAccentCyan.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
@@ -513,22 +513,22 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        color = AccentCyan
+                        color = SoAccentCyan
                     )
                 }
             }
 
             AnimatedVisibility(visible = expanded) {
                 Column(Modifier.padding(start = 74.dp, end = 14.dp, bottom = 14.dp)) {
-                    HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), modifier = Modifier.padding(bottom = 8.dp))
+                    HorizontalDivider(color = SoTextSecondary.copy(alpha = 0.2f), modifier = Modifier.padding(bottom = 8.dp))
                     group.sampleFiles.forEach { fileName ->
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                            Icon(Icons.Default.InsertDriveFile, null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                            Icon(Icons.Default.InsertDriveFile, null, tint = SoTextSecondary, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 fileName,
                                 fontSize = 11.sp,
-                                color = TextSecondary.copy(alpha = 0.9f),
+                                color = SoTextSecondary.copy(alpha = 0.9f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -538,7 +538,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         Text(
                             "... và ${group.count - group.sampleFiles.size} tệp khác",
                             fontSize = 11.sp,
-                            color = AccentCyan,
+                            color = SoAccentCyan,
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
