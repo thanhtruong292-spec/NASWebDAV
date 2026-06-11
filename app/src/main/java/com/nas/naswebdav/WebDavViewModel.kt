@@ -9261,9 +9261,14 @@ fun WebDavViewModel.listenToLocalNasApi(forceRestart: Boolean = false) {
 
                                 lastStatusRefreshAt = System.currentTimeMillis()
 
-                                // CHỐNG BOUNCE (Debounce): Bỏ qua cập nhật trạng thái quạt từ API nếu đang gửi lệnh HOẶC vừa set thủ công < 15s (để chờ NAS xử lý service tốn thời gian)
-
-                                if (isFanModeUpdating || System.currentTimeMillis() - lastFanModeSettingTime < 15000L) {
+                                // CHỐNG BOUNCE: giữ trạng thái optimistic chỉ tới khi NAS xác nhận
+                                // ĐÚNG mode vừa đặt (server fan_mode == optimistic). Một khi server đã
+                                // phản ánh đúng mode thì tin status thật ngay (vd Tắt -> "Dừng"), không
+                                // ôm chuỗi optimistic cũ (vd "Đang chạy 100%") suốt 15s gây hiển thị sai.
+                                // 15s chỉ còn là trần an toàn cho trường hợp NAS xử lý service chậm.
+                                val fanRecentlySet = System.currentTimeMillis() - lastFanModeSettingTime < 15000L
+                                val serverConfirmedFanMode = newStatus.fanMode == systemStatus.fanMode
+                                if (isFanModeUpdating || (fanRecentlySet && !serverConfirmedFanMode)) {
 
                                     systemStatus = newStatus.copy(
 
