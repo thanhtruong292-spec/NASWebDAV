@@ -6,7 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
 
-private fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
+internal fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
     val trimmed = rawPath.trim()
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
         val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
