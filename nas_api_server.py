@@ -2008,11 +2008,25 @@ def get_fan_info():
             except Exception:
                 pass
 
-            if mode not in ["auto", "custom"]:
-                if duty == 0 or enable_val == 0: mode = "off"
-                else: mode = "on"
+            # FIX: Trạng thái chạy/dừng thực tế phụ thuộc CẢ cổng nguồn 5V (GPIO 79),
+            # không chỉ PWM. _pwm_apply_off() cắt nguồn -> quạt dừng dù duty/enable
+            # còn sót. Trước đây chỉ đọc enable/duty nên app báo "Đang chạy" sai khi
+            # nguồn đã bị cắt. Đọc thêm GPIO nguồn để báo đúng.
+            power_on = True
+            try:
+                gpio_value = "/sys/class/gpio/gpio%s/value" % FAN_POWER_GPIO
+                if os.path.exists(gpio_value):
+                    with open(gpio_value) as f:
+                        power_on = (f.read().strip() == "1")
+            except Exception:
+                power_on = True
 
-            percent = _fan_pwm_level(raw_percent if enable_val == 1 else 0)
+            running = (enable_val == 1 and duty > 0 and power_on)
+
+            if mode not in ["auto", "custom"]:
+                mode = "on" if running else "off"
+
+            percent = _fan_pwm_level(raw_percent if running else 0)
             payload = {
                 "rpm": _fan_rpm_for_percent(percent),
                 "percent": percent,

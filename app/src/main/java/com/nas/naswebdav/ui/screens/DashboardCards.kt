@@ -434,43 +434,13 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                                     val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
                                     val realPercent = statusPercent ?: percentFromRpm ?: 0
-                                    val isFanRunning = realPercent > 0
-                                    
-                                    var displayPercent = realPercent
-                                    var displayStatusStr = fanStatusStr
-                                    
-                                    if (viewModel.systemStatus.fanMode == "custom") {
-                                        val hddVal = viewModel.systemStatus.temp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                                        val fanTempVal = hddVal
-                                        val onT = viewModel.systemStatus.fanOnTemp
-                                        val offT = viewModel.systemStatus.fanOffTemp
-                                        val rawPercent = if (fanTempVal <= offT) {
-                                            0
-                                        } else if (fanTempVal >= onT) {
-                                            100
-                                        } else if (onT > offT) {
-                                            (((fanTempVal - offT) / (onT - offT)) * 100).toInt()
-                                        } else {
-                                            realPercent
-                                        }
-                                        displayPercent = when {
-                                            rawPercent <= 10 -> 0
-                                            rawPercent <= 25 -> 25
-                                            rawPercent <= 50 -> 50
-                                            rawPercent <= 75 -> 75
-                                            else -> 100
-                                        }
-                                        if (displayPercent > 0) {
-                                            val rpm = (4300f * displayPercent / 100f).toInt()
-                                            displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
-                                        } else {
-                                            displayStatusStr = "Dừng"
-                                        }
-                                    } else if (isFanRunning) {
-                                        val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
-                                        displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
-                                    }
-                                    
+
+                                    // Hiển thị ĐÚNG trạng thái thực tế do server báo (get_fan_info đã đọc
+                                    // PWM duty + enable + cổng nguồn 5V GPIO). KHÔNG tự suy đoán theo nhiệt
+                                    // độ: trước đây ở chế độ custom app tính lại percent từ HDD temp nên lệch
+                                    // với quạt thật (vd HDD temp "--" -> đoán "Dừng" dù quạt đang chạy).
+                                    val displayPercent = realPercent
+                                    val displayStatusStr = if (realPercent > 0) fanStatusStr else "Dừng"
                                     val isFanDisplayRunning = displayPercent > 0
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(8.dp))
