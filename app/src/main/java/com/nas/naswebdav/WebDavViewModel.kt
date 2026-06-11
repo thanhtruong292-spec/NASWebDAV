@@ -6491,13 +6491,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             fanMode = mode,
 
+            // QUAN TRỌNG: chuỗi phải khớp regex hiển thị "Đang chạy (\d+)%" (CÓ dấu),
+            // nếu không icon quạt không quay và không hiện số liệu cho tới poll kế tiếp.
             fanStatus = when (mode) {
 
-                "off" -> "Dung"
+                "off" -> "Dừng"
 
-                "on" -> "Dang chay 100%"
+                "on" -> "Đang chạy 100% - Tốc độ: 4300 rpm"
 
                 else -> systemStatus.fanStatus
+
+            },
+
+            fanRpm = when (mode) {
+
+                "off" -> 0
+
+                "on" -> 4300
+
+                else -> systemStatus.fanRpm
 
             }
 
