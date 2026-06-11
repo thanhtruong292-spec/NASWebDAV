@@ -2124,8 +2124,11 @@ def _update_status_cache():
             ram_total = format_bytes(mem.total)
             net_rx, net_tx = get_network_speed()
 
-            # Cap nhat thong tin Fan (moi 30 giay)
-            if loop_count % 24 == 0:
+            # Cap nhat thong tin Fan: refresh nhanh (~4s) de trang thai bat/tat quat
+            # phan anh kip thoi tren app. Truoc day refresh moi ~30s nen quat da dung
+            # ma /api/status van bao "dang chay" rat lau. get_fan_info chi doc sysfs PWM/
+            # GPIO + 1 systemctl is-active -> du nhe de chay moi 4s.
+            if loop_count % 2 == 0:
                 cached_fan = get_fan_info()
 
             # Cap nhat top_processes va torrents (moi 2 phut) - Giam tai CPU
