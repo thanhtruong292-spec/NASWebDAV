@@ -61,23 +61,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.getValue
 
-// ============ BẢNG MÀU CHUYÊN NGHIỆP ============
-private val DarkSurface = Color.Black
-private val DarkCard = Color(0xFF0F0F0F)
-private val AccentBlue = Color(0xFF1976D2)
-private val AccentCyan = Color(0xFF00D2FF)
-private val AccentGreen = Color(0xFF00E676)
-private val AccentOrange = Color(0xFFFF9100)
-private val AccentRed = Color(0xFFFF1744)
-private val AccentPurple = Color(0xFFBB86FC)
-private val AccentPink = Color(0xFFFF6EC7)
-private val TextPrimary = Color(0xFFE8E8E8)
-private val TextSecondary = Color(0xFF8892B0)
-private val PanelTitleCyan = Color(0xFF4DD0E1)
-private val PanelTitleGreen = Color(0xFF66BB6A)
-private val PanelTitlePurple = Color(0xFFB388FF)
-private val PanelTitleSize = 11.sp
-private val PanelTitleLetterSpacing = 1.5.sp
 
 private fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
     if (lastRefreshAt <= 0L) return "Đang chờ dữ liệu"
