@@ -10950,6 +10950,62 @@ def _livestream_error_from_log(info):
         pass
     return ""
 
+def _sweep_orphan_ts_remux(max_per_cycle=1):
+    """Phuc hoi ban ghi livestream bi gian doan: file .ts mo coi (vd sau khi
+    restart server / reconnect khien job mat khoi _livestream_jobs in-RAM nen
+    khong duoc remux khi job ket thuc) -> remux sang .mp4 (-c copy, re).
+    Bo qua file dang ghi (mtime moi / thuoc job dang chay)."""
+    try:
+        if not os.path.isdir(_LIVESTREAM_DIR):
+            return
+        # Cac file dang duoc job hien tai ghi -> tuyet doi khong dung
+        active = set()
+        try:
+            with _livestream_lock:
+                for info in _livestream_jobs.values():
+                    for k in ("_latest_output_path", "direct_output_path"):
+                        p = info.get(k)
+                        if p:
+                            active.add(os.path.basename(p))
+        except Exception:
+            pass
+        now = time.time()
+        done = 0
+        for name in sorted(os.listdir(_LIVESTREAM_DIR)):
+            if done >= max_per_cycle:
+                break
+            if not name.lower().endswith(".ts") or name in active:
+                continue
+            path = os.path.join(_LIVESTREAM_DIR, name)
+            if not os.path.isfile(path):
+                continue
+            try:
+                st = os.stat(path)
+            except Exception:
+                continue
+            if st.st_size < 64 * 1024:        # file rong/loi start -> de orphan-cleanup xoa
+                continue
+            if now - st.st_mtime < 180:        # mtime moi -> co the dang ghi, bo qua
+                continue
+            mp4 = os.path.splitext(path)[0] + ".mp4"
+            if os.path.exists(mp4) and os.path.getsize(mp4) > 0:
+                # Da co .mp4 -> .ts chi la rac thua, xoa
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+                continue
+            if not _background_heavy_work_allowed():
+                break
+            log.info("[Livestream] Phuc hoi ban ghi mo coi (remux .ts -> .mp4): %s", name)
+            res = _remux_flv_to_mp4(path)   # -c copy + faststart, xoa .ts neu thanh cong
+            if res:
+                log.info("[Livestream] Da phuc hoi ban ghi: %s", os.path.basename(res))
+            done += 1
+    except Exception as e:
+        log.warning("[Livestream] Sweep orphan .ts loi: %s", e)
+
+
 def _livestream_watchdog():
     """Thread nen tu dong kill cac livestream job qua 12 gio hoac da chet.
     Cung cap nhat thumbnail gate khi livestream/ytdlp không cần chay."""
@@ -10960,6 +11016,8 @@ def _livestream_watchdog():
             _cleanup_stale_job_tmp(max_age_hours=24)
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
             _cleanup_livestream_junk()
+            # Phuc hoi ban ghi .ts mo coi (gian doan do restart/reconnect) -> .mp4
+            _sweep_orphan_ts_remux()
             # Thu hồi RAM steady-state mỗi 60s: trả pages rảnh (thumbnail/livestream
             # đã xong) về OS. Rẻ (~vài µs khi không có gì để trim) trên NAS ~1GB.
             _release_memory_to_os()
