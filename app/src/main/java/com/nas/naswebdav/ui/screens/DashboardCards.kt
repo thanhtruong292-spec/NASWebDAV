@@ -277,6 +277,90 @@ internal fun DashboardSystemOverviewCard(
                         onClick = onOpenSmartDetails
                     )
                 }
+                            // Fan Control
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val fanStatusStr = viewModel.systemStatus.fanStatus
+                                    val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
+                                    val realPercent = statusPercent ?: percentFromRpm ?: 0
+
+                                    // Hiển thị ĐÚNG trạng thái thực tế do server báo (get_fan_info đã đọc
+                                    // PWM duty + enable + cổng nguồn 5V GPIO). KHÔNG tự suy đoán theo nhiệt
+                                    // độ: trước đây ở chế độ custom app tính lại percent từ HDD temp nên lệch
+                                    // với quạt thật (vd HDD temp "--" -> đoán "Dừng" dù quạt đang chạy).
+                                    val displayPercent = realPercent
+                                    val displayStatusStr = if (realPercent > 0) fanStatusStr else "Dừng"
+                                    val isFanDisplayRunning = displayPercent > 0
+                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
+                                    }
+                                }
+                                // Mute / Auto / Max Toggle
+                                var showFanSettings by remember { mutableStateOf(false) }
+                                Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
+                                    val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
+                                    val currentMode = viewModel.systemStatus.fanMode
+                                    val isFanControlLocked = viewModel.isFanModeUpdating
+                                    modes.forEach { (m, label) ->
+                                        val active = m == currentMode
+                                        Box(
+                                            Modifier.clickable(
+                                                enabled = !isFanControlLocked,
+                                                interactionSource = remember { MutableInteractionSource() },
+                                                indication = null
+                                            ) {
+                                                if (m == "custom") showFanSettings = true else {
+                                                    viewModel.setFanMode(m)
+                                                }
+                                            }
+                                                .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
+                                                .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
+                                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                                
+                                if (showFanSettings) {
+                                    var onTemp by remember { mutableStateOf(viewModel.systemStatus.fanOnTemp.toInt().toString()) }
+                                    var offTemp by remember { mutableStateOf(viewModel.systemStatus.fanOffTemp.toInt().toString()) }
+                                    androidx.compose.material3.AlertDialog(
+                                        onDismissRequest = { showFanSettings = false },
+                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
+                                        text = { 
+                                            Column {
+                                                Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
+                                                Spacer(Modifier.height(12.dp))
+                                                OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                                Spacer(Modifier.height(8.dp))
+                                                OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                            }
+                                        },
+                                        confirmButton = {
+                                            val isFanControlLocked = viewModel.isFanModeUpdating
+                                            Button(
+                                                enabled = !isFanControlLocked,
+                                                onClick = { 
+                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
+                                                    showFanSettings = false 
+                                                }
+                                            ) { Text("Lưu & Áp dụng") }
+                                        },
+                                        dismissButton = {
+                                            androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
+                                        },
+                                        containerColor = Color(0xFF1E1E1E),
+                                        textContentColor = Color.White
+                                    )
+                                }
+                            }
             }
         }
 }
@@ -425,90 +509,6 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                                 }
                             }
                             
-                            // Fan Control
-                            Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val fanStatusStr = viewModel.systemStatus.fanStatus
-                                    val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
-                                    val realPercent = statusPercent ?: percentFromRpm ?: 0
-
-                                    // Hiển thị ĐÚNG trạng thái thực tế do server báo (get_fan_info đã đọc
-                                    // PWM duty + enable + cổng nguồn 5V GPIO). KHÔNG tự suy đoán theo nhiệt
-                                    // độ: trước đây ở chế độ custom app tính lại percent từ HDD temp nên lệch
-                                    // với quạt thật (vd HDD temp "--" -> đoán "Dừng" dù quạt đang chạy).
-                                    val displayPercent = realPercent
-                                    val displayStatusStr = if (realPercent > 0) fanStatusStr else "Dừng"
-                                    val isFanDisplayRunning = displayPercent > 0
-                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
-                                    }
-                                }
-                                // Mute / Auto / Max Toggle
-                                var showFanSettings by remember { mutableStateOf(false) }
-                                Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                                    val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
-                                    val currentMode = viewModel.systemStatus.fanMode
-                                    val isFanControlLocked = viewModel.isFanModeUpdating
-                                    modes.forEach { (m, label) ->
-                                        val active = m == currentMode
-                                        Box(
-                                            Modifier.clickable(
-                                                enabled = !isFanControlLocked,
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                if (m == "custom") showFanSettings = true else {
-                                                    viewModel.setFanMode(m)
-                                                }
-                                            }
-                                                .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
-                                                .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
-                                                .padding(horizontal = 6.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                                
-                                if (showFanSettings) {
-                                    var onTemp by remember { mutableStateOf(viewModel.systemStatus.fanOnTemp.toInt().toString()) }
-                                    var offTemp by remember { mutableStateOf(viewModel.systemStatus.fanOffTemp.toInt().toString()) }
-                                    androidx.compose.material3.AlertDialog(
-                                        onDismissRequest = { showFanSettings = false },
-                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
-                                        text = { 
-                                            Column {
-                                                Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
-                                                Spacer(Modifier.height(12.dp))
-                                                OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                                Spacer(Modifier.height(8.dp))
-                                                OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                            }
-                                        },
-                                        confirmButton = {
-                                            val isFanControlLocked = viewModel.isFanModeUpdating
-                                            Button(
-                                                enabled = !isFanControlLocked,
-                                                onClick = { 
-                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
-                                                    showFanSettings = false 
-                                                }
-                                            ) { Text("Lưu & Áp dụng") }
-                                        },
-                                        dismissButton = {
-                                            androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
-                                        },
-                                        containerColor = Color(0xFF1E1E1E),
-                                        textContentColor = Color.White
-                                    )
-                                }
-                            }
                         }
                     }
                 }
