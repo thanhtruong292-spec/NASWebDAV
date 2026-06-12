@@ -319,7 +319,9 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         val icon: androidx.compose.ui.graphics.vector.ImageVector,
         // Neu khac null: moi diem/doan duoc to mau theo gia tri cua chinh no.
         // Neu null: dung mau co dinh (vd tab Mang khong co nguong nhiet do).
-        val colorOf: ((Float) -> Color)? = null
+        val colorOf: ((Float) -> Color)? = null,
+        // Kieu net rieng cho tung duong (null = lien net) de phan biet CPU/HDD/RAM.
+        val dash: FloatArray? = null
     )
     // Lay gia tri moi nhat (cuoi danh sach) de quyet dinh mau theo trang thai —
     // dong bo voi GaugeCard tron tren MainMenuScreen.
@@ -328,24 +330,33 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val cpuPctVals  = history.map { it.cpuPercent }
     val ramPctVals  = history.map { it.ramPercent }
 
+    // Moi duong 1 mau co dinh + 1 kieu net rieng -> de phan biet CPU/HDD/RAM.
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, cpuTempStatusColor(cpuTempVals.lastOrNull() ?: 0f), "CPU",    "°C",   Icons.Default.Memory,  colorOf = ::cpuTempStatusColor),
-            Series(hddTempVals, hddTempStatusColor(hddTempVals.lastOrNull() ?: 0f), "HDD",    "°C",   Icons.Default.Storage, colorOf = ::hddTempStatusColor)
+            Series(cpuTempVals, Color(0xFF00D2FF), "CPU", "°C", Icons.Default.Memory),
+            Series(hddTempVals, Color(0xFFFF9100), "HDD", "°C", Icons.Default.Storage, dash = floatArrayOf(14f, 8f))
         )
         1 -> listOf(
-            Series(cpuPctVals, percentStatusColor(cpuPctVals.lastOrNull() ?: 0f), "CPU",  "%",    Icons.Default.Speed,         colorOf = ::percentStatusColor),
-            Series(ramPctVals, percentStatusColor(ramPctVals.lastOrNull() ?: 0f), "RAM",  "%",    Icons.Default.DeveloperBoard, colorOf = ::percentStatusColor)
+            Series(cpuPctVals, Color(0xFF2196F3), "CPU", "%", Icons.Default.Speed),
+            Series(ramPctVals, Color(0xFFBB86FC), "RAM", "%", Icons.Default.DeveloperBoard, dash = floatArrayOf(14f, 8f))
         )
         else -> listOf(
             Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về",  " MB/s", Icons.Default.ArrowDownward),
-            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF6EC7),  "Tải lên", " MB/s", Icons.Default.ArrowUpward)
+            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF6EC7),  "Tải lên", " MB/s", Icons.Default.ArrowUpward, dash = floatArrayOf(14f, 8f))
         )
     }
 
     val allVals = series.flatMap { it.values }
-    val maxVal  = (allVals.maxOrNull() ?: 1f).coerceAtLeast(1f)
-    val minVal  = (allVals.minOrNull() ?: 0f).coerceAtMost(maxVal * 0.9f)
+    // Truc Y co dinh theo tab: Nhiet do 20-80, Tai nguyen 0-100; Mang tu dong co gian.
+    val (minVal, maxVal) = when (tabIndex) {
+        0    -> 20f to 80f
+        1    -> 0f to 100f
+        else -> {
+            val mx = (allVals.maxOrNull() ?: 1f).coerceAtLeast(1f)
+            val mn = (allVals.minOrNull() ?: 0f).coerceAtMost(mx * 0.9f)
+            mn to mx
+        }
+    }
     val range   = (maxVal - minVal).coerceAtLeast(1f)
 
     var touchedIndex by remember { mutableIntStateOf(-1) }
@@ -436,7 +447,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     if (pts.size < 2) return@forEach
                     val step = (w - leftPad - pad) / (pts.size - 1).toFloat()
                     fun xOf(i: Int) = leftPad + i * step
-                    fun yOf(v: Float) = h - pad - ((v - minVal) / range) * (h - pad * 2)
+                    fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
 
                     if (s.colorOf != null) {
                         // ----- Tab Nhiet do / Tai nguyen: to mau theo tung diem -----
@@ -474,9 +485,20 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         fillPath.close()
                         drawPath(fillPath, s.color.copy(alpha = 0.15f))
 
-                        for (i in 0 until pts.size - 1) {
-                            drawLine(s.color, Offset(xOf(i), yOf(pts[i])), Offset(xOf(i + 1), yOf(pts[i + 1])), strokeWidth = 1f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                        }
+                        // Ve duong lien tuc 1 Path de net dut (dash) chay muot, day net cho de nhin.
+                        val linePath = androidx.compose.ui.graphics.Path()
+                        linePath.moveTo(xOf(0), yOf(pts[0]))
+                        for (i in 1 until pts.size) linePath.lineTo(xOf(i), yOf(pts[i]))
+                        drawPath(
+                            linePath,
+                            color = s.color,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = 1.8f * density,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                pathEffect = s.dash?.let { androidx.compose.ui.graphics.PathEffect.dashPathEffect(it) }
+                            )
+                        )
                     }
 
                     // Điểm mốc cuối cùng nếu ko chạm — dung mau cua chinh diem cuoi
