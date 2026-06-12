@@ -2585,14 +2585,6 @@ def _cron_worker():
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = False
 
-            # --- 2b. Rules engine: disk%/cpu_temp/hdd_temp/ram + action (mỗi 60s) ---
-            try:
-                with _cache_lock:
-                    _rsnap = dict(_status_cache)
-                _rules_engine_check(_rsnap)
-            except Exception as _re:
-                log.warning("[Rules] check loi: %s", _re)
-
             # --- 3. Ghi Lịch sử Metrics vào SQLite (mỗi 60s — dùng cho biểu đồ real-time) ---
             try:
                 with _cache_lock:
@@ -4942,6 +4934,20 @@ def _rules_engine_check(snap):
     chk("hddtemp", hdd_t, cfg.get("hdd_temp", 55), "Nhiệt HDD cao (°C)", "🌡️")
     chk("ram", ram, cfg.get("ram_percent", 96), "RAM cao (%)", "🧠")
     _rules_block_new_recording = paused
+
+
+def _rules_engine_watchdog():
+    """Thread rieng danh gia rules moi 15s (doc _status_cache co san, rat nhe)
+    -> canh bao Telegram nhanh thay vi cho cron 60s."""
+    time.sleep(45)
+    while True:
+        try:
+            with _cache_lock:
+                snap = dict(_status_cache)
+            _rules_engine_check(snap)
+        except Exception as e:
+            log.warning("[Rules] watchdog loi: %s", e)
+        time.sleep(15)
 
 
 def _add_system_log(level, module, message, timestamp=None):
@@ -11483,6 +11489,7 @@ _restore_fan_state_on_boot()
 # Khoi dong watchdog thread
 threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
 threading.Thread(target=_livestream_watchdog, daemon=True).start()
+threading.Thread(target=_rules_engine_watchdog, daemon=True).start()
 
 _TIKTOK_WATCH_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tiktok_live_watch.json")
 _tiktok_watch_lock = threading.Lock()
