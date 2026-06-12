@@ -2585,6 +2585,14 @@ def _cron_worker():
                 with _alert_state_lock:
                     _alert_states["hdd_temp_alerted"] = False
 
+            # --- 2b. Rules engine: disk%/cpu_temp/hdd_temp/ram + action (mỗi 60s) ---
+            try:
+                with _cache_lock:
+                    _rsnap = dict(_status_cache)
+                _rules_engine_check(_rsnap)
+            except Exception as _re:
+                log.warning("[Rules] check loi: %s", _re)
+
             # --- 3. Ghi Lịch sử Metrics vào SQLite (mỗi 60s — dùng cho biểu đồ real-time) ---
             try:
                 with _cache_lock:
@@ -4850,6 +4858,90 @@ def _notify_telegram(text, event="general"):
         ).start()
     except Exception:
         pass
+
+
+# ============ RULES ENGINE (canh bao chu dong + hanh dong, #6) ============
+_RULES_CONFIG_FILE = "/etc/nas/state/rules.json"
+_RULES_DEFAULTS = {
+    "enabled": True,
+    "disk_percent": 90,
+    "cpu_temp": 80,
+    "hdd_temp": 55,
+    "ram_percent": 96,
+    "pause_record_on_disk_full": False,
+}
+_rules_block_new_recording = False  # bat khi disk vuot nguong + bat tuy chon pause
+
+def _load_rules_config():
+    cfg = dict(_RULES_DEFAULTS)
+    try:
+        if os.path.exists(_RULES_CONFIG_FILE):
+            with open(_RULES_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            for k in _RULES_DEFAULTS:
+                if k in data:
+                    cfg[k] = data[k]
+    except Exception as e:
+        log.warning("[Rules] Doc config loi: %s", e)
+    return cfg
+
+def _save_rules_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(_RULES_CONFIG_FILE), exist_ok=True)
+        tmp = _RULES_CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        os.replace(tmp, _RULES_CONFIG_FILE)
+        return True
+    except Exception as e:
+        log.warning("[Rules] Ghi config loi: %s", e)
+        return False
+
+def _rules_num(s):
+    try:
+        return float(_re_module.sub(r"[^0-9.\-]", "", str(s)) or "0")
+    except Exception:
+        return 0.0
+
+def _rules_engine_check(snap):
+    """Danh gia quy tac tu snapshot trang thai. Fire 1 lan khi vuot nguong
+    (debounce, reset khi giam duoi nguong-3 = hysteresis). Gui Telegram + alert
+    in-app + log. Dat co _rules_block_new_recording neu disk day + bat pause."""
+    global _rules_block_new_recording
+    cfg = _load_rules_config()
+    if not cfg.get("enabled"):
+        _rules_block_new_recording = False
+        return
+    disk = _rules_num((snap.get("disk", "0") or "0").split("|")[0])
+    cpu_t = _rules_num(snap.get("cpu_temp", "0"))
+    hdd_t = _rules_num(snap.get("temperature", "0"))
+    ram = _rules_num(snap.get("ram_percent", "0"))
+
+    def chk(key, value, thr, label, emoji, extra=""):
+        if not thr or value <= 0:
+            return
+        flag = "rule_%s_alerted" % key
+        with _alert_state_lock:
+            prev = bool(_alert_states.get(flag, False))
+        if value >= thr and not prev:
+            msg = "%s %s: %.0f (ngưỡng %s)%s" % (emoji, label, value, thr, extra)
+            _push_alert("RULE_%s" % key.upper(), msg, "WARNING")
+            try: _add_system_log("WARNING", "Rules", msg)
+            except Exception: pass
+            _notify_telegram("%s <b>%s</b>: %.0f (ngưỡng %s)%s" % (emoji, label, value, thr, extra), "rule_%s" % key)
+            with _alert_state_lock:
+                _alert_states[flag] = True
+        elif value < (thr - 3) and prev:
+            with _alert_state_lock:
+                _alert_states[flag] = False
+
+    paused = bool(cfg.get("pause_record_on_disk_full") and disk >= cfg.get("disk_percent", 90))
+    chk("disk", disk, cfg.get("disk_percent", 90), "Ổ cứng gần đầy (%)", "💾",
+        " — tạm dừng ghi mới" if paused else "")
+    chk("cputemp", cpu_t, cfg.get("cpu_temp", 80), "Nhiệt CPU cao (°C)", "🌡️")
+    chk("hddtemp", hdd_t, cfg.get("hdd_temp", 55), "Nhiệt HDD cao (°C)", "🌡️")
+    chk("ram", ram, cfg.get("ram_percent", 96), "RAM cao (%)", "🧠")
+    _rules_block_new_recording = paused
 
 
 def _add_system_log(level, module, message, timestamp=None):
@@ -7994,6 +8086,29 @@ def api_notify_telegram():
                 "✅ <b>NAS Chainedbox</b>\nKết nối Telegram thành công. Bạn sẽ nhận cảnh báo tại đây.")
             result["test"] = "ok" if ok else ("fail: " + err)
     return jsonify(result)
+
+
+@app.route("/api/rules", methods=["GET", "POST"])
+@requires_auth
+def api_rules():
+    if request.method == "GET":
+        cfg = _load_rules_config()
+        cfg["block_active"] = bool(_rules_block_new_recording)
+        return jsonify(cfg)
+    body = request.get_json(silent=True) or {}
+    cfg = _load_rules_config()
+    if "enabled" in body:
+        cfg["enabled"] = bool(body["enabled"])
+    if "pause_record_on_disk_full" in body:
+        cfg["pause_record_on_disk_full"] = bool(body["pause_record_on_disk_full"])
+    for k in ("disk_percent", "cpu_temp", "hdd_temp", "ram_percent"):
+        if k in body:
+            try:
+                cfg[k] = max(1, min(200, int(float(body[k]))))
+            except Exception:
+                pass
+    _save_rules_config(cfg)
+    return jsonify({"status": "saved", **cfg})
 
 
 # ============ CANH BAO CHU DONG (PROACTIVE ALERTS) ============
@@ -12013,6 +12128,12 @@ def _tiktok_live_watchdog():
                 checked_count += 1
                 user["last_check"] = now_str
                 if is_live:
+                    if _rules_block_new_recording:
+                        # Quy tac: o cung gan day -> khong bat dau ghi MOI (ban dang ghi van tiep tuc)
+                        user["status"] = "queued"
+                        user["last_error"] = "Tạm dừng ghi mới: ổ cứng gần đầy (quy tắc cảnh báo)."
+                        changed = True
+                        continue
                     if started_count >= 2:
                         user["status"] = "queued"
                         user["last_error"] = "Dang xep hang, watcher se bat o vong ke tiep."
