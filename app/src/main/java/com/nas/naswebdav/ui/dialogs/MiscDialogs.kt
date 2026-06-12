@@ -563,62 +563,75 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
         }
     }
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A1A),
-        title = { Text("Thông báo Telegram", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8)) },
-        text = {
-            Column {
-                Text("NAS sẽ gửi cảnh báo (ghi live bắt đầu/lỗi/kết thúc, ổ cứng yếu, server khởi động) tới Telegram của bạn. Tạo bot qua @BotFather để lấy Token, và lấy Chat ID qua @userinfobot.",
-                    fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Bật thông báo", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = botToken, onValueChange = { botToken = it },
-                    label = { Text(if (hasToken) "Bot Token (đã lưu — để trống nếu giữ nguyên)" else "Bot Token") },
-                    placeholder = { Text("123456:ABC-DEF...") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = chatId, onValueChange = { chatId = it },
-                    label = { Text("Chat ID") }, placeholder = { Text("vd: 123456789") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (resultMsg.isNotBlank()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(resultMsg, fontSize = 12.sp,
-                        color = if (resultMsg.contains("✓") || resultMsg.contains("thành công")) Color(0xFF00E676) else Color(0xFFFF9100))
-                }
+        sheetState = sheetState,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Icon(Icons.Default.Notifications, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Thông báo Telegram", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8), fontSize = 17.sp)
             }
-        },
-        confirmButton = {
-            Button(
-                enabled = !loading && !busy,
-                onClick = {
-                    busy = true; resultMsg = "Đang lưu + gửi thử..."
-                    viewModel.saveTelegramConfig(enabled, botToken, chatId, test = true) { _, msg ->
-                        busy = false; resultMsg = msg; botToken = ""
-                        viewModel.loadTelegramConfig { en, cid, ht -> enabled = en; chatId = cid; hasToken = ht }
+            Text("NAS sẽ gửi cảnh báo (ghi live bắt đầu/lỗi/kết thúc, ổ cứng yếu, server khởi động) tới Telegram của bạn. Tạo bot qua @BotFather để lấy Token, và lấy Chat ID qua @userinfobot.",
+                fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Bật thông báo", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = botToken, onValueChange = { botToken = it },
+                label = { Text(if (hasToken) "Bot Token (đã lưu — để trống nếu giữ nguyên)" else "Bot Token") },
+                placeholder = { Text("123456:ABC-DEF...") },
+                singleLine = true, modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = chatId, onValueChange = { chatId = it },
+                label = { Text("Chat ID") }, placeholder = { Text("vd: 123456789") },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (resultMsg.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(resultMsg, fontSize = 12.sp,
+                    color = if (resultMsg.contains("✓") || resultMsg.contains("thành công")) Color(0xFF00E676) else Color(0xFFFF9100))
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    if (!busy) {
+                        busy = true
+                        viewModel.saveTelegramConfig(enabled, botToken, chatId, test = false) { _, _ -> onDismiss() }
                     }
-                }
-            ) { Text("Lưu & Gửi thử") }
-        },
-        dismissButton = {
-            TextButton(onClick = {
-                if (!busy) {
-                    busy = true
-                    viewModel.saveTelegramConfig(enabled, botToken, chatId, test = false) { _, _ -> onDismiss() }
-                }
-            }) { Text("Chỉ lưu", color = Color(0xFF8892B0)) }
+                }) { Text("Chỉ lưu", color = Color(0xFF8892B0)) }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    enabled = !loading && !busy,
+                    onClick = {
+                        busy = true; resultMsg = "Đang lưu + gửi thử..."
+                        viewModel.saveTelegramConfig(enabled, botToken, chatId, test = true) { _, msg ->
+                            busy = false; resultMsg = msg; botToken = ""
+                            viewModel.loadTelegramConfig { en, cid, ht -> enabled = en; chatId = cid; hasToken = ht }
+                        }
+                    }
+                ) { Text("Lưu & Gửi thử") }
+            }
+            Spacer(Modifier.height(8.dp))
         }
-    )
+    }
 }
 
 // ============ Quy tắc cảnh báo (Rules engine #6) ============
@@ -643,56 +656,71 @@ fun RulesSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
     }
     val numKb = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A1A),
-        title = { Text("Quy tắc cảnh báo", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8)) },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text("NAS tự kiểm tra mỗi 60s và cảnh báo (Telegram + nhật ký) khi vượt ngưỡng.",
-                    fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Bật quy tắc", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = Color(0xFFE8E8E8))
-                        Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = Color(0xFF8892B0))
-                    }
-                    Switch(checked = pause, onCheckedChange = { pause = it }, enabled = !loading && !busy)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(value = disk, onValueChange = { disk = it.filter(Char::isDigit) },
-                    label = { Text("Ngưỡng ổ cứng (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = cpuTemp, onValueChange = { cpuTemp = it.filter(Char::isDigit) },
-                    label = { Text("Ngưỡng nhiệt CPU (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = hddTemp, onValueChange = { hddTemp = it.filter(Char::isDigit) },
-                    label = { Text("Ngưỡng nhiệt HDD (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = ram, onValueChange = { ram = it.filter(Char::isDigit) },
-                    label = { Text("Ngưỡng RAM (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
-                if (msg.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(msg, fontSize = 12.sp, color = if (msg.contains("✓")) Color(0xFF00E676) else Color(0xFFFF9100))
-                }
+        sheetState = sheetState,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Icon(Icons.Default.Tune, null, tint = Color(0xFFFFB300), modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Quy tắc cảnh báo", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8), fontSize = 17.sp)
             }
-        },
-        confirmButton = {
-            Button(enabled = !loading && !busy, onClick = {
-                busy = true; msg = "Đang lưu..."
-                viewModel.saveRulesConfig(enabled, pause,
-                    disk.toIntOrNull() ?: 90, cpuTemp.toIntOrNull() ?: 80,
-                    hddTemp.toIntOrNull() ?: 55, ram.toIntOrNull() ?: 96) { ok ->
-                    busy = false; msg = if (ok) "Đã lưu ✓" else "Lưu thất bại"
-                    if (ok) onDismiss()
+            Text("NAS tự kiểm tra mỗi 60s và cảnh báo (Telegram + nhật ký) khi vượt ngưỡng.",
+                fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Bật quy tắc", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
+                Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = Color(0xFFE8E8E8))
+                    Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = Color(0xFF8892B0))
                 }
-            }) { Text("Lưu") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF8892B0)) } }
-    )
+                Switch(checked = pause, onCheckedChange = { pause = it }, enabled = !loading && !busy)
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = disk, onValueChange = { disk = it.filter(Char::isDigit) },
+                label = { Text("Ngưỡng ổ cứng (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = cpuTemp, onValueChange = { cpuTemp = it.filter(Char::isDigit) },
+                label = { Text("Ngưỡng nhiệt CPU (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = hddTemp, onValueChange = { hddTemp = it.filter(Char::isDigit) },
+                label = { Text("Ngưỡng nhiệt HDD (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(value = ram, onValueChange = { ram = it.filter(Char::isDigit) },
+                label = { Text("Ngưỡng RAM (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+            if (msg.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(msg, fontSize = 12.sp, color = if (msg.contains("✓")) Color(0xFF00E676) else Color(0xFFFF9100))
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF8892B0)) }
+                Spacer(Modifier.width(8.dp))
+                Button(enabled = !loading && !busy, onClick = {
+                    busy = true; msg = "Đang lưu..."
+                    viewModel.saveRulesConfig(enabled, pause,
+                        disk.toIntOrNull() ?: 90, cpuTemp.toIntOrNull() ?: 80,
+                        hddTemp.toIntOrNull() ?: 55, ram.toIntOrNull() ?: 96) { ok ->
+                        busy = false; msg = if (ok) "Đã lưu ✓" else "Lưu thất bại"
+                        if (ok) onDismiss()
+                    }
+                }) { Text("Lưu") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 }

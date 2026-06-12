@@ -433,90 +433,103 @@ fun MainMenuScreen(
 
     // DIALOG CẤU HÌNH QUÉT TRÙNG LẶP — từ màn hình chính
     if (showDuplicateScanDialog) {
-        AlertDialog(
+        val dupSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
             onDismissRequest = { showDuplicateScanDialog = false },
-            icon = { Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(36.dp)) },
-            title = { Text("Quét tệp trùng lặp", fontWeight = FontWeight.Bold, color = TextPrimary) },
-            containerColor = Color(0xFF1A1A2E),
-            textContentColor = TextPrimary,
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Hệ thống sẽ quét toàn bộ NAS và phát hiện tệp có nội dung giống nhau.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
+            sheetState = dupSheetState,
+            containerColor = Color(0xFF0F0F0F),
+            scrimColor = Color.Black.copy(alpha = 0.6f),
+            dragHandle = { DashboardCompactBottomSheetHandle() }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Quét tệp trùng lặp", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 17.sp)
+                }
+                Text("Hệ thống sẽ quét toàn bộ NAS và phát hiện tệp có nội dung giống nhau.", fontSize = 13.sp, color = TextSecondary, lineHeight = 18.sp)
 
-                    // Option 1: Lightning Mode
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { dupScanLightningMode = !dupScanLightningMode },
-                        color = if (dupScanLightningMode) Color(0xFFFFC107).copy(alpha = 0.1f) else Color(0xFF222233),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = dupScanLightningMode,
-                                onCheckedChange = { dupScanLightningMode = it },
-                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
-                            )
-                            Column(Modifier.padding(start = 6.dp)) {
-                                Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    color = if (dupScanLightningMode) Color(0xFFFFC107) else TextPrimary)
-                                Text("Bỏ qua hash nội dung, dùng ETag. Nhanh hơn 100×, phù hợp 500k+ tệp.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
-                            }
+                // Option 1: Lightning Mode
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { dupScanLightningMode = !dupScanLightningMode },
+                    color = if (dupScanLightningMode) Color(0xFFFFC107).copy(alpha = 0.1f) else Color(0xFF222233),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = dupScanLightningMode,
+                            onCheckedChange = { dupScanLightningMode = it },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
+                        )
+                        Column(Modifier.padding(start = 6.dp)) {
+                            Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                color = if (dupScanLightningMode) Color(0xFFFFC107) else TextPrimary)
+                            Text("Bỏ qua hash nội dung, dùng ETag. Nhanh hơn 100×, phù hợp 500k+ tệp.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
                         }
-                    }
-
-                    // Option 2: Force Restart
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { dupScanForceRestart = !dupScanForceRestart },
-                        color = if (dupScanForceRestart) Color(0xFFEF5350).copy(alpha = 0.1f) else Color(0xFF222233),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = dupScanForceRestart,
-                                onCheckedChange = { dupScanForceRestart = it },
-                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFEF5350))
-                            )
-                            Column(Modifier.padding(start = 6.dp)) {
-                                Text("Quét lại từ đầu", fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    color = if (dupScanForceRestart) Color(0xFFEF5350) else TextPrimary)
-                                Text("Bỏ qua lịch sử lưu tạm, thực hiện quét hoàn toàn mới.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
-                            }
-                        }
-                    }
-                    
-                    // Nút Lịch sử quét
-                    TextButton(
-                        onClick = {
-                            showDuplicateScanDialog = false
-                            viewModel.loadDuplicateResultsFromCache(mContext)
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                    ) {
-                        Icon(Icons.Default.History, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Mở lại kết quả quét gần nhất", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
                     }
                 }
-            },
-            confirmButton = {
-                Button(
+
+                // Option 2: Force Restart
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { dupScanForceRestart = !dupScanForceRestart },
+                    color = if (dupScanForceRestart) Color(0xFFEF5350).copy(alpha = 0.1f) else Color(0xFF222233),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = dupScanForceRestart,
+                            onCheckedChange = { dupScanForceRestart = it },
+                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFFEF5350))
+                        )
+                        Column(Modifier.padding(start = 6.dp)) {
+                            Text("Quét lại từ đầu", fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                color = if (dupScanForceRestart) Color(0xFFEF5350) else TextPrimary)
+                            Text("Bỏ qua lịch sử lưu tạm, thực hiện quét hoàn toàn mới.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
+                        }
+                    }
+                }
+
+                // Nút Lịch sử quét
+                TextButton(
                     onClick = {
                         showDuplicateScanDialog = false
-                        viewModel.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
-                        viewModel.isScanningDuplicates = true
+                        viewModel.loadDuplicateResultsFromCache(mContext)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29B6F6))
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Search, null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.History, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Bắt đầu quét", fontWeight = FontWeight.Bold)
+                    Text("Mở lại kết quả quét gần nhất", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDuplicateScanDialog = false }) {
-                    Text("Hủy", color = TextSecondary)
+
+                Spacer(Modifier.height(2.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showDuplicateScanDialog = false }) {
+                        Text("Hủy", color = TextSecondary)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            showDuplicateScanDialog = false
+                            viewModel.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
+                            viewModel.isScanningDuplicates = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29B6F6))
+                    ) {
+                        Icon(Icons.Default.Search, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Bắt đầu quét", fontWeight = FontWeight.Bold)
+                    }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-        )
+        }
     }
     if (showSmartDialog) {
         SmartDetailBottomSheet(

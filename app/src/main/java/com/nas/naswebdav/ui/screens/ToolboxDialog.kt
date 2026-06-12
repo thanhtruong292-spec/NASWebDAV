@@ -319,20 +319,36 @@ fun ToolboxDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.fetchThumbnailAudit() }
                 val thumbAudit by viewModel.thumbnailAudit.collectAsState()
+                val ta = thumbAudit
                 SettingsMenuCard(
                     title = "Kiểm tra Thumbnail",
-                    subtitle = if (thumbAudit != null) {
-                        if (thumbAudit!!.running) "Đang quét..." else "Thiếu ${thumbAudit!!.missing} / Tổng ${thumbAudit!!.total}"
-                    } else "Thống kê & Quét",
+                    // #2: ghi rõ đây là số liệu của LẦN QUÉT GẦN NHẤT (quét theo cửa sổ
+                    // ~15k entry/lần), không phải audit toàn bộ thư viện -> tránh hiểu nhầm
+                    // "Thiếu 0" = cả NAS đã đủ thumbnail.
+                    subtitle = when {
+                        ta == null -> "Thống kê & Quét"
+                        ta.running -> "Đang quét nền... ${ta.thumbnailed}/${ta.total}"
+                        else -> "Quét gần nhất: thiếu ${ta.missing}/${ta.total}"
+                    },
                     icon = Icons.Default.PhotoLibrary,
                     color = Color(0xFFAB47BC),
                     modifier = Modifier.weight(1f),
+                    // #1: luôn có phản hồi + luôn cho phép kích hoạt quét tiếp (kể cả khi
+                    // cửa sổ gần nhất không thiếu, vì có thể còn file ngoài cửa sổ/cursor).
                     onClick = {
-                        if (thumbAudit == null || (!thumbAudit!!.running && thumbAudit!!.missing > 0)) {
-                            viewModel.triggerThumbnailScan()
-                            android.widget.Toast.makeText(context, "Đã gửi lệnh quét Thumbnail vào hệ thống ngầm!", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.fetchThumbnailAudit()
+                        when {
+                            ta != null && ta.running -> {
+                                viewModel.fetchThumbnailAudit()
+                                android.widget.Toast.makeText(context, "Đang quét nền — đã làm mới trạng thái.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            ta != null && ta.missing > 0 -> {
+                                viewModel.triggerThumbnailScan()
+                                android.widget.Toast.makeText(context, "Đã gửi lệnh quét ${ta.missing} ảnh còn thiếu vào nền.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            else -> {
+                                viewModel.triggerThumbnailScan()
+                                android.widget.Toast.makeText(context, "Đã kích hoạt quét tiếp phần còn lại của thư viện.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 )

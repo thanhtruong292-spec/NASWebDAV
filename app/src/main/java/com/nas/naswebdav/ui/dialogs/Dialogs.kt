@@ -624,18 +624,30 @@ fun SystemLogDialog(
 // ====================================================================
 // DIALOG QUẢN LÝ DOCKER
 // ====================================================================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DockerDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.ViewInAr, null, tint = Color(0xFF1E88E5), modifier = Modifier.size(24.dp))
+        sheetState = sheetState,
+        containerColor = Color(0xFF0F0F0F),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
+        dragHandle = { CompactBottomSheetHandle() }
+    ) {
+        // KHÔNG dùng verticalScroll vì bên trong có LazyColumn (tránh nested scroll cùng chiều).
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                Icon(Icons.Default.ViewInAr, null, tint = Color(0xFF1E88E5), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Quản lý Docker", fontWeight = FontWeight.Bold)
+                Text("Quản lý Docker", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
                 if (viewModel.isFetchingDocker) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color(0xFF1E88E5), strokeWidth = 2.dp)
@@ -645,8 +657,6 @@ fun DockerDialog(
                     }
                 }
             }
-        },
-        text = {
             if (viewModel.dockerContainers.isEmpty() && !viewModel.isFetchingDocker) {
                 Text("Không tìm thấy Container nào đang tồn tại.", modifier = Modifier.padding(16.dp), color = Color.Gray)
             } else {
@@ -694,14 +704,15 @@ fun DockerDialog(
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Đóng", color = Color(0xFF1E88E5), fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onDismiss) {
+                    Text("Đóng", color = Color(0xFF1E88E5), fontWeight = FontWeight.Bold)
+                }
             }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
 }
 
 

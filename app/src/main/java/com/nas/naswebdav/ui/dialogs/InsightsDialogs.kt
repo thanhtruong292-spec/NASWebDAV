@@ -210,8 +210,9 @@ fun NasInsightsDialog(
     ) {
         val insight = viewModel.nasInsights
         Column(
+            // Bỏ fillMaxHeight(0.9f): co theo nội dung, tránh thừa khoảng trống đáy khi
+            // nội dung ngắn; verticalScroll vẫn cuộn khi dài (sheet tự giới hạn ~màn hình).
             modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.9f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 8.dp),

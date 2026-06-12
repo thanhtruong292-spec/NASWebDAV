@@ -75,8 +75,10 @@ fun DiskHealthDialog(
         dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
+            // Bỏ fillMaxHeight(0.92f): trước đây sheet luôn chiếm 92% màn hình kể cả khi
+            // nội dung ngắn -> thừa khoảng trống đáy. Để co theo nội dung; verticalScroll
+            // vẫn cho cuộn khi nội dung dài (ModalBottomSheet tự giới hạn tối đa ~màn hình).
             modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.92f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 6.dp)

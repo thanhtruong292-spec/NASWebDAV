@@ -363,7 +363,7 @@ fun SettingsMenuCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .height(76.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -375,7 +375,7 @@ fun SettingsMenuCard(
             Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .padding(horizontal = 8.dp, vertical = 7.dp),
+                .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -387,9 +387,11 @@ fun SettingsMenuCard(
                 Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             }
             Spacer(Modifier.width(6.dp))
+            // Giữ cỡ chữ dễ đọc (12/10sp) và tăng chiều cao thẻ (76.dp) để title +
+            // subtitle luôn đủ chỗ hiển thị 2 dòng, không bị cắt và không quá nhỏ.
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 10.sp, color = TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 10.sp, lineHeight = 12.sp, color = TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (checked != null) {
                 Switch(

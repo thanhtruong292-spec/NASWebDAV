@@ -398,8 +398,9 @@ fun SleepScheduleDialog(
         dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
+            // Bỏ fillMaxHeight(0.6f): trước đây ép cao 60% màn hình -> thừa khoảng trống
+            // đáy khi nội dung ngắn. Co theo nội dung; verticalScroll vẫn cuộn khi dài.
             modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.6f)
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 6.dp)
