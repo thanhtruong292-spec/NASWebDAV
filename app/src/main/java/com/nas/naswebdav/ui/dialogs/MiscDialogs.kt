@@ -544,3 +544,79 @@ fun MultiDeleteDialog(
     )
 }
 
+
+// ============ Cấu hình thông báo Telegram (#2) ============
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    var enabled by remember { mutableStateOf(false) }
+    var botToken by remember { mutableStateOf("") }
+    var chatId by remember { mutableStateOf("") }
+    var hasToken by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var resultMsg by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadTelegramConfig { en, cid, ht ->
+            enabled = en; chatId = cid; hasToken = ht; loading = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = { Text("Thông báo Telegram", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8)) },
+        text = {
+            Column {
+                Text("NAS sẽ gửi cảnh báo (ghi live bắt đầu/lỗi/kết thúc, ổ cứng yếu, server khởi động) tới Telegram của bạn. Tạo bot qua @BotFather để lấy Token, và lấy Chat ID qua @userinfobot.",
+                    fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bật thông báo", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = botToken, onValueChange = { botToken = it },
+                    label = { Text(if (hasToken) "Bot Token (đã lưu — để trống nếu giữ nguyên)" else "Bot Token") },
+                    placeholder = { Text("123456:ABC-DEF...") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = chatId, onValueChange = { chatId = it },
+                    label = { Text("Chat ID") }, placeholder = { Text("vd: 123456789") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (resultMsg.isNotBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(resultMsg, fontSize = 12.sp,
+                        color = if (resultMsg.contains("✓") || resultMsg.contains("thành công")) Color(0xFF00E676) else Color(0xFFFF9100))
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !loading && !busy,
+                onClick = {
+                    busy = true; resultMsg = "Đang lưu + gửi thử..."
+                    viewModel.saveTelegramConfig(enabled, botToken, chatId, test = true) { _, msg ->
+                        busy = false; resultMsg = msg; botToken = ""
+                        viewModel.loadTelegramConfig { en, cid, ht -> enabled = en; chatId = cid; hasToken = ht }
+                    }
+                }
+            ) { Text("Lưu & Gửi thử") }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                if (!busy) {
+                    busy = true
+                    viewModel.saveTelegramConfig(enabled, botToken, chatId, test = false) { _, _ -> onDismiss() }
+                }
+            }) { Text("Chỉ lưu", color = Color(0xFF8892B0)) }
+        }
+    )
+}

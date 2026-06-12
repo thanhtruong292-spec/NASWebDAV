@@ -197,6 +197,22 @@ fun ToolboxDialog(
                 )
             }
             Spacer(Modifier.height(8.dp))
+            var showTelegram by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsMenuCard(
+                    title = "Thông báo Telegram",
+                    subtitle = "Cảnh báo ghi live / ổ cứng",
+                    icon = Icons.Default.Notifications,
+                    color = Color(0xFF29B6F6),
+                    modifier = Modifier.weight(1f),
+                    onClick = { showTelegram = true }
+                )
+                Spacer(Modifier.weight(1f))
+            }
+            if (showTelegram) {
+                com.nas.naswebdav.ui.dialogs.TelegramSettingsDialog(viewModel = viewModel, onDismiss = { showTelegram = false })
+            }
+            Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
                 SettingsMenuCard(

@@ -6619,6 +6619,59 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     }
 
+    // ===== Thông báo Telegram (#2) =====
+    /** Đọc cấu hình Telegram từ NAS. Trả về (enabled, chatId, hasToken). */
+    fun loadTelegramConfig(onDone: (Boolean, String, Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/notify/telegram"
+                val request = okhttp3.Request.Builder().url(url).get()
+                    .let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.sharedHttpClient.newCall(request).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val j = org.json.JSONObject(body)
+                    val enabled = j.optBoolean("enabled", false)
+                    val chatId = j.optString("chat_id", "")
+                    val hasToken = j.optBoolean("has_token", false)
+                    withContext(Dispatchers.Main) { onDone(enabled, chatId, hasToken) }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onDone(false, "", false) }
+            }
+        }
+    }
+
+    /** Lưu cấu hình Telegram (+ gửi tin thử nếu test=true). onDone(success, message). */
+    fun saveTelegramConfig(enabled: Boolean, botToken: String, chatId: String, test: Boolean, onDone: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/notify/telegram"
+                val url = if (test) "$base?test=1" else base
+                val json = org.json.JSONObject().put("enabled", enabled).put("chat_id", chatId)
+                if (botToken.isNotBlank()) json.put("bot_token", botToken.trim())
+                val reqBody = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url(url).post(reqBody)
+                    .let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.sharedHttpClient.newCall(request).execute().use { resp ->
+                    val body = resp.body?.string() ?: ""
+                    val j = runCatching { org.json.JSONObject(body) }.getOrNull()
+                    val testResult = j?.optString("test", "") ?: ""
+                    val ok = resp.isSuccessful
+                    val msg = when {
+                        !ok -> "Lưu thất bại (HTTP ${resp.code})"
+                        test && testResult == "ok" -> "Đã lưu + gửi tin thử thành công ✓"
+                        test && testResult == "missing_token_or_chat_id" -> "Thiếu token hoặc chat id"
+                        test && testResult.startsWith("fail") -> "Lưu OK nhưng gửi thử lỗi: ${testResult.removePrefix("fail: ")}"
+                        else -> "Đã lưu cấu hình"
+                    }
+                    withContext(Dispatchers.Main) { onDone(ok, msg) }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onDone(false, "Lỗi: ${e.message?.take(120)}") }
+            }
+        }
+    }
+
     override fun onCleared() {
 
         super.onCleared()
