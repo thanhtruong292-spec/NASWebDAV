@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
-
-    <!-- Cleartext HTTP chỉ cho phép tới NAS đã biết: LAN + Tailscale (IP cố định). -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">192.168.100.254</domain>
-        <domain includeSubdomains="false">100.90.135.102</domain>
-    </domain-config>
+    <!-- M2 fix: Android domain-config KHÔNG nhận subnet/CIDR, nên việc liệt kê IP
+         cố định làm login vỡ khi đổi IP NAS (DHCP cấp lại / đổi router / Tailscale IP
+         khác). App chỉ kết nối tới URL NAS do người dùng tự nhập, nên cho phép cleartext
+         ở base-config là đánh đổi hợp lý cho NAS cá nhân trên LAN/Tailscale.
+         Lưu ý: muốn "production" thì nên chuyển hẳn sang HTTPS thay vì nới cleartext. -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

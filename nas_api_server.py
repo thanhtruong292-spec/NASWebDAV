@@ -10690,12 +10690,30 @@ VSFTPD_USER_DIR = "/etc/vsftpd/userconf"   # Thư mục cau hinh per-user vsftpd
 GUEST_FTP_ROOT  = "/srv/dev-disk-by-label-data"  # Thư mục FTP se thay the qua chrootdir
 
 def _save_guest_passes_locked():
-    """Ghi _guest_passes ra disk (atomic). Goi khi dang giu _guest_lock."""
+    """Ghi state guest pass ra disk (atomic). Goi khi dang giu _guest_lock.
+
+    CHI persist nhung gi reconcile/watcher can: username + expires_at.
+    KHONG ghi password ra disk (tranh luu secret plaintext at-rest); password
+    chi ton tai trong RAM va da tra ve client mot lan luc tao."""
     try:
         os.makedirs(os.path.dirname(_GUEST_PASSES_FILE), exist_ok=True)
+        snapshot = {u: {"expires_at": v.get("expires_at")} for u, v in _guest_passes.items()}
         tmp = _GUEST_PASSES_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_guest_passes, f, ensure_ascii=False)
+        # Tao file voi quyen 0600 ngay tu dau (umask-safe)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False)
+        except Exception:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            raise
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
         os.replace(tmp, _GUEST_PASSES_FILE)
     except Exception as e:
         log.error("[GuestPass] Khong luu duoc state: %s", e)
@@ -10738,7 +10756,8 @@ def _reconcile_guest_passes():
         except Exception:
             expires_at = 0
         if expires_at > now and username in system_users:
-            alive[username] = {"password": meta.get("password", ""), "expires_at": expires_at}
+            # Password khong duoc persist nua; sau restart chi can expires_at de watcher quan ly
+            alive[username] = {"password": "", "expires_at": expires_at}
         else:
             # Het han hoac user khong con ton tai -> don dep
             if username in system_users:
