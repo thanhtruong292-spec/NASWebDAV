@@ -864,13 +864,33 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
     // ta có thể gọi trực tiếp mà không cần runBlocking wrapper.
     // Tất cả callsite đều nằm trong withContext(IO) nên đã là suspend context.
     protected suspend fun loadWebDavManager(): WebDavManager? {
-        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
-            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        // getActiveBaseUrl() dò mạng (checkNasReachabilityQuickly) trong async/coroutineScope;
+        // nếu probe ném exception trong nền -> propagate ra -> trước đây làm worker FAILED câm
+        // (vì loadWebDavManager được gọi NGOÀI try của worker). Bọc lại + fallback URL đã lưu.
+        val url = try {
+            SmartNetworkManager.getActiveBaseUrl(applicationContext)
+                .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        } catch (e: Exception) {
+            SystemLogger.log("WARNING", "Worker", "Dò URL NAS lỗi (${e.message}); dùng URL đã lưu.")
+            SecurePrefsHelper.getUrl(applicationContext)
+        }
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (url.isEmpty() || user.isEmpty()) return null
+        if (url.isEmpty() || user.isEmpty()) {
+            // Chẩn đoán: ghi rõ vì sao worker dừng (worker nền hay fail âm thầm ở đây).
+            SystemLogger.log("WARNING", "Worker", "Tác vụ nền dừng: thiếu cấu hình NAS (URL trống=${url.isEmpty()}, tài khoản trống=${user.isEmpty()}). Cần đăng nhập lại.")
+            return null
+        }
         val manager = WebDavManager
-        manager.connect(url, user, pass)
+        try {
+            manager.connect(url, user, pass)
+        } catch (e: Exception) {
+            // connect() ném IllegalArgumentException nếu URL không phải LAN/Tailscale/HTTPS,
+            // hoặc lỗi phân giải host trong nền -> trước đây ném ra ngoài try của worker làm
+            // worker FAILED âm thầm (không log). Giờ bắt lại + ghi rõ lý do.
+            SystemLogger.log("WARNING", "Worker", "Tác vụ nền dừng: kết nối NAS lỗi — ${e.message} (URL: $url).")
+            return null
+        }
         return manager
     }
 
@@ -957,7 +977,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
+        SystemLogger.log("INFO", "AutoBackup", "Tiến trình đồng bộ ảnh/video bắt đầu chạy nền.")
         val webDavManager = loadWebDavManager() ?: run {
+            // Chẩn đoán: vì sao không có tiến trình nào hiện — thường do chưa đăng nhập/URL trống.
+            SystemLogger.log("WARNING", "AutoBackup", "Dừng sớm: không tải được cấu hình NAS (URL hoặc tài khoản trống) — không có gì để chạy.")
             // FIX leak: tra wakelock truoc khi return som -> tranh giu pin 60' khi NAS offline.
             if (wakeLock.isHeld) wakeLock.release()
             return@withContext Result.failure()
@@ -1011,6 +1034,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 } catch(e: Exception) {}
             }
+            // Chẩn đoán: số ảnh/video thiết bị thấy được. Nếu = 0 (vd app trong Secure Folder
+            // không truy cập được thư viện chính, hoặc chưa cấp quyền Ảnh) -> không có gì để chạy.
+            SystemLogger.log(
+                if (totalFilesToProcess == 0) "WARNING" else "INFO",
+                "AutoBackup",
+                if (totalFilesToProcess == 0)
+                    "Không tìm thấy ảnh/video nào trong thiết bị (0) — kiểm tra quyền Ảnh hoặc app đang ở Secure Folder. Không có gì để đồng bộ."
+                else
+                    "Quét thấy $totalFilesToProcess ảnh/video trong thiết bị, bắt đầu đối chiếu & tải lên NAS."
+            )
             var processedFilesCount = 0
             val startTime = System.currentTimeMillis()
             
