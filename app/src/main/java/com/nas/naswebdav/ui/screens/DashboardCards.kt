@@ -269,7 +269,8 @@ internal fun DashboardSystemOverviewCard(
                     GaugeCard(
                         title = "S.M.A.R.T",
                         value = smartStatusText,
-                        subValue = viewModel.smartInfo.temperature.replace("°C", "°").replace("--", ""),
+                        // Nhiệt độ HDD THỰC TẾ (live, refresh mỗi poll) thay vì nhiệt lúc quét SMART (kẹt cố định).
+                        subValue = viewModel.systemStatus.temp.replace("°C", "°").replace("--", ""),
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
                         modifier = Modifier.weight(1f),

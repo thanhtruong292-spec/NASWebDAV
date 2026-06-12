@@ -420,7 +420,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 val h = size.height
                 val leftPad = 42f * density
 
-                // Nhãn trục Y (max, mid, min) hiển thị đậm và dứt khoát
+                // Trục Y: đường dóng ngang đều nhau + nhãn giá trị tại mỗi mức
                 val yPaint = android.graphics.Paint().apply {
                     color = android.graphics.Color.argb(220, 200, 200, 200)
                     textSize = textPx
@@ -428,17 +428,20 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     isAntiAlias = true
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                 }
-                drawContext.canvas.nativeCanvas.apply {
-                    val fmt = if (tabIndex == 2) "%.1f" else "%.0f"
-                    drawText(fmt.format(maxVal), 0f, pad + textPx, yPaint)
-                    drawText(fmt.format((maxVal + minVal) / 2f), 0f, h / 2f + textPx/3f, yPaint)
-                    drawText(fmt.format(minVal), 0f, h - pad, yPaint)
+                val fmt = if (tabIndex == 2) "%.1f" else "%.0f"
+                val gridRows = 4
+                for (i in 0..gridRows) {
+                    val frac = i / gridRows.toFloat()
+                    val y = pad + frac * (h - pad * 2)
+                    val v = maxVal - frac * (maxVal - minVal)
+                    drawLine(Color(0x22FFFFFF), Offset(leftPad, y), Offset(w, y), strokeWidth = 1f)
+                    drawContext.canvas.nativeCanvas.drawText(fmt.format(v), 0f, y + textPx / 3f, yPaint)
                 }
-
-                // Grid ngang
-                for (i in 0..3) {
-                    val y = pad + (i / 3f) * (h - pad * 2)
-                    drawLine(Color(0x33FFFFFF), Offset(leftPad, y), Offset(w, y), strokeWidth = 1f)
+                // Trục X: đường dóng dọc đều nhau
+                val gridCols = 6
+                for (j in 0..gridCols) {
+                    val x = leftPad + (j / gridCols.toFloat()) * (w - leftPad - pad)
+                    drawLine(Color(0x14FFFFFF), Offset(x, pad), Offset(x, h - pad), strokeWidth = 1f)
                 }
 
                 // Vẽ các series
@@ -493,7 +496,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             linePath,
                             color = s.color,
                             style = androidx.compose.ui.graphics.drawscope.Stroke(
-                                width = 1.8f * density,
+                                width = 1.0f * density,
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
                                 join = androidx.compose.ui.graphics.StrokeJoin.Round,
                                 pathEffect = s.dash?.let { androidx.compose.ui.graphics.PathEffect.dashPathEffect(it) }
