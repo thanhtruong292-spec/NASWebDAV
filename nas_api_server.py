@@ -4746,47 +4746,18 @@ def _disk_health_sample_once():
         log.error("[DiskHealth] Sample lỗi: %s", e)
 
 
-_DISK_HEALTH_JSONL_LEGACY = "/etc/nas/state/disk_health_history.jsonl"
-_DISK_HEALTH_JSONL_MAX_LINES = 5000
-
 def _disk_health_prune_old_records():
-    """Xoa cac mau disk health cu hon retention trong SQLite + cat log .jsonl legacy."""
-    cutoff = int(time.time()) - (_DISK_HEALTH_RETENTION_DAYS * 86400)
+    """Xoa cac mau disk health cu hon retention trong SQLite (nguon duy nhat;
+    file .jsonl legacy da bo han, khong con ghi/doc/luu)."""
     try:
+        cutoff = int(time.time()) - (_DISK_HEALTH_RETENTION_DAYS * 86400)
         conn = sqlite3.connect(DB_PATH, timeout=10.0)
         cur = conn.cursor()
         cur.execute("DELETE FROM disk_health_history WHERE ts <= ?", (cutoff,))
         conn.commit()
         conn.close()
     except Exception as e:
-        log.warning("[DiskHealth] Prune SQLite lỗi: %s", e)
-
-    # Cat log cu trong file .jsonl legacy (da ngung ghi nhung con ton tren eMMC):
-    # giu cac dong < retention ngay, va tran cung toi da N dong gan nhat.
-    try:
-        if os.path.exists(_DISK_HEALTH_JSONL_LEGACY):
-            kept = []
-            with open(_DISK_HEALTH_JSONL_LEGACY, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        ts = int(json.loads(line).get("ts") or 0)
-                    except Exception:
-                        ts = 0
-                    if ts >= cutoff:
-                        kept.append(line)
-            if len(kept) > _DISK_HEALTH_JSONL_MAX_LINES:
-                kept = kept[-_DISK_HEALTH_JSONL_MAX_LINES:]
-            tmp = _DISK_HEALTH_JSONL_LEGACY + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                for line in kept:
-                    f.write(line + "\n")
-            os.replace(tmp, _DISK_HEALTH_JSONL_LEGACY)
-            log.info("[DiskHealth] Đã cắt log .jsonl legacy còn %d dòng", len(kept))
-    except Exception as e:
-        log.warning("[DiskHealth] Cắt .jsonl legacy lỗi: %s", e)
+        log.warning("[DiskHealth] Prune lỗi: %s", e)
 
 
 def _disk_health_watchdog():
