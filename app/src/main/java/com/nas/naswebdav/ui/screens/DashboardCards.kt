@@ -80,6 +80,8 @@ internal fun MainDashboardHeader(
             }
             Column {
                 Text("NAS Dashboard", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                // Nhãn phiên bản auto theo build — nhìn là biết bản nào, tránh nhầm
+                Text("v${com.nas.naswebdav.BuildConfig.VERSION_NAME}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.7f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Chainedbox L1 Pro", fontSize = 12.sp, color = TextSecondary)
                     Text("  \u2022  ", fontSize = 12.sp, color = TextSecondary)

@@ -1,4 +1,6 @@
 import java.util.Properties
+import java.text.SimpleDateFormat
+import java.util.Date
 
 plugins {
     alias(libs.plugins.android.application)
@@ -37,6 +39,26 @@ gradle.taskGraph.whenReady {
     }
 }
 
+// ─── Auto-versioning: mỗi lần build tự đánh số theo git + thời gian ───────────
+// versionCode = số commit (tăng đều mỗi commit); versionName = 1.0.<count> (<sha> · <ngày giờ build>)
+// Nhờ vậy nhìn nhãn trong app là biết chính xác build nào, tránh nhầm lẫn.
+fun runGit(vararg args: String): String = try {
+    val p = ProcessBuilder(listOf("git", *args))
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    p.waitFor()
+    if (p.exitValue() == 0) out else ""
+} catch (e: Exception) { "" }
+
+val gitCommitCount: Int = runGit("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
+val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogit" }
+val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
+// Đánh dấu build từ code CHƯA COMMIT (bản test thủ công) để không nhầm với bản chính thức.
+val gitDirtySuffix: String = if (runGit("status", "--porcelain").isNotBlank()) "+test" else ""
+val baseVersionName = "1.0"
+
 android {
     namespace = "com.nas.naswebdav"
     compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
@@ -45,9 +67,13 @@ android {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = gitCommitCount
+        versionName = "$baseVersionName.$gitCommitCount$gitDirtySuffix ($gitShortSha · $buildStamp)"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildFeatures {
+        buildConfig = true  // để app đọc BuildConfig.VERSION_NAME hiển thị nhãn phiên bản
     }
 
     signingConfigs {
@@ -63,8 +89,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Cờ chẩn đoán tạm thời: -PdiagBuild=true -> tắt R8 + bật debuggable để
+            // đọc log WorkManager rõ ràng (vẫn release-signed nên cập nhật đè được, giữ login).
+            val diagBuild = providers.gradleProperty("diagBuild").orNull == "true"
+            isMinifyEnabled = !diagBuild
+            isShrinkResources = !diagBuild
+            isDebuggable = diagBuild
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")

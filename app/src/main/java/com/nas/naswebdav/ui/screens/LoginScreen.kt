@@ -319,6 +319,17 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                 fontWeight = FontWeight.Medium
             )
         }
+
+        // ── Nhãn phiên bản (auto theo build) — để phân biệt rõ bản đang chạy ────
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "Phiên bản ${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
+            fontSize = 10.sp,
+            color = Color(0xFF6B7280),
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 
     // ── DIALOGS cho khu vuc khan cap ────────────────────────────────────────
