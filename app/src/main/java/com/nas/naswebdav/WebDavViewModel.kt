@@ -6672,6 +6672,52 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
+    // ===== Rules engine (#6) =====
+    /** onDone(enabled, pauseOnDiskFull, diskPercent, cpuTemp, hddTemp, ramPercent) */
+    fun loadRulesConfig(onDone: (Boolean, Boolean, Int, Int, Int, Int) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/rules"
+                val request = okhttp3.Request.Builder().url(url).get()
+                    .let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.sharedHttpClient.newCall(request).execute().use { resp ->
+                    val j = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    withContext(Dispatchers.Main) {
+                        onDone(
+                            j.optBoolean("enabled", true),
+                            j.optBoolean("pause_record_on_disk_full", false),
+                            j.optInt("disk_percent", 90), j.optInt("cpu_temp", 80),
+                            j.optInt("hdd_temp", 55), j.optInt("ram_percent", 96)
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onDone(true, false, 90, 80, 55, 96) }
+            }
+        }
+    }
+
+    fun saveRulesConfig(enabled: Boolean, pause: Boolean, disk: Int, cpuTemp: Int, hddTemp: Int, ram: Int, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = webDavManager.currentBaseUrl.toApiBaseUrl() + "/api/rules"
+                val json = org.json.JSONObject()
+                    .put("enabled", enabled).put("pause_record_on_disk_full", pause)
+                    .put("disk_percent", disk).put("cpu_temp", cpuTemp)
+                    .put("hdd_temp", hddTemp).put("ram_percent", ram)
+                val reqBody = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url(url).post(reqBody)
+                    .let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.sharedHttpClient.newCall(request).execute().use { resp ->
+                    val ok = resp.isSuccessful
+                    withContext(Dispatchers.Main) { onDone(ok) }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onDone(false) }
+            }
+        }
+    }
+
     override fun onCleared() {
 
         super.onCleared()

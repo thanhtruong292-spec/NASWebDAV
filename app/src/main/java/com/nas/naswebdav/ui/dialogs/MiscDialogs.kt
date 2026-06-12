@@ -620,3 +620,79 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
         }
     )
 }
+
+// ============ Quy tắc cảnh báo (Rules engine #6) ============
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RulesSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    var enabled by remember { mutableStateOf(true) }
+    var pause by remember { mutableStateOf(false) }
+    var disk by remember { mutableStateOf("90") }
+    var cpuTemp by remember { mutableStateOf("80") }
+    var hddTemp by remember { mutableStateOf("55") }
+    var ram by remember { mutableStateOf("96") }
+    var loading by remember { mutableStateOf(true) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadRulesConfig { en, pa, d, c, h, r ->
+            enabled = en; pause = pa; disk = d.toString(); cpuTemp = c.toString()
+            hddTemp = h.toString(); ram = r.toString(); loading = false
+        }
+    }
+    val numKb = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1A1A1A),
+        title = { Text("Quy tắc cảnh báo", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8)) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("NAS tự kiểm tra mỗi 60s và cảnh báo (Telegram + nhật ký) khi vượt ngưỡng.",
+                    fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bật quy tắc", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
+                    Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = Color(0xFFE8E8E8))
+                        Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = Color(0xFF8892B0))
+                    }
+                    Switch(checked = pause, onCheckedChange = { pause = it }, enabled = !loading && !busy)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = disk, onValueChange = { disk = it.filter(Char::isDigit) },
+                    label = { Text("Ngưỡng ổ cứng (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = cpuTemp, onValueChange = { cpuTemp = it.filter(Char::isDigit) },
+                    label = { Text("Ngưỡng nhiệt CPU (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = hddTemp, onValueChange = { hddTemp = it.filter(Char::isDigit) },
+                    label = { Text("Ngưỡng nhiệt HDD (°C)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = ram, onValueChange = { ram = it.filter(Char::isDigit) },
+                    label = { Text("Ngưỡng RAM (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
+                if (msg.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(msg, fontSize = 12.sp, color = if (msg.contains("✓")) Color(0xFF00E676) else Color(0xFFFF9100))
+                }
+            }
+        },
+        confirmButton = {
+            Button(enabled = !loading && !busy, onClick = {
+                busy = true; msg = "Đang lưu..."
+                viewModel.saveRulesConfig(enabled, pause,
+                    disk.toIntOrNull() ?: 90, cpuTemp.toIntOrNull() ?: 80,
+                    hddTemp.toIntOrNull() ?: 55, ram.toIntOrNull() ?: 96) { ok ->
+                    busy = false; msg = if (ok) "Đã lưu ✓" else "Lưu thất bại"
+                    if (ok) onDismiss()
+                }
+            }) { Text("Lưu") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF8892B0)) } }
+    )
+}

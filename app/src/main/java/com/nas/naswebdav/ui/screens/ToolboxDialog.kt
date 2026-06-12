@@ -198,6 +198,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             var showTelegram by remember { mutableStateOf(false) }
+            var showRules by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
                     title = "Thông báo Telegram",
@@ -207,10 +208,20 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { showTelegram = true }
                 )
-                Spacer(Modifier.weight(1f))
+                SettingsMenuCard(
+                    title = "Quy tắc cảnh báo",
+                    subtitle = "Ngưỡng ổ/nhiệt/RAM + hành động",
+                    icon = Icons.Default.Tune,
+                    color = Color(0xFFFFB300),
+                    modifier = Modifier.weight(1f),
+                    onClick = { showRules = true }
+                )
             }
             if (showTelegram) {
                 com.nas.naswebdav.ui.dialogs.TelegramSettingsDialog(viewModel = viewModel, onDismiss = { showTelegram = false })
+            }
+            if (showRules) {
+                com.nas.naswebdav.ui.dialogs.RulesSettingsDialog(viewModel = viewModel, onDismiss = { showRules = false })
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
