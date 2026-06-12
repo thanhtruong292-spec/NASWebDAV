@@ -56,7 +56,9 @@ val gitCommitCount: Int = runGit("rev-list", "--count", "HEAD").toIntOrNull() ?:
 val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogit" }
 val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
 // Đánh dấu build từ code CHƯA COMMIT (bản test thủ công) để không nhầm với bản chính thức.
-val gitDirtySuffix: String = if (runGit("status", "--porcelain").isNotBlank()) "+test" else ""
+// Chỉ tính thay đổi đã track (bỏ qua file chưa track như .apk build, .codex...) để
+// bản release chính thức không bị gắn "+test" oan vì artifact rác trong thư mục.
+val gitDirtySuffix: String = if (runGit("status", "--porcelain", "--untracked-files=no").isNotBlank()) "+test" else ""
 val baseVersionName = "1.0"
 
 android {
