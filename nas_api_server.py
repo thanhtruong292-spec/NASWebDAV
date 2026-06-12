@@ -4733,6 +4733,7 @@ def _disk_health_sample_once():
             try:
                 _add_system_log("WARNING", "DiskHealth",
                     "Điểm sức khỏe HDD: %d/100. Cảnh báo: %s" % (score, "; ".join(normalized_warnings[:3])))
+                _notify_telegram("🩺 <b>Sức khỏe ổ cứng thấp: %d/100</b>\n%s" % (score, "; ".join(normalized_warnings[:3])), "disk_critical")
             except Exception:
                 pass
         if dmesg.get("sata_resets", 0) > 0 or dmesg.get("io_errors", 0) > 0:
@@ -4786,6 +4787,69 @@ def _disk_health_watchdog():
         except Exception as e:
             log.warning("[DiskHealth] Watchdog lỗi: %s", e)
             time.sleep(3600)
+
+
+# ============ THONG BAO TELEGRAM (push canh bao khi roi app) ============
+_TELEGRAM_CONFIG_FILE = "/etc/nas/state/telegram.json"
+_TELEGRAM_DEFAULT_EVENTS = {
+    "rec_start": True, "rec_stop": True, "rec_fail": True,
+    "disk_critical": True, "server_start": True,
+}
+
+def _load_telegram_config():
+    cfg = {"enabled": False, "bot_token": "", "chat_id": "", "events": dict(_TELEGRAM_DEFAULT_EVENTS)}
+    try:
+        if os.path.exists(_TELEGRAM_CONFIG_FILE):
+            with open(_TELEGRAM_CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            cfg.update({k: data[k] for k in ("enabled", "bot_token", "chat_id") if k in data})
+            if isinstance(data.get("events"), dict):
+                cfg["events"].update(data["events"])
+    except Exception as e:
+        log.warning("[Telegram] Doc config loi: %s", e)
+    return cfg
+
+def _save_telegram_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(_TELEGRAM_CONFIG_FILE), exist_ok=True)
+        tmp = _TELEGRAM_CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        os.replace(tmp, _TELEGRAM_CONFIG_FILE)
+        return True
+    except Exception as e:
+        log.warning("[Telegram] Ghi config loi: %s", e)
+        return False
+
+def _telegram_send_raw(bot_token, chat_id, text):
+    """Gui 1 tin Telegram (blocking, co timeout). Tra (ok, error_str)."""
+    try:
+        import urllib.request, urllib.parse
+        url = "https://api.telegram.org/bot%s/sendMessage" % bot_token
+        body = urllib.parse.urlencode({
+            "chat_id": chat_id, "text": text[:4000],
+            "parse_mode": "HTML", "disable_web_page_preview": "true",
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return (200 <= resp.status < 300), ""
+    except Exception as e:
+        return False, str(e)[:200]
+
+def _notify_telegram(text, event="general"):
+    """Fire-and-forget: gui canh bao Telegram trong thread rieng, khong bao gio
+    lam chet luong goi. Ton trong cau hinh enabled + bo loc su kien."""
+    try:
+        cfg = _load_telegram_config()
+        if not cfg.get("enabled") or not cfg.get("bot_token") or not cfg.get("chat_id"):
+            return
+        if event != "general" and cfg.get("events", {}).get(event, True) is False:
+            return
+        threading.Thread(
+            target=_telegram_send_raw, args=(cfg["bot_token"], cfg["chat_id"], text), daemon=True
+        ).start()
+    except Exception:
+        pass
 
 
 def _add_system_log(level, module, message, timestamp=None):
@@ -7890,6 +7954,47 @@ def api_weekly_report():
         return jsonify({"banned_count": banned, "freed_space": "{} MB".format(freed_mb) if freed_mb < 1024 else "{:.1f} GB".format(freed_mb/1024)})
     except Exception:
         return jsonify({"banned_count": 0, "freed_space": "0 MB"})
+
+# ============ CAU HINH THONG BAO TELEGRAM ============
+
+@app.route("/api/notify/telegram", methods=["GET", "POST"])
+@requires_auth
+def api_notify_telegram():
+    if request.method == "GET":
+        cfg = _load_telegram_config()
+        tok = cfg.get("bot_token") or ""
+        masked = (tok[:6] + "..." + tok[-4:]) if len(tok) > 12 else ("***" if tok else "")
+        return jsonify({
+            "enabled": bool(cfg.get("enabled")),
+            "bot_token_masked": masked,
+            "has_token": bool(tok),
+            "chat_id": cfg.get("chat_id", ""),
+            "events": cfg.get("events", dict(_TELEGRAM_DEFAULT_EVENTS)),
+        })
+    # POST: luu cau hinh; neu kem ?test=1 thi gui 1 tin thu nghiem
+    body = request.get_json(silent=True) or {}
+    cfg = _load_telegram_config()
+    if "enabled" in body:
+        cfg["enabled"] = bool(body["enabled"])
+    # Chi cap nhat token khi client gui token moi (khong rong) — tranh xoa nham khi chi bat/tat
+    if body.get("bot_token"):
+        cfg["bot_token"] = str(body["bot_token"]).strip()
+    if "chat_id" in body:
+        cfg["chat_id"] = str(body["chat_id"]).strip()
+    if isinstance(body.get("events"), dict):
+        ev = dict(_TELEGRAM_DEFAULT_EVENTS); ev.update(cfg.get("events", {})); ev.update(body["events"])
+        cfg["events"] = ev
+    _save_telegram_config(cfg)
+    result = {"status": "saved", "enabled": cfg["enabled"]}
+    if request.args.get("test") == "1" or body.get("test"):
+        if not cfg.get("bot_token") or not cfg.get("chat_id"):
+            result["test"] = "missing_token_or_chat_id"
+        else:
+            ok, err = _telegram_send_raw(cfg["bot_token"], cfg["chat_id"],
+                "✅ <b>NAS Chainedbox</b>\nKết nối Telegram thành công. Bạn sẽ nhận cảnh báo tại đây.")
+            result["test"] = "ok" if ok else ("fail: " + err)
+    return jsonify(result)
+
 
 # ============ CANH BAO CHU DONG (PROACTIVE ALERTS) ============
 
@@ -11864,6 +11969,7 @@ def _tiktok_live_watchdog():
                         recording_count += 1
                         _tiktok_watch_mark_session_recorded(user, job_id, now_str)
                         log.info("[TikTokWatch] @%s đang live, NAS đã tự bắt đầu ghi job %s.", username, job_id)
+                        _notify_telegram("🔴 <b>Bắt đầu ghi LIVE</b>\n@%s đang phát — NAS đã tự ghi." % username, "rec_start")
                     else:
                         log.warning("[TikTokWatch] @%s đang live nhưng không bắt đầu ghi được: %s", username, msg)
                         if "User đã kết thúc live" not in msg and "offline" not in msg.lower():
@@ -11874,6 +11980,7 @@ def _tiktok_live_watchdog():
                                 "@%s dang live nhung khong bat dau ghi duoc: %s" % (username, normalize_vietnamese_message(msg)[:220]),
                                 180
                             )
+                            _notify_telegram("⚠️ <b>Không ghi được LIVE</b>\n@%s đang phát nhưng NAS không bắt đầu ghi: %s" % (username, normalize_vietnamese_message(msg)[:180]), "rec_fail")
                 else:
                     if user.get("live_session_recorded", False):
                         is_offline = err == "offline"
@@ -11907,6 +12014,7 @@ def _tiktok_live_watchdog():
                             changed = True
                             continue
                         log.info("[TikTokWatch] @%s đã ngoại tuyến sau %d lần xác nhận, mở khoá phiên live tiếp theo.", username, offline_count)
+                        _notify_telegram("⏹️ <b>Kết thúc ghi LIVE</b>\n@%s đã dừng phát — NAS dừng ghi." % username, "rec_stop")
                         _tiktok_watch_clear_session(user)
                         user["status"] = "watching"
                         user["last_error"] = ""
@@ -13514,4 +13622,5 @@ if __name__ == "__main__":
     ws_server = tornado.httpserver.HTTPServer(ws_app)
     ws_server.add_socket(_ws_sock)
     log.info("Server đã khởi động thành công!")
+    _notify_telegram("🟢 <b>NAS server đã khởi động</b>\nChainedbox L1 Pro online.", "server_start")
     main_loop.start()
