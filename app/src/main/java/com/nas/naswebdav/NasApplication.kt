@@ -294,7 +294,14 @@ class NasApplication : Application(), ImageLoaderFactory {
         // Dang ky Discovery Worker dinh ky de bat cac job livestream do NAS tu
         // khoi (TikTok watcher auto-record). Khong co worker nay thi khi user
         // dong app, may dien thoai khong bao gio biet co job ngam dang chay.
-        LivestreamDiscoveryWorker.schedule(this)
+        // Bo try/catch: WorkManager co the chua khoi tao (vd moi truong test, hoac
+        // edge-case khi ContentProvider initializer chua chay) -> khong duoc lam
+        // crash onCreate.
+        try {
+            LivestreamDiscoveryWorker.schedule(this)
+        } catch (e: Exception) {
+            android.util.Log.w("NasApplication", "Khong dang ky Discovery Worker: ${e.message}")
+        }
     }
 }
 

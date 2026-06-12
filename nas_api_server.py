@@ -4802,7 +4802,11 @@ _TELEGRAM_DEFAULT_EVENTS = {
     "disk_critical": True, "server_start": True,
 }
 
+_telegram_cfg_cache = {"cfg": None, "ts": 0.0}
+
 def _load_telegram_config():
+    if _telegram_cfg_cache["cfg"] is not None and (time.time() - _telegram_cfg_cache["ts"]) < 30:
+        c = dict(_telegram_cfg_cache["cfg"]); c["events"] = dict(c.get("events", {})); return c
     cfg = {"enabled": False, "bot_token": "", "chat_id": "", "events": dict(_TELEGRAM_DEFAULT_EVENTS)}
     try:
         if os.path.exists(_TELEGRAM_CONFIG_FILE):
@@ -4813,6 +4817,8 @@ def _load_telegram_config():
                 cfg["events"].update(data["events"])
     except Exception as e:
         log.warning("[Telegram] Doc config loi: %s", e)
+    _telegram_cfg_cache["cfg"] = {**cfg, "events": dict(cfg["events"])}
+    _telegram_cfg_cache["ts"] = time.time()
     return cfg
 
 def _save_telegram_config(cfg):
@@ -4822,6 +4828,8 @@ def _save_telegram_config(cfg):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False)
         os.replace(tmp, _TELEGRAM_CONFIG_FILE)
+        _telegram_cfg_cache["cfg"] = {**cfg, "events": dict(cfg.get("events", {}))}
+        _telegram_cfg_cache["ts"] = time.time()
         return True
     except Exception as e:
         log.warning("[Telegram] Ghi config loi: %s", e)
@@ -4870,7 +4878,13 @@ _RULES_DEFAULTS = {
 }
 _rules_block_new_recording = False  # bat khi disk vuot nguong + bat tuy chon pause
 
+_rules_cfg_cache = {"cfg": None, "ts": 0.0}  # cache RAM, tranh doc file moi ~5s (eMMC)
+
 def _load_rules_config():
+    # Cache 30s: rules duoc danh gia ~5s/lan trong loop status; doc file moi lan
+    # se hao eMMC vo ich. Config doi rat hiem (user sua trong app) -> TTL 30s ok.
+    if _rules_cfg_cache["cfg"] is not None and (time.time() - _rules_cfg_cache["ts"]) < 30:
+        return dict(_rules_cfg_cache["cfg"])
     cfg = dict(_RULES_DEFAULTS)
     try:
         if os.path.exists(_RULES_CONFIG_FILE):
@@ -4881,6 +4895,8 @@ def _load_rules_config():
                     cfg[k] = data[k]
     except Exception as e:
         log.warning("[Rules] Doc config loi: %s", e)
+    _rules_cfg_cache["cfg"] = dict(cfg)
+    _rules_cfg_cache["ts"] = time.time()
     return cfg
 
 def _save_rules_config(cfg):
@@ -4890,6 +4906,8 @@ def _save_rules_config(cfg):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False)
         os.replace(tmp, _RULES_CONFIG_FILE)
+        _rules_cfg_cache["cfg"] = dict(cfg)   # cap nhat cache ngay -> co hieu luc tuc thi
+        _rules_cfg_cache["ts"] = time.time()
         return True
     except Exception as e:
         log.warning("[Rules] Ghi config loi: %s", e)
