@@ -13453,10 +13453,30 @@ def api_livestream_status():
                 updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 if info.get("logged_start"):
                     if status == "error":
-                        msg = "User hiện không live hoặc đã tắt live (dung lượng: %s)" % format_bytes(file_size) if file_size == 0 else "Lỗi ghi hình (dung lượng: %s)" % format_bytes(file_size)
-                        _log_livestream_event(
-                            "ERROR", jid, info, msg, "status_error"
-                        )
+                        # Một buổi live kết thúc bình thường cũng làm file ngừng tăng dung lượng,
+                        # nên trước đây bị log nhầm là "Lỗi ghi hình" (ERROR) -> phồng số lỗi hệ thống
+                        # và kéo điểm sức khỏe xuống. Phân loại lại theo dung lượng đã ghi:
+                        #  - ghi được đáng kể (>=1MB): kết thúc bình thường -> INFO (không tính lỗi)
+                        #  - ghi được ít (>0, <1MB): kết thúc sớm -> WARNING
+                        #  - không ghi được gì (0 byte): user không live / tắt ngay -> WARNING
+                        if file_size >= 1024 * 1024:
+                            _log_livestream_event(
+                                "INFO", jid, info,
+                                "Buổi live đã kết thúc (đã ghi: %s)" % format_bytes(file_size),
+                                "status_finished"
+                            )
+                        elif file_size > 0:
+                            _log_livestream_event(
+                                "WARNING", jid, info,
+                                "Ghi hình kết thúc sớm, dung lượng nhỏ (%s)" % format_bytes(file_size),
+                                "status_error"
+                            )
+                        else:
+                            _log_livestream_event(
+                                "WARNING", jid, info,
+                                "User hiện không live hoặc đã tắt live (chưa ghi được dữ liệu)",
+                                "status_error"
+                            )
                     else:
                         _log_livestream_event(
                             "SUCCESS", jid, info,
