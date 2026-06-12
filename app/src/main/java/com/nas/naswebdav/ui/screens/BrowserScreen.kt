@@ -137,6 +137,7 @@ fun BrowserScreen(
 ) {
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
+    var searchTypeFilter by remember { mutableStateOf("all") }  // all | image | video | doc
     var searchQuery by remember { mutableStateOf("") }
     
     val context = LocalContext.current
@@ -482,10 +483,19 @@ fun BrowserScreen(
     // NOTE: Khai báo ở đây (trước Scaffold) để TopAppBar có thể truy cập displayedFiles
     val displayedFiles by remember {
         derivedStateOf {
-            val filtered = if (searchQuery.isBlank()) {
+            val byKeyword = if (searchQuery.isBlank()) {
                 viewModel.fileList
             } else {
                 viewModel.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
+            }
+            // Lọc theo loại tệp (thư mục luôn hiển thị để còn điều hướng)
+            val filtered = if (searchTypeFilter == "all") byKeyword else byKeyword.filter { f ->
+                f.isDirectory || when (searchTypeFilter) {
+                    "image" -> com.nas.naswebdav.utils.MediaUtils.isImage(f.name)
+                    "video" -> com.nas.naswebdav.utils.MediaUtils.isVideo(f.name)
+                    "doc" -> !com.nas.naswebdav.utils.MediaUtils.isImage(f.name) && !com.nas.naswebdav.utils.MediaUtils.isVideo(f.name)
+                    else -> true
+                }
             }
             // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
             val folders = filtered.filter { it.isDirectory }
@@ -1069,6 +1079,23 @@ fun BrowserScreen(
                         }
                     } else {
                         mapOf("" to displayedFiles)
+                    }
+                }
+
+                if (isSearching || (viewModel.isSpecialMode && viewModel.specialTitle.startsWith("Tìm kiếm"))) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("all" to "Tất cả", "image" to "Ảnh", "video" to "Video", "doc" to "Tài liệu").forEach { (key, label) ->
+                            androidx.compose.material3.FilterChip(
+                                selected = searchTypeFilter == key,
+                                onClick = { searchTypeFilter = key },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
                     }
                 }
 
