@@ -477,8 +477,10 @@ object SecurePrefsHelper {
     fun getPass(context: Context): String =
         getSecurePrefs(context).getString(KEY_PASS, "") ?: ""
 
-    fun saveCredentials(context: Context, urlList: List<String>, user: String, pass: String) {
-        try {
+    /** Lưu credential. Trả về true nếu thành công; false (kèm log) nếu thất bại
+     *  để caller không tiếp tục như thể đã lưu xong. */
+    fun saveCredentials(context: Context, urlList: List<String>, user: String, pass: String): Boolean {
+        return try {
             val jsonArray = org.json.JSONArray()
             urlList.forEach { jsonArray.put(it) }
             getSecurePrefs(context).edit()
@@ -487,7 +489,11 @@ object SecurePrefsHelper {
                 .putString(KEY_USER, user)
                 .putString(KEY_PASS, pass)
                 .apply()
-        } catch (e: Exception) {}
+            true
+        } catch (e: Exception) {
+            android.util.Log.e("SecurePrefsHelper", "Không lưu được credential: ${e.message}", e)
+            false
+        }
     }
 
     fun saveCredentialsAsync(context: Context, urlList: List<String>, user: String, pass: String, onComplete: () -> Unit = {}) {

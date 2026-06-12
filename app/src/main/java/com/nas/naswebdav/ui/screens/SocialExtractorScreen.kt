@@ -396,6 +396,16 @@ private fun HiddenExtractorWebView(
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
+
+                        // CHỈ tiêm JS bóc link (lộ cầu nối NasExtractor) khi trang hiện
+                        // tại vẫn nằm trong allowlist. Nếu trang đã redirect ra domain lạ
+                        // thì không inject để tránh trao cầu nối JS cho site không tin cậy.
+                        if (url == null || !isAllowedSocialHost(url)) {
+                            timeoutRunnable?.let { timeoutHandler.removeCallbacks(it) }
+                            onFailure("Trang đã chuyển hướng ra ngoài nền tảng được hỗ trợ")
+                            return
+                        }
+
                         onStatusUpdate("📄 Trang load xong. Đang tiêm JS bóc link...")
 
                         // Xoá timeout cũ, đặt lại 10 giây
@@ -408,7 +418,9 @@ private fun HiddenExtractorWebView(
                         view?.evaluateJavascript(buildExtractorJs(), null)
                         // Retry lần 2 sau 2.5s (trang lazy-load JS)
                         timeoutHandler.postDelayed({
-                            view?.evaluateJavascript(buildExtractorJs(), null)
+                            if (view != null && isAllowedSocialHost(view.url ?: "")) {
+                                view.evaluateJavascript(buildExtractorJs(), null)
+                            }
                         }, 2_500)
                     }
 
@@ -920,13 +932,35 @@ private fun MainActionButton(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-fun isSocialUrl(url: String): Boolean {
-    val l = url.lowercase()
-    return l.contains("tiktok.com") || l.contains("vm.tiktok") ||
-           l.contains("facebook.com/") || l.contains("fb.watch") ||
-           l.contains("youtube.com/shorts") || l.contains("youtu.be") ||
-           l.contains("instagram.com/reel") || l.contains("instagram.com/p/")
+// Allowlist host (suffix) cho cac nen tang ho tro. Dung de:
+//  - validate link nguoi dung dan (chong URL gia mao kieu evil.com/?x=tiktok.com)
+//  - gioi han pham vi tiem JS / cau noi NasExtractor chi tren domain hop le
+private val SOCIAL_HOST_ALLOWLIST = listOf(
+    "tiktok.com", "fb.watch", "facebook.com", "youtube.com", "youtu.be", "instagram.com"
+)
+
+private fun extractHost(url: String): String? {
+    val raw = url.trim()
+    if (raw.isEmpty()) return null
+    return try {
+        var host = java.net.URI(raw).host
+        if (host.isNullOrBlank() && !raw.contains("://")) {
+            // Nguoi dung dan link khong co scheme -> them https:// roi parse lai
+            host = java.net.URI("https://$raw").host
+        }
+        host?.lowercase()
+    } catch (e: Exception) {
+        null
+    }
 }
+
+/** Host co thuoc allowlist khong (khop chinh xac hoac la subdomain). */
+fun isAllowedSocialHost(url: String): Boolean {
+    val host = extractHost(url) ?: return false
+    return SOCIAL_HOST_ALLOWLIST.any { host == it || host.endsWith(".$it") }
+}
+
+fun isSocialUrl(url: String): Boolean = isAllowedSocialHost(url)
 
 private fun detectPlatform(url: String): String {
     val l = url.lowercase()

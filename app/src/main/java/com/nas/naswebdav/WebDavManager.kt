@@ -99,8 +99,9 @@ internal fun isLanOrTailscaleWebDavUrl(rawUrl: String): Boolean {
                 }
             }
             else -> {
+                val hostAddr = address.hostAddress ?: ""
                 address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress ||
-                    address.hostAddress.startsWith("fc") || address.hostAddress.startsWith("fd")
+                    hostAddr.startsWith("fc") || hostAddr.startsWith("fd")
             }
         }
     }.getOrDefault(false)

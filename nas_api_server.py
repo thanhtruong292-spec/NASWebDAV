@@ -598,7 +598,53 @@ def broadcast(data):
                 clients.discard(c)
 
 class AlertWebSocket(tornado.websocket.WebSocketHandler):
-    def check_origin(self, origin): return True
+    def check_origin(self, origin):
+        # Client native (Android/okhttp) khong gui Origin -> cho phep.
+        # Trinh duyet gui Origin -> chi chap nhan cung host de chong
+        # Cross-Site WebSocket Hijacking (CSWSH).
+        if not origin:
+            return True
+        try:
+            origin_host = (urllib.parse.urlparse(origin).hostname or "")
+        except Exception:
+            return False
+        req_host = (self.request.host or "").split(":")[0]
+        return origin_host == req_host or _ip_in_whitelist(origin_host)
+
+    def _is_authorized(self):
+        """Xac thuc handshake bang LAN whitelist / authorized_ips / Basic Auth."""
+        ip = self.request.remote_ip or ""
+        try:
+            if _ip_in_whitelist(ip):
+                return True
+        except Exception:
+            pass
+        try:
+            if ip and ip in _refresh_authorized_ips_cache():
+                return True
+        except Exception:
+            pass
+        auth_header = self.request.headers.get("Authorization", "") or ""
+        if auth_header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode("utf-8", "ignore")
+                user, sep, pwd = decoded.partition(":")
+                if sep and check_auth(user, pwd):
+                    if ip:
+                        _remember_authorized_ip(ip)
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def prepare(self):
+        if not self._is_authorized():
+            try:
+                log.warning("[WS] Tu choi ket noi /ws/alerts chua xac thuc tu %s", self.request.remote_ip)
+            except Exception:
+                pass
+            raise tornado.web.HTTPError(401, "Unauthorized")
+
     def open(self):
         with clients_lock:
             clients.add(self)
@@ -993,6 +1039,13 @@ WEBDAV_USER, WEBDAV_PASS = _load_credentials()
 
 _AUTHORIZED_IPS_CACHE = {"ts": 0.0, "ips": set()}
 _AUTHORIZED_IPS_CACHE_TTL = 30.0
+# TTL cho trust-by-IP: IP tu dong tin cay sau Basic Auth se het han va phai
+# xac thuc lai sau khoang thoi gian nay (chong IP DHCP/NAT bi tai su dung
+# giu quyen vinh vien). Cau hinh qua env NAS_AUTHORIZED_IP_TTL_DAYS (0 = khong het han).
+try:
+    _AUTHORIZED_IP_TTL_DAYS = float(os.environ.get("NAS_AUTHORIZED_IP_TTL_DAYS", "7") or 0)
+except Exception:
+    _AUTHORIZED_IP_TTL_DAYS = 7.0
 _AUTH_FAILURES = {"ts": 0.0, "ips": {}}
 _AUTH_FAILURES_LOCK = threading.Lock()
 _AUTH_FAILURE_WINDOW = 60.0
@@ -1057,6 +1110,14 @@ def _refresh_authorized_ips_cache(force=False):
         conn = sqlite3.connect(DB_PATH, timeout=5.0)
         try:
             cur = conn.cursor()
+            # Prune cac IP da het han TTL truoc khi nap (neu bat TTL)
+            if _AUTHORIZED_IP_TTL_DAYS and _AUTHORIZED_IP_TTL_DAYS > 0:
+                try:
+                    cutoff = datetime.datetime.now() - datetime.timedelta(days=_AUTHORIZED_IP_TTL_DAYS)
+                    cur.execute('DELETE FROM authorized_ips WHERE added_at IS NOT NULL AND added_at < ?', (cutoff,))
+                    conn.commit()
+                except Exception as prune_err:
+                    log.warning("[Auth] Khong prune duoc authorized_ips het han: %s", prune_err)
             cur.execute('SELECT ip FROM authorized_ips')
             ips = set()
             for row in cur.fetchall():
@@ -5981,6 +6042,17 @@ def _usb_import_mark_stopped():
         _usb_import_running = False
 
 
+def _sanitize_dest_folder(value):
+    """Lam sach ten thu muc dich cua USB import.
+    - Thay ky tu nguy hiem (slash, dau hai cham...) bang '_'
+    - Vo hieu hoa path traversal: ten chi gom dau cham ('.', '..') se bi
+      thay bang mac dinh de khong thoat ra ngoai WEBDAV_FILE_ROOT."""
+    cleaned = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(value or "USB Import")).strip()
+    if not cleaned or set(cleaned) <= {"."}:
+        return "USB Import"
+    return cleaned
+
+
 def _usb_import_load_settings():
     settings = {
         "enabled": True,
@@ -6005,7 +6077,7 @@ def _usb_import_load_settings():
     settings["mount_readonly"] = bool(settings.get("mount_readonly", True))
     settings["resume_enabled"] = bool(settings.get("resume_enabled", True))
     settings["verify_checksum"] = bool(settings.get("verify_checksum", False))
-    settings["dest_folder"] = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(settings.get("dest_folder") or "USB Import")).strip() or "USB Import"
+    settings["dest_folder"] = _sanitize_dest_folder(settings.get("dest_folder"))
     if settings.get("copy_mode") not in ("new_only", "overwrite"):
         settings["copy_mode"] = "new_only"
     try:
@@ -6819,6 +6891,8 @@ def _usb_import_copy_tree(candidate, settings):
     ident = candidate.get("id") or candidate.get("path") or src_root
     label = candidate.get("label") or os.path.basename(src_root.rstrip("/")) or "USB"
     safe_label = _re_module.sub(r"[^A-Za-z0-9_. -]+", "_", label).strip() or "USB"
+    if set(safe_label) <= {"."}:
+        safe_label = "USB"
     with _usb_import_lock:
         prev_dest = _usb_import_state.get("dest_dir", "")
         prev_id = _usb_import_state.get("active_id", "")
@@ -6827,7 +6901,11 @@ def _usb_import_copy_tree(candidate, settings):
         prev_pending_conflicts = list(_usb_import_state.get("pending_conflicts") or [])
         prev_pending_errors = list(_usb_import_state.get("pending_errors") or [])
     can_resume = bool(settings.get("resume_enabled", True) and prev_id == ident and prev_status in ("copying", "cancelled", "error") and prev_dest and os.path.isdir(prev_dest))
-    dest_base = os.path.join(WEBDAV_FILE_ROOT, settings.get("dest_folder", "USB Import"), safe_label)
+    dest_base = os.path.join(WEBDAV_FILE_ROOT, _sanitize_dest_folder(settings.get("dest_folder", "USB Import")), safe_label)
+    if not _validate_file_path(dest_base):
+        # Chot an toan: neu van thoat ra ngoai root (vd label la dot-only la),
+        # ep ve thu muc mac dinh duoi WebDAV root.
+        dest_base = os.path.join(WEBDAV_FILE_ROOT, "USB Import", "USB")
     session_id = hashlib.sha1(("%s|%s" % (ident, dest_base)).encode("utf-8", errors="ignore")).hexdigest()[:12]
     plan_file, plan_meta_file, files_total, bytes_total, plan_reused = _usb_import_build_or_reuse_plan(src_root, dest_base, session_id, can_resume)
     conflict_file = os.path.join(dest_base, ".usb_import_conflicts_%s.jsonl" % session_id)
@@ -7326,7 +7404,7 @@ def api_usb_import_settings():
         if key in body:
             current[key] = bool(body.get(key))
     if "dest_folder" in body:
-        current["dest_folder"] = _re_module.sub(r"[\\/:*?\"<>|]+", "_", str(body.get("dest_folder") or "USB Import")).strip() or "USB Import"
+        current["dest_folder"] = _sanitize_dest_folder(body.get("dest_folder"))
     if body.get("copy_mode") in ("new_only", "overwrite"):
         current["copy_mode"] = body.get("copy_mode")
     if "poll_seconds" in body:
@@ -10605,9 +10683,80 @@ import string
 # L?u trạng thái Guest Pass (dang hoat dong)
 _guest_passes = {}  # {username: {"password": ..., "expires_at": epoch}}
 _guest_lock = threading.Lock()
+# Persist metadata guest pass de song sot qua restart va reconcile orphan user.
+_GUEST_PASSES_FILE = "/etc/nas/state/guest_passes.json"
 
 VSFTPD_USER_DIR = "/etc/vsftpd/userconf"   # Thư mục cau hinh per-user vsftpd
 GUEST_FTP_ROOT  = "/srv/dev-disk-by-label-data"  # Thư mục FTP se thay the qua chrootdir
+
+def _save_guest_passes_locked():
+    """Ghi _guest_passes ra disk (atomic). Goi khi dang giu _guest_lock."""
+    try:
+        os.makedirs(os.path.dirname(_GUEST_PASSES_FILE), exist_ok=True)
+        tmp = _GUEST_PASSES_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_guest_passes, f, ensure_ascii=False)
+        os.replace(tmp, _GUEST_PASSES_FILE)
+    except Exception as e:
+        log.error("[GuestPass] Khong luu duoc state: %s", e)
+
+def _list_system_guest_users():
+    """Liet ke tat ca Linux user dang co dang nasguest_* (qua getent/pwd)."""
+    users = set()
+    try:
+        import pwd as _pwd_mod
+        for entry in _pwd_mod.getpwall():
+            if entry.pw_name and entry.pw_name.startswith("nasguest_"):
+                users.add(entry.pw_name)
+    except Exception as e:
+        log.warning("[GuestPass] Khong liet ke duoc system user: %s", e)
+    return users
+
+def _reconcile_guest_passes():
+    """Khi startup: nap state da persist, xoa user het han hoac orphan.
+    - User co trong state nhung da het han -> xoa.
+    - User co trong state va con han -> giu lai trong RAM de watcher quan ly.
+    - Linux user nasguest_* khong co trong state -> orphan (mat metadata) -> xoa."""
+    now = time.time()
+    persisted = {}
+    try:
+        if os.path.exists(_GUEST_PASSES_FILE):
+            with open(_GUEST_PASSES_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                persisted = data
+    except Exception as e:
+        log.warning("[GuestPass] Khong doc duoc state file: %s", e)
+
+    system_users = _list_system_guest_users()
+    alive = {}
+    for username, meta in persisted.items():
+        if not isinstance(meta, dict):
+            continue
+        try:
+            expires_at = float(meta.get("expires_at") or 0)
+        except Exception:
+            expires_at = 0
+        if expires_at > now and username in system_users:
+            alive[username] = {"password": meta.get("password", ""), "expires_at": expires_at}
+        else:
+            # Het han hoac user khong con ton tai -> don dep
+            if username in system_users:
+                _delete_linux_user(username)
+                log.info("[GuestPass] Don user het han sau restart: %s", username)
+
+    # Orphan: Linux user nasguest_* khong co metadata -> xoa de tranh ton tai vinh vien
+    for username in system_users:
+        if username not in alive:
+            _delete_linux_user(username)
+            log.info("[GuestPass] Don orphan user (mat metadata): %s", username)
+
+    with _guest_lock:
+        _guest_passes.clear()
+        _guest_passes.update(alive)
+        _save_guest_passes_locked()
+    if alive:
+        log.info("[GuestPass] Khoi phuc %d guest pass con han sau restart", len(alive))
 
 def _generate_guest_name():
     suffix = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
@@ -10674,10 +10823,17 @@ def _guest_expiry_watcher():
                 _delete_linux_user(username)
                 with _guest_lock:
                     _guest_passes.pop(username, None)
+                    _save_guest_passes_locked()
                 log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
         except Exception as e:
             log.error("[GuestPass] Lỗi watcher: %s", e)
         time.sleep(30)
+
+# Reconcile state da persist + don orphan user truoc khi watcher chay
+try:
+    _reconcile_guest_passes()
+except Exception as _e:
+    log.error("[GuestPass] Reconcile khi startup loi: %s", _e)
 
 # Background thread quan ly het han Guest Pass
 threading.Thread(target=_guest_expiry_watcher, daemon=True).start()
@@ -10709,6 +10865,7 @@ def api_guest_create():
 
         with _guest_lock:
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
+            _save_guest_passes_locked()
 
         # L?y IP LAN cua NAS (vi Android can dia chi FTP)
         try:
@@ -10743,6 +10900,7 @@ def api_guest_revoke():
         _delete_linux_user(username)
         with _guest_lock:
             _guest_passes.pop(username, None)
+            _save_guest_passes_locked()
 
         return jsonify({"message": "Đã thu hồi Guest FTP user '%s' thành công." % username})
     except Exception as e:
@@ -13469,8 +13627,10 @@ def api_ytdlp_download():
                 "install_hint": "sudo pip3 install yt-dlp"
             }), 503
 
-        # Xay duong dan l?u (tuyet doi)
+        # Xay duong dan l?u (tuyet doi) + chong path traversal ra ngoai WebDAV root
         dest_dir = os.path.join(WEBDAV_FILE_ROOT, save_folder)
+        if not save_folder or not _validate_file_path(dest_dir):
+            dest_dir = os.path.join(WEBDAV_FILE_ROOT, "Downloads", "social")
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except Exception:
