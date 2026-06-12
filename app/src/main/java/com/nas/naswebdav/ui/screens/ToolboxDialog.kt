@@ -98,6 +98,15 @@ fun ToolboxDialog(
         ) {
             Text("CÔNG CỤ HỆ THỐNG", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 8.dp))
 
+            // Đồng bộ trạng thái THỰC TẾ của các switch khi mở Toolbox (giống Docker bên dưới)
+            // để switch phản ánh đúng hiện trạng server thay vì giá trị mặc định/cũ.
+            // Trước đây chỉ Docker fetch khi mở -> SMB/USB Import hiển thị sai cho tới khi
+            // người dùng mở riêng dialog tương ứng.
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                viewModel.fetchSmbStatus()
+                viewModel.fetchUsbImportStatus()
+            }
+
             var showBiometricSettings by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsMenuCard(
