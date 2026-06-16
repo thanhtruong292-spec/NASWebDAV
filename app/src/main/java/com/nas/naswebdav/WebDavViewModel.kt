@@ -5005,7 +5005,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     val ms = webDavManager.checkPingServer()
 
-                    withContext(Dispatchers.Main) { networkPingMs = ms }
+                    withContext(Dispatchers.Main) { networkPingMs = ms?.takeIf { it >= 0L } }
 
                     // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
 

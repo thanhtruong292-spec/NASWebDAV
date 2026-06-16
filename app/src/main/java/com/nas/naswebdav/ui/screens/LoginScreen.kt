@@ -38,10 +38,12 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -79,6 +81,7 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 @Composable
 fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
     var historyIps by remember {
         mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
@@ -87,6 +90,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
+    var ipFieldWidthPx by remember { mutableIntStateOf(0) }
 
     // State cho 2 nút khẩn cấp (WoL + Restart) hiện trên login screen — dùng khi
     // NAS bị lỗi không đăng nhập được.
@@ -132,13 +136,31 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(32.dp))
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            OutlinedTextField(value = ipInput, onValueChange = { ipInput = it }, label = { Text("Địa chỉ IP / DDNS của NAS") }, modifier = Modifier.fillMaxWidth().menuAnchor(), singleLine = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = ipInput,
+                onValueChange = { ipInput = it },
+                label = { Text("Địa chỉ IP / DDNS của NAS") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { ipFieldWidthPx = it.size.width }
+                    .menuAnchor(),
+                singleLine = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
+            )
             if (historyIps.isNotEmpty()) {
                 ExposedDropdownMenu(
                     expanded = expanded,
                     onDismissRequest = { expanded = false },
-                    modifier = Modifier.exposedDropdownSize(matchTextFieldWidth = true)
+                    modifier = if (ipFieldWidthPx > 0) {
+                        Modifier.width(with(density) { ipFieldWidthPx.toDp() })
+                    } else {
+                        Modifier.fillMaxWidth()
+                    }
                 ) {
                     historyIps.forEach { ipOption ->
                         DropdownMenuItem(
@@ -383,5 +405,4 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // GuestPassScreen (từ GuestPassScreen.kt)
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
 

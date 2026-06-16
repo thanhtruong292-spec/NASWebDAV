@@ -87,6 +87,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
     val hourLabels = listOf("1h", "6h", "24h")
     val hourValues = listOf(1, 6, 24)
     var showReport by remember { mutableStateOf(false) }
+    var chartClockNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val report = viewModel.dailyReport
 
     LaunchedEffect(viewModel.metricsHours) {
@@ -94,6 +95,12 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
     }
     LaunchedEffect(Unit) {
         viewModel.fetchDailyReport()
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1_000L)
+            chartClockNow = System.currentTimeMillis()
+        }
     }
 
     Card(
@@ -119,7 +126,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     Icon(Icons.Default.Insights, null, tint = _ChartAccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("GIÁM SÁT", fontSize = _ChartPanelTitleSize, color = _ChartPanelTitle, fontWeight = FontWeight.Black, letterSpacing = _ChartPanelTitleLetterSpacing)
-                    val ageSec = if (viewModel.lastMetricsRefreshAt > 0L) ((System.currentTimeMillis() - viewModel.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
+                    val ageSec = if (viewModel.lastMetricsRefreshAt > 0L) ((chartClockNow - viewModel.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
                     val refreshLabel = when {
                         ageSec < 0 -> "Đang chờ dữ liệu"
                         ageSec < 60 -> "Mới ${ageSec}s"

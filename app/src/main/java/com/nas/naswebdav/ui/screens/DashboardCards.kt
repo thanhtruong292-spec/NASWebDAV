@@ -428,8 +428,14 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                             val ping = viewModel.networkPingMs
                             if (ping != null) {
                                 Spacer(Modifier.width(8.dp))
-                                val pingColor = if (ping < 50) Color(0xFF00E676) else if (ping < 150) Color(0xFFFFA726) else Color(0xFFEF5350)
-                                Text("${ping}ms", fontSize = 10.sp, color = pingColor, fontWeight = FontWeight.Bold)
+                                val pingColor = when {
+                                    ping < 0L -> Color(0xFFEF5350)
+                                    ping < 50L -> Color(0xFF00E676)
+                                    ping < 150L -> Color(0xFFFFA726)
+                                    else -> Color(0xFFEF5350)
+                                }
+                                val pingText = if (ping < 0L) "Mất kết nối" else "${ping}ms"
+                                Text(pingText, fontSize = 10.sp, color = pingColor, fontWeight = FontWeight.Bold)
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -754,5 +760,4 @@ internal fun QuickAccessSection(
             }
         }
 }
-
 
