@@ -13,18 +13,18 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * LocalVideoProxy ? HTTP proxy c?c b? ch?y tr?n localhost
+ * LocalVideoProxy - HTTP proxy cục bộ chạy trên localhost
  *
- * Ki?n tr?c:
- *   VLC / MX Player ? http://127.0.0.1:<port>/<encoded_url>
- *   ? LocalVideoProxy ? NAS WebDAV with Authorization header
+ * Kiến trúc:
+ *   VLC / MX Player -> http://127.0.0.1:<port>/<encoded_url>
+ *   -> LocalVideoProxy -> NAS WebDAV with Authorization header
  *
- * V?ng ??i:
- * - [start] t?o ServerSocket tr?n port ng?u nhi?n, spawn thread nh?n request, tr? v? localUrl
- * - ServerSocket t? ??ng sau khi ph?c v? 1 request ho?c sau timeout 10 ph?t
- * - [stop] ??ng socket + d?n pool handler ?? tr?nh leak thread khi start() l?p l?i
+ * Vòng đời:
+ * - [start] tạo ServerSocket trên port ngẫu nhiên, spawn thread nhận request, trả về localUrl
+ * - ServerSocket tự đóng sau khi phục vụ 1 request hoặc sau timeout 10 phút
+ * - [stop] đóng socket + dọn pool handler để tránh leak thread khi start() lặp lại
  *
- * @param user  WebDAV username (d?ng ?? t?o Basic Auth header)
+ * @param user  WebDAV username (dùng để tạo Basic Auth header)
  * @param pass  WebDAV password
  */
 class LocalVideoProxy(private val user: String, private val pass: String) {
@@ -61,10 +61,10 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
     }
 
     /**
-     * Kh?i ??ng proxy v? tr? v? URL localhost ?? VLC k?t n?i.
+     * Khởi động proxy và trả về URL localhost để VLC kết nối.
      *
-     * @param nasUrl URL g?c c?a file tr?n NAS (c? d?ng http://192.168.x.x:5005/webdav/...)
-     * @return URL localhost d?ng http://127.0.0.1:<port>/ m? VLC s? m?
+     * @param nasUrl URL gốc của file trên NAS (có dạng http://192.168.x.x:5005/webdav/...)
+     * @return URL localhost dạng http://127.0.0.1:<port>/ mà VLC sẽ mở
      */
     fun start(nasUrl: String): String {
         stop()
@@ -107,7 +107,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                         }
                     } catch (e: Exception) {
                         if (!server.isClosed) {
-                            Log.w(TAG, "L?i nh?n k?t n?i: ${e.message}")
+                            Log.w(TAG, "Lỗi nhận kết nối: ${e.message}")
                             continue
                         }
                         break
@@ -129,10 +129,10 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
     }
 
     /**
-     * X? l? 1 request t? VLC:
-     * 1. ??c request line + headers t? client
-     * 2. M? k?t n?i t?i NAS v?i Authorization header
-     * 3. Stream response body t? NAS xu?ng client (h? tr? Range requests ?? seek video)
+     * Xử lý 1 request từ VLC:
+     * 1. Đọc request line + headers từ client
+     * 2. Mở kết nối tới NAS với Authorization header
+     * 3. Stream response body từ NAS xuống client (hỗ trợ Range requests để seek video)
      */
     private fun handleRequest(clientSocket: Socket, nasUrl: String) {
         var nasConnection: java.net.HttpURLConnection? = null
@@ -176,7 +176,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                     nasConnection!!.responseCode
                 } catch (e: Exception) {
                     Log.e(TAG, "Cannot connect to NAS: ${e.message}")
-                    sendErrorResponse(output, 502, "L?i proxy video: ${e.message}")
+                    sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
                     return
                 }
 
@@ -216,7 +216,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "L?i x? l? y?u c?u: ${e.message}")
+            Log.w(TAG, "Lỗi xử lý yêu cầu: ${e.message}")
         } finally {
             runCatching { nasConnection?.disconnect() }
         }
@@ -238,7 +238,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         }
     }
 
-    /** D?ng proxy th? c?ng (t?y ch?n ? proxy t? ??ng sau timeout) */
+    /** Dừng proxy thủ công (tùy chọn - proxy tự động đóng sau timeout) */
     fun stop() {
         runCatching { serverSocket?.close() }
         runCatching { requestExecutor?.shutdownNow() }

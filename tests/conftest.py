@@ -33,6 +33,7 @@ _WANTED = {
     "_archive_member_target_path",
     "_archive_member_within_dest",
     "_refresh_authorized_ips_cache",
+    "_fan_target_percent",
 }
 
 

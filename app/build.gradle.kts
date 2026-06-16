@@ -63,7 +63,7 @@ val baseVersionName = "1.0"
 
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
+    compileSdk = 35 // Dùng 35 để ổn định nhất với Room hiện tại
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"

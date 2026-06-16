@@ -430,7 +430,7 @@ object WebDavManager {
 
         val safeUrl = if (url.isNotEmpty() && !url.endsWith("/")) "$url/" else url
         if (safeUrl.isNotBlank() && !isLanOrTailscaleWebDavUrl(safeUrl)) {
-            throw IllegalArgumentException("Ch? cho ph?p URL HTTPS ho?c LAN/Tailscale cho k?t n?i NAS")
+            throw IllegalArgumentException("Chỉ cho phép URL HTTPS hoặc LAN/Tailscale cho kết nối NAS")
         }
 
         val newState = AuthState(safeUrl, user, pass)

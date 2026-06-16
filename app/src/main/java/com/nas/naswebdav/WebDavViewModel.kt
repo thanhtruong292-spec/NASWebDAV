@@ -1740,7 +1740,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     fun refresh() {
 
-        // S?A L?I REFRESH: Ph?n lo?i ?? g?i ??ng h?m truy v?n DB cho sub-menu
+        // SỬA LẠI REFRESH: Phân loại để gọi đúng hàm truy vấn DB cho sub-menu
 
         if (isSpecialMode) {
 
@@ -1756,7 +1756,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 } else {
 
-                    loadCurrentUrl(forceRefresh = true) // Cho Th?ng r?c / special folder kh?c
+                    loadCurrentUrl(forceRefresh = true) // Cho Thùng rác / special folder khác
 
                 }
 

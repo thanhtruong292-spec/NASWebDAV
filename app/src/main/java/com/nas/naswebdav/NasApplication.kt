@@ -256,8 +256,8 @@ class NasApplication : Application(), ImageLoaderFactory {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             try {
-                // FIX #21: Ghi DB tr?n main thread trong crash handler c? th? g?y ANR n?u DB l?i.
-                // D?ng 1 thread ri?ng, join ng?n r?i tr? v? default handler.
+                // FIX #21: Ghi DB trên main thread trong crash handler có thể gây ANR nếu DB lỗi.
+                // Dùng 1 thread riêng, join ngắn rồi trả về default handler.
                 val crashLogThread = Thread {
                     try {
                         database.logDao().insertLog(
@@ -534,7 +534,7 @@ object SecurePrefsHelper {
         if (tail.isNotEmpty() && tail != lan) result.add(tail)
         val filtered = result.filter { isLanOrTailscaleWebDavUrl(it) }
         if (filtered.size != result.size) {
-            android.util.Log.w("SecurePrefs", "?? ch?n URL NAS kh?ng an to?n kh?i danh s?ch ??ng nh?p ?? l?u")
+            android.util.Log.w("SecurePrefs", "Đã chặn URL NAS không an toàn khỏi danh sách đăng nhập đã lưu")
         }
         return filtered
     }

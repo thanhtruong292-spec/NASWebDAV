@@ -138,3 +138,28 @@ class TestAuthorizedIpTtl:
 
         ips = helpers["_refresh_authorized_ips_cache"](force=True)
         assert {"10.0.0.1", "10.0.0.2", "10.0.0.3"} <= ips
+
+
+# --------------------------------------------------------------------------
+# Fan custom hysteresis: moc duoi chi de tat, moc tren moi duoc bat
+# --------------------------------------------------------------------------
+class TestFanCustomHysteresis:
+    def test_off_fan_stays_off_between_thresholds(self, helpers):
+        target = helpers["_fan_target_percent"]
+        assert target(control_temp=39.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 0
+        assert target(control_temp=41.9, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 0
+
+    def test_off_fan_starts_only_at_upper_threshold(self, helpers):
+        target = helpers["_fan_target_percent"]
+        assert target(control_temp=42.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 100
+        assert target(control_temp=45.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 100
+
+    def test_running_fan_keeps_running_until_lower_threshold(self, helpers):
+        target = helpers["_fan_target_percent"]
+        assert target(control_temp=41.0, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 100
+        assert target(control_temp=38.1, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 100
+        assert target(control_temp=38.0, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 0
+
+    def test_force_hot_still_overrides_thresholds(self, helpers):
+        target = helpers["_fan_target_percent"]
+        assert target(control_temp=30.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0, force_hot=True) == 100

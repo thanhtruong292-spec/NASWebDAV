@@ -664,8 +664,8 @@ def get_ip_geo(ip):
     except Exception: return "UN", "Unknown"
 
 def ban_ip_permanently(ip):
-    # Co che fail2ban da bi V? HI?U HO? theo yeu cau ng??i dùng.
-    # Không cần g?i iptables DROP de trảnh chan nham IP Tailscale/LAN cua chảnh ch?.
+    # Cơ chế fail2ban đã bị VÔ HIỆU HOÁ theo yêu cầu người dùng.
+    # Không cần gọi iptables DROP để tránh chặn nhầm IP Tailscale/LAN của chính chủ.
     # Chi ghi log de admin biet co request ban (visibility) nhung khong thuc thi.
     try:
         now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
@@ -680,7 +680,7 @@ def ban_ip_permanently(ip):
         log.error("[Firewall] Lỗi ghi log yêu cầu chặn IP %s: %s", ip, e)
 
 def handle_auth_failure(ip):
-    # Co che fail2ban da bi V? HI?U HO? theo yeu cau ng??i dùng.
+    # Cơ chế fail2ban đã bị VÔ HIỆU HOÁ theo yêu cầu người dùng.
     # Chi ghi nhan so lan thất bại vao auth_attempts de admin theo doi,
     # KHONG con tu dong th?m banned_ips/iptables DROP nua.
     conn = None
@@ -905,7 +905,7 @@ AUTH_CONFIG_PATH = "/etc/nas/auth.conf"
 QBITTORRENT_CONFIG_PATH = "/etc/nas/qbittorrent.conf"
 
 def _load_qbittorrent_credentials():
-    """??c qBittorrent user/pass t? file c?u h?nh ho?c bi?n m?i tr??ng."""
+    """Đọc qBittorrent user/pass từ file cấu hình hoặc biến môi trường."""
     user = os.environ.get("QBITTORRENT_USER", "") or os.environ.get("QBT_USER", "")
     passwd = os.environ.get("QBITTORRENT_PASS", "") or os.environ.get("QBT_PASS", "")
     try:
@@ -922,15 +922,15 @@ def _load_qbittorrent_credentials():
                     elif key == "QBITTORRENT_PASS":
                         passwd = val
     except Exception as e:
-        log.error("Kh?ng ??c ???c %s: %s", QBITTORRENT_CONFIG_PATH, e)
+        log.error("Không đọc được %s: %s", QBITTORRENT_CONFIG_PATH, e)
     if not user or not passwd:
-        log.warning("Ch?a c?u h?nh QBITTORRENT_USER/QBITTORRENT_PASS. H?y t?o file %s v?i QBITTORRENT_USER=... QBITTORRENT_PASS=...", QBITTORRENT_CONFIG_PATH)
+        log.warning("Chưa cấu hình QBITTORRENT_USER/QBITTORRENT_PASS. Hãy tạo file %s với QBITTORRENT_USER=... QBITTORRENT_PASS=...", QBITTORRENT_CONFIG_PATH)
     return user, passwd
 
 QBITTORRENT_USER, QBITTORRENT_PASS = _load_qbittorrent_credentials()
 
 
-# Chi l?y S.M.A.R.T cua o dữ liệu NAS. Khong quet /dev/sdb vi day co the la
+# Chỉ lấy S.M.A.R.T của ổ dữ liệu NAS. Không quét /dev/sdb vì đây có thể là
 # o USB import, lam nhieu dashboard bang trạng thái cua o ngoai.
 TARGET_HDD_DEVICE = os.environ.get("NAS_TARGET_HDD_DEVICE", "/dev/sda")
 SMART_DISKS = [TARGET_HDD_DEVICE]
@@ -1517,7 +1517,7 @@ def _run_acl_copy(source_dir, target_dir):
 
 
 def get_cpu_temp():
-    """L?y nhi?t để CPU tu thermal zone (Chainedbox rk3328)."""
+    """Lấy nhiệt độ CPU từ thermal zone (Chainedbox rk3328)."""
     # Phuong phap 1: psutil - uu tien sensor CPU/SoC
     try:
         temps = psutil.sensors_temperatures()
@@ -1531,7 +1531,7 @@ def get_cpu_temp():
                     for entry in entries:
                         if entry.current > 0:
                             return "%d\u00b0C" % int(entry.current)
-        # Fallback: l?y bat ky sensor nao co gia tri hop ly (20-120 do)
+        # Fallback: lấy bất kỳ sensor nào có giá trị hợp lý (20-120 độ)
         for name, entries in temps.items():
             # B? qua sensor ổ cứng
             if "drive" in name.lower() or "hdd" in name.lower():
@@ -1590,7 +1590,7 @@ def _cache_hdd_temp(value):
 
 
 def get_hdd_temp():
-    """L?y nhi?t để ổ cứng — uu tien OMV RPC, fallback smartctl/sysfs."""
+    """Lấy nhiệt độ ổ cứng — ưu tiên OMV RPC, fallback smartctl/sysfs."""
     import re
     try:
         cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
@@ -1612,7 +1612,7 @@ def get_hdd_temp():
 def _get_hdd_temp_uncached():
     """Refresh HDD temperature once. Caller must hold _HDD_TEMP_REFRESH_LOCK."""
     import re
-    # Phuong phap 0 (uu tien): L?y tu OMV Smart enumerateDevices
+    # Phương pháp 0 (ưu tiên): Lấy từ OMV Smart enumerateDevices
     try:
         # Disabled for dashboard path: OMV enumerates every disk and can wedge on
         # a failing USB import device. Use direct target-HDD probes below instead.
@@ -1624,7 +1624,7 @@ def _get_hdd_temp_uncached():
             if dev:
                 temp_str = dev.get("temperature", "")
                 if temp_str and temp_str != "--\u00b0C":
-                    # OMV tr? v? "31°C" hoac "31"
+                    # OMV trả về "31°C" hoặc "31"
                     temp_str = str(temp_str).replace("\u00b0C", "").strip()
                     if temp_str.isdigit() and 10 < int(temp_str) < 100:
                         return _cache_hdd_temp("%s\u00b0C" % temp_str)
@@ -1633,7 +1633,7 @@ def _get_hdd_temp_uncached():
     # Phuong phap 1: smartctl voi regex chinh xac
     for disk_path in [_target_hdd_device_path()]:
         try:
-            # Dung 2>&1 de l?y ca stdout va stderr
+            # Dùng 2>&1 để lấy cả stdout và stderr
             if not _validate_disk_path(disk_path):
                 continue
             output = run_cmd(["sudo", "smartctl", "-A", disk_path, "-d", "sat"], merge_stderr=True)
@@ -1645,13 +1645,13 @@ def _get_hdd_temp_uncached():
                     if "temperature" not in line_lower:
                         continue
                     # Format: "194 Temperature_Celsius ... - 33 (0 8 0 0 0)"
-                    # L?y so dau tien sau dau '-' hoac sau cot cuoi (truoc dau ngoac)
+                    # Lấy số đầu tiên sau dấu '-' hoặc sau cột cuối (trước dấu ngoặc)
                     match = re.search(r'-\s+(\d+)(?:\s*\(|$)', line)
                     if match:
                         temp_val = int(match.group(1))
                         if 10 < temp_val < 100:
                             return _cache_hdd_temp("%d\u00b0C" % temp_val)
-                    # Fallback: l?y so hop le cuoi cung trong dong (truoc ngoac don)
+                    # Fallback: lấy số hợp lệ cuối cùng trong dòng (trước ngoặc đơn)
                     line_before_paren = line.split("(")[0]
                     nums = re.findall(r'\b(\d{2})\b', line_before_paren)
                     for n in reversed(nums):
@@ -1785,7 +1785,7 @@ def format_speed(bps):
         return "%.1f MB/s" % (bps / (1024.0 ** 2))
 
 
-# L?u tru bang thong mang cho tinh toan delta
+# Lưu trữ băng thông mạng cho tính toán delta
 _last_net = {"rx": 0, "tx": 0, "time": 0}
 
 
@@ -1809,7 +1809,7 @@ def get_network_speed():
 
 
 def get_torrents():
-    """L?y danh sách torrent tu qBittorrent Web API (neu co)."""
+    """Lấy danh sách torrent từ qBittorrent Web API (nếu có)."""
     try:
         import urllib.request
         url = "http://127.0.0.1:8080/api/v2/torrents/info"
@@ -1832,13 +1832,13 @@ def get_torrents():
 
 
 def get_main_disk_usage():
-    """Tim phân vùng dữ liệu chinh (lon nhat) va tr? v? % s? dùng.
+    """Tìm phân vùng dữ liệu chính (lớn nhất) và trả về % sử dụng.
     Thay vi Đọc '/' (root eMMC nho), tim phân vùng data HDD that su."""
     try:
         best_usage = None
         best_total = 0
         for partition in psutil.disk_partitions(all=False):
-            # B? qua lỗi do Docker overl?y hoac cac FS ao gay fluctuation RAM/ROM
+            # Bỏ qua lỗi do Docker overlay hoặc các FS ảo gây fluctuation RAM/ROM
             if partition.fstype in ["overlay", "squashfs", "tmpfs", "devtmpfs"]:
                 continue
             if partition.mountpoint.startswith(("/var/lib/docker", "/snap")):
@@ -1864,7 +1864,7 @@ def get_main_disk_usage():
 
 
 def get_disk_partitions():
-    """L?y thong tin phân vùng o dia (loc bo trung lap va nho)."""
+    """Lấy thông tin phân vùng ổ đĩa (lọc bỏ trùng lặp và nhỏ)."""
     parts = []
     # Cac thư mục can b? qua (log, ram, overlay, bind mount)
     SKIP_PREFIXES = ("/var/log", "/run/", "/dev/", "/proc/", "/sys/", "/tmp/")
@@ -2117,13 +2117,13 @@ def get_fan_info():
 
 
 def get_top_processes(n=3):
-    """L?y top N tien trinh tieu hao CPU nhieu nhat (Python 3.5)."""
+    """Lấy top N tiến trình tiêu hao CPU nhiều nhất (Python 3.5)."""
     procs = []
     try:
         num_cores = psutil.cpu_count() or 1
         active_procs = []
 
-        # Pass 1: Tao baseline hieu n?ng cho tung tien trinh
+        # Pass 1: Tạo baseline hiệu năng cho từng tiến trình
         for proc in psutil.process_iter():
             try:
                 proc.cpu_percent()
@@ -2134,7 +2134,7 @@ def get_top_processes(n=3):
         # Ngu 0.1 giay de psutil tinh toan delta giua 2 lan goi
         time.sleep(0.1)
 
-        # Pass 2: L?y so lieu % CPU chinh xac tuyet doi thuoc ve thoi gian thuc
+        # Pass 2: Lấy số liệu % CPU chính xác tuyệt đối thuộc về thời gian thực
         for proc in active_procs:
             try:
                 cpu = proc.cpu_percent() / num_cores
@@ -2158,7 +2158,7 @@ def get_top_processes(n=3):
         return []
 
 
-# ============ BACKGROUND CACHE (Ph?n h?i API tuc thi) ============
+# ============ BACKGROUND CACHE (Phản hồi API tức thì) ============
 _status_cache = {"status": "Đang khởi động..."}
 _cache_lock = threading.Lock()
 
@@ -2202,7 +2202,7 @@ def _update_status_cache():
                 cached_disk_parts = get_disk_partitions()
                 cached_disk = get_main_disk_usage()
             
-            # Nhi?t để HDD: L?y tu cache SMART de khong spin-up ổ cứng (SMART được cache 24h)
+            # Nhiệt độ HDD: Lấy từ cache SMART để không spin-up ổ cứng (SMART được cache 24h)
             # HDD temp: live sensor first, then disk health, then SMART cache.
             try:
                 cached_hdd_temp = get_hdd_temp()
@@ -2279,28 +2279,28 @@ def _update_status_cache():
 
 
 # ============ CRON WORKER (TU DONG HOA) ============
-# Chay nen moi 1 gio: Don dep Thung rac, kick AI scan luc 2h sang
-# TU?N TH? hardware constraints RK3328: Khong poll CPU qua 10s, I/O nh? nhan
+# Chạy nền mỗi 1 giờ: dọn dẹp Thùng rác, kick AI scan lúc 2h sáng
+# TUÂN THỦ hardware constraints RK3328: không poll CPU quá 10s, I/O nhẹ nhàng
 
-# Bien toan cuc l?u trạng thái cầnh b?o (cho alert polling cua Android)
+# Biến toàn cục lưu trạng thái cảnh báo (cho alert polling của Android)
 _alert_state_lock = threading.Lock()
 _alert_states = {
-    "hdd_temp_alerted": False,      # để g?i cầnh b?o nhi?t để ch?a?
-    "offline_alerted": False,        # để g?i cầnh b?o offline ch?a?
-    "last_torrent_states": {},       # {hash: progress} - so sảnh phat hien hoan thảnh
-    "last_alerts": [],               # Danh sách cầnh b?o moi (Android poll)
-    "ai_scan_running": False,        # Đang qu?t ảnh hay khong
-    "ai_last_scan": 0,               # Thoi gian lan quet AI cuoi cung (epoch)
-    "trash_last_clean": 0,           # Thoi gian lan don rac cuoi cung (epoch)
-    "empty_last_clean": 0,           # Thoi gian lan don file/folder rong cuoi cung (epoch)
+    "hdd_temp_alerted": False,       # đã gửi cảnh báo nhiệt độ chưa?
+    "offline_alerted": False,        # đã gửi cảnh báo offline chưa?
+    "last_torrent_states": {},       # {hash: progress} - so sánh phát hiện hoàn thành
+    "last_alerts": [],               # Danh sách cảnh báo mới (Android poll)
+    "ai_scan_running": False,        # Đang quét ảnh hay không
+    "ai_last_scan": 0,               # Thời gian lần quét AI cuối cùng (epoch)
+    "trash_last_clean": 0,           # Thời gian lần dọn rác cuối cùng (epoch)
+    "empty_last_clean": 0,           # Thời gian lần dọn file/folder rỗng cuối cùng (epoch)
 }
 
 def _push_alert(alert_type, message, severity="INFO"):
-    """Th?m cầnh b?o vao hang doi de Android l?y qua /api/alerts/poll"""
+    """Thêm cảnh báo vào hàng đợi để Android lấy qua /api/alerts/poll"""
     message = normalize_vietnamese_message(sanitize_log_input(message))
     alert_type = sanitize_log_input(alert_type)
     with _alert_state_lock:
-        # Giu toi da 50 cầnh b?o gần nh?t
+        # Giữ tối đa 50 cảnh báo gần nhất
         _alert_states["last_alerts"].append({
             "type": alert_type,
             "message": message,
@@ -2309,7 +2309,7 @@ def _push_alert(alert_type, message, severity="INFO"):
         })
         if len(_alert_states["last_alerts"]) > 50:
             _alert_states["last_alerts"] = _alert_states["last_alerts"][-50:]
-    # Ghi vao DB log
+    # Ghi vào DB log
     try:
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
@@ -2319,7 +2319,7 @@ def _push_alert(alert_type, message, severity="INFO"):
         conn.close()
     except Exception:
         pass
-    # Broadcast WebSocket cho client dang ket noi
+    # Broadcast WebSocket cho client đang kết nối
     try:
         if main_loop:
             main_loop.add_callback(
@@ -2358,7 +2358,7 @@ def _clean_trash(webdav_root, max_age_days=30):
 
 
 
-# Map ten thư mục -> dảnh muc gallery (Python 3.5 compat, KHÔNG cần Docker/TFLite)
+# Map tên thư mục -> danh mục gallery (Python 3.5 compat, KHÔNG cần Docker/TFLite)
 _FOLDER_CATEGORY_MAP = {
     "Khuon Mat":           ["selfie", "portrait", "face", "avatar"],
     "Mang Xa Hoi":         ["facebook", "tiktok", "telegram", "instagram", "zalo", "messenger"],
@@ -2366,7 +2366,7 @@ _FOLDER_CATEGORY_MAP = {
     "Video":               ["video", "movie", "film", "clip"],
     "Tai Lieu":            ["document", "doc", "scan", "notes", "samsung notes", "pdf"],
     "Camera / Giam Sat":   ["surveillance", "camera", "cctv", "security"],
-    "ảnh Tai Ve":          ["download", "downloads", "saved"],
+    "Ảnh Tai Ve":          ["download", "downloads", "saved"],
     "Album Dien Thoai":    ["dcim", "camera", "screenshot", "album"],
 }
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic"}
@@ -2374,14 +2374,14 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic"}
 
 def _scan_photos_lightweight():
     """
-    Quet va phan loai ảnh theo ten thư mục — Python 3.5 thuan, KHÔNG cần Docker.
-    Chay truc tiep tren NAS, chi dùng os.walk() va string matching.
-    Ghi ket qua ra AI_TAGS_PATH de Android Đọc qua /api/ai/tags.
+    Quét và phân loại ảnh theo tên thư mục — Python 3.5 thuần, KHÔNG cần Docker.
+    Chạy trực tiếp trên NAS, chỉ dùng os.walk() và string matching.
+    Ghi kết quả ra AI_TAGS_PATH để Android đọc qua /api/ai/tags.
     """
     try:
         with _alert_state_lock:
             if _alert_states["ai_scan_running"]:
-                return False  # Đang ch?y r?i
+                return False  # Đang chạy rồi
             _alert_states["ai_scan_running"] = True
 
         root_dir = WEBDAV_FILE_ROOT
@@ -2392,7 +2392,7 @@ def _scan_photos_lightweight():
             # B? qua thư mục an (.trash, .thumbnails...)
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
 
-            # L?y ten thư mục hien tai va cha
+            # Lấy tên thư mục hiện tại và cha
             rel_dir = dirpath[len(root_dir):].strip("/").strip("\\")
             folder_parts = rel_dir.lower().replace("\\", "/").split("/") if rel_dir else []
 
@@ -2525,7 +2525,7 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, 
     """Don dep tu dong file rong (0-byte), FLV hong cu va thư mục rong duoi root_dir.
     B? qua cac thư mục h? thỏng: .trash, .nas_meta, .thumbnails, .git, .recycle.
 
-    Tr? v? tuple (so file rong da xoa, so thư mục da xoa, so FLV hong da xoa).
+    Trả về tuple (số file rỗng đã xoá, số thư mục đã xoá, số FLV hỏng đã xoá).
     """
     if exclude_dirs is None:
         exclude_dirs = {".trash", ".nas_meta", ".thumbnails", ".git", ".recycle", "@eaDir"}
@@ -2580,7 +2580,7 @@ def _check_torrent_completion():
     """Phat hien torrent vua hoan thảnh (progress 1.0) so voi lan poll truoc."""
     new_completed = []
     try:
-        current = get_torrents()  # L?y trạng thái mới nh?t
+        current = get_torrents()  # Lấy trạng thái mới nhất
         with _alert_state_lock:
             prev_states = dict(_alert_states["last_torrent_states"])
             # Cap nhat trạng thái hien tai
@@ -2607,7 +2607,7 @@ def _check_torrent_completion():
 
 
 def _check_hdd_temp_alert(threshold=60):
-    """Kiểm tra nhi?t để HDD co vuot nguong cầnh b?o khong."""
+    """Kiểm tra nhiệt độ HDD có vượt ngưỡng cảnh báo không."""
     try:
         with _disk_health_lock:
             val = int((_disk_health_last_sample or {}).get("temp_c") or 0)
@@ -2620,8 +2620,8 @@ def _check_hdd_temp_alert(threshold=60):
 
 def _cron_worker():
     """
-    Background cron thread chay mới 60 gi?y.
-    Dam nhiem cac viec: don rac, phat hien cầnh b?o, kick AI 2h sang.
+    Background cron thread chạy mỗi 60 giây.
+    Đảm nhiệm các việc: dọn rác, phát hiện cảnh báo, kick AI 2h sáng.
     Tuan thu STRICT: khong poll HDD/proc qua thuong, interval >= 60s
     """
     # Doi 60 giay sau khi server khoi dong de trảnh trảnh tai I/O luc boot
@@ -2632,13 +2632,13 @@ def _cron_worker():
             now_ts = time.time()
             now_dt = datetime.datetime.now()
 
-            # --- 1. Kiểm tra torrent hoan thảnh (mới 60 gi?y) ---
+            # --- 1. Kiểm tra torrent hoàn thành (mỗi 60 giây) ---
             completed = _check_torrent_completion()
             for name in completed:
                 msg = "Torrent đã tải xong: %s" % name
                 _push_alert("TORRENT_DONE", msg, "SUCCESS")
 
-            # --- 2. Kiểm tra nhi?t để HDD (mới 60 gi?y) ---
+            # --- 2. Kiểm tra nhiệt độ HDD (mỗi 60 giây) ---
             # NOTE: get_hdd_temp() co cache 60s rieng, không wake HDD th?m lan nua
             temp_val, is_hot = _check_hdd_temp_alert(threshold=60)
             with _alert_state_lock:
@@ -2979,7 +2979,7 @@ def api_report_generate():
 @app.route("/api/status")
 @requires_auth
 def api_status():
-    """Trạng thái h? thỏng - tr? v? cache tuc thi (kem cầnh b?o neu co)."""
+    """Trạng thái hệ thống - trả về cache tức thì (kèm cảnh báo nếu có)."""
     with _cache_lock:
         data = dict(_status_cache)
         
@@ -3087,7 +3087,7 @@ def api_ping():
 @app.route("/api/system/idle")
 @requires_auth
 def api_system_idle():
-    """Tr? v? trạng thái 'rảnh' cua NAS de quyet dinh co nen chay tac vu n?ng
+    """Trả về trạng thái 'rảnh' của NAS để quyết định có nên chạy tác vụ nặng
     (vi du quet trung lap) hay khong.
 
     Idle = TRUE khi:
@@ -3095,7 +3095,7 @@ def api_system_idle():
       - Load average 1 phut < cores * 0.7
       - RAM free > 150 MB
       - Khong co livestream nao dang recording
-      - Khong co backup/restore/torrent dang chay n?ng
+      - Không có backup/restore/torrent đang chạy nặng
     """
     try:
         cpu_pct = psutil.cpu_percent(interval=0.4)
@@ -3159,7 +3159,7 @@ _smart_lock = threading.Lock()
 @app.route("/api/disk/smart")
 @requires_auth
 def api_smart():
-    """Thong tin S.M.A.R.T ổ cứng — uu tien l?y tu OMV, fallback smartctl."""
+    """Thông tin S.M.A.R.T ổ cứng — ưu tiên lấy từ OMV, fallback smartctl."""
     global _smart_cache
     with _smart_lock:
         now = time.time()
@@ -3173,14 +3173,14 @@ def api_smart():
     status = "Unknown"
     temperature = "--\u00b0C"
 
-    # === Phuong phap 1: L?y tu OMV RPC (chinh xac nhat) ===
+    # === Phương pháp 1: Lấy từ OMV RPC (chính xác nhất) ===
     try:
         # Disabled here for the same reason as get_hdd_temp(): OMV Smart
         # enumerateDevices scans broken USB devices and makes the API timeout.
         omv_out = ""
         if omv_out and omv_out.strip():
             raw_parsed = json.loads(omv_out)
-            # OMV co the tr? v? object {"1": {...}} hoac array [{...}]
+            # OMV có thể trả về object {"1": {...}} hoặc array [{...}]
             if isinstance(raw_parsed, dict):
                 devices = list(raw_parsed.values())
             else:
@@ -3194,7 +3194,7 @@ def api_smart():
                     status = "FAILED"
                 else:
                     status = overall if overall else "Unknown"
-                # Nhi?t để tu OMV (co the la "31°C" hoac "31")
+                # Nhiệt độ từ OMV (có thể là "31°C" hoặc "31")
                 temp_val = str(dev.get("temperature", "")).strip()
                 if temp_val and temp_val != "0":
                     if "\u00b0" in temp_val:
@@ -3210,7 +3210,7 @@ def api_smart():
                 raw_log = "Thiet bi: /dev/%s\nModel: %s\nSerial: %s\nTrạng thái OMV: %s\nNhiệt độ: %s" % (
                     devname, full_model, serial, overall, temperature
                 )
-                # L?y SMART attributes tu OMV
+                # Lấy SMART attributes từ OMV
                 try:
                     dev_file = dev.get("devicefile", "/dev/%s" % devname)
                     attr_params = json.dumps({"devicefile": dev_file, "type": ""})
@@ -3562,7 +3562,7 @@ _processes_lock = threading.Lock()
 @app.route("/api/processes", methods=["GET"])
 @requires_auth
 def api_processes():
-    """L?y danh sách 100 tien trinh hang dau, sap xep theo CPU hoac RAM."""
+    """Lấy danh sách 100 tiến trình hàng đầu, sắp xếp theo CPU hoặc RAM."""
     try:
         global _processes_cache
         sort_by = request.args.get("sort", "cpu")
@@ -4103,8 +4103,31 @@ def _fan_status_for_percent(percent):
     return "Đang chạy %d%% - Tốc độ: %d rpm" % (level, rpm)
 
 
+def _fan_target_percent(control_temp, on_temp, off_temp, last_applied_percent, force_hot=False):
+    """Binary fan hysteresis.
+
+    - Fan that is off only starts when temperature reaches on_temp.
+    - Fan that is on keeps running until temperature drops to off_temp.
+    - Between the two thresholds, keep the previous on/off state.
+    """
+    if force_hot:
+        return 100
+    try:
+        temp = float(control_temp)
+        on = float(on_temp)
+        off = float(off_temp)
+    except Exception:
+        return 0
+    if off >= on:
+        off = max(28.0, on - 3.0)
+    was_running = (last_applied_percent or 0) > 0
+    if was_running:
+        return 0 if temp <= off else 100
+    return 100 if temp >= on else 0
+
+
 def _pwm_apply_off():
-    """Tất ho?n to?n PWM: duty=0 truoc, enable=0 sau de pin ve LOW va peripheral
+    """Tắt hoàn toàn PWM: duty=0 trước, enable=0 sau để pin về LOW và peripheral
     ngung output. Tren rk3328 Chainedbox phai ca hai buoc nay 5V moi ngat tai
     chan ra quat."""
     _pwm_export_if_needed()
@@ -4475,7 +4498,7 @@ def api_photos_timeline():
 # ============================================================================
 # DISK HEALTH MONITOR — Theo doi suc khoe HDD truoc khi qua muon
 # ============================================================================
-# Sample SMART + dmesg + io stats mới 5 ph?t, ghi append vao .jsonl tren eMMC.
+# Sample SMART + dmesg + io stats mỗi 5 phút, ghi append vào .jsonl trên eMMC.
 # Auto-alert qua system_logs khi vuot threshold. UI app Đọc /api/disk/health
 # (snapshot hien tai) hoac /api/disk/health/history?days=N (time series).
 # ============================================================================
@@ -4484,7 +4507,7 @@ _DISK_HEALTH_RETENTION_DAYS = 30
 _DISK_HEALTH_HEALTHY_INTERVAL_SEC = 30 * 86400
 _DISK_HEALTH_WARNING_INTERVAL_SEC = 7 * 86400
 _DISK_HEALTH_CRITICAL_INTERVAL_SEC = 24 * 3600
-_disk_health_last_sample = {}   # giu sample gần nh?t trong RAM cho /api/disk/health
+_disk_health_last_sample = {}   # giữ sample gần nhất trong RAM cho /api/disk/health
 _disk_health_lock = threading.Lock()
 _SQLITE_STATE_TABLES = set(["hardware_status", "scheduler_state", "runtime_state"])
 
@@ -4629,7 +4652,7 @@ def _read_io_stats(devname="sda"):
 
 
 def _parse_smart_attributes():
-    """L?y 3 metric quan trong tu smartctl: Reallocated, Pending, UDMA CRC, temp."""
+    """Lấy 3 metric quan trọng từ smartctl: Reallocated, Pending, UDMA CRC, temp."""
     result = {
         "smart_status": "Unknown",
         "device": _target_hdd_device_path(),
@@ -4692,7 +4715,7 @@ def _parse_smart_attributes():
 
 
 def _compute_health_score(sample):
-    """Tinh diem suc khoe 0-100 + nhan cầnh b?o."""
+    """Tính điểm sức khỏe 0-100 + nhãn cảnh báo."""
     score = 100
     warnings = []
     if sample.get("smart_status") == "FAILED":
@@ -5643,7 +5666,7 @@ def _save_sleep_schedule(state):
 
 
 def _is_in_sleep_window(sched, now=None):
-    """Tr? v? True neu thoi diem hien tai nam trong khung gio sleep."""
+    """Trả về True nếu thời điểm hiện tại nằm trong khung giờ sleep."""
     if now is None:
         now = datetime.datetime.now()
     start = int(sched.get("start_hour", 23))
@@ -5737,7 +5760,7 @@ def _sleep_schedule_worker():
                 # Chi spindown neu HDD dang quay
                 state = _hdd_get_power_state()
                 if "standby" in state or "sleeping" in state:
-                    # để spindown r?i, skip
+                    # Để spindown rồi, skip
                     time.sleep(60)
                     continue
                 ok, msg = _hdd_spindown()
@@ -5808,7 +5831,7 @@ _BACKUP_SCHEDULE_DEFAULT = {
     "enabled": False,
     "frequency": "weekly",   # daily | weekly | monthly
     "hour": 3,               # 0-23, gio chay (1 gio rieng dem)
-    "retention_count": 7,    # giu N backup gần nh?t
+    "retention_count": 7,    # giữ N backup gần nhất
     "rclone_remote": "",     # vd "onedrive:" — empty = khong upload
     "rclone_path": "/NASBackup/",  # path tren remote
     "last_run_ts": 0,
@@ -5880,7 +5903,7 @@ def _create_backup_tarball():
 
 
 def _apply_backup_retention(keep_count):
-    """Xo? cac backup cu, chi giu N file gần nh?t."""
+    """Xoá các backup cũ, chỉ giữ N file gần nhất."""
     try:
         items = []
         for name in os.listdir(_BACKUP_DIR):
@@ -5937,7 +5960,7 @@ def _scheduled_backup_worker():
             target_hour = int(sched.get("hour", 3))
             freq = sched.get("frequency", "weekly")
             if now.hour == target_hour and (last_dt is None or last_dt.date() != now.date()):
-                # để t?i gi? chay va ch?a chay hom nay
+                # Đến giờ chạy và chưa chạy hôm nay
                 if freq == "daily":
                     should_run = True
                 elif freq == "weekly":
@@ -7433,7 +7456,7 @@ def api_usb_import_start():
     if not candidates:
         return jsonify({"ok": False, "message": "Không tìm thấy ổ USB hợp lệ", "state": _usb_import_public_state()}), 404
     if not _usb_import_try_mark_running():
-        return jsonify({"ok": True, "already_running": True, "message": "USB Import Ä‘ang cháº¡y, khÃ´ng khá»Ÿi táº¡o phiÃªn trÃ¹ng.", "state": _usb_import_public_state()})
+        return jsonify({"ok": True, "already_running": True, "message": "USB Import đang chạy, không khởi tạo phiên trùng.", "state": _usb_import_public_state()})
     _usb_import_cancel.clear()
     threading.Thread(target=_usb_import_copy_tree, args=(candidates[0], settings), daemon=True, name="USBImportManualCopy").start()
     return jsonify({"ok": True, "message": "Đã bắt đầu copy USB", "state": _usb_import_public_state()})
@@ -7468,7 +7491,7 @@ def api_usb_import_resolve_conflicts():
     if selected is not None and not isinstance(selected, list):
         return jsonify({"ok": False, "message": "items phải là danh sách rel/dest/source", "state": _usb_import_public_state()}), 400
     if not _usb_import_try_mark_running():
-        return jsonify({"ok": False, "message": "USB import Ä‘ang cháº¡y", "state": _usb_import_public_state()}), 409
+        return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
     _usb_import_cancel.clear()
     threading.Thread(
         target=_usb_import_resolve_conflicts_worker,
@@ -7507,17 +7530,17 @@ def api_backup_schedule_set():
 
 
 # ============================================================================
-# BACKUP / RESTORE — Sao l?u va khoi phuc cau hinh NAS
+# BACKUP / RESTORE — Sao lưu và khôi phục cấu hình NAS
 # ============================================================================
-# Backup tarball ch?a moi config/state cua NAS API + WebDAV + fan + watcher.
-# L?u vao /etc/nas/backups (eMMC, an toan khi HDD chet).
+# Backup tarball chứa mọi config/state của NAS API + WebDAV + fan + watcher.
+# Lưu vào /etc/nas/backups (eMMC, an toàn khi HDD chết).
 # Filename: "Backup_NAS DDMMYYYY HHMMSS.tar.gz"
 #
-# Cac file được backup (manifest.json dinh kem trong tarball):
+# Các file được backup (manifest.json đính kèm trong tarball):
 #   /opt/nas_api_server.py                          (NAS API server Python)
 #   /opt/fan_custom.json                            (fan settings)
 #   /etc/systemd/system/nas_api.service             (systemd unit)
-#   /etc/systemd/system/fan.service                 (fan service neu co)
+#   /etc/systemd/system/fan.service                 (fan service nếu có)
 #   /etc/nas/auth.conf                              (WEBDAV creds — chmod 600)
 #   /etc/nas/lan_whitelist.conf                     (LAN IP whitelist)
 #   /etc/nas/install-pending-cookies.sh             (auto-install script)
@@ -7525,7 +7548,7 @@ def api_backup_schedule_set():
 #   /etc/nginx/openmediavault-webgui.d/nas_api.conf       (nginx reverse proxy)
 #   /etc/nginx/openmediavault-webgui.d/openmediavault-webdav.conf
 #   /var/www/webdav/config/config.php               (OMV WebDAV publicDir)
-#   <WEBDAV_ROOT>/cookies.txt                       (TikTok cookies — neu accessible)
+#   <WEBDAV_ROOT>/cookies.txt                       (TikTok cookies — nếu accessible)
 #   <WEBDAV_ROOT>/.nas_meta/tiktok_live_watch.json  (watcher state on HDD)
 # ============================================================================
 import tarfile
@@ -7535,7 +7558,7 @@ _BACKUP_RESTORE_MAX_MEMBER_BYTES = 64 * 1024 * 1024
 _BACKUP_RESTORE_COPY_CHUNK = 1024 * 1024
 _BACKUP_FILES = [
     # (source_path, relative_path_in_tar, critical)
-    # critical = True -> bao lỗi neu thieu khi restore
+    # critical = True -> báo lỗi nếu thiếu khi restore
     ("/opt/nas_api_server.py",                              "opt/nas_api_server.py",                              True),
     ("/opt/fan_custom.json",                                "opt/fan_custom.json",                                False),
     ("/etc/systemd/system/nas_api.service",                 "etc/systemd/system/nas_api.service",                 True),
@@ -7551,7 +7574,7 @@ _BACKUP_FILES = [
 
 
 def _backup_dynamic_files():
-    """Cac path phu thuoc WEBDAV_FILE_ROOT (HDD). L?y vao runtime."""
+    """Các path phụ thuộc WEBDAV_FILE_ROOT (HDD). Lấy vào runtime."""
     return [
         (os.path.join(WEBDAV_FILE_ROOT, "cookies.txt"),                     "webdav_root/cookies.txt",                     False),
         (os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tiktok_live_watch.json"), "webdav_root/.nas_meta/tiktok_live_watch.json", False),
@@ -7589,7 +7612,7 @@ def _backup_file_path(filename):
 @app.route('/api/backup/create', methods=['POST'])
 @requires_auth
 def api_backup_create():
-    """Tao 1 backup .tar.gz ch?a moi config/state hien tai."""
+    """Tạo 1 backup .tar.gz chứa mọi config/state hiện tại."""
     if not _ensure_backup_dir():
         return jsonify({"error": "Không tạo được thư mục backup"}), 500
     try:
@@ -7870,10 +7893,8 @@ def api_fan_control():
                 settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            # Watchdog se quyet dinh duty 0/10000 theo hysteresis. Cho phep
-            # PWM peripheral chay san de watchdog ghi duty co tac dung.
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
+            # Watchdog se quyet dinh bat/tat theo hysteresis. Khong bat san
+            # GPIO/PWM o day, vi nhu vay se lam quat chay truoc moc tren.
             with _cache_lock:
                 _status_cache['fan_mode'] = 'custom'
                 _status_cache['fan_on_temp'] = settings['on_temp']
@@ -7925,9 +7946,9 @@ def api_torrent_control():
 
         qbt_base = "http://127.0.0.1:8080/api/v2"
 
-        # St?p 1: Login to qBittorrent to get SID cookie
+        # Step 1: Login to qBittorrent to get SID cookie
         if not QBITTORRENT_USER or not QBITTORRENT_PASS:
-            return jsonify({"error": "Ch?a c?u h?nh qBittorrent credentials"}), 500
+            return jsonify({"error": "Chưa cấu hình qBittorrent credentials"}), 500
         login_data = urllib.parse.urlencode({"username": QBITTORRENT_USER, "password": QBITTORRENT_PASS}).encode("utf-8")
         login_req = urllib.request.Request("%s/auth/login" % qbt_base, data=login_data)
         sid_cookie = ""
@@ -7937,7 +7958,7 @@ def api_torrent_control():
                     sid_cookie = header.split("SID=")[1].split(";")[0]
                     break
         if not sid_cookie:
-            return jsonify({"error": "Kh?ng ??ng nh?p ???c qBittorrent"}), 502
+            return jsonify({"error": "Không đăng nhập được qBittorrent"}), 502
 
 
         # Stệp 2: Map Android actions to qBittorrent v5 API endpoints
@@ -8157,7 +8178,7 @@ def api_notify_telegram():
             "chat_id": cfg.get("chat_id", ""),
             "events": cfg.get("events", dict(_TELEGRAM_DEFAULT_EVENTS)),
         })
-    # POST: luu cau hinh; neu kem ?test=1 thi gui 1 tin thu nghiem
+    # POST: lưu cấu hình; nếu kèm ?test=1 thì gửi 1 tin thử nghiệm
     body = request.get_json(silent=True) or {}
     cfg = _load_telegram_config()
     if "enabled" in body:
@@ -8211,15 +8232,15 @@ def api_rules():
 @requires_auth
 def api_alerts_poll():
     """
-    Android WorkManager goi endpoint nay dinh ky (moi 15 phut).
-    Tr? v? danh sách cầnh b?o moi ch?a Đọc + trạng thái h? thỏng hien tai.
+    Android WorkManager gọi endpoint này định kỳ (mỗi 15 phút).
+    Trả về danh sách cảnh báo mới chưa đọc + trạng thái hệ thống hiện tại.
     """
-    since_ts = request.args.get("since", "")  # L?y cầnh b?o ke tu timestamp nay
+    since_ts = request.args.get("since", "")  # Lấy cảnh báo kể từ timestamp này
     with _alert_state_lock:
         alerts = list(_alert_states["last_alerts"])
         ai_running = _alert_states["ai_scan_running"]
 
-    # L?c cầnh b?o theo timestamp neu co tham so 'since'
+    # Lọc cảnh báo theo timestamp nếu có tham số 'since'
     if since_ts:
         try:
             cutoff = datetime.datetime.strptime(since_ts, "%d/%m/%Y %H:%M:%S")
@@ -8235,7 +8256,7 @@ def api_alerts_poll():
         except Exception:
             pass
 
-    # L?y trạng thái HDD hien tai (tu cache, không wake HDD)
+    # Lấy trạng thái HDD hiện tại (từ cache, không wake HDD)
     with _cache_lock:
         hdd_temp = _status_cache.get("temperature", "--°C")
         nas_status = _status_cache.get("status", "Online")
@@ -8252,7 +8273,7 @@ def api_alerts_poll():
 @app.route("/api/alerts/clear", methods=["POST"])
 @requires_auth
 def api_alerts_clear():
-    """Xo? hang doi cầnh b?o sau khi Android da xu ly."""
+    """Xoá hàng đợi cảnh báo sau khi Android đã xử lý."""
     with _alert_state_lock:
         _alert_states["last_alerts"] = []
     return jsonify({"result": "ok"})
@@ -8261,7 +8282,7 @@ def api_alerts_clear():
 @app.route("/api/cron/status")
 @requires_auth
 def api_cron_status():
-    """Trạng thái cua cron worker: luc don rac gần nh?t, AI quet lan cuoi."""
+    """Trạng thái của cron worker: lúc dọn rác gần nhất, AI quét lần cuối."""
     with _alert_state_lock:
         last_clean = _alert_states["trash_last_clean"]
         last_ai = _alert_states["ai_last_scan"]
@@ -8282,7 +8303,7 @@ def api_cron_status():
 @app.route('/api/system/temperature_history', methods=['GET'])
 @requires_auth
 def api_temperature_history():
-    """L?y lich su nhi?t để (120 diem gần nh?t tuong duong khoang 2 tieng)."""
+    """Lấy lịch sử nhiệt độ (120 điểm gần nhất tương đương khoảng 2 tiếng)."""
     try:
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
@@ -8314,7 +8335,7 @@ def api_cron_trash_clean():
 @app.route("/api/system_logs", methods=["GET"])
 @requires_auth
 def api_system_logs():
-    """Tr? v? danh sách nhat ky h? thỏng (AccessLog, DuplicateScan...) tu NAS."""
+    """Trả về danh sách nhật ký hệ thống (AccessLog, DuplicateScan...) từ NAS."""
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10.0)
         try:
@@ -8350,7 +8371,7 @@ def api_system_logs_clear():
 @app.route("/api/ai/tags")
 @requires_auth
 def api_ai_tags():
-    """Tr? v? phan loai ảnh theo thư mục. Quet truc tiep tren NAS."""
+    """Trả về phân loại ảnh theo thư mục. Quét trực tiếp trên NAS."""
     try:
         if not os.path.exists(AI_TAGS_PATH):
             return jsonify({
@@ -8860,7 +8881,7 @@ def api_screen_record_cancel():
 
 # ============ VIDEO STREAM TRANSCODE ============
 # Transcode video sang MP4 (H.264 + AAC) on-the-fly bang FFmpeg
-# ExoPlayer tren Android không gi?i mở được MPEG-2 (.mpg) tren nhieu thiet bi
+# ExoPlayer trên Android không giải mã được MPEG-2 (.mpg) trên nhiều thiết bị
 
 
 _transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen, "lock": Lock }
@@ -8903,7 +8924,7 @@ def _cleanup_transcode_sessions(force_limit=False):
 
 def _find_source_file(relative_path):
     """Tim file goc tren NAS tu duong dan WebDAV tuong doi.
-    FIX SECURITY: Validate path traversal truoc khi tr? v?."""
+    FIX SECURITY: Validate path traversal trước khi trả về."""
     from urllib.parse import unquote
     relative_path = unquote(relative_path)
     candidates = [
@@ -8917,7 +8938,7 @@ def _find_source_file(relative_path):
     return None
 
 def _get_video_duration(file_path):
-    """L?y thoi luồng video (giay) bang ffprobe"""
+    """Lấy thời lượng video (giây) bằng ffprobe"""
     try:
         cmd = ["/usr/bin/ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
@@ -8957,7 +8978,7 @@ def api_stream_transcode():
 
     os.makedirs(hls_dir, exist_ok=True)
 
-    # L?y tong thoi gian cua video
+    # Lấy tổng thời gian của video
     duration = _get_video_duration(file_path)
     
     with _transcode_sessions_lock:
@@ -9096,11 +9117,11 @@ def api_stream_hls_file(session_id, filename):
 @requires_auth
 def api_organize_legacy_videos():
     """
-    Quet toan bo WEBDAV_FILE_ROOT, di chuyen cac video không ph?i mp4 vao /Other Video/<ext>/
+    Quét toàn bộ WEBDAV_FILE_ROOT, di chuyển các video không phải mp4 vào /Other Video/<ext>/
     """
     import shutil
     
-    # Danh sách giay phep (chi video, không ph?i mp4)
+    # Danh sách giấy phép (chỉ video, không phải mp4)
     target_exts = {".mpg", ".mpeg", ".avi", ".wmv", ".flv", ".mkv", ".mov", ".ts", ".m4v", ".3gp"}
     
     other_video_dir = os.path.join(WEBDAV_FILE_ROOT, "Other Video")
@@ -9110,7 +9131,7 @@ def api_organize_legacy_videos():
     
     # Quet tất c? thư mục trong WEBDAV_FILE_ROOT
     for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
-        # B? qua thư mục Other Video de không di chuy?n vong lap
+        # Bỏ qua thư mục Other Video để không di chuyển vòng lặp
         if os.path.abspath(root).startswith(os.path.abspath(other_video_dir)):
             continue
             
@@ -9166,7 +9187,7 @@ def api_smart_organize_scan():
     """
     Quet thư mục WebDAV, phan nhom file theo Nam/Thang (mtime).
     Input JSON: { "path": "/webdav/", "filter": "all|image|video" }
-    Tr? v?: { "total": N, "groups": [ { "label": "2024/03", "count": X, "size": Y } ] }
+    Trả về: { "total": N, "groups": [ { "label": "2024/03", "count": X, "size": Y } ] }
     """
     data = request.get_json(force=True) or {}
     scan_filter = data.get("filter", "all")
@@ -9206,7 +9227,7 @@ def api_smart_organize_scan():
                 if not rel_path.startswith("/"):
                     rel_path = "/" + rel_path
 
-                # Kiểm tra file da nam trong thư mục YYYY/MM ch?a (b? qua neu da ??ng ch?)
+                # Kiểm tra file đã nằm trong thư mục YYYY/MM chưa (bỏ qua nếu đã đúng chỗ)
                 parent_dir = os.path.dirname(rel_path).strip("/")
                 if parent_dir == label or parent_dir.endswith("/" + label):
                     continue
@@ -9229,7 +9250,7 @@ def api_smart_organize_scan():
             except Exception:
                 pass
 
-    # Sap xep theo thoi gian giam dan (mới nh?t truoc)
+    # Sắp xếp theo thời gian giảm dần (mới nhất trước)
     sorted_labels = sorted(groups_map.keys(), reverse=True)
     groups = []
     for label in sorted_labels:
@@ -9695,7 +9716,7 @@ _thumb_manual_paused = False
 _thumb_auto_block_reasons = set()
 
 def _apply_thumbnail_gate_locked():
-    """?p dùng trạng thái pause/resume tu manual pause + cac tac vu nen n?ng."""
+    """Áp dụng trạng thái pause/resume từ manual pause + các tác vụ nền nặng."""
     should_pause = _thumb_manual_paused or bool(_thumb_auto_block_reasons)
     if should_pause:
         _thumb_paused.clear()
@@ -9745,7 +9766,7 @@ def _generate_image_thumb(src_path, dst_path):
         img.save(dst_path, 'JPEG', quality=THUMB_QUALITY)
         return True
     except Exception:
-        # File corrupt hoac không ph?i ảnh that -> tao placeholder
+        # File corrupt hoặc không phải ảnh thật -> tạo placeholder
         try:
             _create_placeholder_thumb(dst_path)
             return True
@@ -9773,10 +9794,10 @@ def _generate_video_thumb(src_path, dst_path):
     - Seek 00:00:03 -> video < 3s thi ffmpeg fail im lang
     - Timeout 10s -> video lon hoac codec phuc tap (H.265/HEVC/AV1 tren rk3328
       ARM 1-2GB RAM khong co hwacc) thi ffmpeg bi kill truoc khi extract frame
-    - Khong probe duration -> không bi?t co the seek bao nhieu
+    - Không probe duration -> không biết có thể seek bao nhiêu
     - Fallback -ss 0 sau khi seek 3s lỗi: kernel da cache file -> 2nd run nhanh hon
       nhung van lỗi neu codec không decode được bang ffmpeg 3.2
-    - Tao placeholder + return True che dau lỗi -> client không bi?t re-request
+    - Tạo placeholder + return True che dấu lỗi -> client không biết re-request
 
     Logic moi:
     1. Probe duration nhanh (ffprobe 3s) de chon seek time hop ly.
@@ -9863,7 +9884,7 @@ def _generate_video_thumb(src_path, dst_path):
     except Exception as e:
         log.warning("[Thumb] unexpected error %s: %s", os.path.basename(src_path), e)
 
-    # Het cach -> tao placeholder de UI khong trong tron, nhung tr? v? False
+    # Hết cách -> tạo placeholder để UI không trống trơn, nhưng trả về False
     # de _thumb_stats track thất bại va co the retry o vong sau.
     try:
         _create_placeholder_thumb(dst_path)
@@ -10069,7 +10090,7 @@ def _thumbnail_generator():
             _counter_lock = threading.Lock()
             abort_batch = False
             
-            # Tach rieng ảnh (nh?, chay song song PIL) va video (n?ng, gioi han FFmpeg)
+            # Tách riêng ảnh (nhẹ, chạy song song PIL) và video (nặng, giới hạn FFmpeg)
             image_pending = [p for p in pending if p[2] in MEDIA_IMAGE_EXTS]
             video_pending = [p for p in pending if p[2] in MEDIA_VIDEO_EXTS]
             
@@ -10088,7 +10109,7 @@ def _thumbnail_generator():
                     return 3  # Rảnh: 3 luồng (de lai 1 core cho OS + API server)
             
             def _check_resources_and_throttle():
-                """Kiểm tra tai nguyen, tr? v? True neu cần dùng khan cap."""
+                """Kiểm tra tài nguyên, trả về True nếu cần dừng khẩn cấp."""
                 nonlocal abort_batch
                 try:
                     mem = psutil.virtual_memory()
@@ -10191,7 +10212,7 @@ def _thumbnail_generator():
                             if abort_batch:
                                 break
             
-            # === XU LY VIDEO: Tuan tu (FFmpeg n?ng, da co _ffmpeg_semaphore gioi han 2) ===
+            # === XỬ LÝ VIDEO: Tuần tự (FFmpeg nặng, đã có _ffmpeg_semaphore giới hạn 2) ===
             if video_pending and not abort_batch:
                 with _thumb_stats_lock:
                     _thumb_stats["last_file"] = "Video: %d tệp (tuần tự)" % len(video_pending)
@@ -10243,7 +10264,7 @@ def _thumbnail_generator():
 @app.route("/api/thumb")
 @requires_auth
 def api_thumb():
-    """Tr? v? thumbnail. On-demand neu ch?a co."""
+    """Trả về thumbnail. On-demand nếu chưa có."""
     import urllib.parse
     webdav_path = request.args.get("path", "")
     # HOTFIX: Android Kotlin `java.net.URL.path` pass raw %20, and `URLEncoder` double encodes to %2520.
@@ -10367,7 +10388,7 @@ def api_thumb_control():
 @app.route("/api/thumb/activity", methods=["POST"])
 @requires_auth
 def api_thumb_activity():
-    """App/worker bao cho NAS biet tac vu n?ng dang chay de t?m dùng thumbnail.
+    """App/worker báo cho NAS biết tác vụ nặng đang chạy để tạm dừng thumbnail.
     Body: {"source": "sync", "active": true|false}"""
     body = request.get_json(force=True, silent=True) or {}
     source = _re_module.sub(r"[^a-zA-Z0-9_.-]+", "_", str(body.get("source", "sync"))).strip("_") or "sync"
@@ -10444,7 +10465,7 @@ def api_docker_power_post():
 @app.route("/api/lan/whitelist", methods=["GET"])
 @requires_auth
 def api_lan_whitelist_get():
-    """L?y danh sách IP/subnet trong LAN whitelist."""
+    """Lấy danh sách IP/subnet trong LAN whitelist."""
     return jsonify({
         "ips": sorted(list(_lan_whitelist)),
         "subnets": sorted(_lan_subnets)
@@ -10552,6 +10573,8 @@ def _system_health_watchdog():
     # Biến đếm thời gian lỗi (Cần lỗi liên tục 2 lần mới Action để tránh chập chờn)
     hdd_error_cycles = 0
     lan_error_cycles = 0
+    lan_next_check_ts = 0.0
+    lan_retry_delay_sec = 15 * 60
 
     # Không ép `hdparm -S 0` lúc khởi động. Lệnh đó tắt standby HDD và đi ngược
     # mục tiêu bảo vệ ổ trên NAS gia đình. Spindown/standby chỉ do sleep schedule
@@ -10596,18 +10619,39 @@ def _system_health_watchdog():
             else:
                 hdd_error_cycles = 0
                 
-            # 4. Kiểm tra LAN IP (eth0)
-            ip_res = subprocess.run(["ip", "-4", "addr", "show", "eth0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
-            if "inet " not in ip_res.stdout.decode() and hdd_error_cycles == 0:
-                lan_error_cycles += 1
-                log.warning("[Watchdog] Mất kết nối IP LAN eth0 (lần %d)", lan_error_cycles)
-                _system_alert = "⚠️ Mất mạng LAN (Tự động Reboot sau %ds)" % ((6 - lan_error_cycles) * 10)
-                if lan_error_cycles >= 6:  # Mat mang lien tuc trong 1 phut
-                    _trigger_hard_reboot("Mất kết nối mạng LAN (eth0 không có IP)")
+            # 4. Kiem tra LAN IP (eth0). Mat LAN IP khong con reboot ngay:
+            # DHCP/router co the tu hoi phuc cham. Chi canh bao va gian nhip
+            # kiem tra 15 -> 30 phut de tranh reset NAS khi mang chap chon.
+            now_ts = time.time()
+            if now_ts >= lan_next_check_ts:
+                ip_res = subprocess.run(["ip", "-4", "addr", "show", "eth0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+                if "inet " not in ip_res.stdout.decode() and hdd_error_cycles == 0:
+                    lan_error_cycles += 1
+                    delay_min = int(lan_retry_delay_sec / 60)
+                    log.warning("[Watchdog] Mat IP LAN eth0 (lan %d). Khong reboot; se kiem tra lai sau %d phut.", lan_error_cycles, delay_min)
+                    _system_alert = "Mat IP LAN eth0; se kiem tra lai sau %d phut (khong reboot)." % delay_min
+                    lan_next_check_ts = now_ts + lan_retry_delay_sec
+                    lan_retry_delay_sec = min(30 * 60, lan_retry_delay_sec + 15 * 60)
+                    try:
+                        _add_system_log_once(
+                            "lan_ip_missing",
+                            "WARNING",
+                            "Network",
+                            "Mat IP LAN eth0; khong reboot, cho %d phut roi kiem tra lai." % delay_min,
+                            interval_sec=15 * 60,
+                        )
+                    except Exception as e:
+                        log.debug("[M4] Ignored exception: %s", e)
+                elif hdd_error_cycles == 0:
+                    if lan_error_cycles > 0:
+                        log.info("[Watchdog] IP LAN eth0 da co lai sau %d lan mat IP.", lan_error_cycles)
                     lan_error_cycles = 0
+                    lan_retry_delay_sec = 15 * 60
+                    lan_next_check_ts = 0.0
+                    _system_alert = ""
             elif hdd_error_cycles == 0:
-                lan_error_cycles = 0
-                _system_alert = ""
+                remaining_min = max(1, int((lan_next_check_ts - now_ts + 59) / 60))
+                _system_alert = "Mat IP LAN eth0; cho %d phut nua de kiem tra lai." % remaining_min
                 
         except Exception as e:
             log.error("[Watchdog] Lỗi giám sát: %s", e)
@@ -10620,13 +10664,13 @@ def _system_health_watchdog():
 @app.route("/api/tailscale/status", methods=["GET"])
 @requires_auth
 def api_tailscale_status():
-    """Tr? v? trạng thái Tailscale: IP, status, so lan restart."""
+    """Trả về trạng thái Tailscale: IP, status, số lần restart."""
     try:
         # Kiểm tra process
         proc = subprocess.run(["pgrep", "-x", "tailscaled"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         is_running = proc.returncode == 0
         
-        # L?y IP Tailscale
+        # Lấy IP Tailscale
         tailscale_ip = ""
         if is_running:
             try:
@@ -10638,7 +10682,7 @@ def api_tailscale_status():
             except Exception:
                 pass
         
-        # L?y trạng thái ket noi
+        # Lấy trạng thái kết nối
         status_text = "stopped"
         if is_running:
             try:
@@ -10672,7 +10716,7 @@ def api_tailscale_status():
 #
 # Cach hoat dong:
 #  1. Tao user Linux ngau nhien (nasguest_xxxx) voi shell /bin/false (khoa SSH)
-#  2. C?u hảnh vsftpd cho phep user nay: Read-Only vao thư mục Media/
+#  2. Cấu hình vsftpd cho phép user này: Read-Only vào thư mục Media/
 #  3. Dat timeout: cron-like background thread se xoá user sau so phut da dat
 #
 # CANH BAO: Can chay voi quyen root (hoac sudo) de tao user h? thỏng.
@@ -10680,7 +10724,7 @@ def api_tailscale_status():
 import random
 import string
 
-# L?u trạng thái Guest Pass (dang hoat dong)
+# Lưu trạng thái Guest Pass (đang hoạt động)
 _guest_passes = {}  # {username: {"password": ..., "expires_at": epoch}}
 _guest_lock = threading.Lock()
 # Persist metadata guest pass de song sot qua restart va reconcile orphan user.
@@ -10886,7 +10930,7 @@ def api_guest_create():
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
             _save_guest_passes_locked()
 
-        # L?y IP LAN cua NAS (vi Android can dia chi FTP)
+        # Lấy IP LAN của NAS (vì Android cần địa chỉ FTP)
         try:
             import socket as _socket_mod
             nas_host = _socket_mod.gethostbyname(_socket_mod.gethostname())
@@ -11144,7 +11188,7 @@ def _quarantine_broken_livestream_file(file_path):
 
 def _remux_flv_to_mp4(flv_path):
     """Remux file FLV thảnh MP4 bang ffmpeg -c copy (khong re-encode, ~0% CPU).
-    Tr? v? duong dan file MP4 neu thảnh cầng, hoac chuoi rong neu thất bại."""
+    Trả về đường dẫn file MP4 nếu thành công, hoặc chuỗi rỗng nếu thất bại."""
     if not flv_path or not os.path.exists(flv_path):
         return ""
     mp4_path = os.path.splitext(flv_path)[0] + ".mp4"
@@ -11212,7 +11256,7 @@ def _remux_flv_to_mp4(flv_path):
                         proc.returncode, proc2.returncode, proc3.returncode, os.path.basename(flv_path))
             return ""
         # Het cach: log day du stderr + rename file .flv -> .broken.flv de user
-        # biet file da bi hong/không pl?y được, KHÔNG xoá (de debug hoac thu
+        # Biết file đã bị hỏng/không play được, KHÔNG xoá (để debug hoặc thử
         # mo bang VLC tay).
         err_tail = (proc3.stderr or proc2.stderr or b"")[-240:]
         log.warning("[Livestream] Remux FLV sang MP4 thất bại sau cả 3 lượt thử (rc=%d|%d|%d): %s",
@@ -11319,7 +11363,7 @@ def _livestream_watchdog():
     Cung cap nhat thumbnail gate khi livestream/ytdlp không cần chay."""
     while True:
         try:
-            time.sleep(60)  # Kiểm tra mới ph?t
+            time.sleep(60)  # Kiểm tra mỗi phút
             ytdlp_active = False
             _cleanup_stale_job_tmp(max_age_hours=24)
             _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
@@ -11366,7 +11410,7 @@ def _livestream_watchdog():
                         try:
                             out_pattern = info.get("output_dir", "")
                             timestamp_str = info.get("timestamp_str", "")
-                            # Tim dung file cua job nay. Khong l?y file mới nh?t toan thư mục,
+                            # Tìm đúng file của job này. Không lấy file mới nhất toàn thư mục,
                             # vi job fail/offline se bi gan nham MP4 cu va bao sai trạng thái.
                             if os.path.isdir(out_pattern):
                                 files = sorted(
@@ -11382,7 +11426,7 @@ def _livestream_watchdog():
                         except Exception:
                             pass
 
-                        # Bắt bu?c output livestream la MP4. Neu yt-dlp/downloader
+                        # Bắt buộc output livestream là MP4. Nếu yt-dlp/downloader
                         # con de lai FLV thi remux ngay; fail thi job fail, khong
                         # bao thảnh cầng voi file .flv không mở được.
                         flv_path = ""
@@ -11588,24 +11632,15 @@ def _fan_controller_watchdog():
                 time.sleep(1)
                 continue
 
+            target_percent = _fan_target_percent(
+                control_temp,
+                on_temp,
+                off_temp,
+                last_applied_percent,
+                force_hot=force_hot,
+            )
             if force_hot:
-                target_percent = 100
                 target_since_ts = now_ts
-            elif control_temp <= off_temp:
-                target_percent = 0
-            elif control_temp >= on_temp:
-                target_percent = 100
-            else:
-                span = max(on_temp - off_temp, 1.0)
-                ratio = (control_temp - off_temp) / span
-                if ratio <= 0.25:
-                    target_percent = 25
-                elif ratio <= 0.50:
-                    target_percent = 50
-                elif ratio <= 0.75:
-                    target_percent = 75
-                else:
-                    target_percent = 100
 
             if mode != last_mode:
                 last_target_percent = None
@@ -11654,23 +11689,22 @@ def _restore_fan_state_on_boot():
         if mode == "off":
             run_cmd(["systemctl", "stop", "fan.service"])
             _pwm_apply_off()
-            log.info("[Fan] Kh?i ph?c tr?ng th?i T?T (c?t 5V) t? /opt/fan_custom.json")
+            log.info("[Fan] Khôi phục trạng thái TẮT (cắt 5V) từ /opt/fan_custom.json")
         elif mode == "on":
             run_cmd(["systemctl", "stop", "fan.service"])
             _pwm_apply_on(duty=10000, period=10000)
-            log.info("[Fan] Kh?i ph?c tr?ng th?i B?T 100%% t? /opt/fan_custom.json")
+            log.info("[Fan] Khôi phục trạng thái BẬT 100%% từ /opt/fan_custom.json")
         elif mode == "custom":
             run_cmd(["systemctl", "stop", "fan.service"])
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
-            log.info("[Fan] Kh?i ph?c tr?ng th?i TU? CH?NH ? watchdog s? quy?t ??nh")
+            _pwm_apply_off()
+            log.info("[Fan] Khôi phục trạng thái TUỲ CHỈNH - watchdog sẽ quyết định theo mốc nhiệt")
         else:
             run_cmd(["systemctl", "stop", "fan.service"])
             _fan_power_set(True)
             _pwm_write("enable", 1)
-            log.info("[Fan] Kh?i ph?c tr?ng th?i T? ??NG ? watchdog s? quy?t ??nh theo HDD")
+            log.info("[Fan] Khôi phục trạng thái TỰ ĐỘNG - watchdog sẽ quyết định theo HDD")
     except Exception as e:
-        log.warning("[Fan] Kh?ng kh?i ph?c ???c tr?ng th?i: %s", e)
+        log.warning("[Fan] Không khôi phục được trạng thái: %s", e)
 _restore_fan_state_on_boot()
 
 # Khoi dong watchdog thread
@@ -11726,7 +11760,7 @@ def _normalize_tiktok_watch_user_entry(user):
 def _load_tiktok_watch_state():
     global _tiktok_watch_state
     try:
-        # FIX: Load tu file mới nh?t giua primary (HDD) va mirror (eMMC).
+        # FIX: Load từ file mới nhất giữa primary (HDD) và mirror (eMMC).
         # Neu HDD bi RO trong khi user thay doi state -> mirror moi hon ->
         # phai dùng mirror khi reboot, neu khong se mat thay doi.
         candidates = []
@@ -11764,7 +11798,7 @@ def _load_tiktok_watch_state():
 # FIX: Mirror state vao eMMC root FS de khong mat khi HDD bi RO/corrupt.
 # Primary: WEBDAV_FILE_ROOT/.nas_meta/tiktok_live_watch.json (HDD)
 # Mirror : /etc/nas/state/tiktok_live_watch.json              (eMMC, robust)
-# Save tr? v? True neu CO IT NHAT 1 noi ghi thảnh cầng. Load l?y file moi
+# Save trả về True nếu CÓ ÍT NHẤT 1 nơi ghi thành công. Load lấy file mới
 # nhat theo mtime giua hai noi.
 _TIKTOK_WATCH_MIRROR = "/etc/nas/state/tiktok_live_watch.json"
 
@@ -11806,8 +11840,8 @@ def _normalize_tiktok_username(username):
 # Cache trạng thái cookies TikTok de trảnh hit TikTok mới chu k? watchdog.
 _tiktok_cookies_cache = {
     "status": "unknown",   # missing / expired / revoked / valid / unknown
-    "message": "",         # mo ta ng??i dùng doc
-    "checked_at": 0.0,     # epoch lan check gần nh?t
+    "message": "",         # mô tả người dùng đọc
+    "checked_at": 0.0,     # epoch lần check gần nhất
     "file_mtime": 0.0,     # mtime cua cookies.txt luc check de phat hien file moi
 }
 _TIKTOK_COOKIES_CHECK_INTERVAL = 600  # 10 phut moi lan goi mang den TikTok
@@ -11816,7 +11850,7 @@ def _tiktok_cookies_path():
     return os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
 
 def _parse_cookies_sessionid_expiry(path):
-    """Đọc cookies.txt (Netscape format), tr? v? (epoch_expiry, sessionid_value) cho sessionid TikTok."""
+    """Đọc cookies.txt (Netscape format), trả về (epoch_expiry, sessionid_value) cho sessionid TikTok."""
     expiry = 0
     sessionid = ""
     try:
@@ -11844,7 +11878,7 @@ def _parse_cookies_sessionid_expiry(path):
     return expiry, sessionid
 
 def _ping_tiktok_cookies(path):
-    """Goi 1 endpoint can dang nhap; tr? v? (is_valid, detail)."""
+    """Gọi 1 endpoint cần đăng nhập; trả về (is_valid, detail)."""
     curl_cmd = [
         "curl", "-4", "-s", "-L",
         "--max-time", "12",
@@ -11853,7 +11887,7 @@ def _ping_tiktok_cookies(path):
         "-H", "Accept: application/json, text/plain, */*",
         "-b", path,
         "-w", "\n__HTTP__:%{http_code}",
-        # passport_logged_out endpoint tr? v? cau truc { user: { uid, sec_uid }, ... } khi co session
+        # passport_logged_out endpoint trả về cấu trúc { user: { uid, sec_uid }, ... } khi có session
         "https://www.tiktok.com/passport/web/account/info/?aid=1988",
     ]
     try:
@@ -11868,13 +11902,13 @@ def _ping_tiktok_cookies(path):
             return False, "TikTok trả về trạng thái 'chưa đăng nhập' — cookies đã hết hạn"
         if http_code in ("401", "403"):
             return False, "TikTok từ chối (HTTP %s) — cookies đã bị thu hồi" % http_code
-        # Không x?c ?ảnh được — coi nhu valid de khong false-alarm
+        # Không xác định được — coi như valid để không false-alarm
         return True, "HTTP %s (không rõ)" % http_code
     except Exception as e:
         return True, "Không kiểm tra được (%s)" % str(e)[:80]
 
 def _check_cookies_status(force=False):
-    """Tr? v? dict { status, message, checked_at } cua cookies TikTok.
+    """Trả về dict { status, message, checked_at } của cookies TikTok.
     S? dùng cache 10 phut tru khi force=True hoac file vua thay doi."""
     path = _tiktok_cookies_path()
     now = time.time()
@@ -12144,7 +12178,7 @@ def _check_tiktok_user_live(username):
     cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
     tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     # In HTTP status code o cuoi response qua --write-out de phan biet bi block (403/429)
-    # voi "page tr? v? nhung khong co stream" (200 nhung empty / not-live).
+    # với "page trả về nhưng không có stream" (200 nhưng empty / not-live).
     sentinel = "\n__HTTP_STATUS__:"
     curl_cmd = [
         "curl", "-4", "-s", "-L",
@@ -12173,8 +12207,8 @@ def _check_tiktok_user_live(username):
         if len(html) > 786432:
             html = html[:786432]
         if not html.strip():
-            # Trang trong thuong la TikTok bot-block tam thoi — không ph?i lỗi that su.
-            # Coi la offline de watcher tiep tuc kiểm tra lan sau (không l?u last_error).
+            # Trang trống thường là TikTok bot-block tạm thời — không phải lỗi thật sự.
+            # Coi là offline để watcher tiếp tục kiểm tra lần sau (không lưu last_error).
             return False, "unknown: TikTok trả trang rỗng hoặc challenge tạm thời"
         lowered = html.lower()
         media_urls = _extract_tiktok_live_media_urls(html)
@@ -12217,7 +12251,7 @@ def _check_tiktok_user_live(username):
                 return False, "offline"
         # Nếu không có dấu hiệu offline/ended mà HTML chứa media URL, coi là live.
         # Không probe codec ở watcher vì ffmpeg/yt-dlp trên NAS hay false-negative.
-        # HTML tr? v? binh thuong nhung không tìm thấy FLV URL va khong match signal nao
+        # HTML trả về bình thường nhưng không tìm thấy FLV URL và không match signal nào
         # → user khong dang live (TikTok khong show stream URL khi offline). KHONG phai lỗi.
         return False, "unknown: chưa thấy URL stream, chưa xác nhận user đã dừng live"
     except Exception as e:
@@ -12602,7 +12636,7 @@ def api_tiktok_live_watch_add():
             })
         saved = _save_tiktok_watch_state()
         _tiktok_watch_wake.set()
-        # FIX: bao lỗi RO ngay cho user neu CA HAI noi l?u deu fail
+        # FIX: báo lỗi RO ngay cho user nếu CẢ HAI nơi lưu đều fail
         if not saved:
             response = jsonify({
                 "error": "Đã thêm trong RAM nhưng KHÔNG lưu được xuống đĩa. Sẽ mất khi reboot.",
@@ -12683,7 +12717,7 @@ def api_livestream_record():
         # Chi check cho URL TikTok co @user/live; cac URL khac (FB/YT/Shopee) van di
         # qua flow cu vi format URL khac va probe nhanh hon.
         # Removed pre-flight check due to false negatives. Let yt-dlp try its best.
-        # Không gi?i h?n so luồng ghi cung; thay vao do check phan cung de
+        # Không giới hạn số luồng ghi cứng; thay vào đó check phần cứng để
         # bao ve NAS khoi tinh trang treo. Chap nhan luồng moi neu:
         #   - CPU dang dung < 85%
         #   - RAM con trong > 200MB
@@ -12850,18 +12884,18 @@ def api_livestream_record():
             "--hls-use-mpegts",         # Ghi tung doan .ts -> khong bi corrupt khi ngat
             "--downloader", "ffmpeg",   # Dung ffmpeg downloader -> on dinh hon voi live stream
             "--downloader-args", "ffmpeg:-loglevel warning",
-            # FIX: ep yt-dlp remux fragment HLS thảnh MP4 container ch?an, khong
-            # con l?u raw .ts mislabel ext .mp4 (player tu choi parse vi magic
-            # bytes khong khop). --remux-video chi remux container, KHONG
-            # re-encode -> nhanh, không gi?m ch?t lượng.
+            # FIX: ép yt-dlp remux fragment HLS thành MP4 container chuẩn, không
+            # còn lưu raw .ts mislabel ext .mp4 (player từ chối parse vì magic
+            # bytes không khớp). --remux-video chỉ remux container, KHÔNG
+            # re-encode -> nhanh, không giảm chất lượng.
             "--remux-video", "mp4",
-            # FIX: moov atom de o dau file de player pl?y được khi file con dang
-            # ghi (progressive streaming). Khong co flag nay, moov nam o cuoi
-            # va player phai download het roi moi seek được.
+            # FIX: moov atom để ở đầu file để player play được khi file còn đang
+            # ghi (progressive streaming). Không có flag này, moov nằm ở cuối
+            # và player phải download hết rồi mới seek được.
             "--postprocessor-args", "ffmpeg:-movflags +faststart",
         ]
 
-        # Th?m cookies neu co file (ở thư mục gốc)
+        # Thêm cookies nếu có file (ở thư mục gốc)
         cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
         if os.path.exists(cookies_path):
             cmd.extend(["--cookies", cookies_path])
@@ -12873,9 +12907,9 @@ def api_livestream_record():
 
         # --- TIKTOK HTML FLV FALLBACK -> MP4 ---
         # TikTok API metadata cua yt-dlp co the bao sai "not currently live",
-        # trong khi trang HTML van co FLV stream dang chay. L?y cac FLV URL
-        # tu HTML, chon bien the H264 ffmpeg 3.2 Đọc được (_hd/_ld), roi ghi
-        # truc tiep thảnh MP4. Khong l?u FLV ra NAS.
+        # trong khi trang HTML vẫn có FLV stream đang chạy. Lấy các FLV URL
+        # từ HTML, chọn biến thể H264 ffmpeg 3.2 đọc được (_hd/_ld), rồi ghi
+        # trực tiếp thành MP4. Không lưu FLV ra NAS.
         if "tiktok" in live_url.lower():
             curl_cmd = [
                 "curl", "-4", "-s", "-L",
@@ -12957,7 +12991,7 @@ def api_livestream_record():
                     live_url = chosen_url
                     direct_tiktok_flv = True
                     # FIX: dùng stable_id (username) trong filename, không để "_tiktok"
-                    # cung. Truoc day mới l?c dung direct FLV path, file deu co dang
+                    # cứng. Trước đây mới lọc đúng direct FLV path, file đều có dạng
                     # tiktok_<ts>_tiktok.mp4 -> mat thong tin user trong ten file.
                     if stable_id:
                         direct_output_file = os.path.join(
@@ -12975,11 +13009,11 @@ def api_livestream_record():
         # --------------------------------
 
         if direct_tiktok_flv:
-            # FLV URL da được chon la H264 remuxable. Ghi thang MP4 bang
-            # ffmpeg, không để lai file .flv.
-            # Pre-check NHANH bang HEAD request (khong tai body) de tu choi som
-            # neu URL FLV da 404/403/expired. HEAD chi ton ~1-3s nen khong gay
-            # timeout 35s o local urlopen ben watcher.
+            # FLV URL đã được chọn là H264 remuxable. Ghi thẳng MP4 bằng
+            # ffmpeg, không để lại file .flv.
+            # Pre-check NHANH bằng HEAD request (không tải body) để từ chối sớm
+            # nếu URL FLV đã 404/403/expired. HEAD chỉ tốn ~1-3s nên không gây
+            # timeout 35s ở local urlopen bên watcher.
             head_cmd = [
                 "curl", "-4", "-s", "-L", "--http1.1",
                 "-r", "0-1",
@@ -12988,8 +13022,8 @@ def api_livestream_record():
                 "-A", tiktok_user_agent,
                 "-H", "Referer: https://www.tiktok.com/",
                 "-o", "/dev/null",
-                # FIX: log th?m content_type de validate FLV that su (trảnh
-                # truong hop CDN tr? v? text/html, application/json hay
+                # FIX: log thêm content_type để validate FLV thật sự (tránh
+                # trường hợp CDN trả về text/html, application/json hay
                 # application/vnd.apple.mpegurl ma curl van ghi vao .flv).
                 "-w", "%{http_code}|%{content_type}",
             ]
@@ -13007,7 +13041,7 @@ def api_livestream_record():
                 http_code = "0"
                 content_type = ""
 
-            # Neu HEAD thất bại voi 4xx/5xx -> thu re-scrape 1 lan (FLV URL co the vua het han).
+            # Nếu HEAD thất bại với 4xx/5xx -> thử re-scrape 1 lần (FLV URL có thể vừa hết hạn).
             if http_code.startswith(("4", "5")):
                 original_user_url = body.get("url", "").strip()
                 if original_user_url and "tiktok.com" in original_user_url and not original_user_url.startswith(live_url[:30]):
@@ -13037,7 +13071,7 @@ def api_livestream_record():
                         pass
 
             if http_code.startswith(("4", "5")):
-                # Message ngan gon, chuyen nghiep, ko log JSON tho.
+                # Message ngắn gọn, chuyên nghiệp, không log JSON thô.
                 short_msg = {
                     "401": "Cookies TikTok không hợp lệ",
                     "403": "TikTok chặn vùng / cookies bị thu hồi",
@@ -13049,10 +13083,10 @@ def api_livestream_record():
                     "http_code": http_code,
                 }), 502
 
-            # FIX: Validate Content-Type — neu CDN tr? v? text/html, JSON,
-            # hay m3u8 manifest (cac dau hieu URL het han hoac sai) thi fallback
-            # ve yt-dlp path (yt-dlp se tu re-scrape, demux HLS, remux thảnh
-            # mp4 ch?an), thay vi l?u rac vao file .flv không pl?y được.
+            # FIX: Validate Content-Type — nếu CDN trả về text/html, JSON,
+            # hay m3u8 manifest (các dấu hiệu URL hết hạn hoặc sai) thì fallback
+            # về yt-dlp path (yt-dlp sẽ tự re-scrape, demux HLS, remux thành
+            # mp4 chuẩn), thay vì lưu rác vào file .flv không play được.
             is_hls_url = ".m3u8" in live_url.lower()
             is_flv_serve = any(s in content_type for s in ("video/x-flv", "video/flv", "flv-application", "application/octet-stream", "video/mp4", "mpegurl", "application/vnd.apple.mpegurl", "application/x-mpegurl"))
             if content_type and not is_flv_serve:
@@ -13202,7 +13236,7 @@ while True:
             ]
         else:
             # Truong hop fallback: live_url co the la URL FLV CDN da scrape ra,
-            # nhung CDN tra Content-Type không ph?i FLV. Reset ve URL goc cua
+            # nhưng CDN trả Content-Type không phải FLV. Reset về URL gốc của
             # user de yt-dlp scrape lai theo cach cua no.
             original_user_url = body.get("url", "").strip()
             if original_user_url and "tiktok.com" in original_user_url:
@@ -13366,7 +13400,7 @@ while True:
 @app.route("/api/livestream/status", methods=["GET"])
 @requires_auth
 def api_livestream_status():
-    """L?y trạng thái tất c? c?c livestream job."""
+    """Lấy trạng thái tất cả các livestream job."""
     jobs_snapshot = []
     with _livestream_lock:
         for jid, info in list(_livestream_jobs.items()):
@@ -13379,13 +13413,13 @@ def api_livestream_status():
         pid = info.get("pid")
         status = info.get("status", "unknown")
 
-        # 1. Tim file output va l?y size truoc khi dảnh gia status
+        # 1. Tìm file output và lấy size trước khi đánh giá status
         file_size = 0
         output_file = info.get("output_file", "")
         out_dir = info.get("output_dir", _LIVESTREAM_DIR)
         try:
             if os.path.isdir(out_dir):
-                # Tim file mới nh?t trong thư mục Livestream cua luồng nay
+                # Tìm file mới nhất trong thư mục Livestream của luồng này
                 platform = info.get("platform", "")
                 timestamp_str = info.get("timestamp_str", "")
                 all_files = []
@@ -13626,8 +13660,8 @@ def api_livestream_stop():
 # Cach hoat dong:
 #  1. Nhan link tu Android
 #  2. Chay yt-dlp ngam (Popen, khong cho doi) de khong block Flask
-#  3. Tr? v? ngay lap tuc {"message": "Đã nh?n lảnh..."}
-#  4. yt-dlp tu tai va l?u vao WEBDAV_FILE_ROOT/save_folder
+#  3. Trả về ngay lập tức {"message": "Đã nhận lệnh..."}
+#  4. yt-dlp tự tải và lưu vào WEBDAV_FILE_ROOT/save_folder
 #
 # Yeu cau cai dat: pip3 install yt-dlp  (hoac pip install yt-dlp)
 # Hoac: apt-get install yt-dlp  (Debian/OMV)
@@ -13638,7 +13672,7 @@ _ytdlp_lock = threading.Lock()
 @app.route("/api/ytdlp/download", methods=["POST"])
 @requires_auth
 def api_ytdlp_download():
-    """Nhan link video, chay yt-dlp ngam va l?u vao NAS."""
+    """Nhận link video, chạy yt-dlp ngầm và lưu vào NAS."""
     try:
         body = request.get_json(force=True) or {}
         video_url = body.get("url", "").strip()
@@ -13666,7 +13700,7 @@ def api_ytdlp_download():
                 "install_hint": "sudo pip3 install yt-dlp"
             }), 503
 
-        # Xay duong dan l?u (tuyet doi) + chong path traversal ra ngoai WebDAV root
+        # Xây đường dẫn lưu (tuyệt đối) + chống path traversal ra ngoài WebDAV root
         dest_dir = os.path.join(WEBDAV_FILE_ROOT, save_folder)
         if not save_folder or not _validate_file_path(dest_dir):
             dest_dir = os.path.join(WEBDAV_FILE_ROOT, "Downloads", "social")
@@ -13683,7 +13717,7 @@ def api_ytdlp_download():
         # Output template: ten file goc cua video, trong dest_dir
         output_template = os.path.join(dest_dir, "%(title).100s.%(ext)s")
 
-        # Khoi dong yt-dlp ngam (KHONG cho doi - tr? v? ngay cho Android)
+        # Khởi động yt-dlp ngầm (KHÔNG chờ đợi - trả về ngay cho Android)
         cmd = [
             ytdlp_bin,
             "--no-playlist",
@@ -13961,7 +13995,7 @@ if __name__ == "__main__":
     threading.Thread(target=monitor_scanners, daemon=True).start()
     threading.Thread(target=monitor_journalctl, daemon=True).start()
     
-    # Thread cache dữ liệu h? thỏng (cap nhat mới 2 gi?y) → API ph?n h?i tuc thi
+    # Thread cache dữ liệu hệ thống (cập nhật mỗi 2 giây) → API phản hồi tức thì
     threading.Thread(target=_update_status_cache, daemon=True).start()
     
     # Thread tao thumbnail tu dong (Synology-style)
@@ -13982,7 +14016,7 @@ if __name__ == "__main__":
     threading.Thread(target=_sleep_schedule_worker, daemon=True).start()
     log.info("[SleepSchedule] Trình lên lịch HDD spindown đã khởi động.")
 
-    # Thread cron don dep Thung rac + phat hien cầnh b?o + kick AI ban dem
+    # Thread cron dọn dẹp Thùng rác + phát hiện cảnh báo + kick AI ban đêm
     threading.Thread(target=_cron_worker, daemon=True).start()
     log.info("[Cron] Tác vụ tự động dọn dẹp và cảnh báo chủ động đã khởi động.")
 
