@@ -4107,7 +4107,7 @@ def _fan_target_percent(control_temp, on_temp, off_temp, last_applied_percent, f
     """Binary fan hysteresis.
 
     - Fan that is off only starts when temperature reaches on_temp.
-    - Fan that is on keeps running until temperature drops to off_temp.
+    - Fan that is on keeps running until temperature drops below off_temp.
     - Between the two thresholds, keep the previous on/off state.
     """
     if force_hot:
@@ -4120,9 +4120,11 @@ def _fan_target_percent(control_temp, on_temp, off_temp, last_applied_percent, f
         return 0
     if off >= on:
         off = max(28.0, on - 3.0)
-    was_running = (last_applied_percent or 0) > 0
+    if last_applied_percent is None:
+        return 100 if temp >= off else 0
+    was_running = last_applied_percent > 0
     if was_running:
-        return 0 if temp <= off else 100
+        return 0 if temp < off else 100
     return 100 if temp >= on else 0
 
 
@@ -11696,8 +11698,7 @@ def _restore_fan_state_on_boot():
             log.info("[Fan] Khôi phục trạng thái BẬT 100%% từ /opt/fan_custom.json")
         elif mode == "custom":
             run_cmd(["systemctl", "stop", "fan.service"])
-            _pwm_apply_off()
-            log.info("[Fan] Khôi phục trạng thái TUỲ CHỈNH - watchdog sẽ quyết định theo mốc nhiệt")
+            log.info("[Fan] Khôi phục trạng thái TUỲ CHỈNH - giữ PWM hiện tại, watchdog sẽ quyết định theo mốc nhiệt")
         else:
             run_cmd(["systemctl", "stop", "fan.service"])
             _fan_power_set(True)

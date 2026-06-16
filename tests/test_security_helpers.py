@@ -154,11 +154,17 @@ class TestFanCustomHysteresis:
         assert target(control_temp=42.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 100
         assert target(control_temp=45.0, on_temp=42.0, off_temp=38.0, last_applied_percent=0) == 100
 
-    def test_running_fan_keeps_running_until_lower_threshold(self, helpers):
+    def test_running_fan_keeps_running_until_below_lower_threshold(self, helpers):
         target = helpers["_fan_target_percent"]
         assert target(control_temp=41.0, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 100
         assert target(control_temp=38.1, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 100
-        assert target(control_temp=38.0, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 0
+        assert target(control_temp=38.0, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 100
+        assert target(control_temp=37.9, on_temp=42.0, off_temp=38.0, last_applied_percent=100) == 0
+
+    def test_unknown_state_uses_lower_threshold_as_fail_safe(self, helpers):
+        target = helpers["_fan_target_percent"]
+        assert target(control_temp=38.0, on_temp=42.0, off_temp=38.0, last_applied_percent=None) == 100
+        assert target(control_temp=37.9, on_temp=42.0, off_temp=38.0, last_applied_percent=None) == 0
 
     def test_force_hot_still_overrides_thresholds(self, helpers):
         target = helpers["_fan_target_percent"]
