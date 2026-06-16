@@ -507,9 +507,34 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     // Điểm mốc cuối cùng nếu ko chạm — dung mau cua chinh diem cuoi
                     if(touchedIndex == -1) {
                         val endColor = s.colorOf?.invoke(pts.last()) ?: s.color
-                        drawCircle(endColor, 4f * density, Offset(xOf(pts.lastIndex), yOf(pts.last())))
-                        drawCircle(Color.White, 2f * density, Offset(xOf(pts.lastIndex), yOf(pts.last())))
+                        val endX = xOf(pts.lastIndex)
+                        val endY = yOf(pts.last())
+                        drawCircle(endColor, 4f * density, Offset(endX, endY))
+                        drawCircle(Color.White, 2f * density, Offset(endX, endY))
                     }
+                }
+
+                if (touchedIndex == -1 && history.isNotEmpty()) {
+                    val latestTs = history.last().timestamp
+                    val latestTime = if (latestTs.length >= 19) latestTs.substring(11, 19) else latestTs
+                    val latestPaint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = textPx * 0.9f
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                        isFakeBoldText = true
+                    }
+                    val latestBgPaint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.argb(230, 20, 20, 30)
+                        isAntiAlias = true
+                    }
+                    val latestW = latestPaint.measureText(latestTime)
+                    val boxCx = (w - latestW / 2f - 10f).coerceAtLeast(leftPad + latestW / 2f + 10f)
+                    drawContext.canvas.nativeCanvas.drawRoundRect(
+                        android.graphics.RectF(boxCx - latestW / 2f - 12f, h - textPx - 15f, boxCx + latestW / 2f + 12f, h),
+                        8f, 8f, latestBgPaint
+                    )
+                    drawContext.canvas.nativeCanvas.drawText(latestTime, boxCx, h - 8f, latestPaint)
                 }
 
                 // Chế độ tương tác vuốt (Scrubbing)

@@ -65,6 +65,7 @@ import androidx.compose.runtime.getValue
 
 private const val URL_PREFIX = "http://"
 private const val URL_SUFFIX = ":8822/webdav/"
+private val DEFAULT_NAS_IPS = listOf("192.168.100.254", "100.90.135.102")
 
 private fun ipToFullUrl(ip: String): String {
     val trimmed = ip.trim()
@@ -79,9 +80,11 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
-    var historyIps by remember { mutableStateOf(rawHistory.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }) }
-    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
-    var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "admin" }) }
+    var historyIps by remember {
+        mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
+    }
+    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: DEFAULT_NAS_IPS.first()) }
+    var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
 
@@ -132,7 +135,11 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             OutlinedTextField(value = ipInput, onValueChange = { ipInput = it }, label = { Text("Địa chỉ IP / DDNS của NAS") }, modifier = Modifier.fillMaxWidth().menuAnchor(), singleLine = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
             if (historyIps.isNotEmpty()) {
-                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                    modifier = Modifier.exposedDropdownSize(matchTextFieldWidth = true)
+                ) {
                     historyIps.forEach { ipOption ->
                         DropdownMenuItem(
                             text = {
@@ -376,6 +383,5 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 // GuestPassScreen (từ GuestPassScreen.kt)
 // ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
 
 
