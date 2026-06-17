@@ -379,28 +379,48 @@ fun SystemStatusCards(
                                 verticalAlignment = Alignment.Top
                             ) {
                                 Box(
-                                    Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape),
+                                    Modifier.size(38.dp).background(
+                                        (if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A)).copy(alpha = 0.15f),
+                                        CircleShape
+                                    ),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
+                                    Icon(
+                                        Icons.Default.Sync, null,
+                                        tint = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                        if (viewModel.autoBackupIsPaused) {
+                                            Text("⏸ Tạm dừng", fontSize = 10.sp, color = Color(0xFFFFA726),
+                                                modifier = Modifier.background(Color(0xFFFFA726).copy(alpha = 0.12f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
+                                        }
+                                    }
                                     Spacer(Modifier.height(4.dp))
-                                    
+
                                     val speed = when {
+                                        viewModel.autoBackupIsPaused -> "Đã tạm dừng"
                                         viewModel.autoBackupUploadSpeedBps > 0L ->
                                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupUploadSpeedBps)}/s"
                                         viewModel.autoBackupElapsedTime > 1000L -> "Đang đối chiếu..."
                                         else -> "Đang chuẩn bị..."
                                     }
-                                    
+
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tệp: ${viewModel.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(speed, fontSize = 11.sp, color = Color(0xFF66BB6A), modifier = Modifier.padding(start = 4.dp))
+                                        Text(speed, fontSize = 11.sp,
+                                            color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A),
+                                            modifier = Modifier.padding(start = 4.dp))
                                     }
-                                    
+
                                     if (viewModel.autoBackupSourcePath.isNotEmpty()) {
                                         val src = viewModel.autoBackupSourcePath.substringAfterLast("0/").trim('/')
                                         Text("Từ: /$src", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -414,15 +434,41 @@ fun SystemStatusCards(
                                     LinearProgressIndicator(
                                         progress = { viewModel.autoBackupProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                        color = Color(0xFF66BB6A), trackColor = Color(0xFF161616)
+                                        color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A),
+                                        trackColor = Color(0xFF161616)
                                     )
                                     Spacer(Modifier.height(4.dp))
-                                    
+
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tổng tiến trình: ${viewModel.autoBackupProcessedCount} / ${viewModel.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
                                         val totalPercent = if(viewModel.autoBackupTotalCount > 0) (viewModel.autoBackupProcessedCount * 100f / viewModel.autoBackupTotalCount) else 0f
-                                        Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                        Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                            color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A))
                                     }
+                                }
+                                // Nút Tạm dừng / Tiếp tục
+                                IconButton(
+                                    onClick = { viewModel.toggleAutoBackupPause() },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        if (viewModel.autoBackupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                        contentDescription = if (viewModel.autoBackupIsPaused) "Tiếp tục" else "Tạm dừng",
+                                        tint = if (viewModel.autoBackupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                // Nút Huỷ bỏ
+                                IconButton(
+                                    onClick = { viewModel.cancelAutoBackup(mContext) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Stop,
+                                        contentDescription = "Huỷ đồng bộ",
+                                        tint = Color(0xFFEF5350),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }

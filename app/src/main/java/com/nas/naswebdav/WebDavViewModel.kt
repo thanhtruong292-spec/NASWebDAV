@@ -6562,6 +6562,34 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     }
 
+    fun cancelAutoBackup(context: Context) {
+
+        // Đảm bảo Worker thoát khỏi vòng lặp tạm dừng trước khi bị cancel
+        AutoBackupState.isPaused.value = false
+
+        autoBackupIsPaused = false
+
+        // Cancel WorkManager job (isStopped = true trong Worker → vòng while thoát)
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork("ManualAutoBackupWork")
+
+        isAutoBackupRunning = false
+
+        autoBackupCurrentFile = ""
+
+        autoBackupProgress = 0f
+
+        autoBackupProcessedCount = 0
+
+        autoBackupTotalCount = 0
+
+        autoBackupElapsedTime = 0L
+
+        autoBackupUploadSpeedBps = 0L
+
+        logUserAction("AutoBackup", "Huỷ bỏ tiến trình đồng bộ ảnh.")
+
+    }
+
     // ==========================================
 
     // THIẾT LẬP HOẠT ĐỘNG QUẠT (FAN CONTROL)
