@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -46,7 +47,7 @@ class BatchOperationWorker(
 
     workerParams: WorkerParameters
 
-) : NasWorker(appContext, workerParams) {
+) : CoroutineWorker(appContext, workerParams) {
 
 
 
