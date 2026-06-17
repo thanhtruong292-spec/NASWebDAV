@@ -971,6 +971,10 @@ object UploadNotificationHelper {
 // ════════════════════════════════════════════════════════════════════════════
 
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
+    override suspend fun getForegroundInfo(): androidx.work.ForegroundInfo {
+        return makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")
+    }
+
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         suspend fun failAutoBackup(message: String): Result {
@@ -999,9 +1003,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
-        // FIX #23: Giảm WakeLock từ 3 tiếng xuống 60 phút — backup tối đa 1 giờ là hợp lý
-        // Nếu upload bị trẾ (server không phản hồi), thiết bị ko bị hao pin đến 3 tiếng
-        wakeLock.acquire(60 * 60 * 1000L)
+        // FIX: Bọc acquire() trong try-catch — Samsung Knox (Secure Folder, user 150xx)
+        // chặn WAKE_LOCK permission cho process con → ném SecurityException làm worker FAILED câm.
+        // Nếu không acquire được thì backup vẫn chạy, chỉ có thể bị interrupt khi màn hình tắt lâu.
+        val wakeLockAcquired = try {
+            wakeLock.acquire(60 * 60 * 1000L)
+            true
+        } catch (e: SecurityException) {
+            android.util.Log.w("AutoBackup", "Không lấy được WakeLock (Secure Folder?): ${e.message}")
+            false
+        }
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
         val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
@@ -1012,13 +1023,13 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             // Chẩn đoán: vì sao không có tiến trình nào hiện — thường do chưa đăng nhập/URL trống.
             val message = "Dừng sớm: không tải được cấu hình NAS (URL hoặc tài khoản trống) — không có gì để chạy."
             // FIX leak: tra wakelock truoc khi return som -> tranh giu pin 60' khi NAS offline.
-            if (wakeLock.isHeld) wakeLock.release()
+            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
             return@withContext failAutoBackup(message)
         }
         if (runAttemptCount >= 3) {
             val message = "Đã ghi nhận $runAttemptCount lần thực thi thất bại."
             // FIX leak: tra wakelock truoc khi return som khi het quota retry.
-            if (wakeLock.isHeld) wakeLock.release()
+            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
             return@withContext failAutoBackup(message)
         }
         val db = NasApplication.instance.database
@@ -1073,15 +1084,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 } catch(e: Exception) {}
             }
-            // Chẩn đoán: số ảnh/video thiết bị thấy được. Nếu = 0 (vd app trong Secure Folder
-            // không truy cập được thư viện chính, hoặc chưa cấp quyền Ảnh) -> không có gì để chạy.
+            if (totalFilesToProcess == 0) {
+                val message = "Không tìm thấy ảnh/video nào trong thiết bị (0) — kiểm tra quyền Ảnh hoặc app đang ở Secure Folder."
+                if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
+                return@withContext failAutoBackup(message)
+            }
             SystemLogger.log(
-                if (totalFilesToProcess == 0) "WARNING" else "INFO",
+                "INFO",
                 "AutoBackup",
-                if (totalFilesToProcess == 0)
-                    "Không tìm thấy ảnh/video nào trong thiết bị (0) — kiểm tra quyền Ảnh hoặc app đang ở Secure Folder. Không có gì để đồng bộ."
-                else
-                    "Quét thấy $totalFilesToProcess ảnh/video trong thiết bị, bắt đầu đối chiếu & tải lên NAS."
+                "Quét thấy $totalFilesToProcess ảnh/video trong thiết bị, bắt đầu đối chiếu & tải lên NAS."
             )
             var processedFilesCount = 0
             val startTime = System.currentTimeMillis()
@@ -1207,7 +1218,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             "processedCount" to processedFilesCount,
                                             "totalCount" to totalFilesToProcess,
                                             "elapsedTime" to (now - startTime),
-                                            "uploadSpeedBps" to instantSpeedBps
+                                            "uploadSpeedBps" to instantSpeedBps,
+                                            "fileBytesWritten" to bytesWritten,
+                                            "fileBytesTotal" to totalBytes
                                         ))
                                         // Update Foreground Notification Progress với tốc độ MB/s
                                         try {
@@ -1285,7 +1298,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure(workDataOf("error" to message))
         } finally {
             setThumbnailActivity("sync", false)
-            if (wakeLock.isHeld) wakeLock.release()
+            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
             try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
         }
     }

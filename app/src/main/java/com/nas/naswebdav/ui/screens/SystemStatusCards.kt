@@ -409,17 +409,23 @@ fun SystemStatusCards(
                                     }
                                     Spacer(Modifier.height(4.dp))
 
-                                    val speed = when {
+                                    val fileProgress = when {
                                         viewModel.autoBackupIsPaused -> "Đã tạm dừng"
-                                        viewModel.autoBackupUploadSpeedBps > 0L ->
-                                            "${com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupUploadSpeedBps)}/s"
+                                        viewModel.autoBackupFileBytesTotal > 0L -> {
+                                            val written = com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupFileBytesWritten)
+                                            val total = com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupFileBytesTotal)
+                                            val speedStr = if (viewModel.autoBackupUploadSpeedBps > 0L)
+                                                " • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupUploadSpeedBps)}/s"
+                                            else ""
+                                            "$written / $total$speedStr"
+                                        }
                                         viewModel.autoBackupElapsedTime > 1000L -> "Đang đối chiếu..."
                                         else -> "Đang chuẩn bị..."
                                     }
 
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tệp: ${viewModel.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(speed, fontSize = 11.sp,
+                                        Text(fileProgress, fontSize = 11.sp,
                                             color = if (viewModel.autoBackupIsPaused) Color(0xFFFFA726) else Color(0xFF66BB6A),
                                             modifier = Modifier.padding(start = 4.dp))
                                     }

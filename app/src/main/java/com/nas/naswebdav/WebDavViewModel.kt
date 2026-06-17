@@ -1226,6 +1226,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     var autoBackupUploadSpeedBps by mutableLongStateOf(0L) // Tốc độ upload hiện tại (bytes/s) — được Worker cập nhật realtime
 
+    var autoBackupFileBytesWritten by mutableLongStateOf(0L) // Bytes đã gửi của file hiện tại
+
+    var autoBackupFileBytesTotal by mutableLongStateOf(0L)   // Tổng bytes của file hiện tại
+
     var autoBackupIsPaused by mutableStateOf(false)
 
     private var autoBackupManualRequestAt by mutableLongStateOf(0L)
@@ -4876,15 +4880,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         } else null
 
                         val workInfo = workInfos.find {
-
                             it.state == androidx.work.WorkInfo.State.RUNNING
-
                         } ?: workInfos.find {
-
                             it.state == androidx.work.WorkInfo.State.ENQUEUED &&
-
                                 it.tags.contains("MANUAL_AUTO_BACKUP")
-
                         }
 
                         if (workInfo != null) {
@@ -4907,49 +4906,59 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                             autoBackupUploadSpeedBps = workInfo.progress.getLong("uploadSpeedBps", 0L)
 
+                            autoBackupFileBytesWritten = workInfo.progress.getLong("fileBytesWritten", 0L)
+
+                            autoBackupFileBytesTotal = workInfo.progress.getLong("fileBytesTotal", 0L)
+
                             autoBackupIsPaused = AutoBackupState.isPaused.value
 
-                        } else if (currentManualWork?.state == androidx.work.WorkInfo.State.SUCCEEDED) {
-
-                            isAutoBackupRunning = false
-
-                            autoBackupManualRequestAt = 0L
-
-                            autoBackupManualWorkId = null
-
-                        } else if (currentManualWork?.state == androidx.work.WorkInfo.State.FAILED ||
-                            currentManualWork?.state == androidx.work.WorkInfo.State.CANCELLED) {
-
-                            isAutoBackupRunning = false
-
-                            autoBackupManualRequestAt = 0L
-
-                            val errorMessage = currentManualWork.outputData.getString("error")
-                                ?: if (currentManualWork.state == androidx.work.WorkInfo.State.CANCELLED)
-                                    "Tác vụ đồng bộ đã bị hủy."
-                                else
-                                    "Tác vụ đồng bộ thất bại trước khi bắt đầu. Kiểm tra quyền Ảnh, cấu hình NAS hoặc nhật ký hệ thống."
-
-                            autoBackupCurrentFile = errorMessage
-
-                            autoBackupSourcePath = ""
-
-                            autoBackupDestPath = ""
-
-                            autoBackupElapsedTime = 0L
-
-                            autoBackupManualWorkId = null
-
-                        } else if (autoBackupManualRequestAt > 0L && System.currentTimeMillis() - autoBackupManualRequestAt < 30_000L) {
-
-                            isAutoBackupRunning = true
-
-                            if (autoBackupCurrentFile.isBlank()) autoBackupCurrentFile = "Đang chờ WorkManager nhận lệnh..."
-
                         } else {
+                            // Worker không còn RUNNING/ENQUEUED nữa → kiểm tra kết quả
+                            // QUAN TRỌNG: phải lọc theo workId hiện tại để không bắt nhầm job cũ trong WM DB
+                            val currentWorkId = autoBackupManualWorkId
+                            val failedWork = if (currentWorkId != null) {
+                                workInfos.find {
+                                    it.state == androidx.work.WorkInfo.State.FAILED &&
+                                    it.tags.contains("MANUAL_AUTO_BACKUP") &&
+                                    it.id.toString() == currentWorkId
+                                }
+                            } else null
 
-                            isAutoBackupRunning = false
+                            val succeededWork = if (currentWorkId != null) {
+                                workInfos.find {
+                                    it.state == androidx.work.WorkInfo.State.SUCCEEDED &&
+                                    it.tags.contains("MANUAL_AUTO_BACKUP") &&
+                                    it.id.toString() == currentWorkId
+                                }
+                            } else null
 
+                            if (failedWork != null) {
+                                val errorMsg = failedWork.outputData.getString("error")
+                                    ?: "Tác vụ đồng bộ thất bại — kiểm tra kết nối NAS và quyền truy cập Ảnh/Video."
+                                if (!autoBackupIsPaused) {
+                                    isAutoBackupRunning = false
+                                    autoBackupProgress = 0f
+                                    autoBackupCurrentFile = ""
+                                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                                    commonDialogMessage = "Đồng bộ thất bại: $errorMsg"
+                                    showCommonDialog = true
+                                    autoBackupManualWorkId = null
+                                }
+                            } else if (succeededWork != null) {
+                                if (!autoBackupIsPaused) {
+                                    isAutoBackupRunning = false
+                                    autoBackupProgress = 1f
+                                    autoBackupManualWorkId = null
+                                }
+                            } else if (currentWorkId == null) {
+                                // Không có job đang track → reset UI về idle
+                                if (!autoBackupIsPaused) {
+                                    isAutoBackupRunning = false
+                                    autoBackupProgress = 0f
+                                    autoBackupCurrentFile = ""
+                                }
+                            }
+                            // Nếu currentWorkId != null nhưng chưa thấy job → đang enqueue, giữ nguyên trạng thái
                         }
 
                     }
@@ -6431,7 +6440,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val context = NasApplication.instance.applicationContext
 
         androidx.work.WorkManager.getInstance(context)
-
             .enqueueUniqueWork("OrganizeLegacy", androidx.work.ExistingWorkPolicy.REPLACE, workRequest)
 
         viewModelScope.launch {
@@ -6547,6 +6555,18 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.
 
     fun triggerManualBackup(context: android.content.Context) {
+        val permissions = when {
+            android.os.Build.VERSION.SDK_INT >= 33 -> arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VIDEO)
+            android.os.Build.VERSION.SDK_INT >= 23 -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            else -> emptyArray()
+        }
+        val missing = permissions.filter { androidx.core.content.ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) {
+            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+            commonDialogMessage = "Không có quyền truy cập Ảnh/Video! Vui lòng vào Cài đặt -> Ứng dụng -> NASWebDAV để cấp quyền."
+            showCommonDialog = true
+            return
+        }
 
         val workManager = androidx.work.WorkManager.getInstance(context)
 
@@ -6573,21 +6593,39 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
 
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
-
             .addTag("com.nas.naswebdav.AutoBackupWorker")
-
             .addTag("MANUAL_AUTO_BACKUP")
-
+            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
 
         autoBackupManualWorkId = backupRequest.id.toString()
 
-        val operation = workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
+        // Dùng enqueueUniqueWork với tên cố định để:
+        // (1) cancelUniqueWork("ManualAutoBackupWork") hoạt động đúng
+        // (2) Không tạo nhiều job chồng nhau nếu user bấm nhiều lần
+        // APPEND_OR_REPLACE: nếu job cũ đang ENQUEUED thì replace, nếu RUNNING thì giữ nguyên
+        val operation = workManager.enqueueUniqueWork(
+            "ManualAutoBackupWork",
+            androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
+            backupRequest
+        )
 
         operation.result.addListener({
             try {
                 operation.result.get()
                 android.util.Log.i("AutoBackup", "ManualAutoBackupWork enqueue accepted")
+                // Timeout watchdog: nếu sau 60 giây worker vẫn chưa có progress (totalCount == 0)
+                // thì hiện lỗi thay vì bốc hơi im lặng
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(60_000L)
+                    if (isAutoBackupRunning && autoBackupTotalCount == 0 && autoBackupProcessedCount == 0) {
+                        isAutoBackupRunning = false
+                        autoBackupManualWorkId = null
+                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                        commonDialogMessage = "Đồng bộ thất bại: Tác vụ không khởi động được sau 60 giây. Kiểm tra kết nối NAS và quyền truy cập Ảnh/Video."
+                        showCommonDialog = true
+                    }
+                }
             } catch (e: Exception) {
                 android.util.Log.e("AutoBackup", "ManualAutoBackupWork enqueue failed", e)
                 isAutoBackupRunning = false
@@ -6600,14 +6638,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }, androidx.core.content.ContextCompat.getMainExecutor(context))
 
         logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
-
-        // Cập nhật Toast hoặc Trạng thái UI để User biết
-
-        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-
-        commonDialogMessage = "Đã ra lệnh đồng bộ ảnh lên NAS!"
-
-        showCommonDialog = true
+        // KHÔNG hiện dialog "Thành công" giả — chờ worker thực sự chạy mới cập nhật UI
 
     }
 

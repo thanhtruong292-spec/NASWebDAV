@@ -59,7 +59,7 @@ val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
 // Chỉ tính thay đổi đã track (bỏ qua file chưa track như .apk build, .codex...) để
 // bản release chính thức không bị gắn "+test" oan vì artifact rác trong thư mục.
 val gitDirtySuffix: String = if (runGit("status", "--porcelain", "--untracked-files=no").isNotBlank()) "+test" else ""
-val baseVersionName = "1.0"
+val baseVersionName = "2.7"
 
 android {
     namespace = "com.nas.naswebdav"
