@@ -126,9 +126,9 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = safePercent > 0
     val speedRatio = safePercent / 100f
     val durationMs = if (isRunning) {
-        (1600f - 1480f * kotlin.math.sqrt(speedRatio)).toInt().coerceIn(120, 1600)
+        (1700f - 1450f * kotlin.math.sqrt(speedRatio)).toInt().coerceIn(250, 1700)
     } else {
-        1600
+        1700
     }
     val blurAlpha = (speedRatio * 0.28f).coerceIn(0f, 0.28f)
     val sweepAlpha = (speedRatio * 0.55f).coerceIn(0.12f, 0.55f)
@@ -911,4 +911,3 @@ fun MainMenuScreen(
     }
     DuplicateScanGlobalUI(viewModel, mContext)
 }
-
