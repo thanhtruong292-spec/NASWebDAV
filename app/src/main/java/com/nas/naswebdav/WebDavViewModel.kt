@@ -1220,6 +1220,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     var autoBackupElapsedTime by mutableLongStateOf(0L)
 
+    var autoBackupUploadSpeedBps by mutableLongStateOf(0L) // Tốc độ upload hiện tại (bytes/s) — được Worker cập nhật realtime
+
     var autoBackupIsPaused by mutableStateOf(false)
 
     private var autoBackupManualRequestAt by mutableLongStateOf(0L)
@@ -4842,6 +4844,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                             autoBackupElapsedTime = workInfo.progress.getLong("elapsedTime", 0L)
 
+                            autoBackupUploadSpeedBps = workInfo.progress.getLong("uploadSpeedBps", 0L)
+
                             autoBackupIsPaused = AutoBackupState.isPaused.value
 
                         } else if (currentManualWork?.state == androidx.work.WorkInfo.State.SUCCEEDED) {
@@ -6500,6 +6504,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         autoBackupTotalCount = 0
 
         autoBackupElapsedTime = 0L
+
+        autoBackupUploadSpeedBps = 0L
 
         autoBackupManualRequestAt = System.currentTimeMillis()
 

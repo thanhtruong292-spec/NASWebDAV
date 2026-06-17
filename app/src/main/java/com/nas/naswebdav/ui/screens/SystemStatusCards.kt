@@ -389,9 +389,12 @@ fun SystemStatusCards(
                                     Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Spacer(Modifier.height(4.dp))
                                     
-                                    val speed = if (viewModel.autoBackupElapsedTime > 1000L) {
-                                        "%.1f file/s".format(viewModel.autoBackupProcessedCount * 1000f / viewModel.autoBackupElapsedTime)
-                                    } else "Đang chuẩn bị..."
+                                    val speed = when {
+                                        viewModel.autoBackupUploadSpeedBps > 0L ->
+                                            "${com.nas.naswebdav.utils.FormatUtils.formatBytes(viewModel.autoBackupUploadSpeedBps)}/s"
+                                        viewModel.autoBackupElapsedTime > 1000L -> "Đang đối chiếu..."
+                                        else -> "Đang chuẩn bị..."
+                                    }
                                     
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tệp: ${viewModel.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

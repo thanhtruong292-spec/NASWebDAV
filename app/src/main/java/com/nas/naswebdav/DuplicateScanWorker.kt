@@ -1,4 +1,4 @@
-﻿package com.nas.naswebdav
+package com.nas.naswebdav
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -1186,8 +1186,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
                                 webDavManager.uploadStreamWithProgress(targetFileNasPath, input, fileSize, mimeType) { bytesWritten, totalBytes ->
                                     val now = System.currentTimeMillis()
-                                    // Giảm throttle từ 500ms xuống 200ms để % nhảy mượt hơn (5 FPS) thay vì giật cục
+                                    // Giảm throttle 200ms để % nhảy mượt hơn (5 FPS)
                                     if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                        // Tính tốc độ upload: bytes đã gửi / tổng thời gian từ đầu file (smooth, không giật)
+                                        val instantSpeedBps = (bytesWritten * 1000L) / (now - startTime).coerceAtLeast(1L)
                                         lastProgressTime = now
                                         val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
                                         setProgressAsync(workDataOf(
@@ -1197,21 +1199,22 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             "progress" to percent,
                                             "processedCount" to processedFilesCount,
                                             "totalCount" to totalFilesToProcess,
-                                            "elapsedTime" to (now - startTime)
+                                            "elapsedTime" to (now - startTime),
+                                            "uploadSpeedBps" to instantSpeedBps
                                         ))
-                                        // Update Foreground Notification Progress
+                                        // Update Foreground Notification Progress với tốc độ MB/s
                                         try {
                                             val progressInt = (percent * 100).toInt()
+                                            val speedLabel = com.nas.naswebdav.utils.FormatUtils.formatBytes(instantSpeedBps)
                                             val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
                                                 .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                .setContentTitle("Đang sao lưu lên NAS: $progressInt%")
+                                                .setContentTitle("Đang sao lưu lên NAS: $progressInt% • $speedLabel/s")
                                                 .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
                                                 .setProgress(100, progressInt, false)
                                                 .setOnlyAlertOnce(true)
                                                 .setSilent(true)
                                                 .setOngoing(true)
-                                                
-                                            // Sử dụng NotificationManager thay vì setForegroundAsync để cập nhật nhanh theo thời gian thực (tránh delay của WorkManager)
+                                            // Sử dụng NotificationManager để cập nhật nhanh theo thời gian thực
                                             androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
                                         } catch (_: Exception) {}
                                     }
