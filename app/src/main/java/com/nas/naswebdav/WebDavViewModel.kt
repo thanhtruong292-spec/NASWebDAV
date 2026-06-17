@@ -1222,6 +1222,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     var autoBackupIsPaused by mutableStateOf(false)
 
+    private var autoBackupManualRequestAt by mutableLongStateOf(0L)
+
     // === Đã gỡ bỏ tính năng Đồng bộ thư mục ===
 
     // Biến trạng thái cho tính năng Quét và Xóa file trùng lặp
@@ -4821,6 +4823,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                             autoBackupIsPaused = AutoBackupState.isPaused.value
 
+                        } else if (autoBackupManualRequestAt > 0L && System.currentTimeMillis() - autoBackupManualRequestAt < 30_000L) {
+
+                            isAutoBackupRunning = true
+
+                            if (autoBackupCurrentFile.isBlank()) autoBackupCurrentFile = "Đang chờ WorkManager nhận lệnh..."
+
                         } else {
 
                             isAutoBackupRunning = false
@@ -6441,6 +6449,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         autoBackupElapsedTime = 0L
 
+        autoBackupManualRequestAt = System.currentTimeMillis()
+
         // Kích hoạt AutoBackup ngay lập tức (upload anh dien thoai len NAS)
 
         val backupRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
@@ -6451,7 +6461,21 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             .build()
 
-        workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
+        val operation = workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
+
+        operation.result.addListener({
+            try {
+                operation.result.get()
+                android.util.Log.i("AutoBackup", "ManualAutoBackupWork enqueue accepted")
+            } catch (e: Exception) {
+                android.util.Log.e("AutoBackup", "ManualAutoBackupWork enqueue failed", e)
+                isAutoBackupRunning = false
+                autoBackupManualRequestAt = 0L
+                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                commonDialogMessage = "Không xếp hàng được tác vụ đồng bộ: ${e.message ?: e.javaClass.simpleName}"
+                showCommonDialog = true
+            }
+        }, androidx.core.content.ContextCompat.getMainExecutor(context))
 
         logUserAction("AutoBackup", "chạy đồng bộ ảnh thủ công lên NAS.")
 
