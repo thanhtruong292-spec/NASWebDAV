@@ -285,7 +285,7 @@ internal fun DashboardSystemOverviewCard(
                             Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val fanStatusStr = viewModel.systemStatus.fanStatus
-                                    val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val statusPercent = Regex("""(\d+)\s*%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
                                     val realPercent = statusPercent ?: percentFromRpm ?: 0
@@ -294,7 +294,7 @@ internal fun DashboardSystemOverviewCard(
                                     // PWM duty + enable + cổng nguồn 5V GPIO). KHÔNG tự suy đoán theo nhiệt
                                     // độ: trước đây ở chế độ custom app tính lại percent từ HDD temp nên lệch
                                     // với quạt thật (vd HDD temp "--" -> đoán "Dừng" dù quạt đang chạy).
-                                    val displayPercent = realPercent
+                                    val displayPercent = realPercent.coerceIn(0, 100)
                                     val displayStatusStr = if (realPercent > 0) fanStatusStr else "Dừng"
                                     val isFanDisplayRunning = displayPercent > 0
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
@@ -760,4 +760,3 @@ internal fun QuickAccessSection(
             }
         }
 }
-

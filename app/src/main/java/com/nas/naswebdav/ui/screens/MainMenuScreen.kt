@@ -122,21 +122,30 @@ internal fun DashboardCompactBottomSheetHandle() {
 // ============ FAN SPEED ANIMATED ICON ============
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
-    val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(300, (30000 / maxOf(percent, 1))) else 9999
-    
-    val infiniteTransition = rememberInfiniteTransition(label = "fan")
-    val angle by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMs, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ), label = "fan_angle"
-    )
-    val currentAngle = if (isRunning) angle else 0f
+    val safePercent = percent.coerceIn(0, 100)
+    val isRunning = safePercent > 0
+    val speedRatio = safePercent / 100f
+    val durationMs = if (isRunning) {
+        (1600f - 1480f * kotlin.math.sqrt(speedRatio)).toInt().coerceIn(120, 1600)
+    } else {
+        1600
+    }
+    val blurAlpha = (speedRatio * 0.28f).coerceIn(0f, 0.28f)
+    val sweepAlpha = (speedRatio * 0.55f).coerceIn(0.12f, 0.55f)
 
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+    key(durationMs) {
+        val infiniteTransition = rememberInfiniteTransition(label = "fan_$durationMs")
+        val angle by infiniteTransition.animateFloat(
+            initialValue = 0f, targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMs, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ), label = "fan_angle"
+        )
+        val currentAngle = if (isRunning) angle else 0f
+
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
             val cx = size.width / 2f
             val cy = size.height / 2f
             val R = minOf(cx, cy)
@@ -152,11 +161,30 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
             if (isRunning) {
                 drawCircle(
                     brush = Brush.sweepGradient(
-                        colors = listOf(Color.Transparent, color.copy(alpha = 0.35f), Color.Transparent),
+                        colors = listOf(Color.Transparent, color.copy(alpha = sweepAlpha), Color.Transparent),
                         center = Offset(cx, cy)
                     ),
                     radius = R * 0.9f
                 )
+                drawArc(
+                    color = color.copy(alpha = (0.18f + speedRatio * 0.45f).coerceAtMost(0.63f)),
+                    startAngle = -90f,
+                    sweepAngle = 360f * speedRatio,
+                    useCenter = false,
+                    topLeft = Offset(cx - R * 0.93f, cy - R * 0.93f),
+                    size = Size(R * 1.86f, R * 1.86f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = R * 0.10f,
+                        cap = StrokeCap.Round
+                    )
+                )
+                if (safePercent >= 45) {
+                    drawCircle(
+                        color = color.copy(alpha = blurAlpha),
+                        radius = R * (0.58f + speedRatio * 0.18f),
+                        center = Offset(cx, cy)
+                    )
+                }
             }
 
             withTransform({ rotate(currentAngle, Offset(cx, cy)) }) {
@@ -186,6 +214,25 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
                     }
                 }
             }
+            if (isRunning && safePercent >= 70) {
+                listOf(-12f, 12f).forEach { ghostOffset ->
+                    withTransform({ rotate(currentAngle + ghostOffset, Offset(cx, cy)) }) {
+                        val bladeCount = 5
+                        for (i in 0 until bladeCount) {
+                            withTransform({ rotate((360f / bladeCount) * i, Offset(cx, cy)) }) {
+                                val path = androidx.compose.ui.graphics.Path().apply {
+                                    moveTo(cx, cy)
+                                    quadraticBezierTo(cx + R * 0.58f, cy - R * 0.18f, cx + R * 0.2f, cy - R * 0.82f)
+                                    quadraticBezierTo(cx, cy - R * 0.9f, cx - R * 0.18f, cy - R * 0.82f)
+                                    quadraticBezierTo(cx - R * 0.28f, cy - R * 0.3f, cx, cy)
+                                    close()
+                                }
+                                drawPath(path = path, color = color.copy(alpha = 0.13f * speedRatio))
+                            }
+                        }
+                    }
+                }
+            }
             
             // Center Hub - Metallic Orb
             drawCircle(
@@ -204,6 +251,7 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
                 center = Offset(cx, cy)
             )
         }
+    }
     }
 }
 
@@ -863,5 +911,4 @@ fun MainMenuScreen(
     }
     DuplicateScanGlobalUI(viewModel, mContext)
 }
-
 
