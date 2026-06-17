@@ -76,6 +76,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         val pass = SecurePrefsHelper.getPass(applicationContext)
         if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
 
+        // WakeLock: ngăn CPU sleep khi màn hình tắt — quét lớn có thể mất 30-45 phút
+        val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:DupScanWakeLock")
+        wakeLock.acquire(45 * 60 * 1000L) // Tối đa 45 phút
+
         val webDavManager = WebDavManager
         webDavManager.connect(currentUrl, user, pass)
         setThumbnailActivity("sync", true)
@@ -797,6 +802,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             uiUpdaterJob?.join()
             // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
             uiScope.cancel()
+            // Giải phóng WakeLock — luôn release dù thành công, thất bại hay bị cancel
+            if (wakeLock.isHeld) wakeLock.release()
         }
     }
 

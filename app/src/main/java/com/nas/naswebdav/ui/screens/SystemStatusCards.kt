@@ -225,6 +225,10 @@ fun SystemStatusCards(
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
+                                    // Nút Dừng hẳn thumbnail
+                                    IconButton(onClick = { viewModel.stopThumbGeneration() }, modifier = Modifier.size(32.dp)) {
+                                        Icon(Icons.Default.Stop, contentDescription = "Dừng thumbnail", tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                    }
                                 }
                                 IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp))

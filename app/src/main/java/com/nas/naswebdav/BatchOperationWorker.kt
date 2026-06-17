@@ -1,4 +1,4 @@
-﻿package com.nas.naswebdav
+package com.nas.naswebdav
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -6,7 +6,6 @@ import android.content.Context
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -19,6 +18,11 @@ import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+
+// Trạng thái tạm dừng/huỷ cho BatchOperation — dùng singleton giống AutoBackupState
+object BatchOperationState {
+    val isPaused = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
 
 /**
  * BatchOperationWorker - foreground worker chạy ngầm cho tác vụ Copy/Move/Delete/Restore hàng loạt.
@@ -42,7 +46,7 @@ class BatchOperationWorker(
 
     workerParams: WorkerParameters
 
-) : CoroutineWorker(appContext, workerParams) {
+) : NasWorker(appContext, workerParams) {
 
 
 
@@ -208,7 +212,13 @@ class BatchOperationWorker(
 
         if (filePaths.isEmpty()) return@withContext Result.success()
 
+        // WakeLock: ngăn CPU sleep khi màn hình tắt — batch lớn có thể mất nhiều phút
+        val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:BatchOpWakeLock")
+        wakeLock.acquire(30 * 60 * 1000L) // Tối đa 30 phút
 
+        // Khởi động lại trạng thái tạm dừng nếu còn lưu từ lần trước
+        BatchOperationState.isPaused.value = false
 
         // Kết nối WebDAV - sử dụng SmartNetworkManager để chọn URL đang hoạt động (LAN hoặc Tailscale)
 
@@ -344,7 +354,8 @@ class BatchOperationWorker(
 
             if (isStopped) break
 
-
+            // Trạng thái tạm dừng: CPU vẫn giữ WakeLock, chẹ 500ms mỗi bước
+            while (BatchOperationState.isPaused.value && !isStopped) { kotlinx.coroutines.delay(500) }
 
             val fileName = fileNames.getOrElse(index) { filePath.substringAfterLast("/") }
 
@@ -667,6 +678,8 @@ class BatchOperationWorker(
         } finally {
 
             setThumbnailActivity("sync", false)
+            BatchOperationState.isPaused.value = false
+            if (wakeLock.isHeld) wakeLock.release()
 
         }
 

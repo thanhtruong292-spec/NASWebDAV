@@ -1176,6 +1176,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     var batchProcessCurrentFile by mutableStateOf("")
 
+    var batchIsPaused by mutableStateOf(false) // Trạng thái tạm dừng batch
+
+    private var batchOperationUniqueTag = "" // Tag WorkManager để cancel
+
     // TÍNH NĂNG 7.M: Trạng thái chứa dữ liệu Text Preview
 
     var textPreviewContent by mutableStateOf<String?>(null)
@@ -1665,6 +1669,46 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     repository.addSystemLog("WARNING", "Thumbnail", "Toggle pause thất bại: ${e.message?.take(80)}")
 
                 }
+
+            }
+
+        }
+
+    }
+
+    fun stopThumbGeneration() {
+
+        // Optimistic UI: dừng ngay lập tức
+        thumbRunning = false
+        thumbPaused = false
+
+        viewModelScope.launch(Dispatchers.IO) {
+
+            try {
+
+                val body = org.json.JSONObject().put("action", "stop")
+
+                    .toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+                val request = okhttp3.Request.Builder()
+
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control")
+
+                    .post(body)
+
+                    .build()
+
+                localApiClient.newCall(request).execute().use { }
+
+                logUserAction("Thumbnail", "Dừng hẳn quá trình tạo thumbnail.")
+
+                kotlinx.coroutines.delay(1500)
+
+                fetchThumbStatus()
+
+            } catch (e: Exception) {
+
+                repository.addSystemLog("WARNING", "Thumbnail", "Dừng thumbnail thất bại: ${e.message?.take(80)}")
 
             }
 
@@ -6587,6 +6631,40 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         autoBackupUploadSpeedBps = 0L
 
         logUserAction("AutoBackup", "Huỷ bỏ tiến trình đồng bộ ảnh.")
+
+    }
+
+    fun toggleBatchPause() {
+
+        val newState = !BatchOperationState.isPaused.value
+
+        BatchOperationState.isPaused.value = newState
+
+        batchIsPaused = newState
+
+        logUserAction("BatchOperation", if (newState) "Tạm dừng tác vụ hàng loạt." else "Tiếp tục tác vụ hàng loạt.")
+
+    }
+
+    fun cancelBatchOperation(context: Context) {
+
+        BatchOperationState.isPaused.value = false
+
+        batchIsPaused = false
+
+        // Cancel bằng unique work tag (BatchOperation_COPY / BatchOperation_MOVE / ...)
+        val wm = androidx.work.WorkManager.getInstance(context)
+        listOf("COPY", "MOVE", "DELETE", "RESTORE").forEach { op ->
+            wm.cancelUniqueWork("BatchOperation_$op")
+        }
+
+        isBatchProcessing = false
+
+        batchProcessProgress = 0f
+
+        batchProcessCurrentFile = ""
+
+        logUserAction("BatchOperation", "Huỷ bỏ tác vụ hàng loạt.")
 
     }
 
