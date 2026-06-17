@@ -401,7 +401,6 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
             // Mo doc quyen: panel mo dong bo voi ExclusivePanelState — khi mo
             // panel khac (Tasks, Chart) thi panel nay tu cup.
             val omvExpanded = ExclusivePanelState.current.value == "omv"
-            Spacer(Modifier.height(8.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -663,7 +662,6 @@ internal fun TorrentActivityCard(
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
         }
 }
 

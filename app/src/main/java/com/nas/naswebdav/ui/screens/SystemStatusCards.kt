@@ -148,7 +148,6 @@ fun SystemStatusCards(
         // Mo doc quyen: panel mo dong bo voi ExclusivePanelState
         val tasksExpanded = ExclusivePanelState.current.value == "tasks"
         val activeCount = listOf(dupIsActive, autoBackupIsActive, usbImportIsActive, activeStreams.isNotEmpty()).count { it }
-        Spacer(Modifier.height(8.dp))
 
         Card(
             modifier = Modifier.fillMaxWidth().animateContentSize(),

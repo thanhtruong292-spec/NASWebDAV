@@ -770,10 +770,10 @@ fun MainMenuScreen(
                 .fillMaxSize()
                 .background(DarkSurface)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 10.dp)
+                .padding(horizontal = 12.dp, vertical = 24.dp), // Thêm padding chuẩn
+            verticalArrangement = Arrangement.spacedBy(12.dp) // Tự động căn khoảng cách đều tăm tắp giữa các card
         ) {
-        Spacer(Modifier.height(24.dp))
-
+        
         MainDashboardHeader(
             viewModel = viewModel,
             realtimeNow = realtimeNow,
@@ -783,8 +783,6 @@ fun MainMenuScreen(
             onReboot = { showRebootConfirm = true },
             onShutdown = { showShutdownConfirm = true }
         )
-
-            Spacer(Modifier.height(8.dp))
 
         DashboardSystemOverviewCard(
             viewModel = viewModel,
@@ -800,9 +798,8 @@ fun MainMenuScreen(
         OmvServicesHardwarePanel(viewModel = viewModel)
 
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
-        Spacer(Modifier.height(8.dp))
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
-        Spacer(Modifier.height(8.dp))
+        
         NasInsightsSummaryCard(
             viewModel = viewModel,
             onOpen = {
@@ -810,7 +807,6 @@ fun MainMenuScreen(
                 showNasInsightsDialog = true
             }
         )
-        Spacer(Modifier.height(4.dp))
 
         SystemStatusCards(
             viewModel = viewModel,
@@ -836,8 +832,6 @@ fun MainMenuScreen(
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
         )
-
-
 
         QuickAccessSection(
             slot2Id = slot2Id,
@@ -873,8 +867,6 @@ fun MainMenuScreen(
                 onDismiss = { viewModel.showCommonDialog = false }
             )
         }
-
-        Spacer(Modifier.height(16.dp))
     }
 
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

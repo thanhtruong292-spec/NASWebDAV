@@ -130,8 +130,6 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System
     
     if (viewModel.systemLogsList.isEmpty()) return
     
-    Spacer(Modifier.height(8.dp))
-    
     var isExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     
     Box(

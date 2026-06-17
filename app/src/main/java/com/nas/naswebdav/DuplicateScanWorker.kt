@@ -1193,8 +1193,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
                                 webDavManager.uploadStreamWithProgress(targetFileNasPath, input, fileSize, mimeType) { bytesWritten, totalBytes ->
                                     val now = System.currentTimeMillis()
-                                    // Giảm throttle 200ms để % nhảy mượt hơn (5 FPS)
-                                    if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                    // Giảm throttle 500ms để tránh ghi SQLite của WorkManager quá tải
+                                    if (now - lastProgressTime > 500 || bytesWritten == totalBytes) {
                                         // Tính tốc độ upload: bytes đã gửi / tổng thời gian từ đầu file (smooth, không giật)
                                         val instantSpeedBps = (bytesWritten * 1000L) / (now - startTime).coerceAtLeast(1L)
                                         lastProgressTime = now

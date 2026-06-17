@@ -635,9 +635,10 @@ object SmartNetworkManager {
                 lastPingResult = false
                 cachedActiveUrl = null
             }
-            // Tất cả URL đều không phản hồi → thử dùng URL đầu tiên nhưng log cảnh báo
-            android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: ${urlList.first()}")
-            urlList.first()
+            // Tất cả URL đều không phản hồi → thử dùng URL Tailscale (nếu có) để làm fallback an toàn hơn cho kết nối từ xa
+            val fallbackUrl = urlList.find { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first()
+            android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: $fallbackUrl")
+            fallbackUrl
         }
 
     suspend fun getActiveApiHost(context: Context): String =
@@ -655,8 +656,8 @@ object SmartNetworkManager {
         .build()
 
     private val tailscalePingClient = okhttp3.OkHttpClient.Builder()
-        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
         .build()
 

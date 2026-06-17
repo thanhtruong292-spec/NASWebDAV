@@ -4517,15 +4517,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             val oldPass = SecurePrefsHelper.getPass(context)
 
+            var keystoreFailed = false
             withContext(Dispatchers.IO) {
 
-                // FIX F2: Kiểm tra return value — nếu KeyStore lỗi thì cảnh báo thay vì tiếp tục như bình thường
+                // FIX F2: Kiểm tra return value — nếu KeyStore lỗi thì cảnh báo và NGỪNG login
                 val preSaved = SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
                 if (!preSaved) {
                     android.util.Log.w("NAS_AUTH", "[F2] Không lưu được credential tạm trước login — KeyStore có thể lỗi")
+                    withContext(Dispatchers.Main) {
+                        connectionStatus = "Lỗi bảo mật: Không thể lưu thông tin đăng nhập"
+                        isLoading = false
+                        lastErrorDetail = "KeyStore của thiết bị gặp sự cố (có thể do đổi mật khẩu màn hình khóa). Vui lòng thử Clear Data ứng dụng."
+                    }
+                    keystoreFailed = true
                 }
-
             }
+            if (keystoreFailed) return@launch
 
             // FIX: Thử lần lượt từng URL (LAN → Tailscale) mà không gây race condition
 
@@ -4676,6 +4683,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     if (!postSaved) {
                         android.util.Log.e("NAS_AUTH", "[F2] Không lưu được credential sau login — lần sau có thể phải đăng nhập lại")
                         repository.addSystemLog("ERROR", "Auth", "Không lưu được thông tin đăng nhập vào Keystore. Kiểm tra lại thiết bị.")
+                        withContext(Dispatchers.Main) {
+                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
+                            commonDialogMessage = "Đăng nhập thành công, nhưng không thể lưu Mật Khẩu do lỗi bảo mật KeyStore. Bạn sẽ phải nhập lại mật khẩu ở lần mở app sau."
+                            showCommonDialog = true
+                        }
                     }
 
                     repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
@@ -4735,6 +4747,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         if (!reverted) {
                             android.util.Log.e("NAS_AUTH", "[F2] Revert credential thất bại — credential có thể bị mất sau khi login fail!")
                             repository.addSystemLog("ERROR", "Auth", "Không khôi phục được thông tin đăng nhập cũ. Vui lòng đăng nhập lại thủ công.")
+                            withContext(Dispatchers.Main) {
+                                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                                commonDialogMessage = "Đăng nhập thất bại. Hệ thống không thể khôi phục mật khẩu cũ do lỗi KeyStore. Vui lòng gõ lại mật khẩu."
+                                showCommonDialog = true
+                            }
                         }
 
                     }
