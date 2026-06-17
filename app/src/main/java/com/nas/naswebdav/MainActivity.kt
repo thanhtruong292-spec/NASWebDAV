@@ -1,4 +1,4 @@
-﻿@file:OptIn(ExperimentalCoilApi::class)
+@file:OptIn(ExperimentalCoilApi::class)
 package com.nas.naswebdav
 
 
@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 
-import coil.decode.VideoFrameDecoder
 import coil.annotation.ExperimentalCoilApi
 
 import androidx.navigation.compose.*
@@ -231,69 +230,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         handleIncomingIntent(intent)
 
-        val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }
-
-        val customClient = NasApplication.instance.sharedHttpClient.newBuilder()
-
-            .dispatcher(dispatcher)
-
-            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-
-            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-
-            .build()
-
-
-
-        val imageLoaderInstance = coil.ImageLoader.Builder(applicationContext)
-
-            .okHttpClient(customClient)
-
-            .memoryCache {
-
-            // FIX BUG #1: Cache cố định theo MB thay vì % — tránh OOM trên thiết bị yếu
-
-                val maxHeap = Runtime.getRuntime().maxMemory()
-
-                val heapMb = maxHeap / (1024L * 1024L)
-
-                val cacheMb = when {
-
-                    heapMb < 128L -> 50L
-
-                    heapMb > 512L -> 200L
-
-                    else -> (heapMb * 15 / 100)  // 15% nhưng trong bounds an toàn
-
-                }
-
-                coil.memory.MemoryCache.Builder(applicationContext)
-
-                    .maxSizeBytes((cacheMb * 1024 * 1024).toInt())
-
-                    .build()
-
-            }
-
-            .diskCache {
-
-                coil.disk.DiskCache.Builder()
-
-                    .directory(cacheDir.resolve("image_cache"))
-
-                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: Tăng lên 800MB (tối ưu cho thumbnail nhiều)
-
-                    .build()
-
-            }
-
-            .components { add(VideoFrameDecoder.Factory()) }
-
-            .build()
-
-        coil.Coil.setImageLoader(imageLoaderInstance)
-
-
+        // FIX M2: Coil ImageLoader được khởi tạo một lần duy nhất trong NasApplication.newImageLoader()
+        // — không cần override lại ở đây, tránh tạo 2 OkHttpClient pool lãng phí memory.
 
         setContent {
 

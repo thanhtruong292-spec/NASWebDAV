@@ -14,6 +14,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import java.io.File
@@ -67,20 +68,43 @@ class NasApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
+        // FIX M2: Gom toàn bộ Coil ImageLoader cấu hình vào đây, bỏ duplicate trong MainActivity.
+        // - Memory cache theo MB (có bounds an toàn) thay vì % cố định → tránh OOM trên thiết bị yếu
+        // - Disk cache 800MB → tối ưu cho thumbnail nhiều
+        // - Dispatcher giới hạn 16/4 req → không cạnh tranh với WebDAV calls
+        // - VideoFrameDecoder → hiển thị thumbnail video trong BrowserScreen
+        val imageDispatcher = okhttp3.Dispatcher().apply {
+            maxRequests = 16
+            maxRequestsPerHost = 4
+        }
+        val imageHttpClient = fastApiClient.newBuilder()
+            .dispatcher(imageDispatcher)
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+
+        val maxHeap = Runtime.getRuntime().maxMemory()
+        val heapMb = maxHeap / (1024L * 1024L)
+        val cacheMb = when {
+            heapMb < 128L -> 50L
+            heapMb > 512L -> 200L
+            else -> (heapMb * 15 / 100)  // 15% trong bounds an toàn
+        }
+
         return ImageLoader.Builder(this)
+            .okHttpClient(imageHttpClient)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.15) // Limit Coil Memory to 15% of available heap to prevent RAM spikes
+                    .maxSizeBytes((cacheMb * 1024 * 1024).toInt())
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizePercent(0.02)
+                    .maxSizeBytes(800L * 1024 * 1024) // 800MB — tối ưu cho thumbnail nhiều
                     .build()
             }
-            // Mượn chung sharedHttpClient để tránh tạo connection leak
-            .callFactory { request -> fastApiClient.newCall(request) }
+            .components { add(coil.decode.VideoFrameDecoder.Factory()) }
             .build()
     }
 

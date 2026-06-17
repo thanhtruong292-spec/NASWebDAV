@@ -1,4 +1,4 @@
-﻿package com.nas.naswebdav
+package com.nas.naswebdav
 
 import androidx.compose.runtime.*
 
@@ -4473,7 +4473,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             withContext(Dispatchers.IO) {
 
-                SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
+                // FIX F2: Kiểm tra return value — nếu KeyStore lỗi thì cảnh báo thay vì tiếp tục như bình thường
+                val preSaved = SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
+                if (!preSaved) {
+                    android.util.Log.w("NAS_AUTH", "[F2] Không lưu được credential tạm trước login — KeyStore có thể lỗi")
+                }
 
             }
 
@@ -4621,7 +4625,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     webDavManager.connect(successUrl, user, pass)
 
-                    SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
+                    // FIX F2: Kiểm tra kết quả lưu credential sau login thành công
+                    val postSaved = SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
+                    if (!postSaved) {
+                        android.util.Log.e("NAS_AUTH", "[F2] Không lưu được credential sau login — lần sau có thể phải đăng nhập lại")
+                        repository.addSystemLog("ERROR", "Auth", "Không lưu được thông tin đăng nhập vào Keystore. Kiểm tra lại thiết bị.")
+                    }
 
                     repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
 
@@ -4675,7 +4684,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     withContext(Dispatchers.IO) {
 
-                        SecurePrefsHelper.saveCredentials(context, oldUrlList, oldUser, oldPass)
+                        // FIX F2: Revert về credential cũ — nếu revert fail thì cảnh báo nghiêm trọng
+                        val reverted = SecurePrefsHelper.saveCredentials(context, oldUrlList, oldUser, oldPass)
+                        if (!reverted) {
+                            android.util.Log.e("NAS_AUTH", "[F2] Revert credential thất bại — credential có thể bị mất sau khi login fail!")
+                            repository.addSystemLog("ERROR", "Auth", "Không khôi phục được thông tin đăng nhập cũ. Vui lòng đăng nhập lại thủ công.")
+                        }
 
                     }
 
