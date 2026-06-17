@@ -126,7 +126,7 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = safePercent > 0
     val speedRatio = safePercent / 100f
     val durationMs = if (isRunning) {
-        (1700f - 1450f * kotlin.math.sqrt(speedRatio)).toInt().coerceIn(250, 1700)
+        (1700f - 1300f * kotlin.math.sqrt(speedRatio)).toInt().coerceIn(400, 1700)
     } else {
         1700
     }

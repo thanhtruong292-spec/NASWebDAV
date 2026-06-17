@@ -536,6 +536,15 @@ fun formatLogMessage(raw: String): String {
         }
     }
     return raw
+        .replace("Nguoi dung", "Người dùng")
+        .replace("nguoi dung", "người dùng")
+        .replace("dat che do quat", "đặt chế độ quạt")
+        .replace("Dat che do quat", "Đặt chế độ quạt")
+        .replace("che do quat", "chế độ quạt")
+        .replace("thanh cong", "thành công")
+        .replace("that bai", "thất bại")
+        .replace("Khong dat duoc", "Không đặt được")
+        .replace("khong dat duoc", "không đặt được")
 }
 
 // ====================================================================
@@ -714,7 +723,6 @@ fun DockerDialog(
         }
     }
 }
-
 
 
 

@@ -807,7 +807,11 @@ object WebDavManager {
 
         optimizedClient.newBuilder()
 
-            .writeTimeout(0, TimeUnit.SECONDS) // Vô hiệu hóa timeout cho tệp tin siêu lớn
+            // FIX treo: writeTimeout ap dung cho MOI thao tac ghi socket, KHONG phai
+            // tong thoi gian upload -> 120s phat hien mang nghen ma van cho phep file
+            // lon (timeout reset sau moi lan ghi thanh cong). Truoc day = 0 -> socket
+            // treo vo han khi NAS/mang chet giua chung, UI dung im het 60' wakelock.
+            .writeTimeout(120, TimeUnit.SECONDS)
 
             .build()
 
@@ -887,7 +891,7 @@ object WebDavManager {
 
         optimizedClient.newBuilder()
 
-            .writeTimeout(0, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS) // FIX treo: bat stall mang, khong gioi han file lon (per-write)
 
             .build()
 
@@ -976,7 +980,7 @@ object WebDavManager {
 
         optimizedClient.newBuilder()
 
-            .writeTimeout(0, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS) // FIX treo: bat stall mang, khong gioi han file lon (per-write)
 
             .build()
 

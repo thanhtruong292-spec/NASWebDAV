@@ -966,6 +966,29 @@ object UploadNotificationHelper {
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        suspend fun failAutoBackup(message: String): Result {
+            setProgress(workDataOf(
+                "fileName" to safeWorkerText(message, 180),
+                "sourcePath" to "",
+                "destPath" to "",
+                "progress" to 0f,
+                "processedCount" to 0,
+                "totalCount" to 0,
+                "elapsedTime" to 0L
+            ))
+            SystemLogger.log("ERROR", "AutoBackup", message)
+            return Result.failure(workDataOf("error" to message))
+        }
+
+        setProgress(workDataOf(
+            "fileName" to "Đang khởi động tác vụ đồng bộ...",
+            "sourcePath" to "Thiết bị máy trạm",
+            "destPath" to "",
+            "progress" to 0f,
+            "processedCount" to 0,
+            "totalCount" to 0,
+            "elapsedTime" to 0L
+        ))
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
@@ -980,16 +1003,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         SystemLogger.log("INFO", "AutoBackup", "Tiến trình đồng bộ ảnh/video bắt đầu chạy nền.")
         val webDavManager = loadWebDavManager() ?: run {
             // Chẩn đoán: vì sao không có tiến trình nào hiện — thường do chưa đăng nhập/URL trống.
-            SystemLogger.log("WARNING", "AutoBackup", "Dừng sớm: không tải được cấu hình NAS (URL hoặc tài khoản trống) — không có gì để chạy.")
+            val message = "Dừng sớm: không tải được cấu hình NAS (URL hoặc tài khoản trống) — không có gì để chạy."
             // FIX leak: tra wakelock truoc khi return som -> tranh giu pin 60' khi NAS offline.
             if (wakeLock.isHeld) wakeLock.release()
-            return@withContext Result.failure()
+            return@withContext failAutoBackup(message)
         }
         if (runAttemptCount >= 3) {
-            SystemLogger.log("ERROR", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
+            val message = "Đã ghi nhận $runAttemptCount lần thực thi thất bại."
             // FIX leak: tra wakelock truoc khi return som khi het quota retry.
             if (wakeLock.isHeld) wakeLock.release()
-            return@withContext Result.failure()
+            return@withContext failAutoBackup(message)
         }
         val db = NasApplication.instance.database
         val repository = WebDavRepository(webDavManager, db)
@@ -1027,6 +1050,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE)
             
             var totalFilesToProcess = 0
+            setProgress(workDataOf(
+                "fileName" to "Đang quét thư viện ảnh/video...",
+                "sourcePath" to "MediaStore",
+                "destPath" to safeWorkerText(backupFolderBase, 220),
+                "progress" to 0f,
+                "processedCount" to 0,
+                "totalCount" to 0,
+                "elapsedTime" to 1L
+            ))
             for (mediaUri in urisToQuery) {
                 try {
                     applicationContext.contentResolver.query(mediaUri, projection, null, null, null)?.use { cursor ->
@@ -1073,6 +1105,18 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         val fileName = cursor.getString(nameIndex) ?: continue
                         val dataPath = cursor.getString(dataIndex) ?: continue
                         val id = cursor.getLong(idIndex)
+                        if (processedFilesCount == 1 || processedFilesCount % 50 == 0) {
+                            val now = System.currentTimeMillis()
+                            setProgressAsync(workDataOf(
+                                "fileName" to safeWorkerText("Đang đối chiếu: $fileName", 180),
+                                "sourcePath" to safeWorkerText(dataPath, 220),
+                                "destPath" to safeWorkerText(backupFolderBase, 220),
+                                "progress" to 0f,
+                                "processedCount" to processedFilesCount,
+                                "totalCount" to totalFilesToProcess,
+                                "elapsedTime" to (now - startTime).coerceAtLeast(1L)
+                            ))
+                        }
                         
                         // Loại bỏ tiền tố /storage/emulated/0/ để lấy đường dẫn tương đối đẹp nhất
                         val externalStorageRoot = android.os.Environment.getExternalStorageDirectory().absolutePath
@@ -1216,9 +1260,19 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             
             return@withContext Result.success()
         } catch (e: Exception) {
-            SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
+            val message = "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message ?: e.javaClass.simpleName}"
+            SystemLogger.log("ERROR", "AutoBackup", message)
+            setProgress(workDataOf(
+                "fileName" to safeWorkerText(message, 180),
+                "sourcePath" to "",
+                "destPath" to "",
+                "progress" to 0f,
+                "processedCount" to 0,
+                "totalCount" to 0,
+                "elapsedTime" to 0L
+            ))
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
-            return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
+            return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure(workDataOf("error" to message))
         } finally {
             setThumbnailActivity("sync", false)
             if (wakeLock.isHeld) wakeLock.release()

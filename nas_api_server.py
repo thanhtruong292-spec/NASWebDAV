@@ -121,6 +121,16 @@ def normalize_vietnamese_message(text):
         ("Yeu cau", "Yêu cầu"),
         ("nguoi dung", "người dùng"),
         ("Nguoi dung", "Người dùng"),
+        ("dat che do quat", "đặt chế độ quạt"),
+        ("Dat che do quat", "Đặt chế độ quạt"),
+        ("che do quat", "chế độ quạt"),
+        ("Che do quat", "Chế độ quạt"),
+        ("thanh cong", "thành công"),
+        ("Thanh cong", "Thành công"),
+        ("that bai", "thất bại"),
+        ("That bai", "Thất bại"),
+        ("Khong dat duoc", "Không đặt được"),
+        ("khong dat duoc", "không đặt được"),
         ("truy cap", "truy cập"),
         ("Truy cap", "Truy cập"),
         ("he thong", "hệ thống"),
@@ -4155,6 +4165,70 @@ def _pwm_apply_on(duty=10000, period=10000):
     _pwm_write("enable", 1)
 
 
+def _fan_current_percent():
+    try:
+        percent = get_fan_info().get("percent")
+        if percent is None:
+            return None
+        return _fan_pwm_level(percent)
+    except Exception:
+        return None
+
+
+def _fan_apply_auto_decision_now(settings, mode, previous_mode=None):
+    """Apply auto/custom hysteresis immediately when switching from manual on/off."""
+    on_temp = float(settings.get("on_temp", FAN_DEFAULT_ON_TEMP) or FAN_DEFAULT_ON_TEMP)
+    off_temp = float(settings.get("off_temp", FAN_DEFAULT_OFF_TEMP) or FAN_DEFAULT_OFF_TEMP)
+    if off_temp >= on_temp:
+        off_temp = max(28.0, on_temp - 3.0)
+
+    cpu_temp = _fan_temp_value(get_cpu_temp())
+    hdd_temp = _fan_temp_value(get_hdd_temp())
+    force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
+    current_percent = _fan_current_percent()
+    was_manual = str(previous_mode or "").strip().lower() in ("on", "off")
+    hysteresis_percent = 0 if was_manual else current_percent
+
+    if not force_hot and hdd_temp <= 0:
+        # FIX: nhiet HDD chua xac dinh (o dang ngu) -> GIU NGUYEN trang thai quat hien tai,
+        # nhat quan voi watchdog (khong ep tat ngay ca khi truoc do la manual on/off).
+        # CPU force-on van la chot an toan o nhanh tren.
+        target_percent = current_percent if current_percent is not None else 0
+    else:
+        target_percent = _fan_target_percent(
+            hdd_temp,
+            on_temp,
+            off_temp,
+            hysteresis_percent,
+            force_hot=force_hot,
+        )
+
+    if target_percent > 0:
+        _pwm_apply_on(duty=_fan_pwm_duty(target_percent), period=10000)
+    else:
+        _pwm_apply_off()
+
+    with _cache_lock:
+        _status_cache['fan_mode'] = mode
+        _status_cache['fan_on_temp'] = on_temp
+        _status_cache['fan_off_temp'] = off_temp
+        _status_cache['fan_status'] = _fan_status_for_percent(target_percent)
+        _status_cache['fan_rpm'] = _fan_rpm_for_percent(target_percent)
+        _status_cache['fan_percent'] = _fan_pwm_level(target_percent)
+
+    log.info(
+        "[Fan] Apply %s now: target=%s%% current=%s%% previous_mode=%s HDD=%.1fC CPU=%.1fC on=%.1f off=%.1f force_hot=%s",
+        mode, target_percent, current_percent, previous_mode, hdd_temp, cpu_temp, on_temp, off_temp, force_hot
+    )
+    return {
+        "percent": _fan_pwm_level(target_percent),
+        "rpm": _fan_rpm_for_percent(target_percent),
+        "status": _fan_status_for_percent(target_percent),
+        "on_temp": on_temp,
+        "off_temp": off_temp,
+    }
+
+
 # ============================================================================
 # PHOTO TIMELINE — Group ảnh theo Year/Month/Day cho UI Google-Photos-style
 # ============================================================================
@@ -7866,6 +7940,7 @@ def api_fan_control():
         data = request.json or {}
         settings = _load_fan_settings()
         mode = data.get('mode', settings.get('mode', 'auto'))
+        previous_mode = str(settings.get('mode', 'auto') or 'auto').strip().lower()
         
         # FIX: STATUS_CACHE -> _status_cache (ten dung cua bien global).
         # Truoc day moi POST /api/fan/control ne ra "name 'STATUS_CACHE' is not defined"
@@ -7879,13 +7954,8 @@ def api_fan_control():
                 settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
-            with _cache_lock:
-                _status_cache['fan_mode'] = 'auto'
-                _status_cache['fan_on_temp'] = settings['on_temp']
-                _status_cache['fan_off_temp'] = settings['off_temp']
-            return jsonify({"status": "success", "mode": "auto", "on_temp": settings["on_temp"], "off_temp": settings["off_temp"]})
+            applied = _fan_apply_auto_decision_now(settings, "auto", previous_mode)
+            return jsonify({"status": "success", "mode": "auto", "on_temp": applied["on_temp"], "off_temp": applied["off_temp"], "fan_status": applied["status"], "fan_percent": applied["percent"], "fan_rpm": applied["rpm"]})
 
         elif mode == 'custom':
             settings['mode'] = 'custom'
@@ -7895,13 +7965,8 @@ def api_fan_control():
                 settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            # Watchdog se quyet dinh bat/tat theo hysteresis. Khong bat san
-            # GPIO/PWM o day, vi nhu vay se lam quat chay truoc moc tren.
-            with _cache_lock:
-                _status_cache['fan_mode'] = 'custom'
-                _status_cache['fan_on_temp'] = settings['on_temp']
-                _status_cache['fan_off_temp'] = settings['off_temp']
-            return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp']})
+            applied = _fan_apply_auto_decision_now(settings, "custom", previous_mode)
+            return jsonify({"status": "success", "mode": "custom", "on_temp": applied["on_temp"], "off_temp": applied["off_temp"], "fan_status": applied["status"], "fan_percent": applied["percent"], "fan_rpm": applied["rpm"]})
 
         elif mode == 'off':
             settings['mode'] = 'off'
@@ -7913,8 +7978,15 @@ def api_fan_control():
             _pwm_apply_off()
             with _cache_lock:
                 _status_cache['fan_mode'] = 'off'
-                _status_cache['fan_status'] = 'Dừng'
-            return jsonify({"status": "success", "mode": "off"})
+                _status_cache['fan_status'] = _fan_status_for_percent(0)
+                _status_cache['fan_percent'] = _fan_pwm_level(0)
+                _status_cache['fan_rpm'] = _fan_rpm_for_percent(0)
+            return jsonify({
+                "status": "success", "mode": "off",
+                "fan_status": _fan_status_for_percent(0),
+                "fan_percent": _fan_pwm_level(0),
+                "fan_rpm": _fan_rpm_for_percent(0),
+            })
 
         elif mode == 'on':
             settings['mode'] = 'on'
@@ -7925,8 +7997,15 @@ def api_fan_control():
             _pwm_apply_on(duty=10000, period=10000)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'on'
-                _status_cache['fan_status'] = 'Đang chạy 100%'
-            return jsonify({"status": "success", "mode": "on"})
+                _status_cache['fan_status'] = _fan_status_for_percent(100)
+                _status_cache['fan_percent'] = _fan_pwm_level(100)
+                _status_cache['fan_rpm'] = _fan_rpm_for_percent(100)
+            return jsonify({
+                "status": "success", "mode": "on",
+                "fan_status": _fan_status_for_percent(100),
+                "fan_percent": _fan_pwm_level(100),
+                "fan_rpm": _fan_rpm_for_percent(100),
+            })
             
         return jsonify({"error": "Chế độ không hợp lệ"}), 400
     except Exception as e:
@@ -11634,6 +11713,16 @@ def _fan_controller_watchdog():
                 time.sleep(1)
                 continue
 
+            if mode != last_mode:
+                if last_mode in ("on", "off"):
+                    last_applied_percent = 0
+                else:
+                    current_percent = _fan_current_percent()
+                    last_applied_percent = current_percent if current_percent is not None else None
+                last_target_percent = None
+                target_since_ts = 0.0
+                last_mode = mode
+
             target_percent = _fan_target_percent(
                 control_temp,
                 on_temp,
@@ -11644,16 +11733,10 @@ def _fan_controller_watchdog():
             if force_hot:
                 target_since_ts = now_ts
 
-            if mode != last_mode:
-                last_target_percent = None
-                target_since_ts = 0.0
-                last_applied_percent = None
-                last_mode = mode
-
             if target_percent != last_target_percent and not force_hot:
                 last_target_percent = target_percent
                 target_since_ts = now_ts
-                log.info("[FanWatchdog] Cho on dinh %.0fs truoc khi doi quat sang %s%% (mode=%s, HDD %.1fC, CPU %.1fC, on=%.1f, off=%.1f)", stable_seconds, target_percent, mode, hdd_temp, cpu_temp, on_temp, off_temp)
+                log.info("[FanWatchdog] Chờ ổn định %.0fs trước khi đổi quạt sang %s%% (mode=%s, HDD %.1fC, CPU %.1fC, on=%.1f, off=%.1f)", stable_seconds, target_percent, mode, hdd_temp, cpu_temp, on_temp, off_temp)
                 time.sleep(1)
                 continue
             elif force_hot:
@@ -11678,7 +11761,7 @@ def _fan_controller_watchdog():
                 _pwm_apply_off()
             last_applied_percent = target_percent
         except Exception as e:
-            log.error("[FanWatchdog] Loi: %s", e)
+            log.error("[FanWatchdog] Lỗi: %s", e)
         time.sleep(1)
 # FIX: Khoi phuc trạng thái quat sau reboot. Kernel PWM driver mac dinh
 # enable=1 -> 5V luon co o cong ra quat ngay khi NAS bat nguon. Đọc lai

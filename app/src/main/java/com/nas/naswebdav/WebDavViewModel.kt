@@ -1224,6 +1224,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     private var autoBackupManualRequestAt by mutableLongStateOf(0L)
 
+    private var autoBackupManualWorkId by mutableStateOf<String?>(null)
+
     // === Đã gỡ bỏ tính năng Đồng bộ thư mục ===
 
     // Biến trạng thái cho tính năng Quét và Xóa file trùng lặp
@@ -4791,6 +4793,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                     .getWorkInfosByTagFlow("com.nas.naswebdav.AutoBackupWorker").collect { workInfos ->
 
+                        val manualId = autoBackupManualWorkId
+                        val currentManualWork = if (manualId != null) workInfos.find {
+                            it.tags.contains("MANUAL_AUTO_BACKUP") && it.id.toString() == manualId
+                        } else null
+
                         val workInfo = workInfos.find {
 
                             it.state == androidx.work.WorkInfo.State.RUNNING
@@ -4822,6 +4829,37 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             autoBackupElapsedTime = workInfo.progress.getLong("elapsedTime", 0L)
 
                             autoBackupIsPaused = AutoBackupState.isPaused.value
+
+                        } else if (currentManualWork?.state == androidx.work.WorkInfo.State.SUCCEEDED) {
+
+                            isAutoBackupRunning = false
+
+                            autoBackupManualRequestAt = 0L
+
+                            autoBackupManualWorkId = null
+
+                        } else if (currentManualWork?.state == androidx.work.WorkInfo.State.FAILED ||
+                            currentManualWork?.state == androidx.work.WorkInfo.State.CANCELLED) {
+
+                            isAutoBackupRunning = false
+
+                            autoBackupManualRequestAt = 0L
+
+                            val errorMessage = currentManualWork.outputData.getString("error")
+                                ?: if (currentManualWork.state == androidx.work.WorkInfo.State.CANCELLED)
+                                    "Tác vụ đồng bộ đã bị hủy."
+                                else
+                                    "Tác vụ đồng bộ thất bại trước khi bắt đầu. Kiểm tra quyền Ảnh, cấu hình NAS hoặc nhật ký hệ thống."
+
+                            autoBackupCurrentFile = errorMessage
+
+                            autoBackupSourcePath = ""
+
+                            autoBackupDestPath = ""
+
+                            autoBackupElapsedTime = 0L
+
+                            autoBackupManualWorkId = null
 
                         } else if (autoBackupManualRequestAt > 0L && System.currentTimeMillis() - autoBackupManualRequestAt < 30_000L) {
 
@@ -6461,6 +6499,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             .build()
 
+        autoBackupManualWorkId = backupRequest.id.toString()
+
         val operation = workManager.enqueueUniqueWork("ManualAutoBackupWork", androidx.work.ExistingWorkPolicy.REPLACE, backupRequest)
 
         operation.result.addListener({
@@ -6471,6 +6511,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 android.util.Log.e("AutoBackup", "ManualAutoBackupWork enqueue failed", e)
                 isAutoBackupRunning = false
                 autoBackupManualRequestAt = 0L
+                autoBackupManualWorkId = null
                 commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
                 commonDialogMessage = "Không xếp hàng được tác vụ đồng bộ: ${e.message ?: e.javaClass.simpleName}"
                 showCommonDialog = true
@@ -6583,9 +6624,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
 
+                    val modeLabel = when (mode) {
+                        "auto" -> "Tự động"
+                        "custom" -> "Tùy chỉnh"
+                        "on" -> "Bật"
+                        "off" -> "Tắt"
+                        else -> mode
+                    }
+
                     val tempPart = if (mode == "custom" && onTemp != null && offTemp != null) " (${onTemp.toInt()}C/${offTemp.toInt()}C)" else ""
 
-                    val resultPart = if (response.isSuccessful) "thanh cong" else "that bai HTTP ${response.code}"
+                    val resultPart = if (response.isSuccessful) "thành công" else "thất bại HTTP ${response.code}"
 
                     repository.addSystemLog(
 
@@ -6593,7 +6642,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                         "Fan",
 
-                        "Nguoi dung: dat che do quat '$mode'$tempPart $resultPart."
+                        "Người dùng: đặt chế độ quạt '$modeLabel'$tempPart $resultPart."
 
                     )
 
@@ -6601,10 +6650,34 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                         withContext(Dispatchers.Main) { systemStatus = oldStatus }
 
-                        android.util.Log.e("NasAPI", "Khong dat duoc che do quat: HTTP " + response.code)
+                        android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: HTTP " + response.code)
 
                         return@use
 
+                    }
+
+                    val body = response.body?.string() ?: "{}"
+                    val resultJson = runCatching { org.json.JSONObject(body) }.getOrNull()
+                    val returnedPercent = resultJson?.optInt("fan_percent", -1) ?: -1
+                    val returnedRpm = if (resultJson?.has("fan_rpm") == true) resultJson.optInt("fan_rpm") else null
+                    val returnedStatus = resultJson?.optString("fan_status", "")?.takeIf { it.isNotBlank() }
+                        ?: when {
+                            returnedPercent == 0 -> "Dừng"
+                            returnedPercent > 0 && returnedRpm != null -> "Đang chạy ${returnedPercent.coerceIn(0, 100)}% - Tốc độ: $returnedRpm rpm"
+                            else -> optimisticStatus.fanStatus
+                        }
+                    val returnedOnTemp = resultJson?.optDouble("on_temp", Double.NaN)?.takeIf { !it.isNaN() }?.toFloat()
+                        ?: optimisticStatus.fanOnTemp
+                    val returnedOffTemp = resultJson?.optDouble("off_temp", Double.NaN)?.takeIf { !it.isNaN() }?.toFloat()
+                        ?: optimisticStatus.fanOffTemp
+                    withContext(Dispatchers.Main) {
+                        systemStatus = systemStatus.copy(
+                            fanMode = mode,
+                            fanStatus = returnedStatus,
+                            fanRpm = returnedRpm ?: systemStatus.fanRpm,
+                            fanOnTemp = returnedOnTemp,
+                            fanOffTemp = returnedOffTemp
+                        )
                     }
 
                     requestSucceeded = true
@@ -6615,9 +6688,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 withContext(Dispatchers.Main) { systemStatus = oldStatus }
 
-                repository.addSystemLog("WARNING", "Fan", "Nguoi dung: dat che do quat '$mode' that bai: ${e.message?.take(120) ?: ""}")
+                val modeLabel = when (mode) {
+                    "auto" -> "Tự động"
+                    "custom" -> "Tùy chỉnh"
+                    "on" -> "Bật"
+                    "off" -> "Tắt"
+                    else -> mode
+                }
 
-                android.util.Log.e("NasAPI", "Khong dat duoc che do quat: " + (e.message ?: ""))
+                repository.addSystemLog("WARNING", "Fan", "Người dùng: đặt chế độ quạt '$modeLabel' thất bại: ${e.message?.take(120) ?: ""}")
+
+                android.util.Log.e("NasAPI", "Không đặt được chế độ quạt: " + (e.message ?: ""))
 
             } finally {
 
