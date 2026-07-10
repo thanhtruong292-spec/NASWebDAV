@@ -1,13 +1,12 @@
-﻿package com.nas.naswebdav
+package com.nas.naswebdav
 
 import android.content.Context
 import androidx.work.WorkerParameters
-import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
 
-internal fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
+private fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
     val trimmed = rawPath.trim()
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
         val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
@@ -40,8 +39,6 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (user.isEmpty() || pass.isEmpty() || url.isEmpty()) return@withContext Result.failure()
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
-        val repository = WebDavRepository(webDavManager, db)
-        val refreshTargets = linkedSetOf<String>()
         setThumbnailActivity("sync", true)
         try {
             var allSuccess = true
@@ -52,15 +49,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                             val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
                             webDavManager.deleteFile(sourceUrl, sourceUrl.endsWith("/"))
                             trashMetaDao.deleteByTrashPath(sourceUrl)
-                            repository.removeCachedPath(sourceUrl)
-                            refreshTargets.add(webDavParentFolderUrl(sourceUrl))
                         }
-                        "CREATE_FOLDER" -> {
-                            val folderUrl = resolveQueuedWebDavPath(action.sourcePath, url)
-                            webDavManager.createFolder(folderUrl)
-                            refreshTargets.add(webDavParentFolderUrl(folderUrl))
-                            refreshTargets.add(normalizeWebDavFolderUrl(folderUrl))
-                        }
+                        "CREATE_FOLDER" -> webDavManager.createFolder(resolveQueuedWebDavPath(action.sourcePath, url))
                         "RENAME", "MOVE" -> {
                             if (action.destPath != null) {
                                 val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
@@ -69,21 +59,11 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     if (segment.isEmpty() || segment.contains(":")) segment
                                     else encodeWebDavSegment(segment)
                                 }
-                                val destParentUrl = encodedDest.substringBeforeLast("/", "")
-                                if (destParentUrl.isNotBlank()) {
-                                    webDavManager.ensureFolderHierarchy("$destParentUrl/")
-                                }
                                 webDavManager.renameFile(sourceUrl, encodedDest)
                                 if (sourceUrl.contains(".trash/") && !encodedDest.contains(".trash/")) {
                                     trashMetaDao.deleteByTrashPath(sourceUrl)
                                 } else if (!sourceUrl.contains(".trash/") && encodedDest.contains(".trash/")) {
                                     trashMetaDao.insert(TrashMeta(trashPath = encodedDest, originalPath = sourceUrl))
-                                }
-                                repository.removeCachedPath(sourceUrl)
-                                refreshTargets.add(webDavParentFolderUrl(sourceUrl))
-                                refreshTargets.add(webDavParentFolderUrl(encodedDest))
-                                if (sourceUrl.endsWith("/") || encodedDest.endsWith("/")) {
-                                    refreshTargets.add(normalizeWebDavFolderUrl(encodedDest))
                                 }
                             }
                         }
@@ -99,19 +79,15 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         else encodeWebDavSegment(segment)
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
-                                    refreshTargets.add(webDavParentFolderUrl(encodedDest))
                                 }
                             }
                         }
                     }
                     db.syncActionDao().deleteById(action.id)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     allSuccess = false
-                    SystemLogger.log("WARNING", "OfflineSync",
-                        "Thao tác ${action.actionType} thất bại (${action.sourcePath}): ${e.message?.take(120)}")
                 }
             }
-            runCatching { repository.refreshFolderCaches(refreshTargets) }
             if (allSuccess) Result.success() else Result.retry()
         } finally {
             setThumbnailActivity("sync", false)

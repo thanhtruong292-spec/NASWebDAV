@@ -178,3 +178,36 @@ Provide only the exact code blocks being replaced.
 - Do not introduce mojibake in app text, logs, toasts, dialogs, reports, or comments that users will read.
 - All Vietnamese UI/log strings must be written as real UTF-8 characters; never leave ASCII question-mark substitutions like `Kh?ng`, `B?`, `H?y`, `Ch?a`.
 - Before finishing any Kotlin edit, verify user-facing strings render correctly in UTF-8 and the build remains clean.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. MATTPOCOCK SKILLS — AUTO-INVOKE RULES
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills đã cài tại ~/.claude/skills/ (symlinks → /tmp/mattpocock-skills)
+# Dùng Skill("skill-name") — KHÔNG cần hỏi user trước khi gọi.
+#
+# AUTO-INVOKE TRIGGERS (gọi tự động khi phát hiện pattern):
+#
+# - /diagnosing-bugs → khi user mô tả bug: "bị lỗi", "crash", "không hoạt động",
+#   "fix này không đúng", "regression", "chậm", "throw", "fail", "không phát video"
+#   ÁP DỤNG: luôn dùng diagnosing-bugs TRƯỚC KHI đề xuất fix — build feedback loop trước.
+#
+# - /research → khi user yêu cầu tìm hiểu API/docs/thông tin từ web hoặc đọc
+#   nhiều file để tổng hợp. Spin background agent, keep working.
+#
+# - /code-review → khi user nhắc "review", "xem lại code", so sánh HEAD vs base branch.
+#   Run 2 parallel sub-agents (Standards + Spec axes).
+#
+# - /tdd → khi user nói "viết test trước", "red-green-refactor", muốn test-driven.
+#
+# - /grill-with-docs → khi user hỏi về architecture/design, muốn challenge plan trước khi code.
+#
+# - /domain-modeling → khi gặp domain terms mơ hồ, cần define/shared vocabulary.
+#
+# USER-INVOKED ONLY (disable-model-invocation: true — KHÔNG auto-invoke):
+# - /wayfinder — large multi-session planning (too heavy)
+# - /improve-codebase-architecture — architectural refactor proposals (too intrusive)
+# - /grill-me / grilling — user-facing questioning workflow
+#
+# SKILLS CÀI: diagnosing-bugs, code-review, research, tdd, grill-with-docs,
+# domain-modeling, codebase-design, implement, prototype, setup-pre-commit,
+# git-guardrails-claude-code, grill-me, grilling, handoff, obsidian-vault

@@ -1,6 +1,4 @@
 import java.util.Properties
-import java.text.SimpleDateFormat
-import java.util.Date
 
 plugins {
     alias(libs.plugins.android.application)
@@ -39,43 +37,17 @@ gradle.taskGraph.whenReady {
     }
 }
 
-// ─── Auto-versioning: mỗi lần build tự đánh số theo git + thời gian ───────────
-// versionCode = số commit (tăng đều mỗi commit); versionName = 1.0.<count> (<sha> · <ngày giờ build>)
-// Nhờ vậy nhìn nhãn trong app là biết chính xác build nào, tránh nhầm lẫn.
-fun runGit(vararg args: String): String = try {
-    val p = ProcessBuilder(listOf("git", *args))
-        .directory(rootDir)
-        .redirectErrorStream(true)
-        .start()
-    val out = p.inputStream.bufferedReader().readText().trim()
-    p.waitFor()
-    if (p.exitValue() == 0) out else ""
-} catch (e: Exception) { "" }
-
-val gitCommitCount: Int = runGit("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
-val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogit" }
-val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
-// Đánh dấu build từ code CHƯA COMMIT (bản test thủ công) để không nhầm với bản chính thức.
-// Chỉ tính thay đổi đã track (bỏ qua file chưa track như .apk build, .codex...) để
-// bản release chính thức không bị gắn "+test" oan vì artifact rác trong thư mục.
-val gitDirtySuffix: String = if (runGit("status", "--porcelain", "--untracked-files=no").isNotBlank()) "+test" else ""
-val baseVersionName = "2.7"
-
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // Dùng 35 để ổn định nhất với Room hiện tại
+    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
         targetSdk = 35
-        versionCode = gitCommitCount
-        versionName = "$baseVersionName.$gitCommitCount$gitDirtySuffix ($gitShortSha · $buildStamp)"
+        versionCode = 1
+        versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildFeatures {
-        buildConfig = true  // để app đọc BuildConfig.VERSION_NAME hiển thị nhãn phiên bản
     }
 
     signingConfigs {
@@ -91,12 +63,8 @@ android {
 
     buildTypes {
         release {
-            // Cờ chẩn đoán tạm thời: -PdiagBuild=true -> tắt R8 + bật debuggable để
-            // đọc log WorkManager rõ ràng (vẫn release-signed nên cập nhật đè được, giữ login).
-            val diagBuild = providers.gradleProperty("diagBuild").orNull == "true"
-            isMinifyEnabled = !diagBuild
-            isShrinkResources = !diagBuild
-            isDebuggable = diagBuild
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
@@ -113,11 +81,6 @@ android {
     sourceSets {
         getByName("androidTest") {
             assets.setSrcDirs(listOf("$projectDir/schemas"))
-        }
-    }
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
         }
     }
 }
@@ -183,15 +146,6 @@ dependencies {
     // Chucker for in-app network inspection
     debugImplementation("com.github.chuckerteam.chucker:library:4.0.0")
     releaseImplementation("com.github.chuckerteam.chucker:library-no-op:4.0.0")
-
-    // Unit tests (JVM, không cần device)
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.14.1")
-    testImplementation("androidx.test:core-ktx:1.6.1")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
-    testImplementation("io.mockk:mockk:1.13.13")
-    testImplementation("androidx.room:room-testing:$room_version")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 ksp {

@@ -1,41 +1,41 @@
-# Báo cáo tự động hoá sửa chữa ở Screen Recording + Hygiene
+# B?o c?o t? ??ng ho? s?a ch?a ? Screen Recording + Hygiene
 
-**Thời gian:** 2026-06-04 07:26:42
+**Th?i gian:** 2026-06-04 07:26:42  
 **Branch:** codex/review-cleanup-20260603  
-**Trạng thái build:** BUILD SUCCESSFUL (0 warning Kotlin)
+**Tr?ng th?i build:** BUILD SUCCESSFUL (0 warning Kotlin)  
 
-## 1. Sửa chức năng Ghi màn hình
+## 1. S?a ch?c n?ng Ghi m?n h?nh
 
-### Patch A: Overlay permission không cần chặn quay
-- **File:** MainActivity.kt - requestScreenRecordPermission()
-- **Trước:** Nếu thiếu canDrawOverlays, mở Settings intent và return - chặn luồng quay
-- **Sau:** Chỉ hiện Toast thông báo, tiếp tục mở screen capture intent
-- Kết quả: Người dùng không cần cấp overlay permission để quay
+### Patch A: Overlay permission kh?ng c?n ch?n quay
+- **File:** MainActivity.kt ? requestScreenRecordPermission()
+- **Tr??c:** N?u thi?u canDrawOverlays, m? Settings intent v? return ? ch?n lu?ng quay
+- **Sau:** Ch? hi?n Toast th?ng b?o, ti?p t?c m? screen capture intent
+- K?t qu?: Ng??i d?ng kh?ng c?n c?p overlay permission ?? quay
 
-### Patch B: startRecording không dừng khi thiếu overlay
-- **File:** ScreenRecordService.kt - startRecording()
-- **Trước:** stopForeground + stopSelf + return nếu thiếu overlay
-- **Sau:** logWarn cảnh báo, tiếp tục quay bình thường
+### Patch B: startRecording kh?ng d?ng khi thi?u overlay
+- **File:** ScreenRecordService.kt ? startRecording()
+- **Tr??c:** stopForeground + stopSelf + return n?u thi?u overlay
+- **Sau:** logWarn c?nh b?o, ti?p t?c quay b?nh th??ng
 
-### Patch C: cancelNasSession dùng use {}
-- **File:** ScreenRecordService.kt - cancelNasSession()
-- **Trước:** .execute().close() - ném Exception nếu response body lỗi
-- **Sau:** .execute().use { _ -> } - đảm bảo đóng response đúng cách
+### Patch C: cancelNasSession d?ng use {}
+- **File:** ScreenRecordService.kt ? cancelNasSession()
+- **Tr??c:** .execute().close() ? n?m Exception n?u response body l?i
+- **Sau:** .execute().use { _ -> } ? ??m b?o ??ng response ??ng c?ch
 
-### Patch D: uploadLoop backoff + uploadReadySegmentsOnce dùng result object
-- **File:** ScreenRecordService.kt - uploadLoop(), uploadReadySegmentsOnce()
-- **Vấn đề cũ:** uploadReadySegmentsOnce() trả về Boolean true cả khi upload thất bại, gây busy-spin. Không backoff. Không dọn marker mồ côi.
-- **Fix:** Trả về UploadPassResult(progressed, failed). uploadLoop exponential backoff 1s->30s. Dọn marker mồ côi (blank, null index, file 0 byte).
+### Patch D: uploadLoop backoff + uploadReadySegmentsOnce d?ng result object
+- **File:** ScreenRecordService.kt ? uploadLoop(), uploadReadySegmentsOnce()
+- **V?n ?? c?:** uploadReadySegmentsOnce() tr? v? Boolean ? true c? khi upload th?t b?i, g?y busy-spin. Kh?ng backoff. Kh?ng d?n marker m? c?i.
+- **Fix:** Tr? v? UploadPassResult(progressed, failed). uploadLoop exponential backoff 1s->30s. D?n marker m? c?i (blank, null index, file 0 byte).
 
-### Patch E: stopRecording dùng UploadPassResult đúng cách
-- **File:** ScreenRecordService.kt - stopRecording() while loop
-- **Trước:** Gọi uploadReadySegmentsOnce() bỏ qua kết quả, delay cố định 1s
-- **Sau:** Dùng r.failed để backoff khi lỗi upload trong phase dừng
+### Patch E: stopRecording d?ng UploadPassResult ??ng c?ch
+- **File:** ScreenRecordService.kt ? stopRecording() while loop
+- **Tr??c:** G?i uploadReadySegmentsOnce() b? qua k?t qu?, delay c? ??nh 1s
+- **Sau:** D?ng r.failed ?? backoff khi l?i upload trong phase d?ng
 
-## 2. Dọn Dead Code
+## 2. D?n Dead Code
 - MainActivity.kt: Xo? overlayPermissionLauncher (declaration + registration)
 
-## 3. Kết quả Build
+## 3. K?t qu? Build
 - assembleDebug: BUILD SUCCESSFUL
 - Kotlin warnings: 0
 

@@ -14,7 +14,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.ConnectionPool
-import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import java.io.File
@@ -68,43 +67,20 @@ class NasApplication : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
-        // FIX M2: Gom toàn bộ Coil ImageLoader cấu hình vào đây, bỏ duplicate trong MainActivity.
-        // - Memory cache theo MB (có bounds an toàn) thay vì % cố định → tránh OOM trên thiết bị yếu
-        // - Disk cache 800MB → tối ưu cho thumbnail nhiều
-        // - Dispatcher giới hạn 16/4 req → không cạnh tranh với WebDAV calls
-        // - VideoFrameDecoder → hiển thị thumbnail video trong BrowserScreen
-        val imageDispatcher = okhttp3.Dispatcher().apply {
-            maxRequests = 16
-            maxRequestsPerHost = 4
-        }
-        val imageHttpClient = fastApiClient.newBuilder()
-            .dispatcher(imageDispatcher)
-            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
-
-        val maxHeap = Runtime.getRuntime().maxMemory()
-        val heapMb = maxHeap / (1024L * 1024L)
-        val cacheMb = when {
-            heapMb < 128L -> 50L
-            heapMb > 512L -> 200L
-            else -> (heapMb * 15 / 100)  // 15% trong bounds an toàn
-        }
-
         return ImageLoader.Builder(this)
-            .okHttpClient(imageHttpClient)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizeBytes((cacheMb * 1024 * 1024).toInt())
+                    .maxSizePercent(0.15) // Limit Coil Memory to 15% of available heap to prevent RAM spikes
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(800L * 1024 * 1024) // 800MB — tối ưu cho thumbnail nhiều
+                    .maxSizePercent(0.02)
                     .build()
             }
-            .components { add(coil.decode.VideoFrameDecoder.Factory()) }
+            // Mượn chung sharedHttpClient để tránh tạo connection leak
+            .callFactory { request -> fastApiClient.newCall(request) }
             .build()
     }
 
@@ -281,24 +257,21 @@ class NasApplication : Application(), ImageLoaderFactory {
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             try {
                 // FIX #21: Ghi DB trên main thread trong crash handler có thể gây ANR nếu DB lỗi.
-                // Dùng 1 thread riêng, join ngắn rồi trả về default handler.
-                val crashLogThread = Thread {
-                    try {
+                // Dùng runBlocking với timeout ngắn để tránh ANR — nếu timeout thì bỏ qua log.
+                val logResult = java.util.concurrent.Executors.newSingleThreadExecutor().submit<Boolean> {
+                      try {
                         database.logDao().insertLog(
                             SystemLog(
-                                type = "CRASH",
-                                module = "CrashHandler",
-                                message = "${exception.javaClass.simpleName}: ${exception.message}"
-                            )
-                        )
-                    } catch (_: Exception) {}
-                }.apply {
-                    name = "CrashLogger"
-                    isDaemon = true
+                            type = "CRASH",
+                            module = "CrashHandler",
+                            message = "${exception.javaClass.simpleName}: ${exception.message}"
+                        ))
+                        true
+                    } catch (e: Exception) { false }
                 }
-                crashLogThread.start()
-                try { crashLogThread.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-            } catch (_: Exception) {}
+                // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
+                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: Exception) {}
+            } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
@@ -318,14 +291,7 @@ class NasApplication : Application(), ImageLoaderFactory {
         // Dang ky Discovery Worker dinh ky de bat cac job livestream do NAS tu
         // khoi (TikTok watcher auto-record). Khong co worker nay thi khi user
         // dong app, may dien thoai khong bao gio biet co job ngam dang chay.
-        // Bo try/catch: WorkManager co the chua khoi tao (vd moi truong test, hoac
-        // edge-case khi ContentProvider initializer chua chay) -> khong duoc lam
-        // crash onCreate.
-        try {
-            LivestreamDiscoveryWorker.schedule(this)
-        } catch (e: Exception) {
-            android.util.Log.w("NasApplication", "Khong dang ky Discovery Worker: ${e.message}")
-        }
+        LivestreamDiscoveryWorker.schedule(this)
     }
 }
 
@@ -493,7 +459,7 @@ object SecurePrefsHelper {
     }
 
     fun getUrl(context: Context): String =
-        getUrlList(context).firstOrNull() ?: ""
+        getSecurePrefs(context).getString(KEY_URL, "") ?: ""
 
     fun getUser(context: Context): String =
         getSecurePrefs(context).getString(KEY_USER, "") ?: ""
@@ -501,10 +467,8 @@ object SecurePrefsHelper {
     fun getPass(context: Context): String =
         getSecurePrefs(context).getString(KEY_PASS, "") ?: ""
 
-    /** Lưu credential. Trả về true nếu thành công; false (kèm log) nếu thất bại
-     *  để caller không tiếp tục như thể đã lưu xong. */
-    fun saveCredentials(context: Context, urlList: List<String>, user: String, pass: String): Boolean {
-        return try {
+    fun saveCredentials(context: Context, urlList: List<String>, user: String, pass: String) {
+        try {
             val jsonArray = org.json.JSONArray()
             urlList.forEach { jsonArray.put(it) }
             getSecurePrefs(context).edit()
@@ -513,11 +477,7 @@ object SecurePrefsHelper {
                 .putString(KEY_USER, user)
                 .putString(KEY_PASS, pass)
                 .apply()
-            true
-        } catch (e: Exception) {
-            android.util.Log.e("SecurePrefsHelper", "Không lưu được credential: ${e.message}", e)
-            false
-        }
+        } catch (e: Exception) {}
     }
 
     fun saveCredentialsAsync(context: Context, urlList: List<String>, user: String, pass: String, onComplete: () -> Unit = {}) {
@@ -556,11 +516,7 @@ object SecurePrefsHelper {
         val tail = prefs.getString(KEY_TAILSCALE_URL, "") ?: ""
         if (lan.isNotEmpty()) result.add(lan)
         if (tail.isNotEmpty() && tail != lan) result.add(tail)
-        val filtered = result.filter { isLanOrTailscaleWebDavUrl(it) }
-        if (filtered.size != result.size) {
-            android.util.Log.w("SecurePrefs", "Đã chặn URL NAS không an toàn khỏi danh sách đăng nhập đã lưu")
-        }
-        return filtered
+        return result
     }
 
     sealed class AuthData {
@@ -635,10 +591,9 @@ object SmartNetworkManager {
                 lastPingResult = false
                 cachedActiveUrl = null
             }
-            // Tất cả URL đều không phản hồi → thử dùng URL Tailscale (nếu có) để làm fallback an toàn hơn cho kết nối từ xa
-            val fallbackUrl = urlList.find { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first()
-            android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: $fallbackUrl")
-            fallbackUrl
+            // Tất cả URL đều không phản hồi → thử dùng URL đầu tiên nhưng log cảnh báo
+            android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: ${urlList.first()}")
+            urlList.first()
         }
 
     suspend fun getActiveApiHost(context: Context): String =
@@ -656,8 +611,8 @@ object SmartNetworkManager {
         .build()
 
     private val tailscalePingClient = okhttp3.OkHttpClient.Builder()
-        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
         .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
         .build()
 

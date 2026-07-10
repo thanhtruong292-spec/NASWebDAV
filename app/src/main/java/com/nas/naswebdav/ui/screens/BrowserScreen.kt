@@ -1,4 +1,4 @@
-﻿@file:Suppress("DEPRECATION")
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
@@ -87,7 +87,7 @@ import androidx.compose.foundation.lazy.items
 
 private const val VIEWED_FILES_LIMIT = 5000
 
-internal fun markBrowserFilesViewed(
+private fun markBrowserFilesViewed(
     prefs: android.content.SharedPreferences,
     paths: Collection<String>
 ) {
@@ -137,7 +137,6 @@ fun BrowserScreen(
 ) {
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
-    var searchTypeFilter by remember { mutableStateOf("all") }  // all | image | video | doc
     var searchQuery by remember { mutableStateOf("") }
     
     val context = LocalContext.current
@@ -423,8 +422,9 @@ fun BrowserScreen(
                             isOrganizing = true
                             coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 try {
-                                    val authSnapshot = viewModel.webDavManager.currentAuthState()
-                                    val urlStr = authSnapshot.baseUrl
+                                    val user = viewModel.webDavManager.currentUser
+                                    val pass = viewModel.webDavManager.currentPass
+                                    val urlStr = viewModel.webDavManager.currentBaseUrl
                                     
                                     val host = java.net.URL(urlStr).host ?: "127.0.0.1"
                                     val apiUrl = "${urlStr.toApiBaseUrl()}/api/tools/organize_legacy_videos"
@@ -432,7 +432,7 @@ fun BrowserScreen(
                                     val request = okhttp3.Request.Builder()
                                         .url(apiUrl)
                                         .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                        .header("Authorization", authSnapshot.authHeader)
+                                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
                                         .build()
                                         
                                     // Tăng timeout lên 5 phút vì thao tác quét và chép file toàn bộ NAS có thể lâu hơn 30s
@@ -483,19 +483,10 @@ fun BrowserScreen(
     // NOTE: Khai báo ở đây (trước Scaffold) để TopAppBar có thể truy cập displayedFiles
     val displayedFiles by remember {
         derivedStateOf {
-            val byKeyword = if (searchQuery.isBlank()) {
+            val filtered = if (searchQuery.isBlank()) {
                 viewModel.fileList
             } else {
                 viewModel.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
-            }
-            // Lọc theo loại tệp (thư mục luôn hiển thị để còn điều hướng)
-            val filtered = if (searchTypeFilter == "all") byKeyword else byKeyword.filter { f ->
-                f.isDirectory || when (searchTypeFilter) {
-                    "image" -> com.nas.naswebdav.utils.MediaUtils.isImage(f.name)
-                    "video" -> com.nas.naswebdav.utils.MediaUtils.isVideo(f.name)
-                    "doc" -> !com.nas.naswebdav.utils.MediaUtils.isImage(f.name) && !com.nas.naswebdav.utils.MediaUtils.isVideo(f.name)
-                    else -> true
-                }
             }
             // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
             val folders = filtered.filter { it.isDirectory }
@@ -1082,23 +1073,6 @@ fun BrowserScreen(
                     }
                 }
 
-                if (isSearching || (viewModel.isSpecialMode && viewModel.specialTitle.startsWith("Tìm kiếm"))) {
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("all" to "Tất cả", "image" to "Ảnh", "video" to "Video", "doc" to "Tài liệu").forEach { (key, label) ->
-                            androidx.compose.material3.FilterChip(
-                                selected = searchTypeFilter == key,
-                                onClick = { searchTypeFilter = key },
-                                label = { Text(label, fontSize = 11.sp) }
-                            )
-                        }
-                    }
-                }
-
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(5),
                     modifier = Modifier.fillMaxSize(),
@@ -1218,3 +1192,598 @@ fun BrowserScreen(
     }
 }
 
+// --- FILE ITEM GRID CELL ---
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FileItemGridCell(
+    file: NasFile,
+    viewModel: WebDavViewModel,
+    selectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    viewedRefreshTick: Int = 0,
+    onLongClick: () -> Unit = {},
+    onClick: () -> Unit,
+    onVideo: (String) -> Unit
+) {
+    val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+    // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
+    val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
+    val isMedia = isVideo || isImage
+    val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+
+    var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showPropertiesDialog by remember { mutableStateOf(false) }
+    var newFileName by remember { mutableStateOf(file.name) }
+
+    // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
+    // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
+    val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    val itemScope = rememberCoroutineScope()
+    // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
+    var isNewFile by remember(file.path, viewedRefreshTick) {
+        mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
+    }
+
+    val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+
+    // STATE CHO DIALOG THÔNG BÁO TẠI ĐÂY (THAY THẾ TOAST)
+    var commonDialogMessage by remember { mutableStateOf("") }
+    var commonDialogType by remember { mutableStateOf(DialogType.SUCCESS) }
+    var showCommonDialog by remember { mutableStateOf(false) }
+
+    if (showCommonDialog) {
+        AppStatusDialog(
+            type = commonDialogType,
+            message = commonDialogMessage,
+            onDismiss = { showCommonDialog = false }
+        )
+    }
+
+    if (showPropertiesDialog) {
+        com.nas.naswebdav.ui.dialogs.FilePropertiesDialog(
+            file = file,
+            onDismiss = { showPropertiesDialog = false }
+        )
+    }
+
+    if (showDeleteDialog) {
+        AppStatusDialog(
+            type = DialogType.WARNING,
+            message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn '${file.name}' không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa '${file.name}' vào Thùng rác?",
+            onConfirm = {
+                showDeleteDialog = false
+                viewModel.deleteFile(context, file)
+            },
+            onDismiss = { showDeleteDialog = false }
+        )
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Đổi tên", fontWeight = FontWeight.Bold) },
+            text = {
+                com.nas.naswebdav.ui.components.CompactTextField(
+                    value = newFileName,
+                    onValueChange = { newFileName = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRenameDialog = false
+                    if (newFileName.isNotBlank() && newFileName != file.name) viewModel.renameFile(context, file, newFileName)
+                }) { Text("Lưu") }
+            },
+            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Hủy") } }
+        )
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {
+                    // Mark file da xem -> red dot bien mat. Folder khong tracking.
+                    if (!selectionMode && !file.isDirectory && isNewFile) {
+                        isNewFile = false
+                        itemScope.launch(Dispatchers.IO) {
+                            markBrowserFilesViewed(viewedPrefs, listOf(file.path))
+                        }
+                    }
+                    onClick()
+                },
+                onLongClick = {
+                    // Long-press LUON mo menu cho ca file va folder. Selection mode
+                    // entry được thực hiện qua nút "Chọn file" ở toolbar.
+                    if (selectionMode) {
+                        // Trong selection mode -> long-press toggle select (giu logic cu).
+                        onLongClick()
+                    } else {
+                        showMenu = true
+                    }
+                }
+            )
+            .padding(horizontal = 1.dp, vertical = 1.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+            DropdownMenuItem(text = { Text("Tải về máy") }, onClick = {
+                showMenu = false
+                val request = android.app.DownloadManager.Request(android.net.Uri.parse(file.path))
+                    .setTitle(file.name)
+                    .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
+                    .addRequestHeader("Authorization", auth)
+                (context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
+
+                commonDialogType = DialogType.SUCCESS
+                commonDialogMessage = "Đã bắt đầu tải về: ${file.name}"
+                showCommonDialog = true
+            })
+            DropdownMenuItem(text = { Text("Sao chép liên kết") }, onClick = {
+                showMenu = false
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
+
+                commonDialogType = DialogType.SUCCESS
+                commonDialogMessage = "Đã sao chép liên kết tệp!"
+                showCommonDialog = true
+            })
+            // Chỉ hiện nút Khôi phục nếu đang đứng trong Thùng rác
+            if (viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác") {
+                DropdownMenuItem(
+                    text = { Text("Khôi phục") },
+                    onClick = {
+                        showMenu = false
+                        viewModel.restoreFile(context, file)
+                    },)
+            }
+
+            // TÍNH NĂNG MỚI: Giải nén tại NAS
+            if (file.name.lowercase().endsWith(".zip")) {
+                DropdownMenuItem(
+                    text = { Text("Giải nén tại NAS", color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
+                    onClick = {
+                        showMenu = false
+                        viewModel.unzipFile(file.path)
+                    }
+                )
+            }
+
+            // Mở video bằng ứng dụng ngoài
+            if (isVideo) {
+                DropdownMenuItem(
+                    text = { Text("Mở bằng ứng dụng ngoài", color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
+                    onClick = {
+                        showMenu = false
+                        openExternalVideoPlayer(
+                            context = context,
+                            url = file.path,
+                            user = viewModel.webDavManager.currentUser,
+                            pass = viewModel.webDavManager.currentPass,
+                            onError = {
+                                commonDialogType = DialogType.ERROR
+                                commonDialogMessage = "Không tìm thấy trình phát video ngoài nào!"
+                                showCommonDialog = true
+                            }
+                        )
+                    }
+                )
+            }
+
+            DropdownMenuItem(text = { Text("Đổi tên") }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
+            DropdownMenuItem(text = { Text("Thuộc tính") }, onClick = { showMenu = false; showPropertiesDialog = true })
+            DropdownMenuItem(text = { Text("Xóa tệp", color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
+        }
+
+        // === KHUNG HIỂN THỊ CHÍNH — SAMSUNG MY FILES STYLE ===
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (file.isDirectory) Modifier.height(72.dp) else Modifier.aspectRatio(1f))
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    when {
+                        file.isDirectory -> Color.Transparent
+                        isMedia -> Color(0xFF212121)
+                        else -> Color(0xFFF0F0F0)
+                    }
+                )
+        ) {
+            if (isMedia) {
+                // MEDIA: Thumbnail edge-to-edge, sạch sẽ
+                WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
+
+                // Badge video play icon
+                if (isVideo) {
+                    Icon(
+                        Icons.Default.PlayCircle,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(28.dp).align(Alignment.Center)
+                    )
+                }
+            } else if (file.isDirectory) {
+                // THƯ MỤC: Icon folder lớn, canh giữa
+                Icon(
+                    imageVector = Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = Color(0xFFFFC107),
+                    modifier = Modifier.size(65.dp)
+                )
+            } else {
+                // FILE THƯỜNG: Icon cơ bản, canh giữa
+                Icon(
+                    imageVector = Icons.Default.InsertDriveFile,
+                    contentDescription = null,
+                    tint = Color(0xFF78909C),
+                    modifier = Modifier.size(40.dp).align(Alignment.Center)
+                )
+            }
+
+            // GẮN BADGE THÔNG TIN (Cho mọi tệp không phải thư mục)
+            if (!file.isDirectory) {
+                val ext = file.name.substringAfterLast('.', "").uppercase().takeIf { it.isNotBlank() } ?: "FILE"
+                
+                // MÀU SẮC BADGE THEO LOẠI FILE
+                val extColor = when {
+                    isImage -> Color(0xFF1E88E5) // Xanh dương
+                    isVideo -> Color(0xFFFF8F00) // Cam
+                    ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> Color(0xFFE53935) // Đỏ
+                    ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> Color(0xFF43A047) // Xanh lá
+                    ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> Color(0xFF8E24AA) // Tím
+                    ext in listOf("MP3", "WAV", "FLAC", "M4A") -> Color(0xFF00ACC1) // Xanh Cyan
+                    else -> Color(0xFF757575) // Xám
+                }
+
+                // Extension góc dưới phải
+                Text(
+                    text = ext,
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .background(extColor, RoundedCornerShape(4.dp))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+
+                // Dung lượng góc dưới trái
+                val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
+                Text(
+                    text = displaySize,
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(4.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                        .padding(horizontal = 3.dp, vertical = 1.dp)
+                )
+            }
+
+            if (!selectionMode && !file.isDirectory) {
+                if (isTrash && file.lastModified > 0L) {
+                    val daysInTrash = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis() - file.lastModified)
+                    val daysLeft = (30 - daysInTrash).coerceAtLeast(0)
+                    val badgeColor = when {
+                        daysLeft <= 3 -> Color(0xFFFF1744)
+                        daysLeft <= 7 -> Color(0xFFFFA726)
+                        else -> Color(0xFF8892B0)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(3.dp)
+                            .background(badgeColor.copy(alpha = 0.9f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 3.dp, vertical = 1.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("${daysLeft} ngày", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                    }
+                } else if (isNewFile) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(10.dp)
+                            .background(Color(0xFFFF1744), CircleShape)
+                            .border(1.dp, Color.White, CircleShape)
+                    )
+                }
+            }
+
+            // OVERLAY MULTI-SELECT — chỉ khi đang chọn
+            if (selectionMode) {
+                // Lớp phủ mờ xanh khi được chọn
+                if (isSelected) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x5542A5F5))
+                    )
+                }
+                // Checkbox góc trái trên — luôn hiển thị khi selectionMode
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .size(24.dp)
+                        .background(Color.White.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
+                        .clip(androidx.compose.foundation.shape.CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Đã chọn",
+                            tint = Color(0xFF42A5F5),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.RadioButtonUnchecked,
+                            contentDescription = "Chưa chọn",
+                            tint = Color(0xFF90A4AE),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // TÊN THƯ MỤC — chỉ hiện cho thư mục
+        if (file.isDirectory) {
+            Text(
+                text = file.name,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+// --- THUMBNAIL TỐI ƯU HOÁ CHO TẤT CẢ FILE MEDIA: LƯU VÀO DATABASE VĨNH VIỄN ---
+// FIX BUG #10: Giới hạn số thumbnail load đồng thời — tránh OOM + NAS WebDAV 504 CPU Collapse
+private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(8)
+
+private val mediaThumbClient by lazy {
+    NasApplication.instance.sharedHttpClient.newBuilder()
+        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 20; maxRequestsPerHost = 4 })
+        .build()
+}
+
+@Composable
+fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier: Modifier) {
+    val context = LocalContext.current
+    var localThumbPath by remember { mutableStateOf<String?>(null) }
+    var isError by remember { mutableStateOf(false) }
+
+    // Cờ dự phòng: Khi NAS lỗi (hoặc định dạng dị), tự động dùng Coil tải ảnh gốc thu nhỏ
+    var useOriginalFallback by remember { mutableStateOf(false) }
+
+    val thumbnailDao = remember { NasApplication.instance.database.thumbnailDao() }
+    val fingerprintDao = remember { NasApplication.instance.database.fingerprintDao() }
+
+    LaunchedEffect(url) {
+        // TỐI ƯU: Bypass (Bỏ qua) NAS API đối với các định dạng ảnh dễ làm server lỗi (PNG alpha, HEIC Apple)
+        val ext = url.substringAfterLast('.', "").substringBefore("?").lowercase()
+        val isProblematicForNas = ext in listOf("png", "heic", "heif", "gif", "bmp")
+
+        if (!isVideo && isProblematicForNas) {
+            useOriginalFallback = true
+            // Xóa cache rác (nếu trước đó NAS đã lỡ lưu cái Icon Play lỗi vào db)
+            withContext(Dispatchers.IO) {
+                try { thumbnailDao.deleteThumbnail(url) } catch (e: Exception) {
+                    android.util.Log.d("BrowserScreen", "Không xoá được thumbnail cache rác cho $url: ${e.message}")
+                }
+            }
+            return@LaunchedEffect
+        }
+
+        withContext(Dispatchers.IO) {
+            try {
+                thumbnailSemaphore.withPermit {
+                    var attempts = 0
+                    val maxAttempts = 1
+                    while (attempts < maxAttempts) {
+                        attempts++
+                        try {
+                            // 1. Kiểm tra nhanh DB
+                            val cached = thumbnailDao.getThumbnail(url)
+                            if (cached != null) {
+                                val file = File(cached.localFilePath)
+                                if (file.exists() && file.length() > 0) {
+                                    localThumbPath = file.absolutePath
+                                    return@withPermit
+                                } else {
+                                    thumbnailDao.deleteThumbnail(url)
+                                }
+                            }
+
+                            // 2. Kiểm tra File nháp
+                            val safeHash = Integer.toHexString(url.hashCode())
+                            val thumbDir = context.getDir("persistent_thumbnails", android.content.Context.MODE_PRIVATE)
+                            val thumbFile = File(thumbDir, "thumb_$safeHash.jpg")
+
+                            if (thumbFile.exists() && thumbFile.length() > 0) {
+                                localThumbPath = thumbFile.absolutePath
+                                thumbnailDao.saveThumbnail(com.nas.naswebdav.ThumbnailCache(url, thumbFile.absolutePath))
+                                return@withPermit
+                            }
+
+                            // 3. Gọi API NAS (/api/thumb)
+                            val parsedUrl = java.net.URL(url)
+                            val nasHost = parsedUrl.host
+                            val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
+                            val apiThumbUrl = "${url.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+
+                            val apiRequest = okhttp3.Request.Builder()
+                                .url(apiThumbUrl)
+                                .header("Authorization", auth)
+                                .build()
+
+                            mediaThumbClient.newCall(apiRequest).execute().use { apiResponse ->
+                                val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
+
+                                if (apiResponse.isSuccessful && apiResponse.body != null) {
+                                    // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
+                                    if (!isVideo && contentLength in 1L..2000L) {
+                                        throw Exception("NAS trả về Icon báo lỗi thay vì Thumbnail thật")
+                                    }
+
+                                    // FIX: thay !! bang null check phong cao bang isSuccessful=true voi body rong
+                                    val stream = apiResponse.body?.byteStream() ?: throw Exception("Phản hồi rỗng từ NAS")
+                                    stream.use { input ->
+                                        java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
+                                        if (thumbFile.length() > 0) {
+                                            localThumbPath = thumbFile.absolutePath
+                                            thumbnailDao.saveThumbnail(com.nas.naswebdav.ThumbnailCache(url, thumbFile.absolutePath))
+                                            return@withPermit
+                                        }
+                                    }
+                                } else {
+                                    throw Exception("NAS API từ chối tạo thumbnail")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (!isVideo) {
+                                useOriginalFallback = true
+                            } else {
+                                isError = true
+                            }
+                            break
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (!isVideo) useOriginalFallback = true else isError = true
+            }
+        }
+    }
+
+    // ═══ LOGIC RENDER UI ═══
+    if (localThumbPath != null) {
+        AsyncImage(
+            model = coil.request.ImageRequest.Builder(LocalContext.current).data(File(localThumbPath!!)).crossfade(true).build(),
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
+    } else if (useOriginalFallback) {
+        // CỨU CHỮA KHI NAS API CHẾT: Ép Coil tải trực tiếp link WebDAV (size 300x300 để giải cứu RAM)
+        AsyncImage(
+            model = coil.request.ImageRequest.Builder(LocalContext.current)
+                .data(url.toFastMediaUrl())
+                .addHeader("Authorization", auth)
+                .size(300, 300)
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
+    } else {
+        Box(modifier = modifier.background(Color.DarkGray), contentAlignment = Alignment.Center) {
+            if (isError) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (!isVideo) {
+                        Icon(Icons.Default.Image, null, tint = Color.LightGray, modifier = Modifier.size(32.dp))
+                    }
+                    val ext = url.substringAfterLast(".", "").substringBefore("?").uppercase()
+                    if (ext.isNotEmpty() && ext.length <= 5) {
+                        Text(text = ".$ext", color = Color(0xFF90CAF9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                CircularProgressIndicator(color = Color(0xFF2196F3), modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        }
+    }
+}
+// --- HÀM HELPER HỖ TRỢ MỞ VIDEO BẰNG EXTERNAL PLAYERS (VLC, MX PLAYER) ---
+// KIẾN TRÚC MỚI: Dùng Local HTTP Proxy thay vì nhúng auth vào URL
+// → VLC kết nối tới localhost (không cần auth) → Proxy chuyển tiếp tới NAS với header chuẩn
+fun openExternalVideoPlayer(
+    context: android.content.Context,
+    url: String,
+    user: String,
+    pass: String,
+    onError: () -> Unit
+) {
+    try {
+        // 1. Khởi động proxy cục bộ trên localhost — VLC kết nối tới đây
+        val proxy = com.nas.naswebdav.LocalVideoProxy(user, pass)
+        val localUrl = proxy.start(url)
+
+        // 2. Mở Intent tới VLC/MX Player với URL localhost (không cần xác thực)
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(android.net.Uri.parse(localUrl), "video/*")
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        val chooser = android.content.Intent.createChooser(intent, "Chọn trình phát video (VLC, MX Player...)")
+        chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
+        onError()
+    }
+}
+
+// LỚP PHỤ TRỢ: Bộ nhớ Lịch sử Tìm Kiếm (TÍNH NĂNG 3.E)
+data class SearchHistory(val query: String, val timestamp: Long)
+
+class SearchHistoryManager(context: android.content.Context) {
+    private val prefs = context.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE)
+    private val maxHistorySize = 15
+    
+    fun saveQuery(query: String) {
+        if (query.isBlank()) return
+        val history = getHistory().filter { it.query != query }
+        val newHistory = (listOf(SearchHistory(query, System.currentTimeMillis())) + history).take(maxHistorySize)
+        val array = org.json.JSONArray()
+        newHistory.forEach { 
+            val obj = org.json.JSONObject()
+            obj.put("query", it.query)
+            obj.put("timestamp", it.timestamp)
+            array.put(obj)
+        }
+        prefs.edit().putString("history", array.toString()).apply()
+    }
+    
+    fun getHistory(): List<SearchHistory> {
+        val jsonStr = prefs.getString("history", "[]") ?: "[]"
+        return try {
+            val list = mutableListOf<SearchHistory>()
+            val array = org.json.JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(SearchHistory(obj.getString("query"), obj.getLong("timestamp")))
+            }
+            list
+        } catch(e: Exception) {
+            // BUG FIX P1#9: Log lỗi thay vì silent fail → mất data
+            android.util.Log.e("SearchHistory", "Không đọc được lịch sử tìm kiếm: ${e.message}")
+            emptyList()
+        }
+    }
+}

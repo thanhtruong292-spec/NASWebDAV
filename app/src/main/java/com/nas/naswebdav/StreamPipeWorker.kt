@@ -213,8 +213,8 @@ class StreamPipeWorker(
                                             .notify(NOTIFICATION_ID, notificationBuilder.build())
                                     } catch (_: SecurityException) {}
 
-                                    // Báo UI (non-suspend) → fire-and-forget
-                                    setProgressAsync(workDataOf(
+                                    // Báo UI
+                                    setProgressBlocking(workDataOf(
                                         "status" to "streaming",
                                         "progress" to percent,
                                         "bytesRead" to totalBytesRead,
@@ -319,4 +319,12 @@ class StreamPipeWorker(
         }
     }
 
+    // Helper: setProgress từ non-suspend context (writeTo) — bridge qua runBlocking
+    private fun setProgressBlocking(data: androidx.work.Data) {
+        try {
+            kotlinx.coroutines.runBlocking {
+                setProgress(data)
+            }
+        } catch (_: Exception) {}
+    }
 }

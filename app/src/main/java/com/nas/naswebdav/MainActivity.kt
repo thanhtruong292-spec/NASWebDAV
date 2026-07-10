@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 
+import coil.decode.VideoFrameDecoder
 import coil.annotation.ExperimentalCoilApi
 
 import androidx.navigation.compose.*
@@ -230,8 +231,69 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         handleIncomingIntent(intent)
 
-        // FIX M2: Coil ImageLoader được khởi tạo một lần duy nhất trong NasApplication.newImageLoader()
-        // — không cần override lại ở đây, tránh tạo 2 OkHttpClient pool lãng phí memory.
+        val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }
+
+        val customClient = NasApplication.instance.sharedHttpClient.newBuilder()
+
+            .dispatcher(dispatcher)
+
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+
+            .build()
+
+
+
+        val imageLoaderInstance = coil.ImageLoader.Builder(applicationContext)
+
+            .okHttpClient(customClient)
+
+            .memoryCache {
+
+            // FIX BUG #1: Cache cố định theo MB thay vì % — tránh OOM trên thiết bị yếu
+
+                val maxHeap = Runtime.getRuntime().maxMemory()
+
+                val heapMb = maxHeap / (1024L * 1024L)
+
+                val cacheMb = when {
+
+                    heapMb < 128L -> 50L
+
+                    heapMb > 512L -> 200L
+
+                    else -> (heapMb * 15 / 100)  // 15% nhưng trong bounds an toàn
+
+                }
+
+                coil.memory.MemoryCache.Builder(applicationContext)
+
+                    .maxSizeBytes((cacheMb * 1024 * 1024).toInt())
+
+                    .build()
+
+            }
+
+            .diskCache {
+
+                coil.disk.DiskCache.Builder()
+
+                    .directory(cacheDir.resolve("image_cache"))
+
+                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: Tăng lên 800MB (tối ưu cho thumbnail nhiều)
+
+                    .build()
+
+            }
+
+            .components { add(VideoFrameDecoder.Factory()) }
+
+            .build()
+
+        coil.Coil.setImageLoader(imageLoaderInstance)
+
+
 
         setContent {
 
@@ -314,7 +376,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         if (savedUrl.isBlank()) return
 
         viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
-        val repository = WebDavRepository(viewModel.webDavManager, NasApplication.instance.database)
 
         sharedUris.forEach { uri ->
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -336,7 +397,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     val destUrl = savedUrl.trimEnd('/') + "/$encodedName"
 
                     contentResolver.openInputStream(uri)?.use { inputStream ->
-                        val temp = java.io.File.createTempFile("share_", "_$fileName", cacheDir)
+                        val temp = java.io.File(cacheDir, fileName)
                         tempFile = temp
                         if (!temp.canonicalPath.startsWith(cacheDir.canonicalPath)) {
                             throw SecurityException("Invalid temp file name: $rawName")
@@ -344,10 +405,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         temp.outputStream().use { inputStream.copyTo(it) }
                         val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
                         viewModel.webDavManager.uploadFile(destUrl, temp, mimeType)
-                        runCatching { repository.removeCachedPath(destUrl) }
-                            .onFailure { android.util.Log.w("ShareUpload", "Cache clear failed for $destUrl", it) }
-                        runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(destUrl))) }
-                            .onFailure { android.util.Log.w("ShareUpload", "Folder refresh failed for $destUrl", it) }
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
@@ -625,8 +682,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        val auth = viewModel.webDavManager.currentAuthState()
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${auth.user}' đã chủ động đăng xuất.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -680,8 +736,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     viewModel.viewModelScope.launch {
 
-                        val auth = viewModel.webDavManager.currentAuthState()
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${auth.user}' đã chủ động đăng xuất.")
+                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -725,15 +780,13 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("video") {
 
-            val auth = viewModel.webDavManager.currentAuthState()
-
             com.nas.naswebdav.ui.screens.VideoPlayerScreen(
 
                 url = mediaUrl,
 
-                user = auth.user,
+                user = viewModel.webDavManager.currentUser,
 
-                pass = auth.pass,
+                pass = viewModel.webDavManager.currentPass,
 
                 viewModel = viewModel,
 
@@ -747,17 +800,15 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("image") {
 
-            val auth = viewModel.webDavManager.currentAuthState()
-
             com.nas.naswebdav.ui.screens.ImageViewerScreen(
 
                 initialUrl = mediaUrl,
 
                 viewModel = viewModel,
 
-                user = auth.user,
+                user = viewModel.webDavManager.currentUser,
 
-                pass = auth.pass,
+                pass = viewModel.webDavManager.currentPass,
 
                 onBack = { navController.popBackStack() }
 
@@ -977,3 +1028,6 @@ fun ScreenRecordFloatingOverlay() {
         }
     }
 }
+
+
+

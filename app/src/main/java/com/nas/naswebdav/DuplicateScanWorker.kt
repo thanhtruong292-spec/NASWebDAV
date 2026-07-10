@@ -76,16 +76,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         val pass = SecurePrefsHelper.getPass(applicationContext)
         if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
 
-        // WakeLock: ngăn CPU sleep khi màn hình tắt — quét lớn có thể mất 30-45 phút
-        val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-        val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:DupScanWakeLock")
-        wakeLock.acquire(45 * 60 * 1000L) // Tối đa 45 phút
-
         val webDavManager = WebDavManager
         webDavManager.connect(currentUrl, user, pass)
         setThumbnailActivity("sync", true)
         val db = NasApplication.instance.database
-        val repository = WebDavRepository(webDavManager, db)
 
         // KHỞI TẠO HỆ THỐNG THÔNG BÁO ĐỘNG (DYNAMIC NOTIFICATION)
         val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
@@ -121,8 +115,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     if (!isActive) break
                     if (now - item.lastModified > sevenDaysInMillis) {
                         webDavManager.deleteFile(item.path, item.isDirectory)
-                        runCatching { repository.removeCachedPath(item.path) }
-                        runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(item.path))) }
                     }
                 }
             } catch (e: Exception) { }
@@ -802,8 +794,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             uiUpdaterJob?.join()
             // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
             uiScope.cancel()
-            // Giải phóng WakeLock — luôn release dù thành công, thất bại hay bị cancel
-            if (wakeLock.isHeld) wakeLock.release()
         }
     }
 
@@ -871,33 +861,13 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
     // ta có thể gọi trực tiếp mà không cần runBlocking wrapper.
     // Tất cả callsite đều nằm trong withContext(IO) nên đã là suspend context.
     protected suspend fun loadWebDavManager(): WebDavManager? {
-        // getActiveBaseUrl() dò mạng (checkNasReachabilityQuickly) trong async/coroutineScope;
-        // nếu probe ném exception trong nền -> propagate ra -> trước đây làm worker FAILED câm
-        // (vì loadWebDavManager được gọi NGOÀI try của worker). Bọc lại + fallback URL đã lưu.
-        val url = try {
-            SmartNetworkManager.getActiveBaseUrl(applicationContext)
-                .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
-        } catch (e: Exception) {
-            SystemLogger.log("WARNING", "Worker", "Dò URL NAS lỗi (${e.message}); dùng URL đã lưu.")
-            SecurePrefsHelper.getUrl(applicationContext)
-        }
+        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (url.isEmpty() || user.isEmpty()) {
-            // Chẩn đoán: ghi rõ vì sao worker dừng (worker nền hay fail âm thầm ở đây).
-            SystemLogger.log("WARNING", "Worker", "Tác vụ nền dừng: thiếu cấu hình NAS (URL trống=${url.isEmpty()}, tài khoản trống=${user.isEmpty()}). Cần đăng nhập lại.")
-            return null
-        }
+        if (url.isEmpty() || user.isEmpty()) return null
         val manager = WebDavManager
-        try {
-            manager.connect(url, user, pass)
-        } catch (e: Exception) {
-            // connect() ném IllegalArgumentException nếu URL không phải LAN/Tailscale/HTTPS,
-            // hoặc lỗi phân giải host trong nền -> trước đây ném ra ngoài try của worker làm
-            // worker FAILED âm thầm (không log). Giờ bắt lại + ghi rõ lý do.
-            SystemLogger.log("WARNING", "Worker", "Tác vụ nền dừng: kết nối NAS lỗi — ${e.message} (URL: $url).")
-            return null
-        }
+        manager.connect(url, user, pass)
         return manager
     }
 
@@ -971,70 +941,31 @@ object UploadNotificationHelper {
 // ════════════════════════════════════════════════════════════════════════════
 
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
-    override suspend fun getForegroundInfo(): androidx.work.ForegroundInfo {
-        return makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")
-    }
-
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        suspend fun failAutoBackup(message: String): Result {
-            setProgress(workDataOf(
-                "fileName" to safeWorkerText(message, 180),
-                "sourcePath" to "",
-                "destPath" to "",
-                "progress" to 0f,
-                "processedCount" to 0,
-                "totalCount" to 0,
-                "elapsedTime" to 0L
-            ))
-            SystemLogger.log("ERROR", "AutoBackup", message)
-            return Result.failure(workDataOf("error" to message))
-        }
-
-        setProgress(workDataOf(
-            "fileName" to "Đang khởi động tác vụ đồng bộ...",
-            "sourcePath" to "Thiết bị máy trạm",
-            "destPath" to "",
-            "progress" to 0f,
-            "processedCount" to 0,
-            "totalCount" to 0,
-            "elapsedTime" to 0L
-        ))
         try { setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy...")) } catch (_: Exception) {}
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
-        // FIX: Bọc acquire() trong try-catch — Samsung Knox (Secure Folder, user 150xx)
-        // chặn WAKE_LOCK permission cho process con → ném SecurityException làm worker FAILED câm.
-        // Nếu không acquire được thì backup vẫn chạy, chỉ có thể bị interrupt khi màn hình tắt lâu.
-        val wakeLockAcquired = try {
-            wakeLock.acquire(60 * 60 * 1000L)
-            true
-        } catch (e: SecurityException) {
-            android.util.Log.w("AutoBackup", "Không lấy được WakeLock (Secure Folder?): ${e.message}")
-            false
-        }
+        // FIX #23: Giảm WakeLock từ 3 tiếng xuống 60 phút — backup tối đa 1 giờ là hợp lý
+        // Nếu upload bị trẾ (server không phản hồi), thiết bị ko bị hao pin đến 3 tiếng
+        wakeLock.acquire(60 * 60 * 1000L)
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
         val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
-        SystemLogger.log("INFO", "AutoBackup", "Tiến trình đồng bộ ảnh/video bắt đầu chạy nền.")
         val webDavManager = loadWebDavManager() ?: run {
-            // Chẩn đoán: vì sao không có tiến trình nào hiện — thường do chưa đăng nhập/URL trống.
-            val message = "Dừng sớm: không tải được cấu hình NAS (URL hoặc tài khoản trống) — không có gì để chạy."
             // FIX leak: tra wakelock truoc khi return som -> tranh giu pin 60' khi NAS offline.
-            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
-            return@withContext failAutoBackup(message)
+            if (wakeLock.isHeld) wakeLock.release()
+            return@withContext Result.failure()
         }
         if (runAttemptCount >= 3) {
-            val message = "Đã ghi nhận $runAttemptCount lần thực thi thất bại."
+            SystemLogger.log("ERROR", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
             // FIX leak: tra wakelock truoc khi return som khi het quota retry.
-            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
-            return@withContext failAutoBackup(message)
+            if (wakeLock.isHeld) wakeLock.release()
+            return@withContext Result.failure()
         }
         val db = NasApplication.instance.database
-        val repository = WebDavRepository(webDavManager, db)
-        val refreshTargets = linkedSetOf<String>()
         try {
             val backupFolderBase = if (baseUrl.endsWith("/")) "${baseUrl}AutoBackup/" else "$baseUrl/AutoBackup/"
             try { webDavManager.createFolder(backupFolderBase) } catch (_: Exception) {}
@@ -1068,15 +999,6 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE)
             
             var totalFilesToProcess = 0
-            setProgress(workDataOf(
-                "fileName" to "Đang quét thư viện ảnh/video...",
-                "sourcePath" to "MediaStore",
-                "destPath" to safeWorkerText(backupFolderBase, 220),
-                "progress" to 0f,
-                "processedCount" to 0,
-                "totalCount" to 0,
-                "elapsedTime" to 1L
-            ))
             for (mediaUri in urisToQuery) {
                 try {
                     applicationContext.contentResolver.query(mediaUri, projection, null, null, null)?.use { cursor ->
@@ -1084,16 +1006,6 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     }
                 } catch(e: Exception) {}
             }
-            if (totalFilesToProcess == 0) {
-                val message = "Không tìm thấy ảnh/video nào trong thiết bị (0) — kiểm tra quyền Ảnh hoặc app đang ở Secure Folder."
-                if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
-                return@withContext failAutoBackup(message)
-            }
-            SystemLogger.log(
-                "INFO",
-                "AutoBackup",
-                "Quét thấy $totalFilesToProcess ảnh/video trong thiết bị, bắt đầu đối chiếu & tải lên NAS."
-            )
             var processedFilesCount = 0
             val startTime = System.currentTimeMillis()
             
@@ -1123,18 +1035,6 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         val fileName = cursor.getString(nameIndex) ?: continue
                         val dataPath = cursor.getString(dataIndex) ?: continue
                         val id = cursor.getLong(idIndex)
-                        if (processedFilesCount == 1 || processedFilesCount % 50 == 0) {
-                            val now = System.currentTimeMillis()
-                            setProgressAsync(workDataOf(
-                                "fileName" to safeWorkerText("Đang đối chiếu: $fileName", 180),
-                                "sourcePath" to safeWorkerText(dataPath, 220),
-                                "destPath" to safeWorkerText(backupFolderBase, 220),
-                                "progress" to 0f,
-                                "processedCount" to processedFilesCount,
-                                "totalCount" to totalFilesToProcess,
-                                "elapsedTime" to (now - startTime).coerceAtLeast(1L)
-                            ))
-                        }
                         
                         // Loại bỏ tiền tố /storage/emulated/0/ để lấy đường dẫn tương đối đẹp nhất
                         val externalStorageRoot = android.os.Environment.getExternalStorageDirectory().absolutePath
@@ -1204,10 +1104,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
                                 webDavManager.uploadStreamWithProgress(targetFileNasPath, input, fileSize, mimeType) { bytesWritten, totalBytes ->
                                     val now = System.currentTimeMillis()
-                                    // Giảm throttle 500ms để tránh ghi SQLite của WorkManager quá tải
-                                    if (now - lastProgressTime > 500 || bytesWritten == totalBytes) {
-                                        // Tính tốc độ upload: bytes đã gửi / tổng thời gian từ đầu file (smooth, không giật)
-                                        val instantSpeedBps = (bytesWritten * 1000L) / (now - startTime).coerceAtLeast(1L)
+                                    // Giảm throttle từ 500ms xuống 200ms để % nhảy mượt hơn (5 FPS) thay vì giật cục
+                                    if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
                                         lastProgressTime = now
                                         val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
                                         setProgressAsync(workDataOf(
@@ -1217,32 +1115,26 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             "progress" to percent,
                                             "processedCount" to processedFilesCount,
                                             "totalCount" to totalFilesToProcess,
-                                            "elapsedTime" to (now - startTime),
-                                            "uploadSpeedBps" to instantSpeedBps,
-                                            "fileBytesWritten" to bytesWritten,
-                                            "fileBytesTotal" to totalBytes
+                                            "elapsedTime" to (now - startTime)
                                         ))
-                                        // Update Foreground Notification Progress với tốc độ MB/s
+                                        // Update Foreground Notification Progress
                                         try {
                                             val progressInt = (percent * 100).toInt()
-                                            val speedLabel = com.nas.naswebdav.utils.FormatUtils.formatBytes(instantSpeedBps)
                                             val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
                                                 .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                .setContentTitle("Đang sao lưu lên NAS: $progressInt% • $speedLabel/s")
+                                                .setContentTitle("Đang sao lưu lên NAS: $progressInt%")
                                                 .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
                                                 .setProgress(100, progressInt, false)
                                                 .setOnlyAlertOnce(true)
                                                 .setSilent(true)
                                                 .setOngoing(true)
-                                            // Sử dụng NotificationManager để cập nhật nhanh theo thời gian thực
+                                                
+                                            // Sử dụng NotificationManager thay vì setForegroundAsync để cập nhật nhanh theo thời gian thực (tránh delay của WorkManager)
                                             androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
                                         } catch (_: Exception) {}
                                     }
                                 }
                             }
-                            runCatching { repository.removeCachedPath(targetFileNasPath) }
-                            refreshTargets.add(normalizeWebDavFolderUrl(targetFolder))
-                            refreshTargets.add(webDavParentFolderUrl(targetFolder))
 
                             val uploadVerified = try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
@@ -1276,29 +1168,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.resultSkipped.value = skippedCount
             AutoBackupState.resultFailed.value = failedCount
             AutoBackupState.showResultDialog.value = true
-            runCatching { repository.refreshFolderCaches(refreshTargets) }
-                .onFailure {
-                    SystemLogger.log("WARNING", "AutoBackup", "Làm mới cache hậu backup lỗi: ${it.message}")
-                }
             
             return@withContext Result.success()
         } catch (e: Exception) {
-            val message = "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message ?: e.javaClass.simpleName}"
-            SystemLogger.log("ERROR", "AutoBackup", message)
-            setProgress(workDataOf(
-                "fileName" to safeWorkerText(message, 180),
-                "sourcePath" to "",
-                "destPath" to "",
-                "progress" to 0f,
-                "processedCount" to 0,
-                "totalCount" to 0,
-                "elapsedTime" to 0L
-            ))
+            SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
-            return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure(workDataOf("error" to message))
+            return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
             setThumbnailActivity("sync", false)
-            if (wakeLockAcquired && wakeLock.isHeld) wakeLock.release()
+            if (wakeLock.isHeld) wakeLock.release()
             try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
         }
     }
@@ -1449,7 +1327,6 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
             // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.
             db.withTransaction { db.fileDao().clearAllFiles() }
-            QueryCache.invalidate("duplicates")
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
@@ -1481,7 +1358,6 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     reader.endObject()
                 } else throw Exception("Không thể kết nối FastPath API")
             }
-            QueryCache.invalidate("duplicates")
             val duplicateSizes = db.fileDao().getDuplicateSizes()
             var movedCount = 0; var savedBytes = 0L; var totalDuplicatesFound = 0
             for (size in duplicateSizes) {
@@ -1524,10 +1400,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             val rootUrl = manager.currentBaseUrl.trimEnd('/')
             val authHeader = okhttp3.Credentials.basic(user, pass)
             val fileName = sourceUrl.substringAfterLast("/")
-            val trashFolderUrl = buildWebDavTrashParentUrl(rootUrl, sourceUrl)
+            val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
             val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
-            try { manager.ensureFolderHierarchy(trashFolderUrl) } catch (_: Exception) {}
-            val repository = WebDavRepository(manager, NasApplication.instance.database)
+            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
             val success = NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
             if (success) {
                 try {
@@ -1535,8 +1410,6 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
                     )
                 } catch (_: Exception) {}
-                runCatching { repository.removeCachedPath(sourceUrl) }
-                runCatching { repository.refreshFolderCaches(listOf(webDavParentFolderUrl(sourceUrl), webDavParentFolderUrl(destUrl))) }
             }
             success
         } catch (_: Exception) { false }
