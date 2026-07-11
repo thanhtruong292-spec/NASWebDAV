@@ -964,13 +964,13 @@ fun BrowserScreen(
                                         viewMode = opt.mode
                                         sortPrefs.edit().putString("view_mode", opt.mode.name).apply()
                                     },
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
                                     Icon(
                                         imageVector = opt.icon,
                                         contentDescription = opt.desc,
                                         tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                             }

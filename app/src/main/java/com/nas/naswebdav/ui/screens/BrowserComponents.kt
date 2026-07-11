@@ -317,8 +317,8 @@ fun FileItemGridCell(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (file.isDirectory) Modifier.height(64.dp) else Modifier.aspectRatio(1f))
-                .clip(RoundedCornerShape(12.dp))
+                .then(if (file.isDirectory) Modifier.height(56.dp) else Modifier.aspectRatio(1f))
+                .clip(RoundedCornerShape(10.dp))
                 .background(
                     when {
                         file.isDirectory -> Color.Transparent
@@ -346,7 +346,7 @@ fun FileItemGridCell(
                     imageVector = Icons.Default.Folder,
                     contentDescription = null,
                     tint = Color(0xFFFFC107),
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(36.dp)
                 )
             } else {
                 // FILE THƯỜNG: Icon cơ bản, canh giữa
@@ -354,7 +354,7 @@ fun FileItemGridCell(
                     imageVector = Icons.Default.InsertDriveFile,
                     contentDescription = null,
                     tint = Color(0xFF78909C),
-                    modifier = Modifier.size(40.dp).align(Alignment.Center)
+                    modifier = Modifier.size(36.dp).align(Alignment.Center)
                 )
             }
 
