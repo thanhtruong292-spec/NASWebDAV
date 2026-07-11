@@ -415,6 +415,11 @@ fun ImageViewerScreen(
                 currentPage = pagerState.currentPage,
                 user = user,
                 pass = pass,
+                onThumbClick = { idx ->
+                    coroutineScope.launch {
+                        pagerState.scrollToPage(idx)
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
@@ -520,7 +525,7 @@ private fun ZoomableImage(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ThumbnailStrip — danh sách thumbnail ngang, hiển thị vị trí hiện tại
+// ThumbnailStrip — danh sách thumbnail ngang: click → chuyển ảnh, auto-scroll khi swipe
 // ════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ThumbnailStrip(
@@ -528,19 +533,31 @@ private fun ThumbnailStrip(
     currentPage: Int,
     user: String,
     pass: String,
+    onThumbClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val auth = okhttp3.Credentials.basic(user, pass)
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
-    // Auto-scroll để thumbnail hiện tại luôn nằm trong khung nhìn
-    LaunchedEffect(currentPage) {
+    // Auto-scroll khi currentPage đổi (do swipe pager)
+    LaunchedEffect(currentPage, imageFiles.size) {
+        if (imageFiles.isEmpty()) return@LaunchedEffect
         try {
-            listState.animateScrollToItem(
-                index = currentPage,
-                scrollOffset = -40
-            )
+            // Đợi 1 frame để tránh race khi navigate ngay lúc mount
+            kotlinx.coroutines.delay(50)
+            val visible = listState.layoutInfo.visibleItemsInfo
+            val visibleAt = visible.firstOrNull()?.index ?: -1
+            val visibleEnd = visible.lastOrNull()?.index ?: -1
+            // Chỉ animateScrollToItem nếu thumbnail hiện tại đang ngoài tầm nhìn
+            if (currentPage !in visibleAt..visibleEnd) {
+                listState.animateScrollToItem(
+                    index = currentPage,
+                    scrollOffset = -40
+                )
+            } else {
+                listState.scrollToItem(currentPage, scrollOffset = -40)
+            }
         } catch (_: Exception) {}
     }
 
@@ -567,13 +584,14 @@ private fun ThumbnailStrip(
                 val isCurrent = idx == currentPage
                 Box(
                     Modifier
-                        .size(40.dp)
+                        .size(48.dp)
                         .clip(AppShapes.Badge)
                         .border(
                             width = if (isCurrent) 2.dp else 1.dp,
                             color = if (isCurrent) AccentCyan else TextSecondary.copy(alpha = 0.3f),
                             shape = AppShapes.Badge
                         )
+                        .clickable { onThumbClick(idx) }
                 ) {
                     AsyncImage(
                         model = ImageRequest.Builder(context)
