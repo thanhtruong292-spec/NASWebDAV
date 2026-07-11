@@ -3479,32 +3479,47 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 val parsedUrl = java.net.URL(url)
                 val nasHost = parsedUrl.host
                 val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
+
+                // --- Attempt 1: /api/thumb (NAS generates thumbnail) ---
                 val apiThumbUrl = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+                val result = executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)
+                if (result) return@withContext true
 
-                val apiRequest = okhttp3.Request.Builder()
-                    .url(apiThumbUrl)
-                    .header("Authorization", auth)
-                    .build()
-
-                NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
-                        val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
-
-                        if (apiResponse.isSuccessful && apiResponse.body != null) {
-                            // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
-                            if (!isVideo && contentLength in 1L..2000L) {
-                                return@withContext false
-                            }
-
-                            apiResponse.body?.byteStream()?.use { input ->
-                                java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
-                            } ?: return@withContext false
-                            return@withContext (thumbFile.length() > 0)
-                        } else {
-                            return@withContext false
-                        }
+                // --- Attempt 2 (video only): Append timestamp to force NAS cache regeneration ---
+                if (isVideo) {
+                    val forcedUrl = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}&_t=${System.currentTimeMillis()}"
+                    val retryResult = executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)
+                    if (retryResult) return@withContext true
                 }
+
+                return@withContext false
             } catch (e: Exception) {
                 return@withContext false
+            }
+        }
+    }
+
+    /** Helper: execute a single thumbnail download attempt and write to thumbFile. */
+    private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: java.io.File, isVideo: Boolean): Boolean {
+        val apiRequest = okhttp3.Request.Builder()
+            .url(apiThumbUrl)
+            .header("Authorization", auth)
+            .build()
+        NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
+            val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
+
+            if (apiResponse.isSuccessful && apiResponse.body != null) {
+                // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
+                if (!isVideo && contentLength in 1L..2000L) {
+                    return false
+                }
+
+                apiResponse.body?.byteStream()?.use { input ->
+                    java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
+                } ?: return false
+                return thumbFile.length() > 0
+            } else {
+                return false
             }
         }
     }

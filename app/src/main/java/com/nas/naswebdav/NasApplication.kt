@@ -104,6 +104,9 @@ class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_11_12,
                 MIGRATION_12_13
             )
+            // v14 bump trong session này: dùng destructive cho bản debug để tránh crash
+            // khi DB schema trên máy cũ hơn code mới (không có MIGRATION_13_14 thật).
+            .fallbackToDestructiveMigration()
             // Đã gỡ bỏ enableMultiInstanceInvalidation() vì nó có nguy cơ gây deadlock Binder IPC 
             // khiến các tác vụ database.withTransaction() bị treo vĩnh viễn (quay vòng vòng trên UI).
             .build()

@@ -45,8 +45,8 @@ android {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 342
+        versionName = "1.0.342"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {

@@ -125,6 +125,13 @@ internal fun markBrowserFilesViewed(
     }
 }
 
+// --- VIEW MODE ENUM ---
+// TÍNH NĂNG MỚI: Chế độ hiển thị file (giống Windows Explorer)
+// ICON: Lưới icon lớn (mặc định cũ)
+// LIST: Danh sách compact 48dp
+// DETAIL: Danh sách có cột (icon, tên, dung lượng, ngày sửa)
+private enum class BrowserViewMode { ICON, LIST, DETAIL }
+
 // --- BROWSER SCREEN ---
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -160,6 +167,14 @@ fun BrowserScreen(
     val sortPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
     var sortMode by remember { mutableStateOf(sortPrefs.getString("file_sort", "name_asc") ?: "name_asc") }
     var showSortMenu by remember { mutableStateOf(false) }
+
+    // View mode (ICON / LIST / DETAIL) — persisted across app launches
+    var viewMode by remember {
+        mutableStateOf(
+            runCatching { BrowserViewMode.valueOf(sortPrefs.getString("view_mode", "ICON") ?: "ICON") }
+                .getOrDefault(BrowserViewMode.ICON)
+        )
+    }
 
     // TÍNH NĂNG 7.M: Trạng thái Text Preview
     var showTextPreviewDialog by remember { mutableStateOf(false) }
@@ -926,6 +941,42 @@ fun BrowserScreen(
                         modifier = Modifier.padding(start = 8.dp)
                     )
 
+                    // Nút Chuyển đổi chế độ hiển thị file (ICON / LIST / DETAIL)
+                    if (!selectionMode && viewModel.fileList.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.padding(start = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(0.dp)
+                        ) {
+                            data class ViewModeOpt(
+                                val mode: BrowserViewMode,
+                                val icon: androidx.compose.ui.graphics.vector.ImageVector,
+                                val desc: String
+                            )
+                            val viewOpts = listOf(
+                                ViewModeOpt(BrowserViewMode.ICON, Icons.Default.GridView, "Chế độ icon"),
+                                ViewModeOpt(BrowserViewMode.LIST, Icons.Default.ViewList, "Chế độ danh sách"),
+                                ViewModeOpt(BrowserViewMode.DETAIL, Icons.Default.TableRows, "Chế độ chi tiết")
+                            )
+                            viewOpts.forEach { opt ->
+                                val isActive = viewMode == opt.mode
+                                IconButton(
+                                    onClick = {
+                                        viewMode = opt.mode
+                                        sortPrefs.edit().putString("view_mode", opt.mode.name).apply()
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = opt.icon,
+                                        contentDescription = opt.desc,
+                                        tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     // Nút Sắp xếp file — hiện bên cạnh nút "Chọn file" để user dễ tìm
                     if (!selectionMode && viewModel.fileList.isNotEmpty()) {
                         Box {
@@ -1073,73 +1124,368 @@ fun BrowserScreen(
                     }
                 }
 
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    groupedFiles.forEach { (header, filesInGroup) ->
-                        if (header.isNotEmpty()) {
-                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                                Text(
-                                    text = header,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
-                                )
+                // Shared file click handler for all view modes
+                val onFileClick: (NasFile) -> Unit = { file ->
+                    if (selectionMode) {
+                        if (selectedFiles.contains(file)) {
+                            selectedFiles.remove(file)
+                            if (selectedFiles.isEmpty()) selectionMode = false
+                        } else {
+                            selectedFiles.add(file)
+                        }
+                    } else {
+                        if (file.isDirectory) viewModel.openFolder(file)
+                        else if (com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)) onVideo(file.path)
+                        else if (file.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }) onImage(file.path)
+                        else if (file.name.lowercase().run { endsWith(".txt") || endsWith(".md") || endsWith(".py") || endsWith(".log") || endsWith(".json") || endsWith(".xml") || endsWith(".kt") || endsWith(".java") }) {
+                            viewModel.fetchTextPreview(file.path)
+                            textPreviewName = file.name
+                            showTextPreviewDialog = true
+                        }
+                    }
+                }
+                val onFileLongClick: (NasFile) -> Unit = { file ->
+                    if (!selectionMode) {
+                        selectionMode = true
+                        selectedFiles.add(file)
+                    } else {
+                        if (selectedFiles.contains(file)) {
+                            selectedFiles.remove(file)
+                            if (selectedFiles.isEmpty()) selectionMode = false
+                        } else {
+                            selectedFiles.add(file)
+                        }
+                    }
+                }
+
+                // TÍNH NĂNG MỚI: Chuyển đổi layout theo chế độ hiển thị
+                when (viewMode) {
+                    BrowserViewMode.ICON -> {
+                        // ICON MODE: Lưới icon lớn, 4 cột (giảm từ 5 để icon to hơn)
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(4),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            groupedFiles.forEach { (header, filesInGroup) ->
+                                if (header.isNotEmpty()) {
+                                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                        Text(
+                                            text = header,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
+                                        )
+                                    }
+                                }
+                                items(
+                                    items = filesInGroup,
+                                    key = { it.path },
+                                    contentType = { if (it.isDirectory) "folder" else "file" }
+                                ) { file ->
+                                    BrowserScreenFileItemGridCell(
+                                        file = file,
+                                        viewModel = viewModel,
+                                        selectionMode = selectionMode,
+                                        viewedRefreshTick = viewedRefreshTick,
+                                        isSelected = selectedFiles.contains(file),
+                                        onLongClick = { onFileLongClick(file) },
+                                        onClick = { onFileClick(file) },
+                                        onVideo = onVideo
+                                    )
+                                }
                             }
                         }
-                        
-                        items(
-                            items = filesInGroup, 
-                            key = { it.path },
-                            contentType = { if (it.isDirectory) "folder" else "file" }
-                        ) { file ->
-                            BrowserScreenFileItemGridCell(
-                                file = file,
-                                viewModel = viewModel,
-                                selectionMode = selectionMode,
-                                viewedRefreshTick = viewedRefreshTick,
-                                isSelected = selectedFiles.contains(file),
-                                onLongClick = {
-                                    if (!selectionMode) {
-                                        // Nhấn giữ lần đầu → kích hoạt chế độ chọn và chọn file này
-                                        selectionMode = true
-                                        selectedFiles.add(file)
-                                    } else {
-                                        // Đang trong chế độ chọn → toggle file này
-                                        if (selectedFiles.contains(file)) {
-                                            selectedFiles.remove(file)
-                                            if (selectedFiles.isEmpty()) selectionMode = false
+                    }
+
+                    BrowserViewMode.LIST -> {
+                        // LIST MODE: Danh sách compact — thumbnail 32x32, tên + dung lượng
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            groupedFiles.forEach { (header, filesInGroup) ->
+                                if (header.isNotEmpty()) {
+                                    item(key = "header_$header") {
+                                        Text(
+                                            text = header,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)
+                                        )
+                                    }
+                                }
+                                items(
+                                    items = filesInGroup,
+                                    key = { it.path }
+                                ) { file ->
+                                    val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+                                    val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
+                                    val isMedia = isVideo || isImageFile
+                                    val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
+                                    val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .combinedClickable(
+                                                onClick = { onFileClick(file) },
+                                                onLongClick = { onFileLongClick(file) }
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Selection checkbox
+                                        if (selectionMode) {
+                                            Icon(
+                                                imageVector = if (selectedFiles.contains(file)) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                contentDescription = null,
+                                                tint = if (selectedFiles.contains(file)) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                        }
+
+                                        // Small thumbnail / folder icon
+                                        if (isMedia) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF212121)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                WebDavCachedThumbnail(
+                                                    url = file.path,
+                                                    auth = auth,
+                                                    isVideo = isVideo,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    viewModel = viewModel
+                                                )
+                                                if (isVideo) {
+                                                    Icon(
+                                                        Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = Color.White.copy(alpha = 0.8f),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else if (file.isDirectory) {
+                                            Icon(
+                                                imageVector = Icons.Default.Folder,
+                                                contentDescription = null,
+                                                tint = Color(0xFFFFC107),
+                                                modifier = Modifier.size(32.dp)
+                                            )
                                         } else {
-                                            selectedFiles.add(file)
+                                            val ext = file.name.substringAfterLast('.', "").uppercase()
+                                            val extColor = when {
+                                                isImageFile -> Color(0xFF1E88E5)
+                                                isVideo -> Color(0xFFFF8F00)
+                                                ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> Color(0xFFE53935)
+                                                ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> Color(0xFF43A047)
+                                                ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> Color(0xFF8E24AA)
+                                                ext in listOf("MP3", "WAV", "FLAC", "M4A") -> Color(0xFF00ACC1)
+                                                else -> Color(0xFF757575)
+                                            }
+                                            Icon(
+                                                imageVector = Icons.Default.InsertDriveFile,
+                                                contentDescription = null,
+                                                tint = extColor,
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                        }
+
+                                        Spacer(Modifier.width(10.dp))
+
+                                        // File name
+                                        Text(
+                                            text = file.name,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        // Size
+                                        Text(
+                                            text = displaySize,
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                            color = Color.Gray,
+                                            modifier = Modifier.padding(start = 8.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    BrowserViewMode.DETAIL -> {
+                        // DETAIL MODE: Danh sách có cột — icon, tên (trọng số), dung lượng, ngày sửa
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // Column headers
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Spacer(Modifier.width(32.dp + 10.dp)) // Icon column
+                                Text(
+                                    "Tên",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    "Dung lượng",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    modifier = Modifier.width(72.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "Sửa đổi",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    modifier = Modifier.width(90.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                groupedFiles.forEach { (header, filesInGroup) ->
+                                    if (header.isNotEmpty()) {
+                                        item(key = "header_$header") {
+                                            Text(
+                                                text = header,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)
+                                            )
                                         }
                                     }
-                                },
-                                onClick = {
-                                    if (selectionMode) {
-                                        if (selectedFiles.contains(file)) {
-                                            selectedFiles.remove(file)
-                                            if (selectedFiles.isEmpty()) selectionMode = false
-                                        } else {
-                                            selectedFiles.add(file)
-                                        }
-                                    } else {
-                                        if (file.isDirectory) viewModel.openFolder(file)
-                                        else if (com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)) onVideo(file.path)
-                                        else if (file.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }) onImage(file.path)
-                                        // TÍNH NĂNG 7.M: Ném file Text lên màn hình nổi
-                                        else if (file.name.lowercase().run { endsWith(".txt") || endsWith(".md") || endsWith(".py") || endsWith(".log") || endsWith(".json") || endsWith(".xml") || endsWith(".kt") || endsWith(".java") }) {
-                                            viewModel.fetchTextPreview(file.path)
-                                            textPreviewName = file.name
-                                            showTextPreviewDialog = true
+                                    items(
+                                        items = filesInGroup,
+                                        key = { it.path }
+                                    ) { file ->
+                                        val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+                                        val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
+                                        val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
+                                        val displayDate = if (file.lastModified > 0L) {
+                                            val fmt = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
+                                            fmt.format(java.util.Date(file.lastModified))
+                                        } else ""
+                                        val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(40.dp)
+                                                .combinedClickable(
+                                                    onClick = { onFileClick(file) },
+                                                    onLongClick = { onFileLongClick(file) }
+                                                )
+                                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            // Selection checkbox
+                                            if (selectionMode) {
+                                                Icon(
+                                                    imageVector = if (selectedFiles.contains(file)) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                                                    contentDescription = null,
+                                                    tint = if (selectedFiles.contains(file)) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                            }
+
+                                            // Small icon
+                                            if (file.isDirectory) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Folder,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFFC107),
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            } else if (isVideo || isImageFile) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(24.dp)
+                                                        .clip(RoundedCornerShape(3.dp))
+                                                        .background(Color(0xFF212121)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    WebDavCachedThumbnail(
+                                                        url = file.path,
+                                                        auth = auth,
+                                                        isVideo = isVideo,
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        viewModel = viewModel
+                                                    )
+                                                    if (isVideo) {
+                                                        Icon(
+                                                            Icons.Default.PlayArrow,
+                                                            contentDescription = null,
+                                                            tint = Color.White.copy(alpha = 0.8f),
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                    }
+                                                }
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.InsertDriveFile,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF78909C),
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+
+                                            Spacer(Modifier.width(10.dp))
+
+                                            // File name
+                                            Text(
+                                                text = file.name,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+
+                                            // Size
+                                            Text(
+                                                text = displaySize,
+                                                maxLines = 1,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                                color = Color.Gray,
+                                                modifier = Modifier.width(72.dp),
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.End
+                                            )
+
+                                            Spacer(Modifier.width(8.dp))
+
+                                            // Date modified
+                                            Text(
+                                                text = displayDate,
+                                                maxLines = 1,
+                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                                color = Color.Gray,
+                                                modifier = Modifier.width(90.dp),
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.End
+                                            )
                                         }
                                     }
-                                }, 
-                                onVideo = onVideo
-                            )
+                                }
+                            }
                         }
                     }
                 }

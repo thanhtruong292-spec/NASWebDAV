@@ -2,8 +2,9 @@
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
 
-    <!-- LAN-only exception for the current NAS deployment. Prefer HTTPS for any public host. -->
+    <!-- LAN + Tailscale exceptions for the current NAS deployment. -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">192.168.100.254</domain>
+        <domain includeSubdomains="false">100.90.135.102</domain>
     </domain-config>
 </network-security-config>

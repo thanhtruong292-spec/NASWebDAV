@@ -433,7 +433,7 @@ val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
 
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 13,
+    version = 15,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
