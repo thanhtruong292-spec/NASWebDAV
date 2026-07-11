@@ -2954,69 +2954,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // Các hàm lắng nghe System Monitor đã được chuyển ra SystemMonitorHelper.kt
 
-    // ============ AI SMART PHOTOS ============
-    var aiCategories by mutableStateOf<Map<String, List<String>>>(emptyMap())
-    var aiTotal by mutableStateOf(0)
-    var aiLastScan by mutableStateOf("")
-    var aiRunning by mutableStateOf(false)
-    var aiStatus by mutableStateOf("Chưa có dữ liệu")
-    var isLoadingAiTags by mutableStateOf(false)
-
-    fun fetchAiTags() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { isLoadingAiTags = true }
-                val request = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ai/tags")
-                    .build()
-                localApiClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val json = org.json.JSONObject(resp.body?.string() ?: "{}")
-                        val cats = json.optJSONObject("categories")
-                        val result = mutableMapOf<String, List<String>>()
-                        cats?.keys()?.forEach { key ->
-                            val arr = cats.optJSONArray(key)
-                            val urls = (0 until (arr?.length() ?: 0)).mapNotNull { arr?.optString(it) }
-                            if (urls.isNotEmpty()) result[key] = urls
-                        }
-                        withContext(Dispatchers.Main) {
-                            aiCategories = result
-                            aiTotal = json.optInt("total", 0)
-                            aiLastScan = json.optString("last_scan", "")
-                            aiRunning = json.optBoolean("ai_running", false)
-                            aiStatus = json.optString("status", "ok")
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { aiStatus = "Lỗi kết nối: ${e.message?.take(60)}" }
-            } finally {
-                withContext(Dispatchers.Main) { isLoadingAiTags = false }
-            }
-        }
-    }
-
-    fun triggerAiScan(context: Context) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val host = safeUrlHost(webDavManager.currentBaseUrl)
-                val request = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ai/trigger")
-                    .post(ByteArray(0).toRequestBody(null, 0, 0))
-                    .build()
-                localApiClient.newCall(request).execute().use { resp ->
-                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
-                    val msg = json.optString("message", "Đang quét phân loại ảnh...")
-                    withContext(Dispatchers.Main) {
-                        commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                        commonDialogMessage = msg
-                        showCommonDialog = true
-                    }
-                }
-            } catch (e: Exception) {}
-        }
-    }
-
     // ============ CRON / AUTOMATION ============
     fun cleanTrashOnDemand(context: Context, maxAgeDays: Int = 30) {
         viewModelScope.launch(Dispatchers.IO) {
