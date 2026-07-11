@@ -5060,42 +5060,49 @@ fun WebDavViewModel.listenToLocalNasApi(forceRestart: Boolean = false) {
 
                 val tickNow = System.currentTimeMillis()
                 val foreground = AppConfig.IS_APP_FOREGROUND
-                val realtimeInterval = if (foreground) 5_000L else 20_000L
+                // Realtime metrics (CPU/RAM/network) — lightweight: 15s fg / 60s bg
+                val realtimeInterval = if (foreground) 15_000L else 60_000L
                 if (lastRealtimeMetricAt == 0L || tickNow - lastRealtimeMetricAt >= realtimeInterval) {
                     fetchRealtimeMetricPoint()
                     lastRealtimeMetricAt = tickNow
                 }
 
+                // Metrics history (graph data) — 10min fg / 30min bg
                 val metricsHistoryInterval = if (foreground) 600_000L else 1_800_000L
                 if (lastMetricsHistoryAt == 0L || tickNow - lastMetricsHistoryAt >= metricsHistoryInterval) {
                     fetchMetricsHistory(metricsHours)
                     lastMetricsHistoryAt = tickNow
                 }
 
-                if (lastHeavyRefreshAt == 0L || tickNow - lastHeavyRefreshAt >= 300_000L) {
+                // Heavy: OMV overview + daily report — 10min fg / 30min bg (was 5min)
+                if (lastHeavyRefreshAt == 0L || tickNow - lastHeavyRefreshAt >= 600_000L) {
                     fetchOmvOverview()
                     fetchDailyReport()
                     lastHeavyRefreshAt = tickNow
                 }
 
-                val logInterval = if (foreground) 15_000L else 60_000L
+                // System logs — 5min fg / 15min bg (was 15s fg, way too aggressive)
+                val logInterval = if (foreground) 300_000L else 900_000L
                 if (lastLogsRefreshAt == 0L || tickNow - lastLogsRefreshAt >= logInterval) {
                     loadSystemLogs()
                     lastLogsRefreshAt = tickNow
                 }
 
-                val storageInterval = if (foreground) 60_000L else 180_000L
+                // Storage usage (du-style) — 5min fg / 15min bg (was 60s, expensive)
+                val storageInterval = if (foreground) 300_000L else 900_000L
                 if (lastStorageRefreshAt == 0L || tickNow - lastStorageRefreshAt >= storageInterval) {
                     fetchStorageUsage()
                     lastStorageRefreshAt = tickNow
                 }
 
+                // SMART data — 5min fg / 15min bg (was 5min fixed)
                 if (lastSmartRefreshAt == 0L || tickNow - lastSmartRefreshAt >= 300_000L) {
                     fetchSmartData()
                     lastSmartRefreshAt = tickNow
                 }
 
-                val insightsInterval = if (foreground) 15_000L else 60_000L
+                // System insights — 5min fg / 15min bg (was 15s fg, extremely aggressive)
+                val insightsInterval = if (foreground) 300_000L else 900_000L
                 if (lastInsightsRefreshAt == 0L || tickNow - lastInsightsRefreshAt >= insightsInterval) {
                     fetchNasInsights()
                     lastInsightsRefreshAt = tickNow
