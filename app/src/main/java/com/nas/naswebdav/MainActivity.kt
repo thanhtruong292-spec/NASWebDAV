@@ -24,6 +24,10 @@ import com.nas.naswebdav.ui.screens.SocialExtractorScreen
 
 import com.nas.naswebdav.ui.screens.SmartOrganizerScreen
 
+import com.nas.naswebdav.ui.screens.NasTheme
+
+import com.nas.naswebdav.ui.screens.DarkSurface
+
 
 
 import android.os.Bundle
@@ -296,28 +300,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 
         setContent {
+            com.nas.naswebdav.ui.screens.NasTheme {
+                Surface(color = DarkSurface) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
 
-            val colorScheme = if (androidx.compose.foundation.isSystemInDarkTheme()) {
-                androidx.compose.material3.darkColorScheme()
-            } else {
-                androidx.compose.material3.lightColorScheme()
-            }
-
-            MaterialTheme(colorScheme = colorScheme, typography = com.nas.naswebdav.ui.theme.AppTypography) {
-                CompositionLocalProvider(
-                    androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
-                ) {
-                    Surface(color = MaterialTheme.colorScheme.background) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
-
-                            // Floating Screen Recording overlay (global)
-                            ScreenRecordFloatingOverlay()
-                        }
+                        // Floating Screen Recording overlay (global)
+                        ScreenRecordFloatingOverlay()
                     }
                 }
             }
-
         }
 
     }

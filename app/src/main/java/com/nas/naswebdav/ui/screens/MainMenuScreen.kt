@@ -877,43 +877,51 @@ private fun MainMenuDashboardHeader(
                 else -> AccentRed
             }
             Column {
-                Text("NAS Dashboard", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text(
+                    "NAS Dashboard",
+                    style = AppTypography.HeadlineLarge.copy(color = TextPrimary)
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Chainedbox L1 Pro", fontSize = 12.sp, color = TextSecondary)
-                    Text("  \u2022  ", fontSize = 12.sp, color = TextSecondary)
+                    Text(
+                        "Chainedbox L1 Pro",
+                        style = AppTypography.BodyMedium.copy(color = TextSecondary)
+                    )
+                    Text("  \u2022  ", style = AppTypography.BodyMedium.copy(color = TextSecondary))
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(AppShapes.Badge)
                             .background(if (isOnlineStatus) AccentGreen else AccentRed)
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)
                     ) {
                         Text(
                             if (isOnlineStatus) "Online" else "Offline",
-                            fontSize = 11.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
+                            style = AppTypography.LabelMedium.copy(
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(AppSpacing.SM))
                     val isRealtimeStale = viewModel.lastStatusRefreshAt <= 0L || realtimeNow - viewModel.lastStatusRefreshAt > 10_000L
                     val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
                     Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
-                    Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.width(AppSpacing.XS))
                     Text(
                         realtimeFreshnessLabel(viewModel.lastStatusRefreshAt, realtimeNow),
-                        fontSize = 10.sp,
-                        color = realtimeColor,
-                        fontWeight = FontWeight.SemiBold
+                        style = AppTypography.LabelMedium.copy(
+                            color = realtimeColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     )
                     viewModel.apiLatencyMs?.let { latency ->
-                        Spacer(Modifier.width(8.dp))
-                        Text("API ${latency}ms", fontSize = 10.sp, color = TextSecondary)
+                        Spacer(Modifier.width(AppSpacing.SM))
+                        Text("API ${latency}ms", style = AppTypography.LabelMedium.copy(color = TextSecondary))
                     }
                     if (viewModel.apiFailureCount > 0) {
-                        Spacer(Modifier.width(8.dp))
-                        Text("${viewModel.apiFailureCount} lỗi", fontSize = 10.sp, color = AccentRed, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(AppSpacing.SM))
+                        Text("${viewModel.apiFailureCount} lỗi", style = AppTypography.LabelMedium.copy(color = AccentRed, fontWeight = FontWeight.Bold))
                     }
                 }
                 

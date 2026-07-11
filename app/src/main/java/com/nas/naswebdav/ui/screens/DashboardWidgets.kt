@@ -50,11 +50,11 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 @Composable
 fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(emoji, fontSize = 13.sp)
-        Spacer(Modifier.width(5.dp))
+        Text(emoji, style = AppTypography.BodyLarge)
+        Spacer(Modifier.width(AppSpacing.SM))
         Column {
-            Text(label, fontSize = 8.sp, color = TextSecondary, letterSpacing = 0.8.sp)
-            Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = valueColor, maxLines = 1)
+            Text(label, style = AppTypography.LabelSmall.copy(color = TextSecondary, letterSpacing = 0.8.sp))
+            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = valueColor), maxLines = 1)
         }
     }
 }
@@ -86,38 +86,38 @@ fun NasInsightsSummaryCard(
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onOpen() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(10.dp)
+        shape = AppShapes.Card
     ) {
-        Column(Modifier.padding(10.dp)) {
+        Column(Modifier.padding(AppSpacing.SM)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(AppSpacing.SM))
                 Text("PHÂN TÍCH HỆ THỐNG", color = PanelTitleCyan, fontSize = PanelTitleSize, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.weight(1f))
-                Box(Modifier.clip(RoundedCornerShape(6.dp)).background(modeColor.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                Box(Modifier.clip(AppShapes.Badge).background(modeColor.copy(alpha = 0.18f)).padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)) {
                     val displayMode = when(insight.workloadMode.lowercase()) {
                         "normal" -> "BÌNH THƯỜNG"
                         "balanced" -> "CÂN BẰNG TẢI"
                         "protect" -> "BẢO VỆ HỆ THỐNG"
                         else -> insight.workloadMode.uppercase()
                     }
-                    Text(displayMode, color = modeColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(displayMode, style = AppTypography.LabelLarge.copy(color = modeColor))
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.height(AppSpacing.SM))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
                 InsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
                 InsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
                 InsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(AppSpacing.SM))
             val summary = insight.maintenanceActions.firstOrNull()?.detail
                 ?: insight.workloadRecommendation.ifBlank { "Đang chờ dữ liệu phân tích NAS." }
-            Text(summary, color = TextSecondary, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(summary, style = AppTypography.BodyLarge.copy(color = TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (insight.flowTasks.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(AppSpacing.XS))
                 val task = insight.flowTasks.first()
-                Text("${task.label}: ${task.file.ifBlank { "đang thực thi" }}", color = AccentCyan, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${task.label}: ${task.file.ifBlank { "đang thực thi" }}", style = AppTypography.BodyMedium.copy(color = AccentCyan), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -125,10 +125,10 @@ fun NasInsightsSummaryCard(
 
 @Composable
 private fun InsightMiniStat(title: String, value: String, sub: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.background(Color(0xFF171922), RoundedCornerShape(8.dp)).padding(8.dp)) {
-        Text(title, color = TextSecondary, fontSize = 10.sp)
-        Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(sub, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Column(modifier.background(DarkElevated, AppShapes.Input).padding(AppSpacing.SM)) {
+        Text(title, style = AppTypography.BodySmall.copy(color = TextSecondary))
+        Text(value, style = AppTypography.TitleMedium.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = color), maxLines = 1)
+        Text(sub, style = AppTypography.LabelMedium.copy(color = TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -171,9 +171,9 @@ fun GaugeCard(
     } else {
         // Lay trang thai NANG HON giua phan tram va nhiet do de vong tron dong bo voi line chart.
         when (maxOf(pctRank, tempRank)) {
-            2 -> Color(0xFFEF5350) // Đỏ
-            1 -> Color(0xFFFFA726) // Vàng
-            else -> Color(0xFF66BB6A) // Xanh
+            2 -> AccentRed // Đỏ
+            1 -> AccentOrange // Vàng
+            else -> AccentGreen // Xanh
         }
     }
 
@@ -184,10 +184,10 @@ fun GaugeCard(
             onClick = onClick
         ) else modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(12.dp)
+        shape = AppShapes.Card
     ) {
         Box(
-            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = AppSpacing.XS, vertical = AppSpacing.SM),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -207,38 +207,33 @@ fun GaugeCard(
                         Icon(icon, null, tint = accentColor, modifier = Modifier.size(16.dp).offset(y = 2.dp))
                         Text(
                             text = title,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor.copy(alpha = 0.85f),
-                            letterSpacing = 0.5.sp,
+                            style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold, color = accentColor.copy(alpha = 0.85f), letterSpacing = 0.5.sp),
                             modifier = Modifier.offset(y = 1.dp)
                         )
                         if (!subValue.isNullOrBlank() && subValue != "--\u00b0C" && subValue != "--°C") {
                             Text(
                                 text = subValue,
-                                fontSize = 8.sp,
-                                color = if (subValue.contains("°C") || subValue.contains("\u00b0C") || subValue.contains("°")) {
+                                style = AppTypography.LabelSmall.copy(fontWeight = FontWeight.Bold, color = if (subValue.contains("°C") || subValue.contains("\u00b0C") || subValue.contains("°")) {
                                     val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
                                     val isDisk = title == "S.M.A.R.T" || title == "HDD"
                                     when {
-                                        isDisk && tempVal >= 55f -> Color(0xFFEF5350)
-                                        isDisk && tempVal >= 45f -> Color(0xFFFFA726)
-                                        !isDisk && tempVal >= 80f -> Color(0xFFEF5350)
-                                        !isDisk && tempVal >= 60f -> Color(0xFFFFA726) // CPU 60+ is Yellow
-                                        else -> Color(0xFF66BB6A)
+                                        isDisk && tempVal >= 55f -> AccentRed
+                                        isDisk && tempVal >= 45f -> AccentOrange
+                                        !isDisk && tempVal >= 80f -> AccentRed
+                                        !isDisk && tempVal >= 60f -> AccentOrange // CPU 60+ is Yellow
+                                        else -> AccentGreen
                                     }
-                                } else accentColor.copy(alpha = 0.9f),
-                                fontWeight = FontWeight.Bold,
+                                } else accentColor.copy(alpha = 0.9f)),
                                 maxLines = 1,
                                 modifier = Modifier.offset(y = (-1).dp)
                             )
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(AppSpacing.XS))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    val textSize = if (value.length > 7) 8.5.sp else 11.sp
-                    Text(value, fontSize = textSize, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val textStyle = if (value.length > 7) AppTypography.LabelSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary) else AppTypography.BodyMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
+                    Text(value, style = textStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -251,19 +246,19 @@ fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, 
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(10.dp)
+        shape = AppShapes.Card
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 8.dp),
+                .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.SM),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.height(4.dp))
-            Text(value, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(title, fontSize = 9.sp, color = TextSecondary, maxLines = 1)
+            Spacer(Modifier.height(AppSpacing.XS))
+            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = AppTypography.LabelMedium.copy(color = TextSecondary), maxLines = 1)
         }
     }
 }
@@ -278,16 +273,16 @@ fun DiskPartitionBar(mount: String, percent: Float, total: String, used: String)
     }
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(mount, fontSize = 12.sp, color = TextPrimary)
-            Text("$used / $total", fontSize = 11.sp, color = TextSecondary)
+            Text(mount, style = AppTypography.BodyLarge.copy(color = TextPrimary))
+            Text("$used / $total", style = AppTypography.BodyMedium.copy(color = TextSecondary))
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(AppSpacing.XS))
         LinearProgressIndicator(
             progress = { (percent / 100f).coerceIn(0f, 1f) },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(6.dp)
-                .clip(RoundedCornerShape(3.dp)),
+                .clip(AppShapes.Badge),
             color = barColor,
             trackColor = TextSecondary.copy(alpha = 0.15f)
         )
@@ -301,17 +296,17 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
         modifier = modifier
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
-        shape = RoundedCornerShape(10.dp),
+        shape = AppShapes.Card,
         border = BorderStroke(1.dp, color.copy(alpha = 0.3f))
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(vertical = AppSpacing.SM),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.height(2.dp))
-            Text(label, fontSize = 10.sp, color = color, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.height(AppSpacing.XXS))
+            Text(label, style = AppTypography.BodySmall.copy(color = color, fontWeight = FontWeight.SemiBold), maxLines = 1)
         }
     }
 }
@@ -328,21 +323,21 @@ fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColo
                     onLongPress = { if (onLongClick != null) onLongClick() else onClick() }
                 )
             },
-        shape = RoundedCornerShape(12.dp),
+        shape = AppShapes.Card,
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .background(Brush.linearGradient(gradientColors))
-                .padding(horizontal = 8.dp, vertical = 8.dp)
+                .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.SM)
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(AppSpacing.XS))
                 Column {
-                    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(subtitle, fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
+                    Text(title, style = AppTypography.TitleMedium.copy(fontWeight = FontWeight.Bold, color = Color.White))
+                    Text(subtitle, style = AppTypography.BodySmall.copy(color = Color.White.copy(alpha = 0.7f)))
                 }
             }
         }
@@ -369,13 +364,13 @@ fun SettingsMenuCardTall(
                 indication = null
             ) { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
-        shape = RoundedCornerShape(10.dp)
+        shape = AppShapes.Card
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XS),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -386,12 +381,12 @@ fun SettingsMenuCardTall(
             ) {
                 Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             }
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(AppSpacing.SM))
             // Giữ cỡ chữ dễ đọc (12/10sp) và tăng chiều cao thẻ (76.dp) để title +
             // subtitle luôn đủ chỗ hiển thị 2 dòng, không bị cắt và không quá nhỏ.
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 12.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, fontSize = 10.sp, lineHeight = 12.sp, color = TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, style = AppTypography.BodyLarge.copy(lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = AppTypography.BodySmall.copy(lineHeight = 12.sp, color = TextSecondary), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             if (checked != null) {
                 Switch(
@@ -458,33 +453,30 @@ fun SystemStatusItem(title: String, value: String, icon: ImageVector, color: Col
 fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.Black),
-        shape = RoundedCornerShape(20.dp)
+        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+        shape = AppShapes.Dialog
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(AppSpacing.LG)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "BIỂU ĐỒ NHIỆT ĐỘ",
-                    fontSize = 9.sp,
-                    color = Color.LightGray,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
+                    style = AppTypography.LabelMedium.copy(color = Color.LightGray, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 )
                 // Legend
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.MD)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFFFF9800)))
-                        Spacer(Modifier.width(4.dp))
-                        Text("CPU", fontSize = 9.sp, color = Color.White)
+                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(AccentOrange))
+                        Spacer(Modifier.width(AppSpacing.XS))
+                        Text("CPU", style = AppTypography.LabelMedium.copy(color = Color.White))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFF03A9F4)))
-                        Spacer(Modifier.width(4.dp))
-                        Text("HDD", fontSize = 9.sp, color = Color.White)
+                        Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(AccentCyan))
+                        Spacer(Modifier.width(AppSpacing.XS))
+                        Text("HDD", style = AppTypography.LabelMedium.copy(color = Color.White))
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(AppSpacing.LG))
             
             // Vẽ Biểu đồ bằng Native Canvas (Chiếm 0MB RAM)
             Canvas(modifier = Modifier.fillMaxWidth().height(100.dp)) {
@@ -557,7 +549,7 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                 // Vẽ nét đôi
                 drawPath(
                     path = cpuPath,
-                    color = Color(0xFFFF9800),
+                    color = AccentOrange,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(
                         width = 4f,
                         cap = androidx.compose.ui.graphics.StrokeCap.Round
@@ -565,7 +557,7 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                 )
                 drawPath(
                     path = hddPath,
-                    color = Color(0xFF03A9F4),
+                    color = AccentCyan,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(
                         width = 4f,
                         cap = androidx.compose.ui.graphics.StrokeCap.Round
@@ -577,11 +569,11 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                 val lastX = (history.size - 1) * pointWidth
                 
                 val lastCpuY = height - ((lastPoint.first.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
-                drawCircle(color = Color(0xFFFF9800), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
+                drawCircle(color = AccentOrange, radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
                 drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
                 
                 val lastHddY = height - ((lastPoint.second.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
-                drawCircle(color = Color(0xFF03A9F4), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
+                drawCircle(color = AccentCyan, radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
                 drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
                 
                 // Vẽ chữ hiển thị thông số tại thời điểm đo
