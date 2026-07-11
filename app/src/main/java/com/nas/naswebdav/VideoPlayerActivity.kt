@@ -9,7 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
-import com.nas.naswebdav.ui.screens.VideoPlayerScreen
+import com.nas.naswebdav.ui.screens.ExoPlayerScreen
 import android.app.PictureInPictureParams
 import android.util.Rational
 
@@ -64,7 +64,7 @@ class VideoPlayerActivity : ComponentActivity() {
                     androidx.compose.foundation.LocalIndication provides com.nas.naswebdav.ui.theme.NoRippleIndication
                 ) {
                     Surface {
-                        VideoPlayerScreen(
+                        ExoPlayerScreen(
                             url = url,
                             user = user,
                             pass = pass,

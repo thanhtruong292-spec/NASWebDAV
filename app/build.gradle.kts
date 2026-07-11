@@ -39,7 +39,7 @@ gradle.taskGraph.whenReady {
 
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // Dùng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
+    compileSdk = 35 // Dï¿½ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"
@@ -48,6 +48,9 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {

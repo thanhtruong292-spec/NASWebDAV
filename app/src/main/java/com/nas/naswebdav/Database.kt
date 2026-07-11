@@ -129,7 +129,7 @@ interface FileDao {
 
     // HASH STAGE 1: Tìm các file có cùng dung lượng byte (Cực nhanh)
     // TỐI ƯU PHASE 8: Lọc bỏ file rác cỏn con < 4KB
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 200000")
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 50000")
     fun getAllLargeFiles(): List<CachedFile>
 
     // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM 

@@ -164,7 +164,10 @@ class StreamPipeWorker(
                 val socialFolder = if (baseUrl.endsWith("/")) baseUrl + AppConfig.SOCIAL_DOWNLOAD_FOLDER
                                    else "$baseUrl/${AppConfig.SOCIAL_DOWNLOAD_FOLDER}"
 
-                try { WebDavManager.createFolder(socialFolder) } catch (_: Exception) {}
+                try { WebDavManager.createFolder(socialFolder) } catch (e: Exception) {
+                    android.util.Log.e("StreamPipe", "Tạo thư mục NAS thất bại: $socialFolder", e)
+                    throw e
+                }
 
                 val safeFileName = fileName.replace(Regex("[/\\\\:*?\"<>|]"), "_")
                 val safeFileNameEncoded = java.net.URLEncoder.encode(safeFileName, "UTF-8").replace("+", "%20")

@@ -45,6 +45,11 @@ import java.util.concurrent.atomic.AtomicLong
 // FIX ERROR HANDLING: Chuyển lỗi kỹ thuật thành thông báo dễ hiểu
 private val WEB_DAV_HTTP_FAILURE_REGEX = Regex("""^([A-Z]+) failed: (\d{3})(?: - (.*))?$""")
 
+// FIX A-1: Helper an toàn — tránh MalformedURLException crash khi URL rỗng/malformed
+private fun safeUrlHost(url: String): String = try {
+    java.net.URL(url).host ?: ""
+} catch (_: Exception) { "" }
+
 // FIX ERROR HANDLING: Convert technical errors into readable messages
 private fun friendlyError(e: Exception): String = when (e) {
     is java.net.SocketTimeoutException -> "Kết nối tới NAS quá chậm hoặc NAS không phản hồi. Vui lòng kiểm tra mạng."
@@ -125,10 +130,7 @@ private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<S
         val colonIdx = detail.indexOf(": ")
         val rawUrl = if (colonIdx > 0) detail.take(colonIdx) else detail
         val rawReason = if (colonIdx > 0) detail.substring(colonIdx + 2).take(110).trim() else "không xác định"
-        val host = runCatching {
-            val u = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
-            java.net.URL(u).host
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: rawUrl
+        val host = safeUrlHost(rawUrl).takeIf { it.isNotBlank() } ?: rawUrl
         val niceReason = when {
             rawReason.contains("WebDAV", ignoreCase = true) -> "WebDAV quá hạn hoặc chưa xác thực"
             rawReason.contains("timeout", ignoreCase = true) || rawReason.contains("quá hạn", ignoreCase = true) || rawReason.contains("timed out", ignoreCase = true) -> "Mạng quá hạn / không phản hồi"
@@ -337,7 +339,8 @@ fun isTailscaleUrl(url: String): Boolean {
     // Kiểm tra từ khóa "tailscale" trong URL (cho hostname dạng tailscale)
     if (url.contains("tailscale", ignoreCase = true)) return true
     return try {
-        val host = java.net.URL(url).host ?: return false
+        val host = safeUrlHost(url)
+        if (host.isBlank()) return false
         val parts = host.split(".")
         if (parts.size == 4) {
             val a = parts[0].toIntOrNull() ?: return false
@@ -620,13 +623,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var connectionStatus by mutableStateOf("Đang kết nối...")
     private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private fun adaptiveTimeoutMs(url: String): Long {
-        val host = runCatching { java.net.URL(if (url.endsWith("/")) url else "$url/").host }.getOrNull() ?: ""
+        val host = safeUrlHost(url)
         val saved = knownLatencyMs[host]
         if (saved != null) return (saved * 4).coerceIn(500, 15_000)
         return if (isTailscaleUrl(url)) 6_000L else 3_000L
     }
     private fun recordLatency(url: String, ms: Long) {
-        val host = runCatching { java.net.URL(if (url.endsWith("/")) url else "$url/").host }.getOrNull() ?: return
+        val host = safeUrlHost(url)
+        if (host.isBlank()) return
         knownLatencyMs[host] = ms
     }
 
@@ -661,6 +665,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var autoBackupTotalCount by mutableIntStateOf(0)
     var autoBackupElapsedTime by mutableLongStateOf(0L)
     var autoBackupIsPaused by mutableStateOf(false)
+    var autoBackupFileBytesTotal by mutableLongStateOf(0L)
+    var autoBackupFileBytesWritten by mutableLongStateOf(0L)
+    var autoBackupUploadSpeedBps by mutableLongStateOf(0L)
+
+    fun cancelAutoBackup(context: android.content.Context) {
+        androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("com.nas.naswebdav.AutoBackupWorker")
+        autoBackupProgress = 0f
+        autoBackupCurrentFile = ""
+        autoBackupIsPaused = false
+    }
 
     // === Đã gỡ bỏ tính năng Đồng bộ thư mục ===
 
@@ -823,10 +837,22 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var thumbEtaFmt by mutableStateOf("--:--")
     var thumbPaused by mutableStateOf(false)
 
+    fun stopThumbGeneration() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/stop")
+                    .build()
+                localApiClient.newCall(request).execute().use { }
+            } catch (_: Exception) {}
+            thumbRunning = false
+        }
+    }
+
     fun fetchThumbStatus() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val request = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status")
                     .build()
@@ -885,7 +911,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val body = org.json.JSONObject().put("action", action)
                     .toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
@@ -1034,7 +1060,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun controlTorrent(action: String, hash: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                 val json = org.json.JSONObject().apply {
                     put("action", action)
@@ -1112,7 +1138,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
 
     fun unzipFile(filePath: String) {
-        val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch (_: Exception) { return }
+        val host = try { safeUrlHost(webDavManager.currentBaseUrl) } catch (_: Exception) { return }
         val uri = java.net.URI(filePath)
         val relativePath = uri.path.substringAfter("/webdav")
         val fileName = filePath.substringAfterLast("/")
@@ -1491,7 +1517,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         livestreamMessage = "Đang phân tích liên kết & kết nối..."
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 // Boc tach TikTok username tu URL de:
                 // (1) gan vao body de NAS luu vao job dict -> /api/livestream/status tra "watch_username"
                 // (2) sau khi POST OK, tu dong them user vao danh sach theo doi
@@ -1733,7 +1759,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                                 // Nếu tiến trình đang chạy trên NAS nhưng điện thoại không biết (hoặc bị xoá cache data)
                                 val alreadyTracked = activeLivestreams.any { it.jobId == jobId }
                                 if (!alreadyTracked) {
-                                    val host = java.net.URL(currentUrl).host
+                                    val host = safeUrlHost(currentUrl)
                                     withContext(Dispatchers.Main) {
                                         activeLivestreams.add(job)
                                     }
@@ -1855,7 +1881,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 LivestreamMonitorWorker.cancelJob(context, jobId)
 
                 // Gọi NAS stop API
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                 val body = org.json.JSONObject().apply {
                     put("job_id", jobId)
@@ -1919,7 +1945,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }.filter { !it.name.startsWith(".") || isSpecialMode }
 
                 // LOG + IP: Hiển thị IP NAS sau trạng thái kết nối
-                val nasHost = try { java.net.URL(currentUrl).host } catch (_: Exception) { "" }
+                val nasHost = try { safeUrlHost(currentUrl) } catch (_: Exception) { "" }
                 val onLan = !isTailscaleUrl(currentUrl)
                 connectionStatus = if (nasHost.isNotEmpty()) {
                     "Đã kết nối ${if (onLan) "LAN" else "Tailscale"}: $nasHost"
@@ -2300,8 +2326,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                             webDavManager.initConnection()
                             
                             // Gọi authorize để IP mới được thêm vào whitelist/iptables trên NAS
-                            val host = java.net.URL(safeActive).host
-                            if (!host.isNullOrEmpty()) {
+                            val host = safeUrlHost(safeActive)
+                            if (host.isNotEmpty()) {
                                 val authHeader = okhttp3.Credentials.basic(user, pass)
                                 val authRequest = okhttp3.Request.Builder()
                                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
@@ -2973,7 +2999,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun triggerAiScan(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val request = okhttp3.Request.Builder()
                     .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/ai/trigger")
                     .post(ByteArray(0).toRequestBody(null, 0, 0))
@@ -2995,7 +3021,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun cleanTrashOnDemand(context: Context, maxAgeDays: Int = 30) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val json = org.json.JSONObject().put("max_age_days", maxAgeDays)
                 val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder()
@@ -3035,7 +3061,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 guestPassError = null
             }
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val json = org.json.JSONObject().apply {
                     put("duration_minutes", durationMinutes)
                 }
@@ -3135,7 +3161,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 socialExtractStatus = "Đang gửi lệnh tới NAS..."
             }
             try {
-                val host = java.net.URL(webDavManager.currentBaseUrl).host
+                val host = safeUrlHost(webDavManager.currentBaseUrl)
                 val platform = detectSocialPlatform(url)
                 val json = org.json.JSONObject().apply {
                     put("url", url)
@@ -3197,7 +3223,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     private fun monitorYtdlpJob(jobId: String, url: String, platform: String, saveFolder: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch(e: Exception) { return@launch }
+            val host = try { safeUrlHost(webDavManager.currentBaseUrl) } catch(e: Exception) { return@launch }
             val statusUrl = "http://$host:${com.nas.naswebdav.AppConfig.API_PORT}/api/ytdlp/status"
             var isFinished = false
             var consecutiveErrors = 0
@@ -3402,7 +3428,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         organizingLegacyResult = null
 
         // KIẾN TRÚC MỚI: Đẩy sang LongRunningApiWorker (Foreground Service)
-        val host = try { java.net.URL(webDavManager.currentBaseUrl).host } catch (_: Exception) {
+        val host = try { safeUrlHost(webDavManager.currentBaseUrl) } catch (_: Exception) {
             organizingLegacyRunning = false
             organizingLegacyResult = "Lỗi: Chưa kết nối NAS"
             return
@@ -4954,7 +4980,7 @@ fun WebDavViewModel.listenToLocalNasApi(forceRestart: Boolean = false) {
             try {
                 val baseUrl = webDavManager.currentBaseUrl
                 if (baseUrl.isNotEmpty()) {
-                    val host = java.net.URL(baseUrl).host
+                    val host = safeUrlHost(baseUrl)
                     val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/status").build()
                     val startedAt = System.currentTimeMillis()
                     localApiClient.newCall(request).execute().use { response ->
@@ -5110,7 +5136,8 @@ fun WebDavViewModel.startRealtimeAlerts() {
     try {
         val url = webDavManager.currentBaseUrl
         if (url.isBlank()) return
-        val host = java.net.URL(url).host
+        val host = safeUrlHost(url)
+        if (host.isBlank()) return
         // nas_api_server.py chay Tornado WebSocket tren cong AppConfig.WS_PORT (5051)
         val wsUrl = "ws://$host:${com.nas.naswebdav.AppConfig.WS_PORT}/ws/alerts"
         val wsRequest = okhttp3.Request.Builder().url(wsUrl).let(WebDavManager::tagCurrentAuth).build()
@@ -5175,7 +5202,7 @@ fun WebDavViewModel.startRealtimeAlerts() {
 fun WebDavViewModel.fetchWeeklyReport() {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(currentUrl).host
+            val host = safeUrlHost(currentUrl)
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/system/weekly_report").build()
             localApiClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
@@ -5380,7 +5407,7 @@ fun WebDavViewModel.sendWakeOnLan(
 ) {
     viewModelScope.launch(Dispatchers.IO) {
         val preferredHost = targetHost?.trim()?.takeIf { it.isNotBlank() } ?: runCatching {
-            java.net.URL(webDavManager.currentBaseUrl).host
+            safeUrlHost(webDavManager.currentBaseUrl)
         }.getOrNull()
         val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr, preferredHost)
         val logType = if (result.success) "INFO" else "ERROR"
@@ -5416,7 +5443,7 @@ fun WebDavViewModel.sendCommandToNas(
 ) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(webDavManager.currentBaseUrl).host
+            val host = safeUrlHost(webDavManager.currentBaseUrl)
             val isSleepCommand = endpoint.contains("shutdown") || endpoint.contains("suspend")
             val cmdName = when { endpoint.contains("reboot") -> "Khởi động lại"; isSleepCommand -> "Ngủ"; else -> endpoint }
             val savedMac = if (isSleepCommand) refreshWakeOnLanMacFromNas() else null
@@ -5462,7 +5489,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
             }
             // Tu IP -> http://<ip>:<API_PORT>
             val host = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                java.net.URL(trimmed).host
+                safeUrlHost(trimmed)
             } else trimmed.substringBefore(":")
             val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
             val cmdName = when {
@@ -5504,7 +5531,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
 fun WebDavViewModel.checkDockerStatus() {
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(webDavManager.currentBaseUrl).host
+            val host = safeUrlHost(webDavManager.currentBaseUrl)
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").build()
             localApiClient.newCall(request).execute().use { response -> if (response.isSuccessful) { val json = org.json.JSONObject(response.body?.string() ?: "{}"); withContext(Dispatchers.Main) { isDockerRunning = json.optBoolean("running", false) } } }
         } catch (_: Exception) {}
@@ -5515,7 +5542,7 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
     if (isTogglingDocker) return; isTogglingDocker = true
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(webDavManager.currentBaseUrl).host
+            val host = safeUrlHost(webDavManager.currentBaseUrl)
             val body = org.json.JSONObject().put("action", if (turnOn) "start" else "stop").toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power").post(body).build()
             val client = localApiClient.newBuilder().readTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
@@ -5570,7 +5597,7 @@ fun WebDavViewModel.approveDeviceIp(ip: String) {
     showApprovalDialog = false
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(webDavManager.currentBaseUrl).host
+            val host = safeUrlHost(webDavManager.currentBaseUrl)
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", true) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
@@ -5583,7 +5610,7 @@ fun WebDavViewModel.denyDeviceIp(ip: String) {
     showApprovalDialog = false
     viewModelScope.launch(Dispatchers.IO) {
         try {
-            val host = java.net.URL(webDavManager.currentBaseUrl).host
+            val host = safeUrlHost(webDavManager.currentBaseUrl)
             val body = org.json.JSONObject().apply { put("ip", ip); put("approved", false) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
             val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
             localApiClient.newCall(request).execute().use { }
@@ -6143,5 +6170,67 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
                 onResult(false, "Lỗi kết nối: ${e.message}")
             }
         }
+    }
+
+    // --- Missing functions called from dialogs ---
+    fun loadTelegramConfig(onResult: (enabled: Boolean, chatId: String, hasToken: Boolean) -> Unit) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+        val enabled = p.getBoolean("telegram_enabled", false)
+        val chatId = p.getString("telegram_chat_id", "") ?: ""
+        val token = p.getString("telegram_bot_token", "") ?: ""
+        onResult(enabled, chatId, token.isNotBlank())
+    }
+
+    fun saveTelegramConfig(enabled: Boolean, botToken: String, chatId: String, test: Boolean, onResult: (Boolean, String) -> Unit) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+        p.edit()
+            .putBoolean("telegram_enabled", enabled)
+            .putString("telegram_bot_token", botToken)
+            .putString("telegram_chat_id", chatId)
+            .apply()
+        if (test) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val url = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
+                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),
+                        """{"token":"$botToken","chat_id":"$chatId"}""")
+                    val request = okhttp3.Request.Builder().url(url).post(body).build()
+                    val response = webDavManager.optimizedClient.newCall(request).execute()
+                    val bodyStr = response.body?.string() ?: ""
+                    withContext(Dispatchers.Main) {
+                        onResult(response.isSuccessful, if (response.isSuccessful) "Tin nhắn test đã gửi thành công!" else "Lỗi: $bodyStr")
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "Lỗi gửi test: ${e.message}")
+                    }
+                }
+            }
+        } else {
+            onResult(true, "Đã lưu cấu hình Telegram")
+        }
+    }
+
+    fun loadRulesConfig(onResult: (enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int) -> Unit) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+        onResult(
+            p.getBoolean("alert_enabled", true),
+            p.getBoolean("alert_pause_disk_low", true),
+            p.getBoolean("alert_pause_heat", false),
+            p.getInt("alert_cpu_threshold", 90),
+            p.getInt("alert_ram_threshold", 85)
+        )
+    }
+
+    fun saveRulesConfig(enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int, onResult: (Boolean, String) -> Unit) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+        p.edit()
+            .putBoolean("alert_enabled", enabled)
+            .putBoolean("alert_pause_disk_low", pauseOnDiskLow)
+            .putBoolean("alert_pause_heat", pauseOnHeat)
+            .putInt("alert_cpu_threshold", cpuThreshold)
+            .putInt("alert_ram_threshold", ramThreshold)
+            .apply()
+        onResult(true, "Đã lưu quy tắc cảnh báo")
     }
 }

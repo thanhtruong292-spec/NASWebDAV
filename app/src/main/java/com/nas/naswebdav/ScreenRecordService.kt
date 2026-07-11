@@ -75,8 +75,8 @@ class ScreenRecordService : Service() {
     private var height = 720
     private var density = 320
     private var bitrate = 2_500_000
-    private val segmentMs = 30_000L
-    private val maxSpoolBytes = 512L * 1024L * 1024L
+    private val segmentMs = 10_000L
+    private val maxSpoolBytes = 64L * 1024L * 1024L
     private var uploadedSegments = 0
     private var lastProgressLogSegment = -1
 

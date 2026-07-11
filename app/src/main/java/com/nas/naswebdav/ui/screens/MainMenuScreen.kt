@@ -61,25 +61,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.getValue
 
-// ============ BẢNG MÀU CHUYÊN NGHIỆP ============
-private val DarkSurface = Color.Black
-private val DarkCard = Color(0xFF0F0F0F)
-private val AccentBlue = Color(0xFF1976D2)
-private val AccentCyan = Color(0xFF00D2FF)
-private val AccentGreen = Color(0xFF00E676)
-private val AccentOrange = Color(0xFFFF9100)
-private val AccentRed = Color(0xFFFF1744)
-private val AccentPurple = Color(0xFFBB86FC)
-private val AccentPink = Color(0xFFFF6EC7)
-private val TextPrimary = Color(0xFFE8E8E8)
-private val TextSecondary = Color(0xFF8892B0)
-private val PanelTitleCyan = Color(0xFF4DD0E1)
-private val PanelTitleGreen = Color(0xFF66BB6A)
-private val PanelTitlePurple = Color(0xFFB388FF)
-private val PanelTitleSize = 11.sp
-private val PanelTitleLetterSpacing = 1.5.sp
-
-private fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
+// ============ REALTIME FRESHNESS ============
+internal fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
     if (lastRefreshAt <= 0L) return "Đang chờ dữ liệu"
     val ageSec = ((now - lastRefreshAt).coerceAtLeast(0L) / 1000L).toInt()
     return when {
@@ -91,7 +74,7 @@ private fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
 }
 
 @Composable
-private fun PanelFreshnessTag(
+internal fun PanelFreshnessTag(
     lastRefreshAt: Long,
     now: Long,
     staleAfterMs: Long = 30_000L,
@@ -120,7 +103,7 @@ private fun PanelFreshnessTag(
 }
 
 @Composable
-private fun DashboardCompactBottomSheetHandle() {
+fun DashboardCompactBottomSheetHandle() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -441,7 +424,7 @@ fun MainMenuScreen(
     }
     
     if (showProcessDialog) {
-        ProcessListBottomSheet(
+        MainMenuBottomSheetProcessListBottomSheet(
             viewModel = viewModel,
             sortBy = processSortType,
             onDismiss = { showProcessDialog = false }
@@ -536,7 +519,7 @@ fun MainMenuScreen(
         )
     }
     if (showSmartDialog) {
-        SmartDetailBottomSheet(
+        MainMenuBottomSheetSmartDetailBottomSheet(
             smartInfo = viewModel.smartInfo,
             onDismiss = { showSmartDialog = false }
         )
@@ -617,7 +600,7 @@ fun MainMenuScreen(
         )
     }
     if (showSmbDialog) {
-        SmbBottomSheet(
+        MainMenuBottomSheetSmbBottomSheet(
             viewModel = viewModel,
             onDismiss = { showSmbDialog = false }
         )
@@ -641,7 +624,7 @@ fun MainMenuScreen(
         )
     }
     if (showNewDiskProfileSheet) {
-        DiskProfileBottomSheet(
+        MainMenuDiskProfileBottomSheet(
             viewModel = viewModel,
             onDismiss = { showNewDiskProfileSheet = false }
         )
@@ -730,7 +713,7 @@ fun MainMenuScreen(
         ) {
         Spacer(Modifier.height(24.dp))
 
-        MainDashboardHeader(
+        MainMenuDashboardHeader(
             viewModel = viewModel,
             realtimeNow = realtimeNow,
             showPowerMenu = showPowerMenu,
@@ -742,7 +725,7 @@ fun MainMenuScreen(
 
             Spacer(Modifier.height(8.dp))
 
-        DashboardSystemOverviewCard(
+        MainMenuDashboardSystemOverviewCard(
             viewModel = viewModel,
             realtimeNow = realtimeNow,
             onShowProcessList = { sortType ->
@@ -753,13 +736,13 @@ fun MainMenuScreen(
             onOpenSmartDetails = { showSmartDialog = true }
         )
 
-        OmvServicesHardwarePanel(viewModel = viewModel)
+        MainMenuDashboardOmvServicesHardwarePanel(viewModel = viewModel)
 
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
         Spacer(Modifier.height(8.dp))
         com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
         Spacer(Modifier.height(8.dp))
-        NasInsightsSummaryCard(
+        MainMenuDashboardNasInsightsSummaryCard(
             viewModel = viewModel,
             onOpen = {
                 viewModel.fetchNasInsights(minIntervalMs = 0L)
@@ -768,7 +751,7 @@ fun MainMenuScreen(
         )
         Spacer(Modifier.height(4.dp))
 
-        SystemStatusCards(
+        MainMenuSystemStatusCards(
             viewModel = viewModel,
             mContext = mContext,
             onOpenAutoBackup = { showAutoBackupDialog = true },
@@ -785,9 +768,9 @@ fun MainMenuScreen(
                 }
             }
         )
-        SystemLogsSummaryCard(viewModel)
+        MainMenuSectionSystemLogsSummaryCard(viewModel)
 
-        TorrentActivityCard(
+        MainMenuDashboardTorrentActivityCard(
             viewModel = viewModel,
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
@@ -795,7 +778,7 @@ fun MainMenuScreen(
 
 
 
-        QuickAccessSection(
+        MainMenuDashboardQuickAccessSection(
             slot2Id = slot2Id,
             slot3Id = slot3Id,
             slot4Id = slot4Id,
@@ -844,7 +827,7 @@ fun MainMenuScreen(
 
     // Đã HỘP CÔNG CỤ TOOLBOX Đã
     if (showToolboxDialog) {
-        ToolboxDialog(
+        MainMenuToolboxDialog(
             viewModel = viewModel,
             sharedPrefs = sharedPrefs,
             context = mContext,
@@ -865,12 +848,12 @@ fun MainMenuScreen(
             showDuplicateScanDialog = { showDuplicateScanDialog = true }
         )
     }
-    DuplicateScanGlobalUI(viewModel, mContext)
+    MainMenuBottomSheetDuplicateScanGlobalUI(viewModel, mContext)
 }
 
 
 @Composable
-private fun MainDashboardHeader(
+private fun MainMenuDashboardHeader(
     viewModel: WebDavViewModel,
     realtimeNow: Long,
     showPowerMenu: Boolean,
@@ -1002,7 +985,7 @@ private fun MainDashboardHeader(
 }
 
 @Composable
-private fun DashboardSystemOverviewCard(
+private fun MainMenuDashboardSystemOverviewCard(
     viewModel: WebDavViewModel,
     realtimeNow: Long,
     onShowProcessList: (String) -> Unit,
@@ -1024,7 +1007,7 @@ private fun DashboardSystemOverviewCard(
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GaugeCard(
+                    MainMenuDashboardGaugeCard(
                         title = "CPU", value = viewModel.systemStatus.cpu,
                         subValue = viewModel.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
@@ -1034,7 +1017,7 @@ private fun DashboardSystemOverviewCard(
                             onShowProcessList("cpu")
                         }
                     )
-                    GaugeCard(
+                    MainMenuDashboardGaugeCard(
                         title = "RAM", value = viewModel.systemStatus.ram, subValue = "${viewModel.systemStatus.ramPercent}%",
                         icon = Icons.Default.DeveloperBoard,
                         gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
@@ -1052,7 +1035,7 @@ private fun DashboardSystemOverviewCard(
                             val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                             if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
                         }
-                        GaugeCard(
+                        MainMenuDashboardGaugeCard(
                             title = "HDD", value = "${hddDisk.used} / $fmtTotal",
                             subValue = "${hddDisk.percent}%",
                             icon = Icons.Default.Storage,
@@ -1081,7 +1064,7 @@ private fun DashboardSystemOverviewCard(
                         isSmartFailed -> 0f
                         else -> 50f
                     }
-                    GaugeCard(
+                    MainMenuDashboardGaugeCard(
                         title = "S.M.A.R.T",
                         value = smartStatusText,
                         subValue = viewModel.smartInfo.temperature.replace("°C", "°").replace("--", ""),
@@ -1097,7 +1080,7 @@ private fun DashboardSystemOverviewCard(
 }
 
 @Composable
-private fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
+private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel) {
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
         var pendingServiceName by remember { mutableStateOf("") }
         var pendingServiceTitle by remember { mutableStateOf("") }
@@ -1362,7 +1345,7 @@ private fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
 }
 
 @Composable
-private fun TorrentActivityCard(
+private fun MainMenuDashboardTorrentActivityCard(
     viewModel: WebDavViewModel,
     onOpenFolder: (webdavPath: String) -> Unit,
     onGlobalSearch: (String) -> Unit,
@@ -1504,7 +1487,7 @@ private fun TorrentActivityCard(
 }
 
 @Composable
-private fun QuickAccessSection(
+private fun MainMenuDashboardQuickAccessSection(
     slot2Id: String,
     slot3Id: String,
     slot4Id: String,
@@ -1525,25 +1508,25 @@ private fun QuickAccessSection(
 
         // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onClick = onOpenFiles)
+            MainMenuDashboardBigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(Color(0xFFFFCA28), Color(0xFFFF8F00)), Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
-            BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
+            MainMenuDashboardBigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val s3 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot3Id } ?: AVAILABLE_QUICK_ACTIONS[1]
-            BigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s3.id) }, onLongClick = { onEditingSlotChange(3) })
+            MainMenuDashboardBigMenuTile(s3.title, s3.subtitle, s3.icon, s3.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s3.id) }, onLongClick = { onEditingSlotChange(3) })
             val s4 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot4Id } ?: AVAILABLE_QUICK_ACTIONS[2]
-            BigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s4.id) }, onLongClick = { onEditingSlotChange(4) })
+            MainMenuDashboardBigMenuTile(s4.title, s4.subtitle, s4.icon, s4.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s4.id) }, onLongClick = { onEditingSlotChange(4) })
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(Color(0xFF7C4DFF), Color(0xFF00D2FF)), Modifier.weight(1f), onClick = onOpenLatestPhotos)
-            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(Color(0xFFFF6EC7), Color(0xFFFF9100)), Modifier.weight(1f), onClick = onOpenRecentVideos)
+            MainMenuDashboardBigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(Color(0xFF7C4DFF), Color(0xFF00D2FF)), Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            MainMenuDashboardBigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(Color(0xFFFF6EC7), Color(0xFFFF9100)), Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {
-            QuickActionSelectorDialog(
+            MainMenuSectionQuickActionSelectorDialog(
                 currentSlots = setOf(slot2Id, slot3Id, slot4Id),
                 onDismiss = { onEditingSlotChange(null) },
                 onSelect = { newId ->
@@ -1600,7 +1583,7 @@ private fun QuickAccessSection(
 
 // ============ COMPONENT: Inline stat row (emoji + label + value) ============
 @Composable
-fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color) {
+fun MainMenuDashboardInlineStatRow(emoji: String, label: String, value: String, valueColor: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(emoji, fontSize = 13.sp)
         Spacer(Modifier.width(5.dp))
@@ -1625,7 +1608,7 @@ private fun insightRate(bytesPerSec: Long): String {
 }
 
 @Composable
-fun NasInsightsSummaryCard(
+fun MainMenuDashboardNasInsightsSummaryCard(
     viewModel: WebDavViewModel,
     onOpen: () -> Unit
 ) {
@@ -1658,9 +1641,9 @@ fun NasInsightsSummaryCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                InsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
-                InsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
-                InsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
+                MainMenuDashboardInsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
+                MainMenuDashboardInsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
+                MainMenuDashboardInsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
             }
             Spacer(Modifier.height(8.dp))
             val summary = insight.maintenanceActions.firstOrNull()?.detail
@@ -1676,7 +1659,7 @@ fun NasInsightsSummaryCard(
 }
 
 @Composable
-private fun InsightMiniStat(title: String, value: String, sub: String, color: Color, modifier: Modifier = Modifier) {
+private fun MainMenuDashboardInsightMiniStat(title: String, value: String, sub: String, color: Color, modifier: Modifier = Modifier) {
     Column(modifier.background(Color(0xFF171922), RoundedCornerShape(8.dp)).padding(8.dp)) {
         Text(title, color = TextSecondary, fontSize = 10.sp)
         Text(value, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -1685,7 +1668,7 @@ private fun InsightMiniStat(title: String, value: String, sub: String, color: Co
 }
 
 @Composable
-fun GaugeCard(
+fun MainMenuDashboardGaugeCard(
     title: String,
     value: String,
     subValue: String? = null,
@@ -1799,7 +1782,7 @@ fun GaugeCard(
 
 // ============ COMPONENT: Thẻ thống kê nhỏ? ============
 @Composable
-fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+fun MainMenuDashboardMiniStatCard(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -1822,7 +1805,7 @@ fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, 
 
 // ============ COMPONENT: Thanh phân vùng ổ đĩa ============
 @Composable
-fun DiskPartitionBar(mount: String, percent: Float, total: String, used: String) {
+fun MainMenuDashboardDiskPartitionBar(mount: String, percent: Float, total: String, used: String) {
     val barColor = when {
         percent >= 90f -> AccentRed
         percent >= 75f -> AccentOrange
@@ -1848,7 +1831,7 @@ fun DiskPartitionBar(mount: String, percent: Float, total: String, used: String)
 
 // ============ COMPONENT: Quick Action Chip ============
 @Composable
-fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun MainMenuDashboardQuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Card(
         modifier = modifier
             .clickable { onClick() },
@@ -1871,7 +1854,7 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
 // ============ COMPONENT: Thẻ menu lớn (gradient) ============
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
+fun MainMenuDashboardBigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
         modifier = modifier
             .pointerInput(Unit) {
@@ -1903,7 +1886,7 @@ fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColo
 
 // ============ COMPONENT: Settings Menu Card ============
 @Composable
-fun SettingsMenuCard(
+fun MainMenuSettingsMenuCard(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -1963,7 +1946,7 @@ fun SettingsMenuCard(
 }
 
 // ============ HÀM TIỆN ÍCH (Giữ lại tương thích) ============
-fun getStatusColor(title: String, value: String, rawPercent: String = ""): Color {
+fun MainMenuScreenGetStatusColor(title: String, value: String, rawPercent: String = ""): Color {
     try {
         val extractNumber = { str: String -> Regex("[^0-9.]").replace(str, "").toFloatOrNull() ?: 0f }
         return when (title) {
@@ -1986,7 +1969,7 @@ fun getStatusColor(title: String, value: String, rawPercent: String = ""): Color
 
 // Giữ lại MenuCard tương thích cho các file khác nếu cần
 @Composable
-fun MenuCard(
+fun MainMenuDashboardMenuCard(
     title: String,
     subtitle: String,
     icon: ImageVector,
@@ -1994,18 +1977,18 @@ fun MenuCard(
     checked: Boolean? = null,
     onClick: () -> Unit
 ) {
-    SettingsMenuCard(title = title, subtitle = subtitle, icon = icon, color = color, checked = checked, onClick = onClick)
+    MainMenuSettingsMenuCard(title = title, subtitle = subtitle, icon = icon, color = color, checked = checked, onClick = onClick)
 }
 
 @Composable
-fun SystemStatusItem(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
-    MiniStatCard(title = title, value = value, icon = icon, color = color, modifier = modifier)
+fun MainMenuDashboardSystemStatusItem(title: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    MainMenuDashboardMiniStatCard(title = title, value = value, icon = icon, color = color, modifier = modifier)
 }
 
 
 
 @Composable
-fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
+fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.Black),
@@ -2161,7 +2144,7 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
 // ============ COMPONENT: Hộp công cụ Toolbox mở rộng ============
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun ToolboxDialog(
+fun MainMenuToolboxDialog(
     viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     context: android.content.Context,
@@ -2205,7 +2188,7 @@ fun ToolboxDialog(
 
             var showBiometricSettings by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Thùng Rác",
                     subtitle = "Khôi phục tệp bị xoá",
                     icon = Icons.Default.Delete,
@@ -2213,7 +2196,7 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); onOpenTrash() }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Khóa Sinh trắc học",
                     subtitle = if (isBiometricEnabled) {
                         val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
@@ -2233,7 +2216,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             if (showBiometricSettings) {
-                com.nas.naswebdav.ui.dialogs.BiometricSettingsDialog(
+                com.nas.naswebdav.ui.dialogs.BiometricSettingsDialogCompat(
                     viewModel = viewModel,
                     sharedPrefs = sharedPrefs,
                     onDismiss = {
@@ -2244,7 +2227,7 @@ fun ToolboxDialog(
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Auto-Backup",
                     subtitle = if (deleteAfterBackup) "Copy & xoá gốc" else "Chỉ copy",
                     icon = Icons.Default.Sync,
@@ -2253,7 +2236,7 @@ fun ToolboxDialog(
                     checked = isAutoBackupEnabled,
                     onClick = { onDismiss(); showAutoBackupDialog() }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Sao lưu cấu hình NAS",
                     subtitle = "Config + watcher + cookies",
                     icon = Icons.Default.SettingsBackupRestore,
@@ -2264,7 +2247,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "USB Import",
                     subtitle = "Tự copy ổ USB 3.0",
                     icon = Icons.Default.Usb,
@@ -2273,7 +2256,7 @@ fun ToolboxDialog(
                     checked = viewModel.usbImportState.settings.enabled,
                     onClick = { onDismiss(); showUsbImportDialog() }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Sức khoẻ ổ cứng",
                     subtitle = "SMART + dmesg + điểm",
                     icon = Icons.Default.HealthAndSafety,
@@ -2284,7 +2267,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Lịch ngủ NAS",
                     subtitle = "HDD spindown ngoài giờ",
                     icon = Icons.Default.Bedtime,
@@ -2292,7 +2275,7 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showSleepScheduleDialog() }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Giới hạn upload",
                     subtitle = "Tránh nghẽn mạng",
                     icon = Icons.Default.Speed,
@@ -2304,7 +2287,7 @@ fun ToolboxDialog(
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Docker / qBittorrent",
                     subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang thực thi" else "Đã ngắt",
                     icon = Icons.Default.ViewInAr,
@@ -2313,7 +2296,7 @@ fun ToolboxDialog(
                     checked = viewModel.isDockerRunning,
                     onClick = { viewModel.toggleDockerPower(!viewModel.isDockerRunning) }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Tải BitTorrent",
                     subtitle = "Magnet, URL, tệp .torrent",
                     icon = Icons.Default.CloudDownload,
@@ -2324,7 +2307,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Nhật ký hệ thống",
                     subtitle = "Lịch sử tiến trình",
                     icon = Icons.Default.Assignment,
@@ -2336,7 +2319,7 @@ fun ToolboxDialog(
                         viewModel.showLogDialog = true
                     }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Quét trùng lặp",
                     subtitle = "Dọn dẹp không gian",
                     icon = Icons.Default.ContentCopy,
@@ -2347,7 +2330,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "LAN Whitelist",
                     subtitle = "IP LAN truy cập thẳng",
                     icon = Icons.Default.Wifi,
@@ -2355,7 +2338,7 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showLanWhitelistDialog() }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Ghi Livestream",
                     subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
                     icon = Icons.Default.Videocam,
@@ -2366,7 +2349,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Dọn thùng rác",
                     subtitle = "Xoá rác cũ hơn 30 ngày",
                     icon = Icons.Default.DeleteSweep,
@@ -2374,7 +2357,7 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
                 )
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Ổ đĩa LAN (SMB)",
                     subtitle = if (viewModel.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
                     icon = Icons.Default.Dns,
@@ -2388,7 +2371,7 @@ fun ToolboxDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.fetchThumbnailAudit() }
                 val thumbAudit by viewModel.thumbnailAudit.collectAsState()
-                SettingsMenuCard(
+                MainMenuSettingsMenuCard(
                     title = "Kiểm tra Thumbnail",
                     subtitle = if (thumbAudit != null) {
                         if (thumbAudit!!.running) "Đang quét..." else "Thiếu ${thumbAudit!!.missing} / Tổng ${thumbAudit!!.total}"
@@ -2516,7 +2499,7 @@ private fun profileStatusColor(status: String): Color = when {
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun DiskProfileBottomSheet(
+private fun MainMenuDiskProfileBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -2817,7 +2800,7 @@ private fun DiskProfileBottomSheet(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Dung lượng",
                     value = if (isTrackingNewDisk) profileSizeLabel(totalBytes) else "Chưa phân tích",
                     subtitle = if (isTrackingNewDisk) "Trống ~%.2f TiB • dùng %.0f%%".format(java.util.Locale.US, estimatedFreeTiB, usedPercent) else "Nhấn đặt mốc để bắt đầu",
@@ -2825,7 +2808,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentCyan,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Ngân sách ghi",
                     value = if (isTrackingNewDisk && enduranceTbPerYear != null) "$enduranceTbPerYear TB/năm" else "Chưa rõ",
                     subtitle = if (isTrackingNewDisk && dailyBudgetGb > 0) "~$dailyBudgetGb GB/ngày" else "Không có thông số workload",
@@ -2833,7 +2816,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Livestream",
                     value = "$livestreamSessionsToday phiên",
                     subtitle = if (isTrackingNewDisk) "Đang ghi hình: $activeRecordings luồng • Đã hoàn tất: $completedLivestreamSessionsToday phiên" else "Chưa phân tích trên phân vùng mới",
@@ -2844,7 +2827,7 @@ private fun DiskProfileBottomSheet(
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Ngày lắp ổ",
                     value = installedDate,
                     subtitle = "Tiến trình thử nghiệm: $trialLabel",
@@ -2852,7 +2835,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentGreen,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Nhiệt độ ổ",
                     value = tempStatus,
                     subtitle = if (isTrackingNewDisk) "Hiện tại: $smartTemp" else "Chưa phân tích",
@@ -2860,7 +2843,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentPurple,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Ghi dữ liệu cường độ cao",
                     value = "$heavyWriteTasks tiến trình",
                     subtitle = "Ghi hình: $activeRecordings luồng • Tải xuống: $downloadTasks phiên",
@@ -2871,7 +2854,7 @@ private fun DiskProfileBottomSheet(
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Ghi hôm nay",
                     value = if (completedLivestreamBytesToday > 0L) com.nas.naswebdav.utils.FormatUtils.formatBytes(completedLivestreamBytesToday) else "~$estimatedActualWriteGb GB",
                     subtitle = if (completedLivestreamBytesToday > 0L) "Livestream đã hoàn tất hôm nay" else "Ước tính từ tác vụ",
@@ -2879,7 +2862,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentCyan,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Ngân sách tháng",
                     value = "$monthlyBudgetTb TB",
                     subtitle = enduranceTbPerYear?.let { "Theo $it TB/năm" } ?: "Chưa có thông số",
@@ -2887,7 +2870,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Dự báo thực tế",
                     value = actualForecastLabel,
                     subtitle = forecastSubtitle,
@@ -2898,7 +2881,7 @@ private fun DiskProfileBottomSheet(
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Cảnh báo đầy ổ",
                     value = fillWarning,
                     subtitle = if (isTrackingNewDisk) "Dự báo: $actualForecastLabel" else "Chưa bắt đầu theo dõi",
@@ -2906,7 +2889,7 @@ private fun DiskProfileBottomSheet(
                     color = AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Sẵn sàng ghi",
                     value = livestreamReady,
                     subtitle = "CPU ${cpuLoad.toInt()}% • RAM ${ramLoad.toInt()}%",
@@ -2914,7 +2897,7 @@ private fun DiskProfileBottomSheet(
                     color = if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Dữ liệu ghi thật",
                     value = realWriteDataLabel,
                     subtitle = smartRiskText,
@@ -2955,15 +2938,15 @@ private fun DiskProfileBottomSheet(
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OperationModeChip("stream", "Ghi live", operationMode, prefs) {
+                    MainMenuDiskProfileOperationModeChip("stream", "Ghi live", operationMode, prefs) {
                         operationMode = it
                         viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
-                    OperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
+                    MainMenuDiskProfileOperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
                         operationMode = it
                         viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
-                    OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
+                    MainMenuDiskProfileOperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
                         operationMode = it
                         viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
@@ -2971,7 +2954,7 @@ private fun DiskProfileBottomSheet(
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Sức khỏe NAS",
                     value = nasHealthState,
                     subtitle = "CPU ${cpuLoad.toInt()}% • RAM ${ramLoad.toInt()}%",
@@ -2979,7 +2962,7 @@ private fun DiskProfileBottomSheet(
                     color = profileStatusColor(nasHealthState),
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Bảo vệ RAM thấp",
                     value = if (ramLoad >= 80f) "Đang theo dõi" else "Ổn định",
                     subtitle = ramGuardAdvice,
@@ -2987,7 +2970,7 @@ private fun DiskProfileBottomSheet(
                     color = if (ramLoad >= 80f) AccentOrange else AccentGreen,
                     modifier = Modifier.weight(1f)
                 )
-                HardwareMetricCell(
+                MainMenuDiskProfileHardwareMetricCell(
                     title = "Lịch yên tĩnh",
                     value = if (heavyWriteTasks > 0) "Nên bật" else "Chưa cần",
                     subtitle = quietWindowAdvice,
@@ -3016,7 +2999,7 @@ private fun DiskProfileBottomSheet(
                     Text("Chưa có dữ liệu thư mục. App sẽ tự tải khi NAS API sẵn sàng.", color = TextSecondary, fontSize = 11.sp)
                 } else {
                     storageUsage.take(4).forEach { item ->
-                        WriteTaskRow(item.name, "${item.size} • ${item.files} tệp", if (item.path == ".trash") AccentOrange else AccentCyan)
+                        MainMenuDiskProfileWriteTaskRow(item.name, "${item.size} • ${item.files} tệp", if (item.path == ".trash") AccentOrange else AccentCyan)
                     }
                 }
             }
@@ -3033,15 +3016,15 @@ private fun DiskProfileBottomSheet(
                     Text("Nhật ký vận hành hôm nay", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(4.dp))
-                WriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
-                WriteTaskRow("Tải ghi hiện tại", writeRiskLabel, AccentOrange)
-                WriteTaskRow("Trạng thái ghi", livestreamReady, if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange)
+                MainMenuDiskProfileWriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
+                MainMenuDiskProfileWriteTaskRow("Tải ghi hiện tại", writeRiskLabel, AccentOrange)
+                MainMenuDiskProfileWriteTaskRow("Trạng thái ghi", livestreamReady, if (livestreamReady == "Sẵn sàng ghi") AccentGreen else AccentOrange)
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                NewDiskChecklistItem("Sau 24 giờ", profileChecklistStatus(1), Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
-                NewDiskChecklistItem("Sau 7 ngày", profileChecklistStatus(7), Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
-                NewDiskChecklistItem("Sau 30 ngày", profileChecklistStatus(30), Icons.Default.EventRepeat, AccentOrange, Modifier.weight(1f))
+                MainMenuDiskProfileNewDiskChecklistItem("Sau 24 giờ", profileChecklistStatus(1), Icons.Default.Schedule, AccentCyan, Modifier.weight(1f))
+                MainMenuDiskProfileNewDiskChecklistItem("Sau 7 ngày", profileChecklistStatus(7), Icons.Default.FactCheck, AccentGreen, Modifier.weight(1f))
+                MainMenuDiskProfileNewDiskChecklistItem("Sau 30 ngày", profileChecklistStatus(30), Icons.Default.EventRepeat, AccentOrange, Modifier.weight(1f))
             }
             Spacer(Modifier.height(6.dp))
             Column(
@@ -3071,10 +3054,10 @@ private fun DiskProfileBottomSheet(
                 androidx.compose.animation.AnimatedVisibility(visible = writePanelExpanded) {
                     Column {
                         Spacer(Modifier.height(6.dp))
-                        WriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
-                        WriteTaskRow("Đã hoàn tất hôm nay", "$completedLivestreamSessionsToday phiên • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(completedLivestreamBytesToday)}", AccentGreen)
-                        WriteTaskRow("Torrent đang tải", "$downloadTasks tác vụ", AccentCyan)
-                        WriteTaskRow("Sao lưu nền", "$backupTasks tác vụ", AccentGreen)
+                        MainMenuDiskProfileWriteTaskRow("Livestream hôm nay", "$livestreamSessionsToday phiên", AccentPink)
+                        MainMenuDiskProfileWriteTaskRow("Đã hoàn tất hôm nay", "$completedLivestreamSessionsToday phiên • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(completedLivestreamBytesToday)}", AccentGreen)
+                        MainMenuDiskProfileWriteTaskRow("Torrent đang tải", "$downloadTasks tác vụ", AccentCyan)
+                        MainMenuDiskProfileWriteTaskRow("Sao lưu nền", "$backupTasks tác vụ", AccentGreen)
                     }
                 }
             }
@@ -3090,7 +3073,7 @@ private fun DiskProfileBottomSheet(
 }
 
 @Composable
-private fun OperationModeChip(
+private fun MainMenuDiskProfileOperationModeChip(
     mode: String,
     label: String,
     selectedMode: String,
@@ -3116,7 +3099,7 @@ private fun OperationModeChip(
 }
 
 @Composable
-private fun NewDiskChecklistItem(
+private fun MainMenuDiskProfileNewDiskChecklistItem(
     title: String,
     status: String,
     icon: ImageVector,
@@ -3140,7 +3123,7 @@ private fun NewDiskChecklistItem(
 }
 
 @Composable
-private fun WriteTaskRow(title: String, value: String, color: Color) {
+private fun MainMenuDiskProfileWriteTaskRow(title: String, value: String, color: Color) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -3154,7 +3137,7 @@ private fun WriteTaskRow(title: String, value: String, color: Color) {
 }
 
 @Composable
-private fun HardwareMetricCell(
+private fun MainMenuDiskProfileHardwareMetricCell(
     title: String,
     value: String,
     subtitle: String,
@@ -3179,7 +3162,7 @@ private fun HardwareMetricCell(
 }
 
 @Composable
-fun SystemStatusCards(
+fun MainMenuSystemStatusCards(
     viewModel: WebDavViewModel,
     mContext: android.content.Context,
     onOpenAutoBackup: () -> Unit = {},
@@ -3712,7 +3695,7 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
+fun MainMenuLoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
     var historyIps by remember { mutableStateOf(rawHistory.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }) }
@@ -4014,7 +3997,7 @@ private val GpTextSecondary = Color(0xFF8892B0)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
+fun MainMenuGuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     var durationMinutes by remember { mutableIntStateOf(AppConfig.GUEST_PASS_DEFAULT_MINUTES) }
     var copiedField by remember { mutableStateOf("") }
@@ -4052,10 +4035,10 @@ fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
                         Column(Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = GpAccentGreen, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Guest Pass đang hoạt động", fontWeight = FontWeight.Bold, color = GpAccentGreen) }
                             Spacer(Modifier.height(14.dp))
-                            GuestInfoRow("Host", gp.host, clipboardManager, copiedField, "host") { copiedField = "host" }; Spacer(Modifier.height(8.dp))
-                            GuestInfoRow("Port FTP", gp.ftpPort.toString(), clipboardManager, copiedField, "port") { copiedField = "port" }; Spacer(Modifier.height(8.dp))
-                            GuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
-                            GuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass") { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
+                            MainMenuGuestInfoRow("Host", gp.host, clipboardManager, copiedField, "host") { copiedField = "host" }; Spacer(Modifier.height(8.dp))
+                            MainMenuGuestInfoRow("Port FTP", gp.ftpPort.toString(), clipboardManager, copiedField, "port") { copiedField = "port" }; Spacer(Modifier.height(8.dp))
+                            MainMenuGuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
+                            MainMenuGuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass") { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
                             val expiresMs = gp.expiresAt - System.currentTimeMillis(); val expiresMin = (expiresMs / 60000).coerceAtLeast(0)
                             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, null, tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️ Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
                             Spacer(Modifier.height(14.dp))
@@ -4082,7 +4065,7 @@ fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun GuestInfoRow(label: String, value: String, clipboardManager: androidx.compose.ui.platform.ClipboardManager, copiedField: String, fieldKey: String, onCopied: () -> Unit) {
+private fun MainMenuGuestInfoRow(label: String, value: String, clipboardManager: androidx.compose.ui.platform.ClipboardManager, copiedField: String, fieldKey: String, onCopied: () -> Unit) {
     val isCopied = copiedField == fieldKey
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0F3460).copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold); Text(value, fontSize = 14.sp, color = Color(0xFFE8E8E8), fontWeight = FontWeight.SemiBold) }
@@ -4098,20 +4081,20 @@ private fun GuestInfoRow(label: String, value: String, clipboardManager: android
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PerformanceScreen(onBack: () -> Unit) {
+fun MainMenuPerformanceScreen(onBack: () -> Unit) {
     val mContext = LocalContext.current
     val metrics by PerformanceMonitor.metricsFlow.collectAsState()
     LaunchedEffect(Unit) { PerformanceMonitor.startMonitoring(mContext) }
     Scaffold(topBar = { TopAppBar(title = { Text("Màn Giám Sát Kỹ Thuật (DevOps Monitor)", fontSize = 18.sp, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Trở lại") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) }) { padding ->
         Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            MetricCard("Động Cơ JVM (App RAM)", Icons.Default.Memory, "${metrics.usedJvmMemoryMb} MB / ${metrics.maxJvmMemoryMb} MB", if (metrics.maxJvmMemoryMb > 0) metrics.usedJvmMemoryMb.toFloat() / metrics.maxJvmMemoryMb else 0f, if (metrics.usedJvmMemoryMb > metrics.maxJvmMemoryMb * 0.8) Color.Red else Color.Green)
-            MetricCard("Bộ Nhớ Hệ Thống (Màng RAM)", Icons.Default.Adb, "Trống: ${metrics.freeRamMb} MB (Tổng: ${metrics.totalRamMb} MB)", metrics.ramUsagePercent / 100f, if (metrics.ramUsagePercent > 85) Color.Red else Color(0xFF03A9F4))
-            MetricCard("Trái Tim Chip Bán Dẫn (CPU Thread)", Icons.Default.Speed, "Hoạt động: ${metrics.cpuUsagePercent}% (Dao động ảo)", metrics.cpuUsagePercent / 100f, if (metrics.cpuUsagePercent > 70) Color(0xFFFF9800) else Color.Cyan)
+            MainMenuMetricCard("Động Cơ JVM (App RAM)", Icons.Default.Memory, "${metrics.usedJvmMemoryMb} MB / ${metrics.maxJvmMemoryMb} MB", if (metrics.maxJvmMemoryMb > 0) metrics.usedJvmMemoryMb.toFloat() / metrics.maxJvmMemoryMb else 0f, if (metrics.usedJvmMemoryMb > metrics.maxJvmMemoryMb * 0.8) Color.Red else Color.Green)
+            MainMenuMetricCard("Bộ Nhớ Hệ Thống (Màng RAM)", Icons.Default.Adb, "Trống: ${metrics.freeRamMb} MB (Tổng: ${metrics.totalRamMb} MB)", metrics.ramUsagePercent / 100f, if (metrics.ramUsagePercent > 85) Color.Red else Color(0xFF03A9F4))
+            MainMenuMetricCard("Trái Tim Chip Bán Dẫn (CPU Thread)", Icons.Default.Speed, "Hoạt động: ${metrics.cpuUsagePercent}% (Dao động ảo)", metrics.cpuUsagePercent / 100f, if (metrics.cpuUsagePercent > 70) Color(0xFFFF9800) else Color.Cyan)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NetworkBadge(Modifier.weight(1f), "Tải Xuống", "${metrics.rxSpeedKbps} KB/s", Icons.Default.ArrowDownward, Color.Green)
-                NetworkBadge(Modifier.weight(1f), "Đẩy Lên", "${metrics.txSpeedKbps} KB/s", Icons.Default.ArrowUpward, Color(0xFFFF5722))
+                MainMenuNetworkBadge(Modifier.weight(1f), "Tải Xuống", "${metrics.rxSpeedKbps} KB/s", Icons.Default.ArrowDownward, Color.Green)
+                MainMenuNetworkBadge(Modifier.weight(1f), "Đẩy Lên", "${metrics.txSpeedKbps} KB/s", Icons.Default.ArrowUpward, Color(0xFFFF5722))
             }
-            MetricCard("Kho Gạch Ngói Hình Ảnh (Coil Disk Cache)", Icons.Default.Storage, "${metrics.diskCacheSizeMb} MB đang ngốn rác", (metrics.diskCacheSizeMb / 800f).coerceIn(0f, 1f), Color(0xFF9C27B0))
+            MainMenuMetricCard("Kho Gạch Ngói Hình Ảnh (Coil Disk Cache)", Icons.Default.Storage, "${metrics.diskCacheSizeMb} MB đang ngốn rác", (metrics.diskCacheSizeMb / 800f).coerceIn(0f, 1f), Color(0xFF9C27B0))
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = { coil.Coil.imageLoader(mContext).memoryCache?.clear(); System.gc() }, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))) { Icon(Icons.Default.DeleteForever, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("BĂM NÚT BỘ ĐỆM RAM (Tránh Đơ Máy)", fontWeight = FontWeight.Bold) }
         }
@@ -4119,7 +4102,7 @@ fun PerformanceScreen(onBack: () -> Unit) {
 }
 
 @Composable
-fun MetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, progress: Float, progressColor: Color) {
+fun MainMenuMetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, progress: Float, progressColor: Color) {
     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, color = Color.Gray, fontSize = 14.sp) }
@@ -4130,7 +4113,7 @@ fun MetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVec
 }
 
 @Composable
-fun NetworkBadge(modifier: Modifier, title: String, speed: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color) {
+fun MainMenuNetworkBadge(modifier: Modifier, title: String, speed: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color) {
     Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
         Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp)); Spacer(Modifier.height(4.dp)); Text(title, color = Color.Gray, fontSize = 12.sp); Text(speed, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -4138,30 +4121,9 @@ fun NetworkBadge(modifier: Modifier, title: String, speed: String, icon: android
     }
 }
 
-data class QuickActionDef(
-    val id: String,
-    val title: String,
-    val subtitle: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val gradientColors: List<androidx.compose.ui.graphics.Color>
-)
-
-val AVAILABLE_QUICK_ACTIONS = listOf(
-    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B))),
-    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
-    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(Color(0xFFEF5350), Color(0xFFD32F2F))),
-    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
-    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
-    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
-    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C))),
-    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00))),
-    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(Color(0xFF29B6F6), Color(0xFF0277BD))),
-    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, listOf(Color(0xFF00BFA5), Color(0xFF00695C)))
-)
-
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun QuickActionSelectorDialog(
+fun MainMenuSectionQuickActionSelectorDialog(
     currentSlots: Set<String>,
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
@@ -4204,7 +4166,7 @@ fun QuickActionSelectorDialog(
 }
 
 @Composable
-fun SystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
+fun MainMenuSectionSystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.loadSystemLogs()
     }
@@ -4287,7 +4249,7 @@ fun SystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System
     }
 }
 
-fun formatElapsedTimeUI(millis: Long): String {
+fun MainMenuScreenFormatElapsedTimeUI(millis: Long): String {
     if (millis <= 0) return "0 giây"
     val totalSeconds = millis / 1000
     val days = totalSeconds / 86400
@@ -4306,7 +4268,7 @@ fun formatElapsedTimeUI(millis: Long): String {
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-fun ProcessListBottomSheet(
+fun MainMenuBottomSheetProcessListBottomSheet(
     viewModel: WebDavViewModel,
     sortBy: String,
     onDismiss: () -> Unit
@@ -4422,7 +4384,7 @@ fun ProcessListBottomSheet(
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-fun SmartDetailBottomSheet(
+fun MainMenuBottomSheetSmartDetailBottomSheet(
     smartInfo: SmartInfo,
     onDismiss: () -> Unit
 ) {
@@ -4555,7 +4517,7 @@ fun SmartDetailBottomSheet(
 }
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun SmbBottomSheet(
+fun MainMenuBottomSheetSmbBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -4691,7 +4653,7 @@ fun SmbBottomSheet(
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
+fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (viewModel.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)

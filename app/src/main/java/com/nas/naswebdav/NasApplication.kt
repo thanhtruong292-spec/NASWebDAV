@@ -194,7 +194,7 @@ class NasApplication : Application(), ImageLoaderFactory {
     @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
     val videoCache: SimpleCache by lazy {
         val cacheDirectory = File(cacheDir, "exoplayer_video_cache")
-        val evictor = LeastRecentlyUsedCacheEvictor(2L * 1024 * 1024 * 1024) // 2GB Cache
+        val evictor = LeastRecentlyUsedCacheEvictor(500L * 1024 * 1024) // 500MB - bảo vệ RAM 1GB device
         val databaseProvider = StandaloneDatabaseProvider(this)
         SimpleCache(cacheDirectory, evictor, databaseProvider)
     }
@@ -495,7 +495,7 @@ object SecurePrefsHelper {
                     .putString(KEY_USER, user)
                     .putString(KEY_PASS, pass)
                     .apply()
-            } catch (e: Exception) {}
+            } catch (e: Exception) { android.util.Log.e("NasApp", "Lưu credentials thất bại", e) }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onComplete() }
         }
     }

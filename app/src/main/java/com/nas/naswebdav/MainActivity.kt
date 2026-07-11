@@ -12,7 +12,7 @@ import com.nas.naswebdav.ui.screens.BrowserScreen
 
 import com.nas.naswebdav.ui.screens.LoginScreen
 
-import com.nas.naswebdav.ui.screens.VideoPlayerScreen
+import com.nas.naswebdav.ui.screens.ExoPlayerScreen
 
 import com.nas.naswebdav.ui.screens.ImageViewerScreen
 
@@ -780,7 +780,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("video") {
 
-            com.nas.naswebdav.ui.screens.VideoPlayerScreen(
+            com.nas.naswebdav.ui.screens.ExoPlayerScreen(
 
                 url = mediaUrl,
 

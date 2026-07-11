@@ -156,7 +156,7 @@ fun DownloadDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -391,11 +391,11 @@ fun SmartDiskDialog(
 }
 
 // ====================================================================
-// EXCLUSIVE PANEL STATE cho 3 section trong LivestreamRecordDialog:
+// EXCLUSIVE PANEL STATE cho 3 section trong DialogsLivestreamRecordDialog:
 // "watchlist" (THEO DÕI TIKTOK LIVE) | "exclude" (Thoi gian loai tru) | "active" (Dang ghi hinh)
 // Chỉ 1 section mở cùng lúc -> tối ưu diện tích màn hình.
 // ====================================================================
-object LivestreamPanelState {
+object DialogsLivestreamPanelState {
     val current: androidx.compose.runtime.MutableState<String?> =
         androidx.compose.runtime.mutableStateOf(null)
 
@@ -404,7 +404,7 @@ object LivestreamPanelState {
     }
 }
 
-private fun normalizeTikTokWatchMessage(message: String): String {
+private fun DialogsNormalizeTikTokWatchMessage(message: String): String {
     if (message.isBlank()) return ""
     return message
         .replace("Đã ghi phiên live này; không tạo file thứ hai cho tới khi user offline.", "Đã ghi phiên live này; không tạo tệp thứ hai cho tới khi người dùng ngoại tuyến.")
@@ -427,7 +427,7 @@ private fun normalizeTikTokWatchMessage(message: String): String {
 }
 
 @Composable
-private fun CompactBottomSheetHandle() {
+private fun DialogsCompactBottomSheetHandle() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -448,7 +448,7 @@ private fun CompactBottomSheetHandle() {
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TikTokLiveWatchSection(
+private fun DialogsTikTokLiveWatchSection(
     viewModel: WebDavViewModel,
     context: Context,
     users: List<WebDavViewModel.TikTokLiveWatchUser>,
@@ -460,9 +460,9 @@ private fun TikTokLiveWatchSection(
     var pendingDeleteUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
     val snackbarScope = rememberCoroutineScope()
     // Các panel theo dõi TikTok / thời gian loại trừ / đang ghi hình — chi 1 panel mo
-    // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).
-    val listExpanded = LivestreamPanelState.current.value == "watchlist"
-    val excludeExpanded = LivestreamPanelState.current.value == "exclude"
+    // cung luc thong qua DialogsLivestreamPanelState. Mac dinh tat ca dong (current.value == null).
+    val listExpanded = DialogsLivestreamPanelState.current.value == "watchlist"
+    val excludeExpanded = DialogsLivestreamPanelState.current.value == "exclude"
 
     pendingDeleteUser?.let { target ->
         AlertDialog(
@@ -518,7 +518,7 @@ private fun TikTokLiveWatchSection(
                 if (users.isNotEmpty()) Modifier.clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                     indication = null
-                ) { LivestreamPanelState.toggle("watchlist") } else Modifier
+                ) { DialogsLivestreamPanelState.toggle("watchlist") } else Modifier
             )
     ) {
         Text("♪", fontSize = 20.sp, color = Color(0xFFEE1D52))
@@ -719,7 +719,7 @@ private fun TikTokLiveWatchSection(
                                 "error" -> "Lỗi kiểm tra"
                                 else -> "Đang theo dõi"
                             }
-                            val displayLastError = normalizeTikTokWatchMessage(user.lastError)
+                            val displayLastError = DialogsNormalizeTikTokWatchMessage(user.lastError)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
@@ -734,7 +734,7 @@ private fun TikTokLiveWatchSection(
                                     modifier = Modifier.weight(1f)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                TikTokWatchStatusChip(
+                                DialogsTikTokWatchStatusChip(
                                     status = user.status,
                                     label = statusLabel,
                                     modifier = Modifier.widthIn(min = 116.dp)
@@ -844,7 +844,7 @@ private fun TikTokLiveWatchSection(
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null
-            ) { LivestreamPanelState.toggle("exclude") }
+            ) { DialogsLivestreamPanelState.toggle("exclude") }
     ) {
         Text("☾", fontSize = 18.sp, color = Color(0xFFFFCC80))
         Spacer(Modifier.width(8.dp))
@@ -893,7 +893,7 @@ private fun TikTokLiveWatchSection(
 }
 
 @Composable
-private fun TikTokWatchStatusChip(
+private fun DialogsTikTokWatchStatusChip(
     status: String,
     label: String,
     modifier: Modifier = Modifier
@@ -964,7 +964,7 @@ fun AutoBackupDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF161616),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
@@ -1106,7 +1106,7 @@ fun SystemLogDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -1262,7 +1262,7 @@ fun DockerDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderPickerDialog(
+fun DialogsFolderPickerDialog(
     viewModel: WebDavViewModel,
     startingUrl: String,
     onDismiss: () -> Unit,
@@ -1372,39 +1372,10 @@ fun FolderPickerDialog(
 // AppStatusDialog + DialogType enum (từ ui.components.AppStatusDialog)
 // ════════════════════════════════════════════════════════════════════════════
 
-enum class DialogType { SUCCESS, ERROR, WARNING, CONFIRM }
-
+@Suppress("DIFFERENT_NAMES_FOR_THE_SAME_THING")
 @Composable
-fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? = null, onDismiss: () -> Unit) {
-    if (message.isBlank()) return
-
-    val (icon, color, title) = when (type) {
-        DialogType.SUCCESS -> Triple(Icons.Default.Check, Color(0xFF4CAF50), "Thành công")
-        DialogType.ERROR -> Triple(Icons.Default.Close, Color(0xFFE53935), "Thất bại")
-        DialogType.WARNING -> Triple(Icons.Default.Warning, Color(0xFFFFA726), "Cảnh báo")
-        DialogType.CONFIRM -> Triple(Icons.Default.HelpOutline, Color(0xFF2196F3), "Xác nhận")
-    }
-    val isDark = isSystemInDarkTheme()
-    val dialogBg = if (isDark) Color(0xFF263238) else Color.White
-    val textColor = if (isDark) Color.White else Color(0xFF546E7A)
-    Dialog(onDismissRequest = onDismiss) {
-        Box(modifier = Modifier.fillMaxWidth().background(dialogBg, shape = RoundedCornerShape(24.dp)).border(1.dp, Color(0xFFEEEEEE).copy(alpha = 0.3f), RoundedCornerShape(24.dp)).padding(24.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.size(72.dp).background(color.copy(0.1f), CircleShape).border(2.dp, color.copy(0.2f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(36.dp))
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(text = title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = color)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(text = message, fontSize = 16.sp, color = textColor, textAlign = TextAlign.Center)
-                Spacer(modifier = Modifier.height(28.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = color), shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f).height(48.dp)) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
-                    if (onConfirm != null) { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)), shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f).height(48.dp)) { Text("Xác nhận", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp) } }
-                }
-            }
-        }
-    }
+fun DialogsAppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? = null, onDismiss: () -> Unit) {
+    AppStatusDialog(type, message, onConfirm, onDismiss)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1412,7 +1383,7 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuthenticated: () -> Unit, onFallbackToLogin: () -> Unit) {
+fun DialogsBiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuthenticated: () -> Unit, onFallbackToLogin: () -> Unit) {
     val executor = remember { androidx.core.content.ContextCompat.getMainExecutor(activity) }
     val currentOnAuthenticated by rememberUpdatedState(onAuthenticated)
     val currentOnFallbackToLogin by rememberUpdatedState(onFallbackToLogin)
@@ -1470,7 +1441,7 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
 }
 
 @Composable
-fun NotificationDialog(title: String, message: String, icon: ImageVector, iconColor: Color, onDismiss: () -> Unit) {
+fun DialogsNotificationDialog(title: String, message: String, icon: ImageVector, iconColor: Color, onDismiss: () -> Unit) {
     LaunchedEffect(key1 = title, key2 = message) { kotlinx.coroutines.delay(3000); onDismiss() }
     AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onClick = onDismiss) { Text("Đã hiểu", fontWeight = FontWeight.Bold) } },
         title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, fontWeight = FontWeight.Bold) } },
@@ -1482,7 +1453,7 @@ fun NotificationDialog(title: String, message: String, icon: ImageVector, iconCo
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+fun DialogsIpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
     val ip = viewModel.pendingIpAddress; val message = viewModel.approvalMessage; val countryCode = viewModel.pendingCountryCode
     val infiniteTransition = rememberInfiniteTransition(label = "shield_pulse")
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
@@ -1545,7 +1516,7 @@ fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun LanWhitelistDialog(
+fun DialogsLanWhitelistDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -1562,7 +1533,7 @@ fun LanWhitelistDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).heightIn(max = 600.dp)
@@ -1679,7 +1650,7 @@ fun LanWhitelistDialog(
 
 // (Đã xoá SmartSyncDialog theo yêu cầu)
 @Composable
-fun OrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+fun DialogsOrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!viewModel.organizingLegacyRunning) onDismiss() },
         title = { Text("Phân loại video cũ") },
@@ -1711,7 +1682,7 @@ fun OrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun DuplicateConfigDialog(
+fun DialogsDuplicateConfigDialog(
     viewModel: WebDavViewModel,
     context: android.content.Context,
     onStartScan: (Boolean, Boolean) -> Unit,
@@ -1795,7 +1766,7 @@ fun DuplicateConfigDialog(
     )
 }
 @Composable
-fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = { onDismiss() },
         title = {
@@ -2003,7 +1974,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 // DIALOG TẠO THƯ MỤC MỚI
 // ====================================================================
 @Composable
-fun CreateFolderDialog(
+fun DialogsCreateFolderDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2030,13 +2001,13 @@ fun CreateFolderDialog(
 // DIALOG XÓA NHIỀU TỆP CÙNG LÚC
 // ====================================================================
 @Composable
-fun MultiDeleteDialog(
+fun DialogsMultiDeleteDialog(
     selectedCount: Int,
     isTrash: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AppStatusDialog(
+    DialogsAppStatusDialog(
         type = DialogType.WARNING,
         message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn $selectedCount tệp này không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa $selectedCount tệp này vào Thùng rác?",
         onConfirm = onConfirm,
@@ -2045,12 +2016,12 @@ fun MultiDeleteDialog(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// LivestreamRecordDialog — Ghi hinh Livestream TikTok / Facebook / YouTube
+// DialogsLivestreamRecordDialog — Ghi hinh Livestream TikTok / Facebook / YouTube
 // ════════════════════════════════════════════════════════════════════════════
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun LivestreamRecordDialog(
+fun DialogsLivestreamRecordDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -2061,7 +2032,7 @@ fun LivestreamRecordDialog(
     // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
     // giao dien gon, user chu dong bam header de xem section can xem.
     androidx.compose.runtime.DisposableEffect(Unit) {
-        LivestreamPanelState.current.value = null
+        DialogsLivestreamPanelState.current.value = null
         onDispose { }
     }
     var liveUrl by remember { mutableStateOf("") }
@@ -2179,7 +2150,7 @@ fun LivestreamRecordDialog(
     // bao gio dung lai o half. Khi user mo panel thi sheet con auto expand() de
     // dam bao co du khong gian hien thi content.
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val expandedPanel = LivestreamPanelState.current.value
+    val expandedPanel = DialogsLivestreamPanelState.current.value
     androidx.compose.runtime.LaunchedEffect(expandedPanel) {
         if (expandedPanel != null) {
             // 1) Day sheet len max height (truong hop user mo dialog xong it phat
@@ -2197,7 +2168,7 @@ fun LivestreamRecordDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -2245,7 +2216,7 @@ fun LivestreamRecordDialog(
             Spacer(Modifier.height(6.dp))
 
             if (livePanelMode == "watch") {
-                TikTokLiveWatchSection(
+                DialogsTikTokLiveWatchSection(
                     viewModel = viewModel,
                     context = context,
                     users = tiktokWatchUsers,
@@ -2373,8 +2344,8 @@ fun LivestreamRecordDialog(
 
             // --- PHẦN 2: DANH SÁCH CÁC JOB ĐANG GHI ---
             // Ẩn mặc định, bấm header để mở (toggle "active" panel). Khi mở sẽ tự
-            // động đóng các panel khác (watchlist + exclude) thông qua LivestreamPanelState.
-            val activeExpanded = LivestreamPanelState.current.value == "active"
+            // động đóng các panel khác (watchlist + exclude) thông qua DialogsLivestreamPanelState.
+            val activeExpanded = DialogsLivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
                 HorizontalDivider(color = Color.DarkGray)
                 Spacer(Modifier.height(8.dp))
@@ -2385,7 +2356,7 @@ fun LivestreamRecordDialog(
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                             indication = null
-                        ) { LivestreamPanelState.toggle("active") }
+                        ) { DialogsLivestreamPanelState.toggle("active") }
                 ) {
                     val pulse = rememberInfiniteTransition(label = "rec_pulse")
                     val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.4f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "rec_alpha")
@@ -2523,7 +2494,7 @@ fun LivestreamRecordDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BiometricSettingsDialog(
+fun DialogsBiometricSettingsDialog(
     viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
@@ -2554,7 +2525,7 @@ fun BiometricSettingsDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -2729,7 +2700,7 @@ fun BiometricSettingsDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BandwidthThrottleDialog(
+fun DialogsBandwidthThrottleDialog(
     viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
@@ -2750,7 +2721,7 @@ fun BandwidthThrottleDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -2837,7 +2808,7 @@ fun BandwidthThrottleDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SleepScheduleDialog(
+fun DialogsSleepScheduleDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -2857,7 +2828,7 @@ fun SleepScheduleDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -3069,7 +3040,7 @@ fun SleepScheduleDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DiskHealthDialog(
+fun DialogsDiskHealthDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -3085,7 +3056,7 @@ fun DiskHealthDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -3304,7 +3275,7 @@ fun DiskHealthDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NasConfigBackupDialog(
+fun DialogsNasConfigBackupDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -3363,7 +3334,7 @@ fun NasConfigBackupDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
@@ -3543,7 +3514,7 @@ fun NasConfigBackupDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UsbImportDialog(
+fun DialogsUsbImportDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
@@ -3602,7 +3573,7 @@ fun UsbImportDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -3951,7 +3922,7 @@ fun UsbImportDialog(
 // ====================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FilePropertiesDialog(
+fun DialogsFilePropertiesDialog(
     file: com.nas.naswebdav.NasFile,
     onDismiss: () -> Unit
 ) {
@@ -4007,7 +3978,7 @@ fun FilePropertiesDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = Color(0xFF101012),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -4034,21 +4005,21 @@ fun FilePropertiesDialog(
             Spacer(Modifier.height(6.dp))
 
             // Cac dong field — label trai, value phai, value selectable de copy
-            PropertyRow("Tên", file.name, selectable = true)
-            PropertyRow("Đường dẫn", file.path, selectable = true, monospace = true)
-            PropertyRow("Loại", mime)
+            DialogsPropertyRow("Tên", file.name, selectable = true)
+            DialogsPropertyRow("Đường dẫn", file.path, selectable = true, monospace = true)
+            DialogsPropertyRow("Loại", mime)
             if (!file.isDirectory) {
-                PropertyRow("Phần mở rộng", if (ext.isEmpty()) "—" else ".$ext")
-                PropertyRow("Kích thước", "$sizeFormatted$sizeRaw")
+                DialogsPropertyRow("Phần mở rộng", if (ext.isEmpty()) "—" else ".$ext")
+                DialogsPropertyRow("Kích thước", "$sizeFormatted$sizeRaw")
             }
-            PropertyRow("Sửa lần cuối", modifiedStr)
+            DialogsPropertyRow("Sửa lần cuối", modifiedStr)
             val hashDisplay = when {
                 file.isDirectory -> "—"
                 fingerprintLoading -> "Đang tra cứu..."
                 fingerprintHash.isNullOrEmpty() -> "— (chưa quét fingerprint)"
                 else -> fingerprintHash!!
             }
-            PropertyRow("Hash", hashDisplay, selectable = true, monospace = true)
+            DialogsPropertyRow("Hash", hashDisplay, selectable = true, monospace = true)
 
             Spacer(Modifier.height(8.dp))
 
@@ -4076,7 +4047,7 @@ fun FilePropertiesDialog(
     }
 }
 
-private fun dialogInsightRate(bytesPerSec: Long): String {
+private fun DialogsInsightRate(bytesPerSec: Long): String {
     if (bytesPerSec <= 0L) return "0 B/s"
     val units = arrayOf("B/s", "KB/s", "MB/s", "GB/s")
     var value = bytesPerSec.toDouble()
@@ -4090,7 +4061,7 @@ private fun dialogInsightRate(bytesPerSec: Long): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NasInsightsDialog(
+fun DialogsNasInsightsDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
@@ -4102,7 +4073,7 @@ fun NasInsightsDialog(
         sheetState = sheetState,
         containerColor = Color(0xFF0F0F0F),
         scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
+        dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         val insight = viewModel.nasInsights
         Column(
@@ -4123,43 +4094,43 @@ fun NasInsightsDialog(
                 }
             }
 
-            InsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, Color(0xFF66BB6A)) {
-                InsightRow("Điểm hiện tại", "${insight.hddScore}/100")
-                InsightRow("Nhiệt độ", "${insight.hddTempC}°C")
-                InsightRow("Thấp nhất 7 ngày", "${insight.hddMinScore}/100")
-                InsightRow("Biến động", if (insight.hddScoreDelta >= 0) "+${insight.hddScoreDelta}" else "${insight.hddScoreDelta}")
+            DialogsInsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, Color(0xFF66BB6A)) {
+                DialogsInsightRow("Điểm hiện tại", "${insight.hddScore}/100")
+                DialogsInsightRow("Nhiệt độ", "${insight.hddTempC}°C")
+                DialogsInsightRow("Thấp nhất 7 ngày", "${insight.hddMinScore}/100")
+                DialogsInsightRow("Biến động", if (insight.hddScoreDelta >= 0) "+${insight.hddScoreDelta}" else "${insight.hddScoreDelta}")
                 if (insight.hddStatusText.isNotBlank()) {
                     Text(insight.hddStatusText, color = Color(0xFF8892B0), fontSize = 12.sp)
                 }
             }
 
-            InsightSection("Bộ điều phối tải nền", Icons.Default.Tune, Color(0xFFFFA726)) {
+            DialogsInsightSection("Bộ điều phối tải nền", Icons.Default.Tune, Color(0xFFFFA726)) {
                 val displayMode = when(insight.workloadMode.lowercase()) {
                     "normal" -> "BÌNH THƯỜNG"
                     "balanced" -> "CÂN BẰNG TẢI"
                     "protect" -> "BẢO VỆ HỆ THỐNG"
                     else -> insight.workloadMode.uppercase()
                 }
-                InsightRow("Chế độ", displayMode)
-                InsightRow("Áp lực tải", "${insight.workloadPressure}")
+                DialogsInsightRow("Chế độ", displayMode)
+                DialogsInsightRow("Áp lực tải", "${insight.workloadPressure}")
                 Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = Color(0xFFE8E8E8), fontSize = 12.sp)
                 if (insight.workloadReasons.isNotEmpty()) {
                     Text(insight.workloadReasons.joinToString(" • "), color = Color(0xFF8892B0), fontSize = 11.sp)
                 }
             }
 
-            InsightSection("Bảo vệ eMMC", Icons.Default.Memory, Color(0xFF42A5F5)) {
-                InsightRow("Root eMMC", "${insight.emmcRootPercent}%")
-                InsightRow("Log/zram", "${insight.emmcLogPercent}%")
+            DialogsInsightSection("Bảo vệ eMMC", Icons.Default.Memory, Color(0xFF42A5F5)) {
+                DialogsInsightRow("Root eMMC", "${insight.emmcRootPercent}%")
+                DialogsInsightRow("Log/zram", "${insight.emmcLogPercent}%")
                 val recs = insight.emmcRecommendations.ifEmpty { listOf("eMMC đang an toàn.") }
                 recs.take(3).forEach { Text(it, color = Color(0xFF8892B0), fontSize = 12.sp) }
             }
 
-            InsightSection("Luồng dữ liệu thực tế", Icons.Default.SyncAlt, Color(0xFFB388FF)) {
-                InsightRow("Ghi HDD", dialogInsightRate(insight.diskWriteBps))
-                InsightRow("Đọc HDD", dialogInsightRate(insight.diskReadBps))
-                InsightRow("LAN nhận", dialogInsightRate(insight.netRxBps))
-                InsightRow("LAN gửi", dialogInsightRate(insight.netTxBps))
+            DialogsInsightSection("Luồng dữ liệu thực tế", Icons.Default.SyncAlt, Color(0xFFB388FF)) {
+                DialogsInsightRow("Ghi HDD", DialogsInsightRate(insight.diskWriteBps))
+                DialogsInsightRow("Đọc HDD", DialogsInsightRate(insight.diskReadBps))
+                DialogsInsightRow("LAN nhận", DialogsInsightRate(insight.netRxBps))
+                DialogsInsightRow("LAN gửi", DialogsInsightRate(insight.netTxBps))
                 if (insight.flowTasks.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
                     insight.flowTasks.take(4).forEach { task ->
@@ -4178,7 +4149,7 @@ fun NasInsightsDialog(
                 }
             }
 
-            InsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
+            DialogsInsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
                 insight.maintenanceActions.ifEmpty {
                     listOf(WebDavViewModel.InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
                 }.forEach { action ->
@@ -4210,7 +4181,7 @@ fun NasInsightsDialog(
 }
 
 @Composable
-private fun InsightSection(title: String, icon: ImageVector, color: Color, content: @Composable ColumnScope.() -> Unit) {
+private fun DialogsInsightSection(title: String, icon: ImageVector, color: Color, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().background(Color(0xFF171922), RoundedCornerShape(10.dp)).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
@@ -4223,7 +4194,7 @@ private fun InsightSection(title: String, icon: ImageVector, color: Color, conte
 }
 
 @Composable
-private fun InsightRow(label: String, value: String) {
+private fun DialogsInsightRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = Color(0xFF8892B0), fontSize = 12.sp)
         Text(value, color = Color(0xFFE8E8E8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -4231,7 +4202,7 @@ private fun InsightRow(label: String, value: String) {
 }
 
 @Composable
-private fun PropertyRow(
+private fun DialogsPropertyRow(
     label: String,
     value: String,
     selectable: Boolean = false,

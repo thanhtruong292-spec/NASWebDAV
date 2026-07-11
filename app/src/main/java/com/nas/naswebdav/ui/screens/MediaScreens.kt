@@ -83,12 +83,6 @@ private val categoryColors = mapOf(
     "Thể Thao"           to listOf(Color(0xFF56AB2F), Color(0xFFA8E063))
 )
 
-private val DarkSurface = Color.Black
-private val DarkCard    = Color.Black
-private val AccentCyan  = Color(0xFF00D2FF)
-private val TextPrimary = Color(0xFFE8E8E8)
-private val TextSecondary = Color(0xFF8892B0)
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
 @Composable
 fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: String, pass: String, onBack: () -> Unit) {
@@ -1365,19 +1359,13 @@ private fun updatePipActions(activity: ComponentActivity, exoPlayer: androidx.me
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SmartOrganizerScreen.kt
+// MainMenuSmartOrganizerScreen.kt
 // ════════════════════════════════════════════════════════════════════════════
-
-// ── Bảng màu bổ sung cho SmartOrganizer ──
-private val AccentGreen = Color(0xFF00E676)
-private val AccentOrange = Color(0xFFFF9100)
-private val AccentRed = Color(0xFFFF1744)
-
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SmartOrganizerScreen(
+fun MainMenuSmartOrganizerScreen(
     viewModel: WebDavViewModel,
     onBack: () -> Unit
 ) {
@@ -1883,7 +1871,7 @@ private val SeTextSecondary = Color(0xFF8892B0)
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SocialExtractorScreen(
+fun MainMenuSocialExtractorScreen(
     viewModel: WebDavViewModel,
     onBack: () -> Unit
 ) {
@@ -1893,7 +1881,7 @@ fun SocialExtractorScreen(
     // ── State cục bộ ─────────────────────────────────────────────────────────
     var linkInput by remember {
         val clip = clipboardManager.getText()?.text ?: ""
-        mutableStateOf(if (isSocialUrl(clip)) clip else "")
+        mutableStateOf(if (MainMenuIsSocialUrl(clip)) clip else "")
     }
     // Chế độ: true = Stream Pipe (điện thoại bơm), false = yt-dlp (NAS tự tải)
     var usePipeMode by remember { mutableStateOf(true) }
@@ -2713,7 +2701,7 @@ private fun MainActionButton(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-fun isSocialUrl(url: String): Boolean {
+fun MainMenuIsSocialUrl(url: String): Boolean {
     val l = url.lowercase()
     return l.contains("tiktok.com") || l.contains("vm.tiktok") ||
            l.contains("facebook.com/") || l.contains("fb.watch") ||

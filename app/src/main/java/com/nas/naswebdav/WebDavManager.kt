@@ -104,7 +104,7 @@ internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fi
 
 object WebDavManager {
 
-    internal data class AuthState(
+    data class AuthState(
         val baseUrl: String = "",
         val user: String = "",
         val pass: String = ""
@@ -127,6 +127,8 @@ object WebDavManager {
 
     fun currentAuthHeader(): String = authState.authHeader
 
+    fun currentAuthState(): AuthState = authState
+
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
     }
@@ -141,7 +143,7 @@ object WebDavManager {
 
     // Kế thừa kết nối (Connection Pooling) & Keep-Alive
 
-    private val optimizedClient: OkHttpClient by lazy {
+    internal val optimizedClient: OkHttpClient by lazy {
 
         val dispatcher = Dispatcher().apply {
 

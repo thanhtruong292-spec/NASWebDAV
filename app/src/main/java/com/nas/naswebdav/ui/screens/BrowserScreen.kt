@@ -87,7 +87,7 @@ import androidx.compose.foundation.lazy.items
 
 private const val VIEWED_FILES_LIMIT = 5000
 
-private fun markBrowserFilesViewed(
+internal fun markBrowserFilesViewed(
     prefs: android.content.SharedPreferences,
     paths: Collection<String>
 ) {
@@ -1097,7 +1097,7 @@ fun BrowserScreen(
                             key = { it.path },
                             contentType = { if (it.isDirectory) "folder" else "file" }
                         ) { file ->
-                            FileItemGridCell(
+                            BrowserScreenFileItemGridCell(
                                 file = file,
                                 viewModel = viewModel,
                                 selectionMode = selectionMode,
@@ -1192,10 +1192,10 @@ fun BrowserScreen(
     }
 }
 
-// --- FILE ITEM GRID CELL ---
+// --- FILE ITEM GRID CELL (kept for backwards compat) ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun FileItemGridCell(
+fun BrowserScreenFileItemGridCell(
     file: NasFile,
     viewModel: WebDavViewModel,
     selectionMode: Boolean = false,
@@ -1717,35 +1717,6 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
                 CircularProgressIndicator(color = Color(0xFF2196F3), modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
         }
-    }
-}
-// --- HÀM HELPER HỖ TRỢ MỞ VIDEO BẰNG EXTERNAL PLAYERS (VLC, MX PLAYER) ---
-// KIẾN TRÚC MỚI: Dùng Local HTTP Proxy thay vì nhúng auth vào URL
-// → VLC kết nối tới localhost (không cần auth) → Proxy chuyển tiếp tới NAS với header chuẩn
-fun openExternalVideoPlayer(
-    context: android.content.Context,
-    url: String,
-    user: String,
-    pass: String,
-    onError: () -> Unit
-) {
-    try {
-        // 1. Khởi động proxy cục bộ trên localhost — VLC kết nối tới đây
-        val proxy = com.nas.naswebdav.LocalVideoProxy(user, pass)
-        val localUrl = proxy.start(url)
-
-        // 2. Mở Intent tới VLC/MX Player với URL localhost (không cần xác thực)
-        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(android.net.Uri.parse(localUrl), "video/*")
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-
-        val chooser = android.content.Intent.createChooser(intent, "Chọn trình phát video (VLC, MX Player...)")
-        chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
-    } catch (e: Exception) {
-        android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
-        onError()
     }
 }
 

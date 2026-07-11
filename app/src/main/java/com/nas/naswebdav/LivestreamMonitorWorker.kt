@@ -231,7 +231,7 @@ class LivestreamMonitorWorker(
                 // Tìm job của chúng ta
                 var found = false
                 for (i in 0 until jobs.length()) {
-                    val job = jobs.getJSONObject(i)
+                    val job = jobs.optJSONObject(i) ?: continue
                     if (job.optString("job_id") != jobId) continue
                     found = true
                     finalStatus = job.optString("status", "recording")
