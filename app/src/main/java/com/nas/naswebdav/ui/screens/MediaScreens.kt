@@ -3,6 +3,8 @@ package com.nas.naswebdav.ui.screens
 
 import android.annotation.SuppressLint
 import android.view.ViewGroup
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import android.webkit.*
 import android.widget.Toast
 import com.nas.naswebdav.*
@@ -484,17 +486,45 @@ private fun ZoomableImage(
                 )
             }
             .pointerInput(path) {
-                // Pinch zoom + pan
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(minScale, maxScale)
-                    scale = newScale
-                    if (newScale > 1f) {
-                        offsetX += pan.x
-                        offsetY += pan.y
-                        clampOffsets()
-                    } else {
-                        offsetX = 0f
-                        offsetY = 0f
+                // Pinch zoom — CHỈ consume khi ≥2 ngón tay
+                // Single finger → KHÔNG consume → pager swipe hoạt động bình thường
+                awaitEachGesture {
+                    val down1 = awaitFirstDown(requireUnconsumed = false)
+                    down1.consume()
+                    var pastMultiTouch = false
+                    while (true) {
+                        val ev = awaitPointerEvent()
+                        val anyPressed = ev.changes.any { it.pressed }
+                        if (!anyPressed) break
+                        if (ev.changes.size >= 2) {
+                            pastMultiTouch = true
+                            // Tính zoom ratio + pan từ multi-touch centroid
+                            val c = ev.changes
+                            val oldDist = kotlin.math.hypot(
+                                c[0].previousPosition.x - c[1].previousPosition.x,
+                                c[0].previousPosition.y - c[1].previousPosition.y
+                            ).coerceAtLeast(1f)
+                            val newDist = kotlin.math.hypot(
+                                c[0].position.x - c[1].position.x,
+                                c[0].position.y - c[1].position.y
+                            ).coerceAtLeast(1f)
+                            val zoom = newDist / oldDist
+                            val newScale = (scale * zoom).coerceIn(minScale, maxScale)
+                            scale = newScale
+                            if (newScale > 1f) {
+                                val cx = (c[0].position.x + c[1].position.x) / 2f
+                                val cy = (c[0].position.y + c[1].position.y) / 2f
+                                val oldCx = (c[0].previousPosition.x + c[1].previousPosition.x) / 2f
+                                val oldCy = (c[0].previousPosition.y + c[1].previousPosition.y) / 2f
+                                offsetX += cx - oldCx
+                                offsetY += cy - oldCy
+                                clampOffsets()
+                            } else {
+                                offsetX = 0f
+                                offsetY = 0f
+                            }
+                            c.forEach { if (it.pressed) it.consume() }
+                        }
                     }
                 }
             },

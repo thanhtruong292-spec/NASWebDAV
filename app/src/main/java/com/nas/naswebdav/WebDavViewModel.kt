@@ -611,6 +611,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // LOẠI BỎ fileList GÂY OOM, THAY BẰNG PAGING DATA FLOW
     var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
+    // Set tracks file paths pending deletion — prevents files from reappearing after refresh
+    private val pendingDeletes = mutableSetOf<String>()
 
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
@@ -948,6 +950,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // HÀM CONNECT_AND_LOAD BỊ XÓA BỎ VÌ DƯ THỪA. SẼ DÙNG HÀM CONNECT CHÍNH THỨC NẰM Ở CUỐI FILE.
 
     fun openFolder(file: NasFile) {
+        pendingDeletes.clear()
         urlStack.push(currentUrl)
         currentUrl = if (file.path.endsWith("/")) file.path else "${file.path}/"
 
@@ -1005,6 +1008,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun resetToRoot() = resetToDefaultMode()
     fun navigateToUrl(url: String) {
+        pendingDeletes.clear()
         currentUrl = url
         fileList = emptyList()
         isLoading = true
@@ -1012,6 +1016,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun goBack(): Boolean {
         if (urlStack.isNotEmpty()) {
+            pendingDeletes.clear()
             currentUrl = urlStack.pop()
 
             // SỬA LỖI: Nhường toàn bộ băng thông cho lệnh lùi thư mục
@@ -1918,9 +1923,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
             // Lấy danh sách tĩnh để phục vụ ImageViewerScreen
             val cached = repository.getCachedFiles(currentUrl)
-            fileList = cached.map { 
-                NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) 
-            }.filter { !it.name.startsWith(".") || isSpecialMode }
+            // Filter pending deletions locally — tránh file xoá hiện lại khi DB cache stale
+            val activePendingDeletes = pendingDeletes
+            fileList = cached.map {
+                NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+            }
+                .filter { it.path !in activePendingDeletes }
+                .filter { !it.name.startsWith(".") || isSpecialMode }
 
             // TỐI ƯU SMART REFRESH: Nếu không ép buộc Refresh và Cache đã có sẵn dữ liệu thì xong luôn!
             if (!forceRefresh && cached.isNotEmpty()) {
@@ -1940,9 +1949,11 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.getRemoteFilesAndCache(currentUrl)
                 // Lập tức Cập nhật lại FileList tĩnh cho chế độ xem ảnh Full-Screen
                 val refreshedCached = repository.getCachedFiles(currentUrl)
-                fileList = refreshedCached.map { 
-                    NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) 
-                }.filter { !it.name.startsWith(".") || isSpecialMode }
+                fileList = refreshedCached.map {
+                    NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+                }
+                    .filter { it.path !in pendingDeletes }
+                    .filter { !it.name.startsWith(".") || isSpecialMode }
 
                 // LOG + IP: Hiển thị IP NAS sau trạng thái kết nối
                 val nasHost = try { safeUrlHost(currentUrl) } catch (_: Exception) { "" }
@@ -2016,6 +2027,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun deleteFile(context: Context, file: NasFile) {
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
+        // Mark as pending — giúp refresh không hiển thị lại file này cho đến khi cache invalidate
+        pendingDeletes.add(file.path)
 
         viewModelScope.launch(Dispatchers.IO) {
             val trashMetaDao = NasApplication.instance.database.trashMetaDao()
@@ -2044,7 +2057,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                     trashMetaDao.insert(TrashMeta(trashPath = trashTargetUrl, originalPath = file.path))
                     repository.addSystemLog("WARNING", "File Ops", "Đã di chuyển tệp '${file.name}' vào Thùng rác.")
                 }
+                // Xóa khỏi DB cache ngay — không cần chờ next-refresh
+                if (!isInTrash) {
+                    try { NasApplication.instance.database.fileDao().deleteFileByPath(file.path) } catch (_: Exception) {}
+                }
             } catch (e: Exception) {
+                pendingDeletes.remove(file.path)
                 withContext(Dispatchers.Main) { fileList = oldList }
 
                 val message = friendlyError(e)
@@ -2074,6 +2092,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // Cùng lúc bốc hơi 100+ file ra khỏi List để giao diện trống ngay trong 0 mili-giây!
         val pathsToDelete = filesToDelete.map { it.path }.toSet()
         fileList = fileList.filter { it.path !in pathsToDelete }
+        // Track deletions to prevent reappearance after refresh
+        pendingDeletes.addAll(pathsToDelete)
 
         // KIẾN TRÚC MỚI: Đẩy toàn bộ tác vụ sang BatchOperationWorker (Foreground Service)
         // → Tiến trình KHÔNG BỊ HỦY khi App tắt, hiển thị trên Notification Bar
