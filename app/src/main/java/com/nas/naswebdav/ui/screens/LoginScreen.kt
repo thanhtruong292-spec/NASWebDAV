@@ -86,7 +86,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     var historyIps by remember {
         mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
     }
-    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: DEFAULT_NAS_IPS.first()) }
+    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
     var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
     var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }

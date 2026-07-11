@@ -568,6 +568,7 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
         loading = false
     }
 
+    val coroutineScope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -640,7 +641,7 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                             .putString("telegram_bot_token", botToken)
                             .putString("telegram_chat_id", chatId)
                             .apply()
-                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val url = "${viewModel.webDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
                                 val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),

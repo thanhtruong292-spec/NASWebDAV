@@ -4,7 +4,6 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -37,7 +36,6 @@ import android.net.TrafficStats
 import android.os.Process
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.StateFlow
-import com.nas.naswebdav.utils.ImageFingerprint
 import androidx.work.WorkManager
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -613,6 +611,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
     // Set tracks file paths pending deletion — prevents files from reappearing after refresh
     private val pendingDeletes = mutableSetOf<String>()
+    // FIX S1: Generation counter — guards against stale coroutines overwriting newer UI state
+    // when loadCurrentUrl() is invoked again before the previous one finishes (e.g. fast nav).
+    private var loadGeneration = 0
 
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
@@ -1913,23 +1914,27 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // ĐÁNH THỨC NAS BẰNG WAKE-ON-LAN (MAGIC PACKET)
     
+    // FIX S1: Generation counter guards against stale coroutines overwriting newer UI state
+    // when loadCurrentUrl() fires again before the previous invocation finishes.
     private fun loadCurrentUrl(forceRefresh: Boolean = false) {
         viewModelScope.launch {
+            val gen = ++loadGeneration
             errorMessage = null
-            
+
             // SỬA LỖI CHÍ MẠNG TỪ PHASE 1: LUÔN LUÔN KẾT NỐI UI VỚI CSDL TRƯỚC TIÊN!
             // Khi Paging Flow trói buộc vào Room DB, mọi thay đổi dữ liệu từ NAS tải về sẽ lập tức bắn lên UI một cách Auto!
             _pagedFilesFlow.value = repository.getFilesStream(currentUrl).cachedIn(viewModelScope)
 
             // Lấy danh sách tĩnh để phục vụ ImageViewerScreen
             val cached = repository.getCachedFiles(currentUrl)
-            // Filter pending deletions locally — tránh file xoá hiện lại khi DB cache stale
-            val activePendingDeletes = pendingDeletes
+            // FIX R1: Snapshot pendingDeletes to avoid concurrent-modification race
+            val activePendingDeletes = pendingDeletes.toSet()
             fileList = cached.map {
                 NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
             }
                 .filter { it.path !in activePendingDeletes }
                 .filter { !it.name.startsWith(".") || isSpecialMode }
+            if (gen != loadGeneration) return@launch // stale — newer load in progress
 
             // TỐI ƯU SMART REFRESH: Nếu không ép buộc Refresh và Cache đã có sẵn dữ liệu thì xong luôn!
             if (!forceRefresh && cached.isNotEmpty()) {
@@ -1954,6 +1959,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 }
                     .filter { it.path !in pendingDeletes }
                     .filter { !it.name.startsWith(".") || isSpecialMode }
+                if (gen != loadGeneration) return@launch // stale — newer load in progress
 
                 // LOG + IP: Hiển thị IP NAS sau trạng thái kết nối
                 val nasHost = try { safeUrlHost(currentUrl) } catch (_: Exception) { "" }
@@ -2200,6 +2206,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         // Optimistic UI: keep instant feel while remote move happens in background.
         val oldList = fileList
         fileList = oldList.filter { it.path != file.path }
+        // Mark as pending — prevents refresh from re-displaying the file before the restore completes.
+        pendingDeletes.add(file.path)
         viewModelScope.launch(Dispatchers.IO) {
             val trashMetaDao = NasApplication.instance.database.trashMetaDao()
             val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
@@ -2212,9 +2220,13 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             try {
                 webDavManager.renameFile(file.path, targetUrl)
                 trashMetaDao.deleteByTrashPath(file.path)
+                // Clear any stale pending-delete marker for the restored file so it can reappear after refresh.
+                pendingDeletes.remove(file.path)
+                meta?.originalPath?.let { pendingDeletes.remove(it) }
                 repository.addSystemLog("INFO", "File Ops", "Đã khôi phục tệp '${file.name}' từ Thùng rác.")
                 // Keep current list; no full refresh needed here.
             } catch (e: Exception) {
+                pendingDeletes.remove(file.path)
                 withContext(Dispatchers.Main) { fileList = oldList }
                 val message = friendlyError(e)
                 if (e.isTransientNetworkFailure()) {

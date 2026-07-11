@@ -249,7 +249,10 @@ class BatchOperationWorker(
                         trashMetaDao.deleteByTrashPath(sourceUrl)
                         successCount++
                     }
-                    else -> {}
+                    else -> {
+                        // Unknown operation — DO NOT increment successCount here.
+                        // Only the 4 valid branches above (COPY/MOVE/DELETE/RESTORE) count as success.
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Lá»—i $operation file: $fileName", e)

@@ -841,7 +841,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                         // Tại đây, ta báo cho giao diện bật Dialog hỏi chuyển sang VLC
                         (activity as? MainActivity)?.runOnUiThread {
                             viewModel?.showCommonDialog = true
-                            viewModel?.commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
+                            viewModel?.commonDialogType = DialogType.ERROR
                             viewModel?.commonDialogMessage = if (invalidResponseCode == 416) {
                                 "Tệp MP4 này bị hỏng hoặc chưa được hoàn tất metadata (HTTP 416, ${error.errorCodeName}).\n\nNAS sẽ tự ẩn các bản ghi livestream thiếu moov atom sau khi dọn nền. Vui lòng chọn một bản ghi khác hoặc ghi lại livestream."
                             } else if (invalidResponseCode != null) {

@@ -283,6 +283,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             val parentUrl = fullUrl.substringBeforeLast("/") + "/"
                                             val parentFolderName = parentUrl.trimEnd('/').substringAfterLast("/")
 
+                                            // FIX: Single lock acquisition — add + flush check in one critical section
+                                            // to avoid per-iteration lock churn that defeated the 2000-entry batching goal.
+                                            val flushBatch = mutableListOf<CachedFile>()
                                             bufferMutex.withLock {
                                                 batchBuffer.add(
                                                     CachedFile(
@@ -291,13 +294,17 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                         contentLength = size, lastModified = mtime
                                                     )
                                                 )
+                                                if (batchBuffer.size >= 2000) {
+                                                    flushBatch.addAll(batchBuffer)
+                                                    batchBuffer.clear()
+                                                }
                                             }
 
                                             val count = totalFilesIndexed.incrementAndGet()
                                             // Cập nhật tên file và thư mục đang xử lý
                                             currentFileName.set(name)
                                             currentFolder.set(parentFolderName)
-                                            
+
                                             // Progress Stage 1: Nếu Server gửi "total", chia tỷ lệ thật xác 100%. Nếu không, dùng công thức dự phòng
                                             val stage1Progress = if (totalExpectedFiles > 0f) {
                                                 (count / totalExpectedFiles).coerceIn(0f, 1f)
@@ -307,14 +314,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             currentStagePercent.set(stage1Progress)
                                             progressPercent.set(stage1Progress * 0.5f)
 
-                                            // Flush batch mỗi 2000 files
-                                            val flushBatch = mutableListOf<CachedFile>()
-                                            bufferMutex.withLock {
-                                                if (batchBuffer.size >= 2000) {
-                                                    flushBatch.addAll(batchBuffer)
-                                                    batchBuffer.clear()
-                                                }
-                                            }
                                             if (flushBatch.isNotEmpty()) {
                                                 db.withTransaction { db.fileDao().insertFiles(flushBatch) }
                                             }
