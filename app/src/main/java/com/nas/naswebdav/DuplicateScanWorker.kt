@@ -103,11 +103,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             val now = System.currentTimeMillis()
             val sevenDaysInMillis = 7 * 24 * 60 * 60 * 1000L
 
-            // Xóa thumbnail cũ hơn 30 ngày
-            try {
-                val thirtyDaysAgo = now - 30L * 24 * 60 * 60 * 1000L
-                db.thumbnailDao().clearOldThumbnails(thirtyDaysAgo)
-            } catch (e: Exception) { }
+            // ThumbnailCache cleanup removed — client-side thumbnails no longer used, NAS handles thumbnails via /api/thumb
 
             try {
                 val trashItems = webDavManager.listFiles(trashUrl)
@@ -239,9 +235,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
                                 val batchBuffer = mutableListOf<CachedFile>()
 
-                                // Xóa DB cũ sạch sẽ bằng clearAllFiles() để tránh rác cộng dồn lầm file (Lỗi 571k Nhóm trùng)
+                                // Chỉ xóa checkpoint — file index cập nhật tăng dần qua INSERT OR REPLACE,
+                                // KHÔNG xóa toàn bộ để tránh churn DB lớn mỗi lần scan (hàng triệu row).
                                 db.withTransaction {
-                                    db.fileDao().clearAllFiles()
                                     db.checkpointDao().clearCheckpoint("DuplicateScan")
                                 }
 
@@ -706,6 +702,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         val progress = processedGroups.toFloat() / totalSizeGroups
                         progressPercent.set(0.5f + progress * 0.45f)
                         currentFileName.set("Đang xử lý ${processedGroups}/$totalSizeGroups nhóm...")
+
+                        // Throttle: tránh đập liên tục vào NAS — tối đa 5 batch/giây (50 groups x 5 = 250 groups/s)
+                        delay(200)
                     }
                     
                     // XỬ LÝ NỐT PHẦN BUFFER CÒN SÓT LẠI TRONG RAM KHI VÒNG LẶP KẾT THÚC
@@ -1151,8 +1150,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 }
                             }
                         }
-                        // Nhường luồng cho CPU để tránh văng app do tác vụ I/O nặng
-                        kotlinx.coroutines.yield()
+                        // Nhường luồng cho CPU — thêm delay 100ms để tránh đập NAS liên tục
+                        kotlinx.coroutines.delay(100)
                     }
                 }
             }
@@ -1324,9 +1323,8 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         try {
             SystemLogger.log("INFO", "AutoClean", "Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.")
             db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
-            // FIX #24: deleteByParentPath("%") không xóa gì vì WHERE parentPath = '%' chỉ khớp
-            // row có parentPath đúng bằng chuỗi %, không phải LIKE. Dùng clearAllFiles() để xóa sạch.
-            db.withTransaction { db.fileDao().clearAllFiles() }
+            // Incremental index — KHÔNG clearAllFiles() vì Fast-Path API dùng INSERT OR REPLACE,
+            // avoids DB churn (hàng triệu row xóa + chèn lại mỗi lần auto-scan).
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
             val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", okhttp3.Credentials.basic(user, pass)).build()

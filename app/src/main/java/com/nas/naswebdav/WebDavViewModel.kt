@@ -4674,6 +4674,8 @@ fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) 
         val constraints = androidx.work.Constraints.Builder()
             .setRequiresDeviceIdle(true)
             .setRequiresCharging(true)
+            .setRequiresBatteryNotLow(true) // Tránh đập NAS khi pin yếu — chỉ chạy khi pin đủ
+            .setRequiresStorageNotLow(true) // Tránh đập NAS khi bộ nhớ trong thiếu — chỉ chạy khi còn dung lượng
             .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
             .build()
 
