@@ -3523,7 +3523,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
         }
     }
-    // TÍNH NĂNG: Cập nhật thủ công (Manual Sync)
     // BO QUÉT RÁC khoi flow nay theo yeu cau user — Sync Anh chi nen chay AutoBackup
     // (upload anh moi). Quet trung lap la tac vu nang ca cho phone va NAS, chi chay
     // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.

@@ -312,23 +312,23 @@ fun FileItemGridCell(
             DropdownMenuItem(text = { Text("Xóa tệp", color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
-        // === KHUNG HIỂN THỊ CHÍNH — SAMSUNG MY FILES STYLE ===
+        // === KHUNG HIỂN THỊ CHÍNH — ĐỒNG BỘ DASHBOARD DESIGN ===
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (file.isDirectory) Modifier.height(56.dp) else Modifier.aspectRatio(1f))
-                .clip(RoundedCornerShape(10.dp))
+                .then(if (file.isDirectory) Modifier.height(48.dp) else Modifier.aspectRatio(1f))
+                .clip(AppShapes.Card)
                 .background(
                     when {
-                        file.isDirectory -> Color.Transparent
-                        isMedia -> Color(0xFF212121)
-                        else -> Color(0xFFF0F0F0)
+                        file.isDirectory -> DarkCard
+                        isMedia -> DarkCard
+                        else -> DarkCardHover
                     }
                 )
         ) {
             if (isMedia) {
-                // MEDIA: Thumbnail edge-to-edge, sạch sẽ
+                // MEDIA: Thumbnail edge-to-edge
                 WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
 
                 // Badge video play icon
@@ -341,20 +341,20 @@ fun FileItemGridCell(
                     )
                 }
             } else if (file.isDirectory) {
-                // THƯ MỤC: Icon folder lớn, canh giữa
+                // THƯ MỤC: Icon folder lớn, canh giữa — dùng AccentCyan đồng bộ dashboard
                 Icon(
                     imageVector = Icons.Default.Folder,
                     contentDescription = null,
-                    tint = Color(0xFFFFC107),
+                    tint = AccentCyan,
                     modifier = Modifier.size(36.dp)
                 )
             } else {
-                // FILE THƯỜNG: Icon cơ bản, canh giữa
+                // FILE THƯỜNG: Icon cơ bản
                 Icon(
                     imageVector = Icons.Default.InsertDriveFile,
                     contentDescription = null,
-                    tint = Color(0xFF78909C),
-                    modifier = Modifier.size(36.dp).align(Alignment.Center)
+                    tint = TextTertiary,
+                    modifier = Modifier.size(32.dp).align(Alignment.Center)
                 )
             }
 
@@ -460,57 +460,51 @@ fun FileItemGridCell(
 
         // EXTENSION BADGE — chỉ cho file (không phải folder), đặt thành đường nhỏ ngay dưới icon
         if (!file.isDirectory) {
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(AppSpacing.XS))
             val ext = file.name.substringAfterLast('.', "").uppercase().takeIf { it.isNotBlank() } ?: "FILE"
             val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
             val isVideoFile = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
             val extColor = when {
-                isImageFile -> Color(0xFF1E88E5) // Xanh dương
-                isVideoFile -> Color(0xFFFF8F00) // Cam
-                ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> Color(0xFFE53935) // Đỏ
-                ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> Color(0xFF43A047) // Xanh lá
-                ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> Color(0xFF8E24AA) // Tím
-                ext in listOf("MP3", "WAV", "FLAC", "M4A") -> Color(0xFF00ACC1) // Xanh Cyan
-                else -> Color(0xFF757575) // Xám
+                isImageFile -> AccentCyan
+                isVideoFile -> AccentOrange
+                ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> AccentRed
+                ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> AccentGreen
+                ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> AccentPurple
+                ext in listOf("MP3", "WAV", "FLAC", "M4A") -> AccentCyan
+                else -> TextTertiary
             }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(3.dp)
-                    .padding(horizontal = 8.dp)
-                    .background(extColor.copy(alpha = 0.85f), RoundedCornerShape(2.dp))
+                    .padding(horizontal = AppSpacing.SM)
+                    .background(extColor.copy(alpha = 0.85f), AppShapes.Badge)
             )
         }
 
-        // TÊN THƯ MỤC — chỉ hiện cho thư mục (giữ nguyên logic cũ)
-        if (file.isDirectory) {
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = file.name,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        // TÊN THƯ MỤC / TỆP — dùng design system typography
+        Spacer(modifier = Modifier.height(AppSpacing.XXS))
+        Text(
+            text = file.name,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            style = AppTypography.LabelMedium,
+            color = TextPrimary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 // --- THUMBNAIL TỐI ƯU HOÁ CHO TẤT CẢ FILE MEDIA: LƯU VÀO DATABASE VĨNH VIỄN ---
 // ════════════════════════════════════════════════════════════════════════════
-// THUMBNAIL LOADER — Multi-strategy: NAS API → Client fallback → Error badge
+// THUMBNAIL LOADER — Phone-only, NAS-free architecture
 // ════════════════════════════════════════════════════════════════════════════
-// Fix: Tối ưu thumbnail cho NAS cấu hình yếu
-// - Bỏ qua NAS nếu quá chậm (>5s timeout), dùng client-side
-// - Video: Coil VideoFrameDecoder (trích frame locally, không cần NAS FFmpeg)
-// - Ảnh: Coil downsampling trực tiếp từ WebDAV (không cần NAS resize)
-// - File lỗi: badge đỏ + retry button rõ ràng
-
-private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(6)
+// Nguyên tắc: NAS chỉ là storage, phone tự xử lý thumbnail
+// - Coil manages ALL caching (memory LRU + disk) — không cần Room DB
+// - Video: Coil VideoFrameDecoder (MediaCodec, client-side)
+// - Ảnh: Coil downsampling trực tiếp từ WebDAV URL
+// - Không gọi NAS `/api/thumb` — NAS chỉ serve raw bytes
+// - File lỗi: badge đỏ rõ ràng
 
 @Composable
 fun WebDavCachedThumbnail(
@@ -521,129 +515,48 @@ fun WebDavCachedThumbnail(
     viewModel: WebDavViewModel
 ) {
     val context = LocalContext.current
-    var localThumbPath by remember(url, auth, isVideo) { mutableStateOf<String?>(null) }
-    var strategy by remember(url, auth, isVideo) { mutableStateOf<ThumbStrategy>(ThumbStrategy.LOADING) }
-    var retryKey by remember(url, auth, isVideo) { mutableStateOf(0) }
+    var loadState by remember(url, auth) { mutableStateOf<ThumbState>(ThumbState.LOADING) }
+    var retryKey by remember(url, auth) { mutableStateOf(0) }
 
-    val thumbnailDao = remember { NasApplication.instance.database.thumbnailDao() }
+    // Coil memory + disk cache handles everything — no Room DB, no NAS API
+    val imageRequest = coil.request.ImageRequest.Builder(context)
+        .data(url)
+        .addHeader("Authorization", auth)
+        .crossfade(true)
+        .size(coil.size.Size(300, 300))
+        .allowHardware(true)
+        .build()
 
-    LaunchedEffect(url, auth, isVideo, retryKey) {
-        strategy = ThumbStrategy.LOADING
-        val ext = url.substringAfterLast('.', "").substringBefore("?").lowercase()
-
-        withContext(Dispatchers.IO) {
-            try {
-                thumbnailSemaphore.withPermit {
-                    // ── Strategy 1: Check local cache ─────────────────────
-                    val cached = thumbnailDao.getThumbnail(url)
-                    if (cached != null) {
-                        val file = File(cached.localFilePath)
-                        if (file.exists() && file.length() > 0) {
-                            localThumbPath = file.absolutePath
-                            strategy = ThumbStrategy.LOCAL
-                            return@withPermit
-                        }
-                        thumbnailDao.deleteThumbnail(url)
-                    }
-
-                    val safeHash = Integer.toHexString(url.hashCode())
-                    val thumbDir = context.getDir("persistent_thumbnails", android.content.Context.MODE_PRIVATE)
-                    val thumbFile = File(thumbDir, "thumb_$safeHash.jpg")
-
-                    if (thumbFile.exists() && thumbFile.length() > 0) {
-                        localThumbPath = thumbFile.absolutePath
-                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath)) }
-                        strategy = ThumbStrategy.LOCAL
-                        return@withPermit
-                    }
-
-                    // ── Strategy 2: NAS backend /api/thumb (server-side) ──
-                    val downloaded = viewModel.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
-                    if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
-                        localThumbPath = thumbFile.absolutePath
-                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath)) }
-                        strategy = ThumbStrategy.LOCAL
-                        return@withPermit
-                    }
-
-                    // ── Strategy 3: Client-side fallback ─────────────────
-                    // Video: Coil VideoFrameDecoder trích frame đầu tiên
-                    // Ảnh: Coil downsampling trực tiếp từ URL WebDAV
-                    strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
-                }
-            } catch (e: Exception) {
-                strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
-            }
-        }
+    if (loadState != ThumbState.ERROR) {
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop,
+            onSuccess = { loadState = ThumbState.SUCCESS },
+            onError = { loadState = ThumbState.ERROR }
+        )
     }
 
-    // ── Render based on strategy ──────────────────────────────────────────
-    when (strategy) {
-        ThumbStrategy.LOCAL -> {
-            AsyncImage(
-                model = coil.request.ImageRequest.Builder(LocalContext.current)
-                    .data(File(localThumbPath!!)).crossfade(true).build(),
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
-            )
-        }
-        ThumbStrategy.CLIENT_VIDEO -> {
-            // Coil VideoFrameDecoder: trích frame video trực tiếp trên Android
-            // Không cần NAS FFmpeg, nhẹ nhàng cho NAS cấu hình yếu
-            AsyncImage(
-                model = coil.request.ImageRequest.Builder(LocalContext.current)
-                    .data(url)
-                    .addHeader("Authorization", auth)
-                    .crossfade(true)
-                    .size(coil.size.Size(300, 300))
-                    .build(),
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
-            )
-        }
-        ThumbStrategy.CLIENT_IMAGE -> {
-            AsyncImage(
-                model = coil.request.ImageRequest.Builder(LocalContext.current)
-                    .data(url)
-                    .addHeader("Authorization", auth)
-                    .crossfade(true)
-                    .size(coil.size.Size(300, 300))
-                    .build(),
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
-            )
-        }
-        ThumbStrategy.LOADING -> {
-            Box(modifier = modifier.background(Color(0xFF1A1A1A)), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = AccentCyan, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-            }
-        }
-        ThumbStrategy.ERROR -> {
-            Box(modifier = modifier.background(Color(0xFF1A1A1A)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(32.dp))
-                    Spacer(Modifier.height(2.dp))
-                    Text("Lỗi", color = AccentRed, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+    if (loadState == ThumbState.ERROR) {
+        Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(2.dp))
+                // Red error badge
+                Box(
+                    modifier = Modifier
+                        .background(AccentRed, AppShapes.Badge)
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text("!", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                 }
-            }
-        }
-    }
-
-    // ── Error overlay: badge đỏ cho file lỗi ──────────────────────────────
-    if (strategy == ThumbStrategy.ERROR) {
-        Box(modifier = modifier) {
-            // Red error badge góc trên trái
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(3.dp)
-                    .background(AccentRed, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 4.dp, vertical = 1.dp)
-            ) {
-                Text("!", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
-private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_VIDEO, CLIENT_IMAGE, ERROR }
+private enum class ThumbState { LOADING, SUCCESS, ERROR }
 
 fun openExternalVideoPlayer(
     context: android.content.Context,

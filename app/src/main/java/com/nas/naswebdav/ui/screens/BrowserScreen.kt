@@ -1161,13 +1161,13 @@ fun BrowserScreen(
                 // TÍNH NĂNG MỚI: Chuyển đổi layout theo chế độ hiển thị
                 when (viewMode) {
                     BrowserViewMode.ICON -> {
-                        // ICON MODE: Lưới icon lớn, 4 cột (giảm từ 5 để icon to hơn)
+                        // ICON MODE: Lưới icon, 5 cột (đồng bộ với dashboard cards)
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(4),
+                            columns = GridCells.Fixed(5),
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                            contentPadding = PaddingValues(AppSpacing.XS),
+                            horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS),
+                            verticalArrangement = Arrangement.spacedBy(AppSpacing.XS)
                         ) {
                             groupedFiles.forEach { (header, filesInGroup) ->
                                 if (header.isNotEmpty()) {
@@ -1193,7 +1193,15 @@ fun BrowserScreen(
                                         isSelected = selectedFiles.contains(file),
                                         onLongClick = { onFileLongClick(file) },
                                         onClick = { onFileClick(file) },
-                                        onVideo = onVideo
+                                        onVideo = onVideo,
+                                        onDelete = {
+                                            // BUG FIX: Sync the selection state with what
+                                            // viewModel just did in its optimistic update.
+                                            selectedFiles.remove(file)
+                                            if (selectedFiles.isEmpty()) {
+                                                selectionMode = false
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -1549,7 +1557,8 @@ fun BrowserScreenFileItemGridCell(
     viewedRefreshTick: Int = 0,
     onLongClick: () -> Unit = {},
     onClick: () -> Unit,
-    onVideo: (String) -> Unit
+    onVideo: (String) -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
@@ -1603,6 +1612,7 @@ fun BrowserScreenFileItemGridCell(
             onConfirm = {
                 showDeleteDialog = false
                 viewModel.deleteFile(context, file)
+                onDelete?.invoke()
             },
             onDismiss = { showDeleteDialog = false }
         )

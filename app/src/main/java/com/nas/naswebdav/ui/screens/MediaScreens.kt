@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.screens
 import android.annotation.SuppressLint
 import android.view.ViewGroup
 import android.webkit.*
+import android.widget.Toast
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
 import androidx.compose.animation.*
@@ -13,6 +14,7 @@ import androidx.compose.foundation.gestures.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -49,7 +51,9 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.session.MediaSession
 import android.app.PictureInPictureParams
 import android.util.Rational
+import android.content.Intent
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import coil.annotation.ExperimentalCoilApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -59,8 +63,538 @@ import kotlinx.coroutines.withContext
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// ImageViewerScreen.kt
+// ImageViewerScreen.kt — REDESIGNED Professional Photo Viewer (Phase 6)
 // ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Chuyển NasFile sang content URI Android (dùng cho share + delete qua SAF nếu cần).
+ * Hiện tại chỉ dùng cho Intent.ACTION_SEND.
+ */
+private fun shareText(context: android.content.Context, text: String, mime: String = "text/plain") {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mime
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, "Chia sẻ"))
+}
+
+private fun shareImageUrl(
+    context: android.content.Context,
+    url: String,
+    fileName: String
+) {
+    try {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_TEXT, url)
+            putExtra(Intent.EXTRA_TITLE, fileName)
+            // Một số app nhận EXTRA_STREAM — cố gắng lấy qua Uri.parse
+            putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse(url))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(sendIntent, "Chia sẻ ảnh")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        Toast.makeText(context, "Không thể chia sẻ: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
+@Composable
+fun ImageViewerScreen(
+    initialUrl: String,
+    viewModel: WebDavViewModel,
+    user: String,
+    pass: String,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+
+    // ============ IMAGE LIST ============
+    val imageFiles = remember(viewModel.fileList) {
+        viewModel.fileList.filter { com.nas.naswebdav.utils.MediaUtils.isImage(it.name) }
+    }
+
+    val initialPage = remember(imageFiles, initialUrl) {
+        val index = imageFiles.indexOfFirst { it.path == initialUrl }
+        if (index >= 0) index else 0
+    }
+
+    val pagerState = rememberPagerState(
+        initialPage = initialPage.coerceIn(0, (imageFiles.size - 1).coerceAtLeast(0)),
+        pageCount = { imageFiles.size }
+    )
+
+    // ============ IMMERSIVE / AUTO-HIDE CONTROLS ============
+    var showControls by remember { mutableStateOf(true) }
+    var isSlideshowActive by remember { mutableStateOf(false) }
+
+    // Tự ẩn thanh header/footer sau 2s nếu không có tương tác
+    LaunchedEffect(showControls, isSlideshowActive, pagerState.currentPage) {
+        if (showControls && imageFiles.isNotEmpty()) {
+            delay(2000)
+            showControls = false
+        }
+    }
+
+    // ============ DELETE DIALOG ============
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // ============ SLIDESHOW TIMER ============
+    LaunchedEffect(isSlideshowActive, pagerState.currentPage) {
+        if (isSlideshowActive && imageFiles.isNotEmpty()) {
+            delay(3000)
+            val next = (pagerState.currentPage + 1) % imageFiles.size
+            pagerState.scrollToPage(next)
+        }
+    }
+
+    // ============ CLEANUP ============
+    DisposableEffect(Unit) {
+        onDispose {
+            val imageLoader = coil.Coil.imageLoader(context)
+            imageLoader.memoryCache?.clear()
+            val prefs = context.getSharedPreferences("nas_cache", android.content.Context.MODE_PRIVATE)
+            val lastClearTime = prefs.getLong("last_cache_clear", 0)
+            val now = System.currentTimeMillis()
+            if (now - lastClearTime > 7 * 24 * 60 * 60 * 1000L) {
+                imageLoader.diskCache?.clear()
+                prefs.edit().putLong("last_cache_clear", now).apply()
+            }
+        }
+    }
+
+    // ============ DELETE UX ============
+    val coroutineScope = rememberCoroutineScope()
+
+    // Sau khi xóa thành công:
+    //  - Nếu còn ảnh: tự động advance (next hoặc previous nếu đang ở cuối)
+    //  - Nếu hết: gọi onBack()
+    val handleConfirmDelete: (NasFile) -> Unit = { fileToDelete ->
+        val wasLast = imageFiles.size <= 1
+        val wasAtEnd = pagerState.currentPage >= imageFiles.size - 1
+        viewModel.deleteFile(context, fileToDelete)
+        showDeleteDialog = false
+        Toast.makeText(context, "Đã chuyển vào Thùng rác", Toast.LENGTH_SHORT).show()
+        if (wasLast) {
+            onBack()
+        } else if (wasAtEnd) {
+            // Ảnh tiếp theo sẽ tự động là previous image (vì list đã giảm 1)
+            coroutineScope.launch {
+                val newCurrentPage = (pagerState.currentPage - 1).coerceAtLeast(0)
+                try {
+                    pagerState.scrollToPage(newCurrentPage)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // ============ DELETE DIALOG ============
+    if (showDeleteDialog && imageFiles.isNotEmpty()) {
+        val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            icon = { Icon(Icons.Default.DeleteForever, null, tint = AccentRed) },
+            title = { Text("Xóa ảnh?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("Bạn có chắc muốn xóa\n\"${currentFile.name}\"?\n\nẢnh sẽ được chuyển vào Thùng rác.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = { handleConfirmDelete(currentFile) },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                ) { Text("Xóa") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Hủy") }
+            }
+        )
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black) // pure black immersive background
+    ) {
+        if (imageFiles.isEmpty()) {
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Default.ImageNotSupported, null, tint = Color.Gray, modifier = Modifier.size(56.dp))
+                Spacer(Modifier.height(8.dp))
+                Text("Không có ảnh nào để hiển thị", color = Color.Gray)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onBack) { Text("Quay lại") }
+            }
+            return@Box
+        }
+
+        // ============ PAGER + ZOOM ============
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            beyondBoundsPageCount = 1,
+            key = { imageFiles[it].path },
+            userScrollEnabled = true
+        ) { page ->
+            val file = imageFiles[page]
+            ZoomableImage(
+                path = file.path,
+                auth = okhttp3.Credentials.basic(user, pass),
+                fileName = file.name,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // Tap-anywhere-to-toggle-controls (overlay invisible layer above pager)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { showControls = !showControls }
+                    )
+                }
+        )
+
+        // ============ TOP TOOLBAR (auto-hide) ============
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                        )
+                    )
+            ) {
+                Spacer(Modifier.statusBarsPadding())
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {
+                        if (isSlideshowActive) {
+                            isSlideshowActive = false
+                            showControls = true
+                        } else {
+                            onBack()
+                        }
+                    }) {
+                        Icon(
+                            if (isSlideshowActive) Icons.Default.Stop else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Quay lại",
+                            tint = Color.White
+                        )
+                    }
+
+                    // File counter
+                    val total = imageFiles.size
+                    val current = (pagerState.currentPage + 1).coerceAtMost(total)
+                    Text(
+                        text = "$current / $total",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center
+                    )
+
+                    // Slideshow toggle
+                    IconButton(onClick = {
+                        isSlideshowActive = !isSlideshowActive
+                        showControls = true
+                    }) {
+                        Icon(
+                            if (isSlideshowActive) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                            contentDescription = "Trình chiếu",
+                            tint = if (isSlideshowActive) AccentGreen else Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    // Share
+                    IconButton(onClick = {
+                        val currentFile = imageFiles[pagerState.currentPage]
+                        shareImageUrl(context, currentFile.path, currentFile.name)
+                    }) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = "Chia sẻ",
+                            tint = Color.White
+                        )
+                    }
+
+                    // Delete
+                    IconButton(onClick = { showDeleteDialog = true }) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Xóa",
+                            tint = AccentRed,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // ============ BOTTOM INFO BAR (auto-hide) ============
+        AnimatedVisibility(
+            visible = showControls && imageFiles.isNotEmpty(),
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+            val fileSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentFile.contentLength)
+            val total = imageFiles.size
+            val current = (pagerState.currentPage + 1).coerceAtMost(total)
+
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))
+                        )
+                    )
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .navigationBarsPadding()
+            ) {
+                Text(
+                    text = currentFile.name,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = fileSize,
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1
+                    )
+                    Box(
+                        Modifier
+                            .height(12.dp)
+                            .width(1.dp)
+                            .background(TextSecondary.copy(alpha = 0.5f))
+                            .align(Alignment.CenterVertically)
+                    )
+                    Text(
+                        text = "$current / $total",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // ============ THUMBNAIL STRIP (always visible at bottom) ============
+        if (imageFiles.isNotEmpty()) {
+            ThumbnailStrip(
+                imageFiles = imageFiles,
+                currentPage = pagerState.currentPage,
+                user = user,
+                pass = pass,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+                    .navigationBarsPadding()
+            )
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ZoomableImage — composable con cho pager page. Pinch-to-zoom + double-tap.
+// ════════════════════════════════════════════════════════════════════════════
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ZoomableImage(
+    path: String,
+    auth: String,
+    fileName: String,
+    modifier: Modifier = Modifier
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // Reset zoom khi đổi ảnh
+    LaunchedEffect(path) {
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+    }
+
+    val maxScale = 5f
+    val minScale = 1f
+
+    fun clampOffsets() {
+        val maxPan = (scale - 1f) * 1000f
+        offsetX = offsetX.coerceIn(-maxPan, maxPan)
+        offsetY = offsetY.coerceIn(-maxPan, maxPan)
+    }
+
+    Box(
+        modifier = modifier
+            .pointerInput(path) {
+                detectTapGestures(
+                    onDoubleTap = { tapOffset ->
+                        if (scale > 1f) {
+                            // Zoom out về 1f
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            // Zoom in 2.5x, căn giữa tap point
+                            scale = 2.5f
+                            val center = Offset(size.width / 2f, size.height / 2f)
+                            val targetOffset = (center - tapOffset) * (scale - 1f)
+                            val maxPan = (scale - 1f) * 1000f
+                            offsetX = targetOffset.x.coerceIn(-maxPan, maxPan)
+                            offsetY = targetOffset.y.coerceIn(-maxPan, maxPan)
+                        }
+                    }
+                )
+            }
+            .pointerInput(path) {
+                // Pinch zoom + pan
+                detectTransformGestures { _, pan, zoom, _ ->
+                    val newScale = (scale * zoom).coerceIn(minScale, maxScale)
+                    scale = newScale
+                    if (newScale > 1f) {
+                        offsetX += pan.x
+                        offsetY += pan.y
+                        clampOffsets()
+                    } else {
+                        offsetX = 0f
+                        offsetY = 0f
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(path)
+                .addHeader("Authorization", auth)
+                .size(1920, 1080)
+                .allowHardware(true) // performance — ảnh lớn render mượt
+                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                .crossfade(true)
+                .build(),
+            contentDescription = fileName,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offsetX,
+                    translationY = offsetY
+                ),
+            contentScale = ContentScale.Fit
+        )
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ThumbnailStrip — danh sách thumbnail ngang, hiển thị vị trí hiện tại
+// ════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun ThumbnailStrip(
+    imageFiles: List<NasFile>,
+    currentPage: Int,
+    user: String,
+    pass: String,
+    modifier: Modifier = Modifier
+) {
+    val auth = okhttp3.Credentials.basic(user, pass)
+    val context = LocalContext.current
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    // Auto-scroll để thumbnail hiện tại luôn nằm trong khung nhìn
+    LaunchedEffect(currentPage) {
+        try {
+            listState.animateScrollToItem(
+                index = currentPage,
+                scrollOffset = -40
+            )
+        } catch (_: Exception) {}
+    }
+
+    Box(
+        modifier = modifier
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+                )
+            )
+            .padding(vertical = 6.dp)
+    ) {
+        LazyRow(
+            state = listState,
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS),
+            contentPadding = PaddingValues(horizontal = 12.dp)
+        ) {
+            items(
+                count = imageFiles.size,
+                key = { idx -> imageFiles[idx].path }
+            ) { idx ->
+                val file = imageFiles[idx]
+                val isCurrent = idx == currentPage
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(AppShapes.Badge)
+                        .border(
+                            width = if (isCurrent) 2.dp else 1.dp,
+                            color = if (isCurrent) AccentCyan else TextSecondary.copy(alpha = 0.3f),
+                            shape = AppShapes.Badge
+                        )
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(file.path)
+                            .addHeader("Authorization", auth)
+                            .size(160, 160)
+                            .allowHardware(true)
+                            .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                            .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = file.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+        }
+    }
+}
+
 
 // ============ ICON MAP CHO THỂ LOẠI AI ============
 private val categoryIcons = mapOf(
@@ -82,339 +616,6 @@ private val categoryColors = mapOf(
     "Tài Liệu / Văn Phòng" to listOf(Color(0xFF2193B0), Color(0xFF6DD5FA)),
     "Thể Thao"           to listOf(Color(0xFF56AB2F), Color(0xFFA8E063))
 )
-
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalCoilApi::class)
-@Composable
-fun ImageViewerScreen(initialUrl: String, viewModel: WebDavViewModel, user: String, pass: String, onBack: () -> Unit) {
-    val imageFiles = remember(viewModel.fileList) {
-        viewModel.fileList.filter { com.nas.naswebdav.utils.MediaUtils.isImage(it.name) }
-    }
-
-    val initialPage = remember(imageFiles, initialUrl) {
-        val index = imageFiles.indexOfFirst { it.path == initialUrl }
-        if (index >= 0) index else 0
-    }
-
-    val pagerState = rememberPagerState(
-        initialPage = initialPage,
-        pageCount = { imageFiles.size }
-    )
-
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
-    // ============ TAB STATE ============
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Tất Cả", "Khám Phá")
-
-    // ============ TRÌNH CHIẾU (SLIDESHOW) ============
-    var isSlideshowActive by remember { mutableStateOf(false) }
-    var slideshowIntervalMs by remember { mutableLongStateOf(3000L) }
-    var showControls by remember { mutableStateOf(true) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
-
-    // Timer tự động chuyển ảnh
-    LaunchedEffect(isSlideshowActive, pagerState.currentPage) {
-        if (isSlideshowActive && imageFiles.isNotEmpty()) {
-            delay(slideshowIntervalMs)
-            val nextPage = (pagerState.currentPage + 1) % imageFiles.size
-            pagerState.scrollToPage(nextPage)
-        }
-    }
-    LaunchedEffect(isSlideshowActive, showControls) {
-        if (isSlideshowActive && showControls) { delay(3000); showControls = false }
-    }
-
-    // Fetch AI tags khi vào Tab Khám Phá lần đầu
-    var aiTabVisited by remember { mutableStateOf(false) }
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 1 && !aiTabVisited) {
-            aiTabVisited = true
-            viewModel.fetchAiTags()
-        }
-    }
-
-    // Giải phóng RAM khi thoát
-    DisposableEffect(Unit) {
-        onDispose {
-            val imageLoader = coil.Coil.imageLoader(context)
-            imageLoader.memoryCache?.clear()
-            val prefs = context.getSharedPreferences("nas_cache", android.content.Context.MODE_PRIVATE)
-            val lastClearTime = prefs.getLong("last_cache_clear", 0)
-            val now = System.currentTimeMillis()
-            if (now - lastClearTime > 7 * 24 * 60 * 60 * 1000L) {
-                imageLoader.diskCache?.clear()
-                prefs.edit().putLong("last_cache_clear", now).apply()
-            }
-        }
-    }
-
-    // ============ XÁC NHẬN XÓA ẢNH ============
-    if (showDeleteDialog && imageFiles.isNotEmpty()) {
-        val currentFile = imageFiles[pagerState.currentPage]
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            icon = { Icon(Icons.Default.DeleteForever, null, tint = Color(0xFFEF5350)) },
-            title = { Text("Xóa ảnh?", fontWeight = FontWeight.Bold) },
-            text = { Text("Bạn có chắc muốn xóa\n\"${currentFile.name}\"?\n\nẢnh sẽ được chuyển vào Thùng rác.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDeleteDialog = false
-                        val fileToDelete = NasFile(currentFile.name, currentFile.path, false, "", 0, 0)
-                        viewModel.deleteFile(context, fileToDelete)
-                        if (imageFiles.size <= 1) onBack()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))
-                ) { Text("Xóa") }
-            },
-            dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Hủy") } }
-        )
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(DarkSurface)
-    ) {
-        // ============ HEADER + TABS ============
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(DarkCard)
-        ) {
-            // Top bar
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = {
-                    if (isSlideshowActive) { isSlideshowActive = false; showControls = true }
-                    else onBack()
-                }) {
-                    Icon(
-                        if (isSlideshowActive) Icons.Default.Stop else Icons.Default.ArrowBack,
-                        "Back", tint = Color.White
-                    )
-                }
-                Text(
-                    text = if (selectedTab == 0 && imageFiles.isNotEmpty())
-                        "${pagerState.currentPage + 1}/${imageFiles.size} — ${imageFiles[pagerState.currentPage].name}"
-                    else "AI Gallery",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                if (selectedTab == 0) {
-                    IconButton(onClick = { isSlideshowActive = !isSlideshowActive; showControls = true }) {
-                        Icon(
-                            if (isSlideshowActive) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
-                            null, tint = if (isSlideshowActive) Color(0xFF00E676) else Color.White,
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                    IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, null, tint = Color(0xFFEF5350), modifier = Modifier.size(24.dp))
-                    }
-                } else {
-                    // Tab Khám Phá: nút Refresh + Trigger AI
-                    IconButton(onClick = { viewModel.fetchAiTags() }) {
-                        Icon(Icons.Default.Refresh, null, tint = AccentCyan, modifier = Modifier.size(22.dp))
-                    }
-                    IconButton(onClick = { viewModel.triggerAiScan(context) }) {
-                        Icon(Icons.Default.AutoAwesome, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(22.dp))
-                    }
-                }
-            }
-
-            // Tab Row
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = DarkCard,
-                contentColor = AccentCyan,
-                indicator = { tabPositions ->
-                    Box(
-                        Modifier
-                            .tabIndicatorOffset(tabPositions[selectedTab])
-                            .height(2.dp)
-                            .padding(horizontal = 16.dp)
-                            .background(AccentCyan, RoundedCornerShape(1.dp))
-                    )
-                }
-            ) {
-                tabs.forEachIndexed { idx, label ->
-                    Tab(
-                        selected = selectedTab == idx,
-                        onClick = { selectedTab = idx },
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                if (idx == 1) {
-                                    Icon(Icons.Default.AutoAwesome, null,
-                                        tint = if (selectedTab == 1) AccentCyan else TextSecondary,
-                                        modifier = Modifier.size(14.dp))
-                                }
-                                Text(label, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selectedTab == idx) AccentCyan else TextSecondary,
-                                    fontSize = 13.sp)
-                            }
-                        }
-                    )
-                }
-            }
-        }
-
-        // ============ NỘI DUNG THEO TAB ============
-        when (selectedTab) {
-            0 -> PhotoViewerContent(
-                imageFiles = imageFiles,
-                pagerState = pagerState,
-                isSlideshowActive = isSlideshowActive,
-                showControls = showControls,
-                slideshowIntervalMs = slideshowIntervalMs,
-                onSlideshowIntervalChange = { slideshowIntervalMs = it },
-                user = user, pass = pass
-            )
-            1 -> AiGalleryContent(
-                viewModel = viewModel,
-                user = user, pass = pass,
-                baseUrl = viewModel.webDavManager.currentBaseUrl
-            )
-        }
-    }
-}
-
-// ============ TAB 0: XEM ẢNH GỐC (tách ra khỏi Composable chính) ============
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun PhotoViewerContent(
-    imageFiles: List<NasFile>,
-    pagerState: androidx.compose.foundation.pager.PagerState,
-    isSlideshowActive: Boolean,
-    showControls: Boolean,
-    slideshowIntervalMs: Long,
-    onSlideshowIntervalChange: (Long) -> Unit,
-    user: String, pass: String
-) {
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            beyondBoundsPageCount = if (isSlideshowActive) 1 else 0,
-            key = { imageFiles[it].path },
-            userScrollEnabled = !isSlideshowActive,
-            pageSpacing = 32.dp
-        ) { page ->
-            val file = imageFiles[page]
-            var scale by remember { mutableFloatStateOf(1f) }
-            var panOffset by remember { mutableStateOf(Offset.Zero) }
-
-            LaunchedEffect(pagerState.currentPage) { scale = 1f; panOffset = Offset.Zero }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(isSlideshowActive) {
-                        detectTapGestures(
-                            onDoubleTap = { tapOffset ->
-                                if (!isSlideshowActive) {
-                                    if (scale > 1f) { scale = 1f; panOffset = Offset.Zero }
-                                    else {
-                                        scale = 2.5f
-                                        val center = Offset(size.width / 2f, size.height / 2f)
-                                        val targetOffset = (center - tapOffset) * (scale - 1f)
-                                        val extraW = (scale - 1) * 1000f; val extraH = (scale - 1) * 1000f
-                                        panOffset = Offset(
-                                            targetOffset.x.coerceIn(-extraW, extraW),
-                                            targetOffset.y.coerceIn(-extraH, extraH)
-                                        )
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    .pointerInput(isSlideshowActive) {
-                        if (!isSlideshowActive) {
-                            awaitEachGesture {
-                                awaitFirstDown()
-                                do {
-                                    val event = awaitPointerEvent()
-                                    if (event.changes.size >= 2 || scale > 1f) {
-                                        val zoomChange = event.calculateZoom()
-                                        val panChange = event.calculatePan()
-                                        scale = (scale * zoomChange).coerceIn(1f, 5f)
-                                        if (scale > 1f) {
-                                            val extraW = (scale - 1) * 1000f; val extraH = (scale - 1) * 1000f
-                                            panOffset = Offset(
-                                                (panOffset.x + panChange.x).coerceIn(-extraW, extraW),
-                                                (panOffset.y + panChange.y).coerceIn(-extraH, extraH)
-                                            )
-                                        } else panOffset = Offset.Zero
-                                        event.changes.forEach { it.consume() }
-                                    }
-                                } while (event.changes.any { it.pressed })
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                AsyncImage(
-                    model = coil.request.ImageRequest.Builder(LocalContext.current)
-                        .data(file.path)
-                        .addHeader("Authorization", okhttp3.Credentials.basic(user, pass))
-                        .size(1920, 1080)
-                        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = file.name,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer(scaleX = scale, scaleY = scale, translationX = panOffset.x, translationY = panOffset.y),
-                    contentScale = ContentScale.Fit
-                )
-            }
-        }
-
-        if (isSlideshowActive && imageFiles.isNotEmpty()) {
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
-                LinearProgressIndicator(
-                    progress = { (pagerState.currentPage + 1).toFloat() / imageFiles.size },
-                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)),
-                    color = Color(0xFF00E676), trackColor = Color.White.copy(alpha = 0.2f)
-                )
-            }
-        }
-        AnimatedVisibility(
-            visible = isSlideshowActive && showControls,
-            enter = fadeIn(), exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter)
-        ) {
-            Row(
-                modifier = Modifier.padding(bottom = 40.dp).clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black.copy(alpha = 0.7f)).padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                listOf(2000L to "2s", 3000L to "3s", 5000L to "5s", 10000L to "10s").forEach { (ms, label) ->
-                    val isSelected = slideshowIntervalMs == ms
-                    Surface(onClick = { onSlideshowIntervalChange(ms) },
-                        color = if (isSelected) Color(0xFF00E676) else Color.Transparent,
-                        shape = RoundedCornerShape(16.dp)) {
-                        Text(label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            color = if (isSelected) Color.Black else Color.White,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, fontSize = 13.sp)
-                    }
-                }
-            }
-        }
-    }
-}
 
 // ============ TAB 1: AI GALLERY (KHÁM PHÁ) ============
 @Composable
