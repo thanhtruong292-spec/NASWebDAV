@@ -29,6 +29,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.URI
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -963,6 +964,36 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             if (wakeLock.isHeld) wakeLock.release()
             return@withContext Result.failure()
         }
+
+        // ── SMB probe: check if SMB is enabled on NAS (one-time) ──
+        val smbUser = SecurePrefsHelper.getUser(applicationContext)
+        val smbPass = SecurePrefsHelper.getPass(applicationContext)
+        val smbHost = try { URI(baseUrl).host ?: "" } catch (_: Exception) { "" }
+        val smbShare = "NAS_Data"
+        var smbEnabled = false
+        try {
+            val apiBaseUrl = if (baseUrl.contains("/api/")) baseUrl.substringBeforeLast("/api/") + "/api/"
+                              else if (baseUrl.endsWith("/")) "${baseUrl}api/" else "$baseUrl/api/"
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
+            val request = okhttp3.Request.Builder().url("${apiBaseUrl}smb/status").build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (body != null) {
+                        val obj = JSONObject(body)
+                        smbEnabled = obj.optBoolean("effective_enabled",
+                            obj.optBoolean("enabled", false) && obj.optBoolean("active", false))
+                    }
+                }
+            }
+            client.dispatcher.executorService.shutdown()
+        } catch (_: Exception) { /* SMB unavailable — WebDAV fallback */ }
+        if (smbEnabled && smbHost.isNotBlank()) {
+            SystemLogger.log("INFO", "AutoBackup", "SMB enabled — host=$smbHost share=$smbShare, uploading via SMB3")
+        }
+
         val db = NasApplication.instance.database
         try {
             val backupFolderBase = if (baseUrl.endsWith("/")) "${baseUrl}AutoBackup/" else "$baseUrl/AutoBackup/"
@@ -1100,36 +1131,82 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             var lastProgressTime = 0L
 
                             applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
-                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input, fileSize, mimeType) { bytesWritten, totalBytes ->
-                                    val now = System.currentTimeMillis()
-                                    // Giảm throttle từ 500ms xuống 200ms để % nhảy mượt hơn (5 FPS) thay vì giật cục
-                                    if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
-                                        lastProgressTime = now
-                                        val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
-                                        setProgressAsync(workDataOf(
-                                            "fileName" to safeWorkerText(fileName, 180),
-                                            "sourcePath" to safeWorkerText(dataPath, 220),
-                                            "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                            "progress" to percent,
-                                            "processedCount" to processedFilesCount,
-                                            "totalCount" to totalFilesToProcess,
-                                            "elapsedTime" to (now - startTime)
-                                        ))
-                                        // Update Foreground Notification Progress
-                                        try {
-                                            val progressInt = (percent * 100).toInt()
-                                            val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
-                                                .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                .setContentTitle("Đang sao lưu lên NAS: $progressInt%")
-                                                .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
-                                                .setProgress(100, progressInt, false)
-                                                .setOnlyAlertOnce(true)
-                                                .setSilent(true)
-                                                .setOngoing(true)
-                                                
-                                            // Sử dụng NotificationManager thay vì setForegroundAsync để cập nhật nhanh theo thời gian thực (tránh delay của WorkManager)
-                                            androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
-                                        } catch (_: Exception) {}
+                                // ── SMB upload with WebDAV fallback ──
+                                // SMB remote path: strip WebDAV base + "AutoBackup/" prefix to get share-relative path
+                                val smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
+                                val smbUploadOk = if (smbEnabled && smbHost.isNotBlank()) {
+                                    com.nas.naswebdav.SmbManager.uploadFile(
+                                        host = smbHost,
+                                        user = smbUser,
+                                        pass = smbPass,
+                                        share = smbShare,
+                                        remotePath = smbRemotePath,
+                                        inputStream = input,
+                                        totalSize = fileSize
+                                    ) { bytesWritten, totalBytes ->
+                                        val now = System.currentTimeMillis()
+                                        if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                            lastProgressTime = now
+                                            val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                            setProgressAsync(workDataOf(
+                                                "fileName" to safeWorkerText(fileName, 180),
+                                                "sourcePath" to safeWorkerText(dataPath, 220),
+                                                "destPath" to safeWorkerText(targetFileNasPath, 220),
+                                                "progress" to percent,
+                                                "processedCount" to processedFilesCount,
+                                                "totalCount" to totalFilesToProcess,
+                                                "elapsedTime" to (now - startTime)
+                                            ))
+                                            try {
+                                                val progressInt = (percent * 100).toInt()
+                                                val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                                                    .setSmallIcon(android.R.drawable.ic_menu_upload)
+                                                    .setContentTitle("Đang sao lưu lên NAS (SMB): $progressInt%")
+                                                    .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
+                                                    .setProgress(100, progressInt, false)
+                                                    .setOnlyAlertOnce(true)
+                                                    .setSilent(true)
+                                                    .setOngoing(true)
+                                                androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                } else false
+
+                                if (!smbUploadOk) {
+                                    if (smbEnabled && smbHost.isNotBlank()) {
+                                        android.util.Log.w("AutoBackup", "SMB upload failed for $fileName — falling back to WebDAV")
+                                    }
+                                    // Reopen stream for WebDAV (SMB may have consumed it)
+                                    applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input2 ->
+                                        webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
+                                            val now = System.currentTimeMillis()
+                                            if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                                lastProgressTime = now
+                                                val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                                setProgressAsync(workDataOf(
+                                                    "fileName" to safeWorkerText(fileName, 180),
+                                                    "sourcePath" to safeWorkerText(dataPath, 220),
+                                                    "destPath" to safeWorkerText(targetFileNasPath, 220),
+                                                    "progress" to percent,
+                                                    "processedCount" to processedFilesCount,
+                                                    "totalCount" to totalFilesToProcess,
+                                                    "elapsedTime" to (now - startTime)
+                                                ))
+                                                try {
+                                                    val progressInt = (percent * 100).toInt()
+                                                    val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                                                        .setSmallIcon(android.R.drawable.ic_menu_upload)
+                                                        .setContentTitle("Đang sao lưu lên NAS: $progressInt%")
+                                                        .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
+                                                        .setProgress(100, progressInt, false)
+                                                        .setOnlyAlertOnce(true)
+                                                        .setSilent(true)
+                                                        .setOngoing(true)
+                                                    androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
+                                                } catch (_: Exception) {}
+                                            }
+                                        }
                                     }
                                 }
                             }
