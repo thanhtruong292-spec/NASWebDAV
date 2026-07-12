@@ -147,9 +147,9 @@ object WebDavManager {
 
         val dispatcher = Dispatcher().apply {
 
-            maxRequests = 16 // FIX BUG #7: Giảm từ 64 xuống 16 — tránh quá tải NAS yếu (Rockchip, Chainedbox)
+            maxRequests = 32       // OPTIMIZE: cho phép HTTP/2 multiplexing trên LAN
 
-            maxRequestsPerHost = 8
+            maxRequestsPerHost = 16 // OPTIMIZE: upload/download đồng thời lên cùng host
 
         }
 
@@ -158,6 +158,8 @@ object WebDavManager {
             .followRedirects(false) // FIX LỖI P0 CAO CẤP: Không cho phép tự ý chuyển PROPFIND thành GET khi NAS (ngu ngốc) trả về HTTP 301 Redirect.
 
             .followSslRedirects(false)
+
+            .writeTimeout(0, TimeUnit.SECONDS) // OPTIMIZE: vô hiệu hóa write timeout cho file upload lớn
 
             .dispatcher(dispatcher)
 
@@ -607,32 +609,26 @@ object WebDavManager {
 
                 inputStream.source().use { source ->
 
-                    var totalBytesRead = 0L
+                    // OPTIMIZE: 256KB buffer cho LAN throughput (1Gbps = ~125MB/s,
+                    // 8KB chunks = 15000 syscalls/MB). Giữ 8KB khi speed-limit đang active
+                    // để throttle math chính xác hơn (smaller chunks = tighter rate control).
+                    val speedLimit = AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC
+                    val bufferSize = if (speedLimit == 0L) 262144L else 8192L
 
+                    var totalBytesRead = 0L
                     var readCount = 0L
 
-                    val bufferSize = 8192L
-
-                    // PHASE 4.D: Bandwidth Throttling
-
-                    val speedLimit = AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC
-
-                    val throttleStartTime = System.currentTimeMillis()
-
-
+                    // Throttle timing chỉ cần thiết khi speed-limit > 0
+                    val throttleStartTime = if (speedLimit > 0) System.currentTimeMillis() else 0L
 
                     while (source.read(sink.buffer, bufferSize).also { readCount = it } != -1L) {
 
                         sink.emit()
 
                         totalBytesRead += readCount
-
                         onProgress(totalBytesRead, totalContentLength)
 
-
-
                         // Throttle: nếu đang vượt tốc, chờ cho kịp
-
                         if (speedLimit > 0) {
 
                             val elapsedMs = System.currentTimeMillis() - throttleStartTime
@@ -661,17 +657,14 @@ object WebDavManager {
 
         val request = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody).build()
 
-        optimizedClient.newBuilder()
+        // OPTIMIZE: dùng thẳng optimizedClient — không tạo builder mới mỗi lần upload
+        // để tái sử dụng Connection Pool, Dispatcher, Interceptors, HTTP/2 streams.
+        // writeTimeout đã được set = 0 trên optimizedClient.
+        optimizedClient.newCall(request).execute().use { response ->
 
-            .writeTimeout(0, TimeUnit.SECONDS) // Vô hiệu hóa timeout cho tệp tin siêu lớn
+            if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
 
-            .build()
-
-            .newCall(request).execute().use { response ->
-
-                if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
-
-            }
+        }
 
     }
 

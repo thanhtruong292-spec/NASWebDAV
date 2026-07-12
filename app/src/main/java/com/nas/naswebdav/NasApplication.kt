@@ -119,6 +119,11 @@ class NasApplication : Application(), ImageLoaderFactory {
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.MAIN_CONNECTION_POOL_SIZE, AppConfig.MAIN_CONNECTION_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
+            // OPTIMIZE: tăng maxRequestsPerHost để upload nhiều file song song (mặc định OkHttp = 5)
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 16
+            })
             .build()
     }
 
@@ -137,6 +142,11 @@ class NasApplication : Application(), ImageLoaderFactory {
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.FAST_API_POOL_SIZE, AppConfig.FAST_API_POOL_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
+            // OPTIMIZE: tăng maxRequestsPerHost để song song hóa các call API lên cùng NAS
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 16
+            })
             .build()
     }
 
