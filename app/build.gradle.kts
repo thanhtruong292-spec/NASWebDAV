@@ -93,6 +93,9 @@ dependencies {
     implementation("androidx.paging:paging-runtime-ktx:3.3.0")
     implementation("androidx.paging:paging-compose:3.3.0")
 
+    // SMB/Samba client — upload/download files to NAS via native SMB3 protocol
+    implementation("com.hierynomus:smbj:0.13.0")
+
     // Sinh trắc học & Fragment hỗ trợ
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
