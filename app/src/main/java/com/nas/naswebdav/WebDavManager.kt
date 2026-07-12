@@ -886,6 +886,41 @@ object WebDavManager {
 
     }
 
+    /**
+     * SHA-256 phone-side: download first 1MB then compute SHA-256 on phone CPU.
+     * Cheaper than full-file hash for duplicate detection, while still using phone CPU.
+     */
+    suspend fun getSha256PhoneStream(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().withAuth(authState)
+                .url(url)
+                .header("Range", "bytes=0-1048575")
+                .build()
+            optimizedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful && response.code != 206) return@withContext null
+                val stream = response.body?.byteStream() ?: return@withContext null
+                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
+                    .takeIf { it.isNotEmpty() }
+            }
+        } catch (e: Exception) { null }
+    }
+
+    /**
+     * Full-content SHA-256 on phone. Streams the entire file via WebDAV GET and hashes
+     * locally — pushes work OFF the NAS CPU. Use only for files small enough to download.
+     */
+    suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().withAuth(authState).url(url).build()
+            optimizedClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val stream = response.body?.byteStream() ?: return@withContext null
+                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(it) }
+                    .takeIf { it.isNotEmpty() }
+            }
+        } catch (e: Exception) { null }
+    }
+
 
 
     // TÍNH NĂNG 7.M: Đọc lướt nội dung File Text giới hạn dòng (Tránh lag RAM)

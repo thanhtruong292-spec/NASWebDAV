@@ -17,6 +17,7 @@ import java.net.InetAddress
 import java.net.InterfaceAddress
 import java.net.NetworkInterface
 import java.net.URI
+import java.io.InputStream
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -51,7 +52,7 @@ object FormatUtils {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HashUtils — MD5 hashing
+// HashUtils — MD5 & SHA-256 hashing (runs on PHONE CPU, not NAS)
 // ─────────────────────────────────────────────────────────────────────────────
 object HashUtils {
     fun md5(input: String): String = try {
@@ -64,6 +65,48 @@ object HashUtils {
         md.update(buffer, offset, length)
         md.digest().joinToString("") { "%02x".format(it) }
     } catch (_: Exception) { "error_hash" }
+
+    /**
+     * Compute SHA-256 hash from an InputStream on the phone CPU.
+     * Reads in 64KB chunks to avoid memory spikes. Call on Dispatchers.IO.
+     */
+    fun computeSha256OnPhone(inputStream: InputStream): String = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(65536) // 64KB chunks
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            digest.update(buffer, 0, bytesRead)
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) { "" }
+
+    /**
+     * Compute SHA-256 from a limited number of bytes (for Range-based partial hashing).
+     * Used when we download only the first N bytes of a file for speed.
+     */
+    fun computeSha256Partial(inputStream: InputStream, maxBytes: Long): String = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(65536)
+        var totalRead = 0L
+        while (totalRead < maxBytes) {
+            val toRead = minOf(buffer.size.toLong(), maxBytes - totalRead).toInt()
+            val bytesRead = inputStream.read(buffer, 0, toRead)
+            if (bytesRead == -1) break
+            digest.update(buffer, 0, bytesRead)
+            totalRead += bytesRead
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) { "" }
+
+    /**
+     * Whether a MIME type should be gzip-compressed (text-like content).
+     */
+    fun shouldCompress(mimeType: String): Boolean {
+        val mt = mimeType.lowercase()
+        return mt.startsWith("text/") || mt.contains("json") || mt.contains("xml")
+                || mt.contains("javascript") || mt.contains("css") || mt.contains("html")
+                || mt.contains("csv") || mt.contains("xml") || mt.contains("yaml")
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

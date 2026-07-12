@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentUris
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
@@ -16,6 +17,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.nas.naswebdav.utils.HashUtils
 import com.nas.naswebdav.utils.ImageFingerprint
 import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.*
@@ -518,7 +520,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 // ═══════════════════════════════════════════════════
                 if (duplicateSizes.isNotEmpty()) {
                     totalHashesNeeded.set(actualDuplicatesCount)
-                    val client = NasApplication.instance.fastApiClient
                     val isLightningMode = inputData.getBoolean("lightningMode", true)
 
                     val totalSizeGroups = duplicateSizes.size
@@ -581,7 +582,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                             }
                         }
 
-                        // 3. XỬ LÝ HASH MẠNG LƯỚI CHO TOÀN BỘ 50 NHÓM (CẢ TRĂM FILE) GỘP TRONG 1 REQUEST (Giảm 50x Network)
+                        // 3. HASH TRÊN PHONE: tải file qua WebDAV Range → SHA-256 bằng CPU điện thoại
+                        // Trước đây dùng NAS /api/disk/hash_batch → NAS tốn CPU, giờ phone lo
                         if (filesNeedHash.isNotEmpty()) {
                             if (isLightningMode) {
                                 for (file in filesNeedHash) {
@@ -590,73 +592,16 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                     pendingHashUpdates.add(Pair(file.path, pseudoHash))
                                 }
                             } else {
-                                try {
-                                    val jsonArray = org.json.JSONArray()
-                                    filesNeedHash.forEach { file ->
-                                        val rootWebDav = currentUrl.trimEnd('/')
-                                        val relativePath = if (file.path.startsWith(rootWebDav)) file.path.substring(rootWebDav.length) else file.path
-                                        val fileObj = org.json.JSONObject().apply {
-                                            put("path", file.path)
-                                            put("local_path", relativePath)
-                                        }
-                                        jsonArray.put(fileObj)
-                                    }
-                                    val jsonString = org.json.JSONObject().put("files", jsonArray).toString()
-                                    val requestBody = jsonString.toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                                    // FIX #14: Thêm Authorization header — hash_batch API yêu cầu auth
-                                    val request = okhttp3.Request.Builder()
-                                        .url("$apiBaseUrl/api/disk/hash_batch")
-                                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
-                                        .post(requestBody)
-                                        .build()
-                                    val call = client.newCall(request)
-                                    val cancelJob = launch {
-                                        while (isActive) {
-                                            if (isStopped) { call.cancel(); break }
-                                            kotlinx.coroutines.delay(1000)
-                                        }
-                                    }
-                                    try {
-                                        call.execute().use { response ->
-                                        if (response.isSuccessful) {
-                                            val responseBody = response.body?.string() ?: "{}"
-                                            val resultObj = org.json.JSONObject(responseBody)
-                                            filesNeedHash.forEach { file ->
-                                                val hash: String = resultObj.optString(file.path, "")
-                                                if (hash.isNotEmpty()) {
-                                                    pendingHashUpdates.add(Pair(file.path, hash))
-                                                    pendingHashCacheUpdates.add(HashCache(file.path, file.contentLength, file.lastModified, hash))
-                                                }
-                                            }
-                                        } else {
-                                            // SONG SONG HOA: Hash qua WebDAV voi 3 coroutine dong thoi
-                                            val hashSemaphore = kotlinx.coroutines.sync.Semaphore(3)
-                                            kotlinx.coroutines.coroutineScope {
-                                                filesNeedHash.map { dup ->
-                                                    async(Dispatchers.IO) {
-                                                        hashSemaphore.withPermit {
-                                                            hashViaWebDavBuffered(webDavManager, pendingHashUpdates, pendingHashCacheUpdates, dup, hashBufferMutex)
-                                                        }
-                                                    }
-                                                }.awaitAll()
+                                // Hash song song 3 coroutine — phone CPU tính SHA-256, NAS chỉ serve bytes
+                                val hashSemaphore = kotlinx.coroutines.sync.Semaphore(3)
+                                kotlinx.coroutines.coroutineScope {
+                                    filesNeedHash.map { dup ->
+                                        async(Dispatchers.IO) {
+                                            hashSemaphore.withPermit {
+                                                hashViaWebDavBuffered(webDavManager, pendingHashUpdates, pendingHashCacheUpdates, dup, hashBufferMutex)
                                             }
                                         }
-                                    }
-                                    } finally {
-                                        cancelJob.cancel()
-                                    }
-                                } catch (e: Exception) {
-                                    // SONG SONG HOA fallback
-                                    val hashSemaphore = kotlinx.coroutines.sync.Semaphore(3)
-                                    kotlinx.coroutines.coroutineScope {
-                                        filesNeedHash.map { dup ->
-                                            async(Dispatchers.IO) {
-                                                hashSemaphore.withPermit {
-                                                    hashViaWebDavBuffered(webDavManager, pendingHashUpdates, pendingHashCacheUpdates, dup, hashBufferMutex)
-                                                }
-                                            }
-                                        }.awaitAll()
-                                    }
+                                    }.awaitAll()
                                 }
                             }
                         }
@@ -796,14 +741,14 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         }
     }
 
-    /** Helper: Hash từng file qua WebDAV (ETag hoặc partial hash) TỐI ƯU HÓA BẰNG BUFFER RAM
+    /** Helper: Hash trên phone CPU qua WebDAV (SHA-256 partial 1MB)
+     *  KHÔNG gọi NAS để tính hash — phone tải bytes rồi tự SHA-256 bằng MessageDigest.
      *  Thread-safe: dùng Mutex để đồng bộ ghi vào buffer khi chạy song song */
     private suspend fun hashViaWebDavBuffered(webDavManager: WebDavManager, buffer: MutableList<Pair<String,String>>, bufferHashCache: MutableList<HashCache>, dup: CachedFile, mutex: Mutex? = null) {
         try {
-            val headHeaders = webDavManager.headFileHeaders(dup.path)
-            val eTag = headHeaders?.get("ETag")?.replace("\"", "")
-            val finalHash = if (!eTag.isNullOrEmpty() && eTag.length >= 8) eTag else webDavManager.getPartialHashStream(dup.path)
-            
+            // Phone CPU computes SHA-256 over the first 1MB (Range GET — NAS chỉ serve bytes).
+            val finalHash = webDavManager.getSha256PhoneStream(dup.path)
+
             if (finalHash != null) {
                 if (mutex != null) {
                     mutex.withLock {
@@ -1179,7 +1124,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     }
                                     // Reopen stream for WebDAV (SMB may have consumed it)
                                     applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input2 ->
-                                        webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
+                                        // Route text-like files (json, xml, html, csv) through gzip-compressed upload
+                                        // to save 60-80% bandwidth. Media files (jpg/mp4/heic) are already compressed
+                                        // and would only grow if gzip'd, so pass them through unchanged.
+                                        val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
+                                        val uploadCall: suspend (
+                                            String, java.io.InputStream, Long, String,
+                                            (Long, Long) -> Unit
+                                        ) -> Unit = if (useCompression)
+                                            webDavManager::uploadCompressedStream else webDavManager::uploadStreamWithProgress
+                                        uploadCall(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
                                             val now = System.currentTimeMillis()
                                             if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
                                                 lastProgressTime = now
@@ -1272,29 +1226,41 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
             val savedUser = SecurePrefsHelper.getUser(applicationContext)
             val savedPass = SecurePrefsHelper.getPass(applicationContext)
             if (savedUrl.isEmpty() || savedUser.isEmpty()) return@withContext Result.failure()
-            val apiBaseUrl = savedUrl.toApiBaseUrl()
             for (file in filesToProcess) {
                 if (isStopped) break
                 try {
-                    // FIX #15: Uri.encode(file.path) encode toàn bộ URL thành http%3A%2F%2F...
-                    // API /api/thumb?path= chỉ cần phần path (/webdav/img.jpg), không phải full URL.
-                    // Tách path từ URL đầy đủ, sau đó encode chỉ phần path đó.
-                    val pathOnly = try {
-                        java.net.URL(file.path).path  // "/webdav/photos/img.jpg"
-                    } catch (_: Exception) {
-                        file.path  // fallback nếu đã là path thuần
-                    }
-                    val encodedPath = java.net.URLEncoder.encode(pathOnly, "UTF-8").replace("+", "%20")
-                    val url = "$apiBaseUrl/api/thumb?path=$encodedPath"
-                    val request = okhttp3.Request.Builder().url(url).header("Authorization", okhttp3.Credentials.basic(savedUser, savedPass)).build()
-                    app.fastApiClient.newCall(request).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            resp.body?.byteStream()?.use { inputStream ->
-                                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
-                                if (bitmap != null) { try { val aHash = ImageFingerprint.computeAHash(bitmap); if (aHash != null) { db.fileDao().updateImageFingerprint(file.path, aHash); successCount++ } else failCount++ } finally { bitmap.recycle() } }
-                                else failCount++
-                            } ?: run { failCount++ }
-                        } else { db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED"); failCount++ }
+                    // Phone-side: tải raw image 512KB đầu tiên qua WebDAV Range,
+                    // decode bitmap + tính aHash trên phone CPU — KHÔNG gọi NAS /api/thumb
+                    val authHeader = okhttp3.Credentials.basic(savedUser, savedPass)
+                    val thumbRequest = okhttp3.Request.Builder()
+                        .url(file.path)
+                        .header("Range", "bytes=0-524287") // 512KB — đủ cho aHash
+                        .header("Authorization", authHeader)
+                        .build()
+                    NasApplication.instance.sharedHttpClient.newCall(thumbRequest).execute().use { resp ->
+                        if (resp.isSuccessful || resp.code == 206) {
+                            val imageBytes = resp.body?.bytes() ?: return@use run { failCount++ }
+                            // Peek full dimensions to set inSampleSize
+                            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
+                            var sampleSize = 1
+                            while (opts.outWidth / sampleSize > 512 || opts.outHeight / sampleSize > 512) sampleSize *= 2
+                            val decodeOpts = BitmapFactory.Options().apply {
+                                inSampleSize = sampleSize
+                                inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                            }
+                            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOpts)
+                            if (bitmap != null) {
+                                try {
+                                    val aHash = ImageFingerprint.computeAHash(bitmap)
+                                    if (aHash != null) {
+                                        db.fileDao().updateImageFingerprint(file.path, aHash); successCount++
+                                    } else failCount++
+                                } finally { bitmap.recycle() }
+                            } else failCount++
+                        } else {
+                            db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED"); failCount++
+                        }
                     }
                     delay(200)
                 } catch (_: Exception) { failCount++; delay(1000) }
@@ -1437,17 +1403,18 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             for (size in duplicateSizes) {
                 val group = db.fileDao().getFilesBySize(size)
                 if (group.size < 2 || group.first().contentLength < 1024L) continue
-                val paths = group.map { it.path }; val hashResult = mutableMapOf<String, String>()
+                val hashResult = mutableMapOf<String, String>()
+                // Phone CPU computes SHA-256 over first 1MB (WebDAV Range) — NAS chỉ serve bytes
                 try {
-                    val fastClient = NasApplication.instance.fastApiClient; val jsonArray = JSONArray()
-                    val apiBase = webDavManager.currentBaseUrl.toApiBaseUrl()
-                    val rootWebDav = webDavManager.currentBaseUrl.trimEnd('/')
-                    paths.forEach { path -> jsonArray.put(JSONObject().apply { put("path", path); put("local_path", if (path.startsWith(rootWebDav)) path.substring(rootWebDav.length) else path) }) }
-                    val reqBody = JSONObject().put("files", jsonArray).toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                    val req = okhttp3.Request.Builder().url("$apiBase/api/disk/hash_batch").post(reqBody).header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
-                    fastClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) { val resultObj = JSONObject(resp.body?.string() ?: "{}"); for (path in paths) { val hash = resultObj.optString(path, ""); if (hash.isNotEmpty()) hashResult[path] = hash } }
-                        else throw Exception("Non 2xx")
+                    for (file in group) {
+                        if (!isActive) break
+                        val phoneHash = webDavManager.getSha256PhoneStream(file.path)
+                        if (!phoneHash.isNullOrEmpty()) {
+                            hashResult[file.path] = phoneHash
+                        } else {
+                            // Fallback khi phone không tải được: dùng size+mtime pseudo-hash
+                            hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}"
+                        }
                     }
                 } catch (_: Exception) { for (file in group) hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}" }
                 val hashGroups = mutableMapOf<String, MutableList<CachedFile>>()
