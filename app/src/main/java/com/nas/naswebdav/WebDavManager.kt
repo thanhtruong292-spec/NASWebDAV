@@ -599,6 +599,7 @@ object WebDavManager {
 
     ) = withContext(Dispatchers.IO) {
 
+        val uploadStartMs = System.currentTimeMillis()
         val requestBody = object : RequestBody() {
 
             override fun contentType() = contentType.toMediaTypeOrNull()
