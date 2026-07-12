@@ -738,7 +738,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // Cần Wifi
                 .build()
                 
-            val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(7, java.util.concurrent.TimeUnit.DAYS)
+            val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(30, java.util.concurrent.TimeUnit.DAYS)
                 .setConstraints(constraints)
                 .build()
             workManager.enqueueUniquePeriodicWork("AutoCleanDuplicates", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, req)
@@ -951,7 +951,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // HÀM CONNECT_AND_LOAD BỊ XÓA BỎ VÌ DƯ THỪA. SẼ DÙNG HÀM CONNECT CHÍNH THỨC NẰM Ở CUỐI FILE.
 
     fun openFolder(file: NasFile) {
-        pendingDeletes.clear()
         urlStack.push(currentUrl)
         currentUrl = if (file.path.endsWith("/")) file.path else "${file.path}/"
 
@@ -1009,7 +1008,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun resetToRoot() = resetToDefaultMode()
     fun navigateToUrl(url: String) {
-        pendingDeletes.clear()
         currentUrl = url
         fileList = emptyList()
         isLoading = true
@@ -1017,7 +1015,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     }
     fun goBack(): Boolean {
         if (urlStack.isNotEmpty()) {
-            pendingDeletes.clear()
             currentUrl = urlStack.pop()
 
             // SỬA LỖI: Nhường toàn bộ băng thông cho lệnh lùi thư mục
@@ -4716,7 +4713,7 @@ fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) 
         )
 
         val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
-            24, java.util.concurrent.TimeUnit.HOURS
+            168, java.util.concurrent.TimeUnit.HOURS // 7 ngày (was 24h — quá nhiều)
         )
             .setConstraints(constraints)
             .setInputData(inputData)
@@ -4724,7 +4721,7 @@ fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) 
 
         workManager.enqueueUniquePeriodicWork(
             "Auto_Idle_Duplicate_Scan",
-            androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP, // Giữ nguyên nếu đã schedule
             periodicScanRequest
         )
     }
@@ -4765,9 +4762,9 @@ fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) 
         .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED) // Có mạng
         .build()
 
-    // Chạy mỗi 24 tiếng để tạo vân tay cho các file ảnh/video vừa upload
+    // Chạy mỗi 7 ngày để tạo vân tay (was 24h — quá nhiều lần scan file mới)
     val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
-        24, java.util.concurrent.TimeUnit.HOURS
+        168, java.util.concurrent.TimeUnit.HOURS // 7 ngày
     )
         .setConstraints(constraints)
         .build()

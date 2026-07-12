@@ -563,7 +563,7 @@ fun MainMenuScreen(
                         .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
                         .setRequiresCharging(true)
                         .build()
-                    val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(24, java.util.concurrent.TimeUnit.HOURS)
+                    val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
                         .setConstraints(constraints)
                         .addTag("com.nas.naswebdav.AutoBackupWorker")
                         .build()

@@ -77,7 +77,7 @@ class LivestreamDiscoveryWorker(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
             val request = PeriodicWorkRequestBuilder<LivestreamDiscoveryWorker>(
-                15, TimeUnit.MINUTES
+                60, TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
                 .build()
