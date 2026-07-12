@@ -1959,7 +1959,7 @@ fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier:
     }
 }
 
-private enum class ThumbState { LOADING, SUCCESS, ERROR }
+// ThumbState defined in BrowserComponents.kt — no duplicate here
 
 // LỚP PHỤ TRỢ: Bộ nhớ Lịch sử Tìm Kiếm (TÍNH NĂNG 3.E)
 data class SearchHistory(val query: String, val timestamp: Long)

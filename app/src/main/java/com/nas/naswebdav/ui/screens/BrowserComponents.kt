@@ -556,7 +556,7 @@ fun WebDavCachedThumbnail(
     }
 }
 
-private enum class ThumbState { LOADING, SUCCESS, ERROR }
+internal enum class ThumbState { LOADING, SUCCESS, ERROR }
 
 fun openExternalVideoPlayer(
     context: android.content.Context,

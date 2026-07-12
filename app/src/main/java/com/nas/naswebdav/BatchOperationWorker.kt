@@ -1,4 +1,4 @@
-﻿package com.nas.naswebdav
+package com.nas.naswebdav
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -17,19 +17,19 @@ import java.net.URL
 import java.io.File
 
 /**
- * BatchOperationWorker â€” Foreground Worker cháº¡y ngáº§m cho cÃ¡c tÃ¡c vá»¥ Copy/Move/Delete/Restore hÃ ng loáº¡t.
+ * BatchOperationWorker �?? Foreground Worker chạy ngầm cho các tác vụ Copy/Move/Delete/Restore hàng loạt.
  *
- * Æ¯u Ä‘iá»ƒm so vá»›i viewModelScope.launch:
- * - Tiáº¿n trÃ¬nh KHÃ”NG Bá»Š Há»¦Y khi ngÆ°á»i dÃ¹ng táº¯t App hoáº·c thu nhá» á»©ng dá»¥ng.
- * - Hiá»ƒn thá»‹ thanh tiáº¿n trÃ¬nh trÃªn Notification Bar (Thanh thÃ´ng bÃ¡o) theo thá»i gian thá»±c.
- * - Há»‡ Ä‘iá»u hÃ nh Android cáº¥p phÃ¡t Æ°u tiÃªn cao (Foreground Service) â†’ TrÃ¡nh bá»‹ OOM Killer xÃ³a sá»•.
+ * Ưu �?i�?m so v�?i viewModelScope.launch:
+ * - Tiến trình KH�?NG B�? HỦY khi người dùng tắt App hoặc thu nhỏ ứng dụng.
+ * - Hi�?n th�? thanh tiến trình trên Notification Bar (Thanh thông báo) theo thời gian thực.
+ * - H�? �?iều hành Android cấp phát ưu tiên cao (Foreground Service) �?? Tránh b�? OOM Killer xóa s�?.
  *
  * Input Data:
  *   - "operation" : "COPY" | "MOVE" | "DELETE" | "RESTORE"
- *   - "filePaths" : String[] â€” danh sÃ¡ch Ä‘Æ°á»ng dáº«n WebDAV Ä‘áº§y Ä‘á»§ (source)
- *   - "fileNames" : String[] â€” tÃªn hiá»ƒn thá»‹ tÆ°Æ¡ng á»©ng
- *   - "destUrl"   : String   â€” thÆ° má»¥c Ä‘Ã­ch (cho COPY/MOVE, khÃ´ng cáº§n cho DELETE)
- *   - "baseUrl"   : String   â€” WebDAV base URL hiá»‡n táº¡i (Ä‘á»ƒ tÃ­nh trash path)
+ *   - "filePaths" : String[] �?? danh sách �?ường dẫn WebDAV �?ầy �?ủ (source)
+ *   - "fileNames" : String[] �?? tên hi�?n th�? tương ứng
+ *   - "destUrl"   : String   �?? thư mục �?ích (cho COPY/MOVE, không cần cho DELETE)
+ *   - "baseUrl"   : String   �?? WebDAV base URL hi�?n tại (�?�? tính trash path)
  */
 class BatchOperationWorker(
     appContext: Context,
@@ -44,10 +44,10 @@ class BatchOperationWorker(
         fun createChannel(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "TÃ¡c vá»¥ hÃ ng loáº¡t",
+                    CHANNEL_ID, "Tác vụ hàng loạt",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Hiá»ƒn thá»‹ tiáº¿n trÃ¬nh Copy/Move/Delete file trÃªn NAS"
+                    description = "Hi�?n th�? tiến trình Copy/Move/Delete file trên NAS"
                     setShowBadge(false)
                 }
                 (context.getSystemService(NotificationManager::class.java))
@@ -107,10 +107,10 @@ class BatchOperationWorker(
         val destUrl = inputData.getString("destUrl") ?: ""
         if (filePaths.isEmpty()) return@withContext Result.success()
 
-        // Káº¿t ná»‘i WebDAV â€” sá»­ dá»¥ng SmartNetworkManager Ä‘á»ƒ chá»n URL Ä‘ang hoáº¡t Ä‘á»™ng (LAN hoáº·c Tailscale)
+        // Kết n�?i WebDAV �?? sử dụng SmartNetworkManager �?�? chọn URL �?ang hoạt �?�?ng (LAN hoặc Tailscale)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        // FIX D3: ÄÃ£ trong withContext(IO) â†’ gá»i suspend fun trá»±c tiáº¿p, khÃ´ng cáº§n runBlocking
+        // FIX D3: Đã trong withContext(IO) �?? gọi suspend fun trực tiếp, không cần runBlocking
         val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
@@ -121,27 +121,27 @@ class BatchOperationWorker(
         val db = NasApplication.instance.database
         val trashMetaDao = db.trashMetaDao()
 
-        // Táº¡o Foreground Notification
+        // Tạo Foreground Notification
         createChannel(applicationContext)
         val operationLabel = when (operation) {
-            "COPY" -> "Sao chÃ©p"
-            "MOVE" -> "Di chuyá»ƒn"
-            "DELETE" -> "XÃ³a"
-            "RESTORE" -> "KhÃ´i phá»¥c"
-            else -> "Xá»­ lÃ½"
+            "COPY" -> "Sao chép"
+            "MOVE" -> "Di chuy�?n"
+            "DELETE" -> "Xóa"
+            "RESTORE" -> "Khôi phục"
+            else -> "Xử lý"
         }
 
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("$operationLabel ${filePaths.size} tá»‡p")
+            .setContentTitle("$operationLabel ${filePaths.size} t�?p")
             .setProgress(100, 0, true)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         try {
-            // Tá»« Android 10 (Q) trá»Ÿ lÃªn báº¯t buá»™c khai bÃ¡o foregroundServiceType
-            // khá»›p manifest, náº¿u khÃ´ng sáº½ nÃ©m MissingForegroundServiceTypeException.
+            // Từ Android 10 (Q) tr�? lên bắt bu�?c khai báo foregroundServiceType
+            // kh�?p manifest, nếu không sẽ ném MissingForegroundServiceTypeException.
             setForeground(
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                     ForegroundInfo(
@@ -164,7 +164,7 @@ class BatchOperationWorker(
         var failCount = 0
         val trashFolderName = ".trash/"
 
-        // Bá» viá»‡c chuáº©n bá»‹ ThÃ¹ng rÃ¡c dÃ¹ng chung á»Ÿ Ä‘Ã¢y vÃ¬ Trash giá» phá»¥ thuá»™c tá»«ng á»• Ä‘Ä©a
+        // Bỏ vi�?c chuẩn b�? Thùng rác dùng chung �? �?ây vì Trash giờ phụ thu�?c từng �? �?ĩa
         
         var lastNotifyUpdate = 0L
 
@@ -179,7 +179,7 @@ class BatchOperationWorker(
             if (now - lastNotifyUpdate > 200 || index == 0 || index == total - 1) {
                 lastNotifyUpdate = now
 
-                // Cáº­p nháº­t Notification Bar
+                // Cập nhật Notification Bar
                 notificationBuilder
                     .setContentTitle("$operationLabel (${ index + 1 }/$total)")
                     .setContentText(displayName)
@@ -189,7 +189,7 @@ class BatchOperationWorker(
                         .notify(NOTIFICATION_ID, notificationBuilder.build())
                 } catch (_: SecurityException) {}
 
-                // BÃ¡o cÃ¡o tiáº¿n trÃ¬nh cho UI (náº¿u App Ä‘ang má»Ÿ)
+                // Báo cáo tiến trình cho UI (nếu App �?ang m�?)
                 setProgress(workDataOf(
                     "completed" to index,
                     "total" to total,
@@ -250,12 +250,12 @@ class BatchOperationWorker(
                         successCount++
                     }
                     else -> {
-                        // Unknown operation — DO NOT increment successCount here.
+                        // Unknown operation ? DO NOT increment successCount here.
                         // Only the 4 valid branches above (COPY/MOVE/DELETE/RESTORE) count as success.
                     }
                 }
             } catch (e: Exception) {
-                android.util.Log.e(TAG, "Lá»—i $operation file: $fileName", e)
+                android.util.Log.e(TAG, "L�?i $operation file: $fileName", e)
                 failCount++
             }
             
@@ -263,39 +263,39 @@ class BatchOperationWorker(
             kotlinx.coroutines.delay(100L)
         }
 
-        // BÃ¡o cÃ¡o káº¿t quáº£ cuá»‘i cÃ¹ng cho UI
+        // Báo cáo kết quả cu�?i cùng cho UI
         setProgress(workDataOf(
             "completed" to total,
             "total" to total,
-            "currentFile" to "HoÃ n táº¥t",
+            "currentFile" to "Hoàn tất",
             "operation" to operation,
             "percent" to 100,
             "successCount" to successCount,
             "failCount" to failCount
         ))
 
-        // Ghi log há»‡ thá»‘ng
+        // Ghi log h�? th�?ng
         try {
             val db = NasApplication.instance.database
             val logType = if (failCount == 0) "SUCCESS" else "WARNING"
             val logMsg = if (failCount == 0) {
-                "$operationLabel thÃ nh cÃ´ng $successCount/$total tá»‡p."
+                "$operationLabel thành công $successCount/$total t�?p."
             } else {
-                "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount tháº¥t báº¡i."
+                "$operationLabel: $successCount thành công, $failCount thất bại."
             }
-            db.logDao().insertLog(SystemLog(type = logType, module = "HÃ ng loáº¡t", message = logMsg))
+            db.logDao().insertLog(SystemLog(type = logType, module = "Hàng loạt", message = logMsg))
         } catch (_: Exception) {}
 
-        // Hiá»ƒn thá»‹ thÃ´ng bÃ¡o hoÃ n táº¥t (khÃ´ng cÃ²n ongoing)
+        // Hi�?n th�? thông báo hoàn tất (không còn ongoing)
         val resultText = if (failCount == 0) {
-            "HoÃ n táº¥t $operationLabel $successCount tá»‡p âœ…"
+            "Hoàn tất $operationLabel $successCount t�?p �??"
         } else {
-            "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount lá»—i"
+            "$operationLabel: $successCount thành công, $failCount l�?i"
         }
         val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle(resultText)
-            .setContentText(if (failCount > 0) "Má»™t sá»‘ tá»‡p khÃ´ng thá»ƒ xá»­ lÃ½." else "Táº¥t cáº£ tá»‡p Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½ thÃ nh cÃ´ng!")
+            .setContentText(if (failCount > 0) "M�?t s�? t�?p không th�? xử lý." else "Tất cả t�?p �?ã �?ược xử lý thành công!")
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         try {
