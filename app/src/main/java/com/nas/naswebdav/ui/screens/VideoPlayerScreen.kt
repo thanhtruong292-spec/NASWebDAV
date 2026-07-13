@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.webkit.*
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.utils.FormatUtils
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -65,19 +66,6 @@ import kotlinx.coroutines.withContext
 private const val PIP_ACTION_REWIND = "com.nas.naswebdav.PIP_REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.nas.naswebdav.PIP_PLAY_PAUSE"
 private const val PIP_ACTION_FAST_FORWARD = "com.nas.naswebdav.PIP_FAST_FORWARD"
-
-private fun formatPlayerTime(positionMs: Long): String {
-    val safeMs = positionMs.coerceAtLeast(0L)
-    val totalSeconds = safeMs / 1000L
-    val hours = totalSeconds / 3600L
-    val minutes = (totalSeconds % 3600L) / 60L
-    val seconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
-    }
-}
 
 private fun inferWebDavBaseUrl(rawUrl: String): String {
     return runCatching {
@@ -192,11 +180,18 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
                 urlLower.endsWith(".flv") || urlLower.endsWith(".asf")
     }
 
-    val effectiveUrl = remember(playbackUrl) {
-        playbackUrl.toFastMediaUrl()
+    val effectiveUrl = remember(playbackUrl, isLegacyFormat) {
+        if (isLegacyFormat) {
+            val uri = android.net.Uri.parse(playbackUrl)
+            val relativePath = uri.path?.substringAfter("/webdav") ?: ""
+            val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
+            "${playbackUrl.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
+        } else {
+            playbackUrl.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM → /api/media endpoint
+        }
     }
 
-    val isTranscoding = isLegacyFormat && effectiveUrl.contains("/api/stream/transcode")
+    val isTranscoding = isLegacyFormat
 
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->
@@ -231,12 +226,10 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
         val memoryInfo = android.app.ActivityManager.MemoryInfo()
         activityManager.getMemoryInfo(memoryInfo)
         
-        // LAN playback: mở càng nhanh càng tốt, chỉ giữ buffer vừa đủ.
-        // File lớn/bitrate cao mà đặt buffer theo thời gian quá dài sẽ làm màn hình
-        // quay mãi trước khi phát. Giới hạn byte để ExoPlayer không hút LAN/HDD quá tay.
-        val dynamicBufferBytes = (memoryInfo.availMem * 0.025).toLong()
-            .coerceIn(16L * 1024 * 1024, 64L * 1024 * 1024).toInt()
-            
+        // Dành 15% RAM trống hiện tại làm bộ đệm video. Tối thiểu 50MB, tối đa 500MB để tránh OOM.
+        val dynamicBufferBytes = (memoryInfo.availMem * 0.15).toLong()
+            .coerceIn(50L * 1024 * 1024, 500L * 1024 * 1024).toInt()
+
         android.util.Log.i("VideoPlayer", "Dynamic Buffer allocated: ${dynamicBufferBytes / 1024 / 1024} MB")
 
         val allocator = androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE)
@@ -244,13 +237,13 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setAllocator(allocator)
             .setBufferDurationsMs(
-                1_000,    // LAN: không bắt player đợi 15s buffer mới ổn định
-                15_000,   // Không đọc quá xa làm chiếm HDD/RAM và nghẽn NAS
-                150,      // Bắt đầu gần như ngay lập tức trên LAN
-                500       // Rebuffer ngắn để khôi phục nhanh khi tua
+                10_000,   // Min buffer: nạp 10s là đủ để duy trì mượt
+                120_000,  // Max buffer: nạp trước tối đa 2 phút (đủ xem xuyên qua mạng chập chờn)
+                250,      // Ngưỡng mới play cực thấp (0.25s) để play ngay lập tức
+                500       // Ngưỡng re-buffer cực thấp
             )
             .setTargetBufferBytes(dynamicBufferBytes) // Dùng cấp phát RAM động
-            .setBackBuffer(5_000, true)
+            .setBackBuffer(30_000, true)  // Giữ 30s lui để tua lại mượt hơn
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
 
@@ -616,7 +609,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
                             Icon(Icons.Default.SkipNext, "Tới cuối", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
                         Text(
-                            text = "${formatPlayerTime(playbackPositionMs)} / ${formatPlayerTime(playbackDurationMs)}",
+                            text = "${FormatUtils.formatPlayerTime(playbackPositionMs)} / ${FormatUtils.formatPlayerTime(playbackDurationMs)}",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium

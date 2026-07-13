@@ -68,6 +68,9 @@ class LivestreamViewModel(
 
     // ═══ TIKTOK LIVE WATCH ═══
 
+    var tiktokLiveWatchUsers by androidx.compose.runtime.mutableStateOf<List<WebDavViewModel.TikTokLiveWatchUser>>(emptyList())
+        internal set
+
     var tiktokWatchDaemonRunning by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var tiktokWatchDaemonLastTick by androidx.compose.runtime.mutableStateOf("")
@@ -139,6 +142,23 @@ class LivestreamViewModel(
                         tiktokWatchDaemonLastTick = json.optString("last_tick", "")
                         tiktokWatchDaemonSummary = json.optString("summary", "")
                         tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
+                        tiktokLiveWatchError = json.optString("error", null)
+                        tiktokCookiesStatus = json.optString("cookies_status", "unknown")
+                        tiktokCookiesMessage = json.optString("cookies_message", "")
+                        val usersArr = json.optJSONArray("users")
+                        tiktokLiveWatchUsers = if (usersArr != null) {
+                            (0 until usersArr.length()).mapNotNull { idx ->
+                                val u = usersArr.optJSONObject(idx) ?: return@mapNotNull null
+                                WebDavViewModel.TikTokLiveWatchUser(
+                                    username = u.optString("username", ""),
+                                    status = u.optString("status", ""),
+                                    lastCheck = u.optString("last_check", ""),
+                                    lastLive = u.optString("last_live", ""),
+                                    lastError = u.optString("last_error", ""),
+                                    jobId = u.optString("job_id", "")
+                                )
+                            }
+                        } else emptyList()
                     }
                 }
             } catch (e: Exception) {

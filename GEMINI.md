@@ -45,19 +45,29 @@ rule 5: ACCEPT all from 192.168.100.93  ← không bao giờ chạy!
 
 ---
 
-## Cấu trúc chính
+## Cấu trúc chính (Cập nhật sau Phase 7 - Strangler Fig)
+
+Dự án áp dụng Strangler Fig Pattern, bẻ God Class `WebDavViewModel` thành 7 Domain VMs:
+1. `AuthSessionViewModel` (Login, Kết nối)
+2. `DeviceManagementViewModel` (SMB, Docker, Whitelist, Fan, Storage)
+3. `SystemMonitorViewModel` (Metrics, Disk Health, OMV)
+4. `FileBrowserViewModel` (Duyệt file, CRUD)
+5. `AutoBackupViewModel` (Background backup)
+6. `LivestreamViewModel` (Social extract, stream)
+7. `SmartToolsViewModel` (Duplicate scan, Thumbnails)
 
 ```
+MainActivity.kt       → Cấu hình DomainViewModelProvider & CompositionLocalProvider
 WebDavManager.kt      → HTTP/WebDAV + TCP ping
-WebDavViewModel.kt    → Main ViewModel (large, ~3500 lines)
-MonitoringViewModel.kt → SMART, OMV, metrics polling
-LivestreamViewModel.kt → Livestream recording
-TransferViewModel.kt  → AutoBackup, batch ops
-MainActivity.kt       → Navigation + NasTheme wrapper
+WebDavViewModel.kt    → [SẮP XÓA] Đóng vai trò Facade delegates cho 7 VMs
 ui/theme/Type.kt      → SamsungOneFontFamily + AppTypography
 ui/theme/Theme.kt     → NasTheme (color + typography)
 nas_api_server.py     → NAS backend (Python 3.5, Flask)
 ```
+
+**Tiến độ UI Migration (Phase 7c):**
+- Đã hoàn tất Nhóm 1 (Đơn nhiệm) và Nhóm 2 (Màn hình Quản trị).
+- Đang chuẩn bị chuyển sang Nhóm 3 (Xương sống - BrowserScreen, MainMenu).
 
 ---
 

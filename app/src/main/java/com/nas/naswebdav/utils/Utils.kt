@@ -49,6 +49,31 @@ object FormatUtils {
     }
 
     fun ensureTrailingSlash(url: String): String = if (url.endsWith("/")) url else "$url/"
+
+    fun stripTrailingSlash(url: String): String = url.trimEnd('/')
+
+    /** Format milliseconds as MM:SS or HH:MM:SS (for duplicate-scan ETA / elapsed). */
+    fun formatElapsedTime(ms: Long): String {
+        if (ms < 0) return "--:--"
+        val totalSec = ms / 1000
+        val m = totalSec / 60
+        val s = totalSec % 60
+        return String.format(Locale.US, "%02d:%02d", m, s)
+    }
+
+    /** Format milliseconds as M:SS or H:MM:SS (for video playback time). */
+    fun formatPlayerTime(positionMs: Long): String {
+        val safeMs = positionMs.coerceAtLeast(0L)
+        val totalSeconds = safeMs / 1000L
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            "%d:%02d:%02d".format(hours, minutes, seconds)
+        } else {
+            "%d:%02d".format(minutes, seconds)
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

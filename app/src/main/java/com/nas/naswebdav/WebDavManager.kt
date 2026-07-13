@@ -110,7 +110,13 @@ object WebDavManager {
         val pass: String = ""
     ) {
         val authHeader: String
-            get() = okhttp3.Credentials.basic(user, pass)
+            // FIX C5: OkHttp Credentials.basic() dùng ISO-8859-1, không hỗ trợ Unicode
+            // (password chứa dấu tiếng Việt sẽ bị corrupt → NAS reject 401).
+            // Encode thủ công bằng UTF-8 Base64 để đảm bảo đúng.
+            get() = "Basic " + android.util.Base64.encodeToString(
+                "$user:$pass".toByteArray(java.nio.charset.StandardCharsets.UTF_8),
+                android.util.Base64.NO_WRAP
+            )
     }
 
     @Volatile
@@ -149,7 +155,7 @@ object WebDavManager {
 
             maxRequests = 32       // OPTIMIZE: cho phép HTTP/2 multiplexing trên LAN
 
-            maxRequestsPerHost = 16 // OPTIMIZE: upload/download đồng thời lên cùng host
+            maxRequestsPerHost = 8  // STD-1 fix: giảm 16 → 8. Chia sẻ quota với sharedHttpClient + fastApiClient (cùng NAS host). NAS RK3328 yếu, 16 concurrent gây TCP retransmit.
 
         }
 
@@ -159,7 +165,7 @@ object WebDavManager {
 
             .followSslRedirects(false)
 
-            .writeTimeout(0, TimeUnit.SECONDS) // OPTIMIZE: vô hiệu hóa write timeout cho file upload lớn
+            .writeTimeout(30, TimeUnit.MINUTES) // FIX C2: giới hạn 30 phút thay vì 0 (vô hạn) — nếu NAS ngừng ACK giữa chừng, không treo vĩnh viễn
 
             .dispatcher(dispatcher)
 
@@ -371,12 +377,17 @@ object WebDavManager {
 
         // 1. Dùng sardineClient (đã gắn sẵn Basic Auth)
 
+                // FIX H5: Gửi body PROPFIND explicit thay vì body rỗng.
+        // RFC 4918 §9.1 nói empty body = "all properties" nhưng một số firmware NAS
+        // (Synology older, router mini-NAS) trả về propstat rỗng khi body trống.
+        val propfindBody = """<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:"><D:prop>
+  <D:getcontentlength/><D:getlastmodified/><D:getcontenttype/>
+  <D:resourcetype/><D:getetag/>
+</D:prop></D:propfind>""".toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull())
         val request = okhttp3.Request.Builder().withAuth(authState)
-
             .url(safeUrl)
-
-            .method("PROPFIND", ByteArray(0).toRequestBody(null, 0, 0))
-
+            .method("PROPFIND", propfindBody)
             .header("Depth", "1")
 
             .build()
@@ -639,9 +650,8 @@ object WebDavManager {
                             val delayMs = expectedMs - elapsedMs
 
                             if (delayMs > 10) {
-
+                                // Thread.sleep trong writeTo callback (non-suspend) — giữ nguyên
                                 Thread.sleep(delayMs.coerceAtMost(2000))
-
                             }
 
                         }
@@ -660,7 +670,7 @@ object WebDavManager {
 
         // OPTIMIZE: dùng thẳng optimizedClient — không tạo builder mới mỗi lần upload
         // để tái sử dụng Connection Pool, Dispatcher, Interceptors, HTTP/2 streams.
-        // writeTimeout đã được set = 0 trên optimizedClient.
+        // writeTimeout = 30 phút (FIX C2) — nếu NAS ngừng ACK, upload timeout thay vì treo vĩnh viễn.
         optimizedClient.newCall(request).execute().use { response ->
 
             if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
@@ -694,39 +704,27 @@ object WebDavManager {
             
 
             override fun writeTo(sink: BufferedSink) {
-
                 val gzipSink = okio.GzipSink(sink)
-
                 val bufferedGzip = gzipSink.buffer()
-
-                
-
-                inputStream.source().use { source ->
-
-                    var totalBytesRead = 0L
-
-                    var readCount = 0L
-
-                    val bufferSize = 8192L
-
-                    while (source.read(bufferedGzip.buffer, bufferSize).also { readCount = it } != -1L) {
-
-                        bufferedGzip.emit()
-
-                        totalBytesRead += readCount
-
-                        // Cập nhật thẻ Progress theo mốc dung lượng gốc (Uncompressed)
-
-                        onProgress(totalBytesRead, totalUncompressedLength)
-
+                try {
+                    inputStream.source().use { source ->
+                        var totalBytesRead = 0L
+                        var readCount = 0L
+                        val bufferSize = 8192L
+                        while (source.read(bufferedGzip.buffer, bufferSize).also { readCount = it } != -1L) {
+                            bufferedGzip.emit()
+                            totalBytesRead += readCount
+                            // Cập nhật thẻ Progress theo mốc dung lượng gốc (Uncompressed)
+                            onProgress(totalBytesRead, totalUncompressedLength)
+                        }
+                        bufferedGzip.flush()
                     }
-
-                    bufferedGzip.flush()
-
+                } finally {
+                    // FIX C4: flush + close trong finally để gzip footer (CRC32+ISIZE)
+                    // luôn được ghi — nếu source.read throw, server sẽ nhận truncated gzip
+                    // mà không có footer → decompression fail thay vì silent corruption.
+                    try { bufferedGzip.close() } catch (_: Exception) {}
                 }
-
-                bufferedGzip.close()
-
             }
 
         }
@@ -745,17 +743,11 @@ object WebDavManager {
 
 
 
-        optimizedClient.newBuilder()
-
-            .writeTimeout(0, TimeUnit.SECONDS)
-
-            .build()
-
-            .newCall(request).execute().use { response ->
-
-                if (!response.isSuccessful) throw Exception("NAS từ chối tệp nén GZIP: ${response.code}")
-
-            }
+        // FIX C3: optimizedClient đã có writeTimeout 30 phút (xem C2 fix).
+        // Dùng trực tiếp newCall() để giữ connection pool / dispatcher singleton.
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("NAS từ chối tệp nén GZIP: ${response.code}")
+        }
 
     }
 
@@ -840,21 +832,13 @@ object WebDavManager {
 
 
 
-        optimizedClient.newBuilder()
-
-            .writeTimeout(0, TimeUnit.SECONDS)
-
-            .build()
-
-            .newCall(request).execute().use { response ->
-
-                if (!response.isSuccessful && response.code != 206) {
-
-                    throw Exception("NAS từ chối Resume: ${response.code}")
-
-                }
-
+        // FIX C3: optimizedClient đã có writeTimeout 30 phút (xem C2 fix).
+        // Dùng trực tiếp newCall() để giữ connection pool / dispatcher singleton.
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) {
+                throw Exception("NAS từ chối Resume: ${response.code}")
             }
+        }
 
     }
 

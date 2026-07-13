@@ -9,6 +9,7 @@ import android.webkit.*
 import android.widget.Toast
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.utils.FormatUtils
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -112,6 +113,10 @@ fun ImageViewerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    // ═══ PHASE 7c: fileList + deleteFile now owned by FileBrowserVM (Phase 7a) ═══
+    // Reads via facade delegating getters → fileBrowser.fileList. Delete action
+    // delegates to fileBrowser.deleteFile(). Migration to LocalFileBrowserVM.current
+    // happens in 7c.Group2/3 cleanup pass.
 
     // ============ IMAGE LIST ============
     val imageFiles = remember(viewModel.fileList) {
@@ -486,19 +491,17 @@ private fun ZoomableImage(
                 )
             }
             .pointerInput(path) {
-                // Pinch zoom — CHỈ consume khi ≥2 ngón tay
-                // Single finger → KHÔNG consume → pager swipe hoạt động bình thường
+                // Multi-touch zoom — single-finger pan is consumed when zoomed (to prevent
+                // accidental page-swipe via HorizontalPager). Single-finger passes through only
+                // when scale == 1f (not zoomed), so the user can swipe to the next image.
                 awaitEachGesture {
-                    val down1 = awaitFirstDown(requireUnconsumed = false)
-                    down1.consume()
-                    var pastMultiTouch = false
+                    var wasMultiTouch = false
                     while (true) {
                         val ev = awaitPointerEvent()
                         val anyPressed = ev.changes.any { it.pressed }
                         if (!anyPressed) break
                         if (ev.changes.size >= 2) {
-                            pastMultiTouch = true
-                            // Tính zoom ratio + pan từ multi-touch centroid
+                            wasMultiTouch = true
                             val c = ev.changes
                             val oldDist = kotlin.math.hypot(
                                 c[0].previousPosition.x - c[1].previousPosition.x,
@@ -507,7 +510,7 @@ private fun ZoomableImage(
                             val newDist = kotlin.math.hypot(
                                 c[0].position.x - c[1].position.x,
                                 c[0].position.y - c[1].position.y
-                            ).coerceAtLeast(1f)
+                            ).coerceAtMost(1f)
                             val zoom = newDist / oldDist
                             val newScale = (scale * zoom).coerceIn(minScale, maxScale)
                             scale = newScale
@@ -524,7 +527,13 @@ private fun ZoomableImage(
                                 offsetY = 0f
                             }
                             c.forEach { if (it.pressed) it.consume() }
+                        } else if (ev.changes.size == 1 && wasMultiTouch && scale > 1f) {
+                            // After a pinch, pan with the remaining single finger while zoomed.
+                            // Consume so the event doesn't bubble to HorizontalPager.
+                            ev.changes.forEach { it.consume() }
                         }
+                        // Single-finger with no prior multi-touch and scale == 1f:
+                        // do NOT consume → HorizontalPager handles swipe naturally.
                     }
                 }
             },
@@ -653,19 +662,6 @@ private fun ThumbnailStrip(
 private const val PIP_ACTION_REWIND = "com.nas.naswebdav.PIP_REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.nas.naswebdav.PIP_PLAY_PAUSE"
 private const val PIP_ACTION_FAST_FORWARD = "com.nas.naswebdav.PIP_FAST_FORWARD"
-
-private fun formatPlayerTime(positionMs: Long): String {
-    val safeMs = positionMs.coerceAtLeast(0L)
-    val totalSeconds = safeMs / 1000L
-    val hours = totalSeconds / 3600L
-    val minutes = (totalSeconds % 3600L) / 60L
-    val seconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%d:%02d".format(minutes, seconds)
-    }
-}
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
@@ -1149,7 +1145,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDav
                             Icon(Icons.Default.SkipNext, "Tới cuối", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
                         Text(
-                            text = "${formatPlayerTime(playbackPositionMs)} / ${formatPlayerTime(playbackDurationMs)}",
+                            text = "${FormatUtils.formatPlayerTime(playbackPositionMs)} / ${FormatUtils.formatPlayerTime(playbackDurationMs)}",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
@@ -2058,10 +2054,28 @@ private fun HiddenExtractorWebView(
     onWebViewReady: (WebView) -> Unit
 ) {
     // Hiển thị dưới dạng 0x0 invisible view
+    // FIX UI C1: lưu tham chiếu WebView vào remember, destroy trong DisposableEffect
+    // để giải phóng ~50-100MB/instance. Trước đây không destroy → rò rỉ 1 WebView
+    // mỗi lần navigate (nghiêm trọng trên thiết bị RAM thấp).
+    val webViewHolder = androidx.compose.runtime.remember { mutableListOf<WebView>() }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            webViewHolder.forEach { wv ->
+                try {
+                    wv.stopLoading()
+                    wv.loadUrl("about:blank")
+                    (wv.parent as? android.view.ViewGroup)?.removeView(wv)
+                    wv.destroy()
+                } catch (_: Exception) {}
+            }
+            webViewHolder.clear()
+        }
+    }
     AndroidView(
         modifier = Modifier.size(0.dp),
         factory = { ctx ->
             WebView(ctx).apply {
+                webViewHolder.add(this)
                 layoutParams = ViewGroup.LayoutParams(1, 1)
 
                 settings.apply {

@@ -431,6 +431,20 @@ val MIGRATION_12_13 = object : androidx.room.migration.Migration(12, 13) {
     }
 }
 
+// FIX F1 CRITICAL: v13→v14→v15 là no-op (schema không đổi — cùng identityHash).
+// Trước đây KHÔNG có migration → Room dùng fallbackToDestructiveMigration() → xóa sạch
+// sync_queue, trash_meta, scan_checkpoints, system_logs... của user khi upgrade.
+val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        // Schema unchanged (identityHash identical to v13) — no-op migration.
+    }
+}
+val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        // Schema unchanged (identityHash identical to v13) — no-op migration.
+    }
+}
+
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
     version = 15,

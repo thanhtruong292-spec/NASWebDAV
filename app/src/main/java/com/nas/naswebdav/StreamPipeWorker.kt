@@ -91,6 +91,9 @@ class StreamPipeWorker(
 
         if (user.isEmpty() || pass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
 
+        // Dùng cho cleanup partial file trong catch (StreamPipe die mid-upload)
+        val authHeader = okhttp3.Credentials.basic(user, pass)
+
         createChannel(applicationContext)
 
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
@@ -118,6 +121,9 @@ class StreamPipeWorker(
         } catch (_: Exception) {}
 
         setProgress(workDataOf("status" to "connecting", "progress" to 0))
+
+        // Hoist destUrl ra outer scope để catch block có thể xóa partial NAS file
+        var destUrl = ""
 
         try {
             val ua = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -171,8 +177,8 @@ class StreamPipeWorker(
 
                 val safeFileName = fileName.replace(Regex("[/\\\\:*?\"<>|]"), "_")
                 val safeFileNameEncoded = java.net.URLEncoder.encode(safeFileName, "UTF-8").replace("+", "%20")
-                val destUrl = if (socialFolder.endsWith("/")) "$socialFolder$safeFileNameEncoded"
-                              else "$socialFolder/$safeFileNameEncoded"
+                destUrl = if (socialFolder.endsWith("/")) "$socialFolder$safeFileNameEncoded"
+                         else "$socialFolder/$safeFileNameEncoded"
 
                 // ── 4. Streaming body CDN→NAS ──
                 var totalBytesRead = 0L
@@ -216,15 +222,7 @@ class StreamPipeWorker(
                                             .notify(NOTIFICATION_ID, notificationBuilder.build())
                                     } catch (_: SecurityException) {}
 
-                                    // Báo UI
-                                    setProgressBlocking(workDataOf(
-                                        "status" to "streaming",
-                                        "progress" to percent,
-                                        "bytesRead" to totalBytesRead,
-                                        "totalBytes" to actualTotal,
-                                        "speedStr" to speedStr,
-                                        "etaSec" to etaSec
-                                    ))
+                                    // Báo UI — notification đã được cập nhật ở trên
                                     lastNotifyUpdate = now
                                 }
                             }
@@ -314,6 +312,18 @@ class StreamPipeWorker(
                 ))
             } catch (_: Exception) {}
 
+            // CRITICAL: xóa partial file trên NAS nếu PUT thất bại sau khi đã bắt đầu ghi
+            if (destUrl.isNotEmpty()) {
+                try {
+                    val cleanupReq = okhttp3.Request.Builder()
+                        .url(destUrl)
+                        .header("Authorization", authHeader)
+                        .delete()
+                        .build()
+                    NasApplication.instance.fastApiClient.newCall(cleanupReq).execute().use { /* ignore response */ }
+                } catch (_: Exception) { /* best-effort */ }
+            }
+
             return@withContext Result.failure()
         } finally {
             try {
@@ -322,12 +332,4 @@ class StreamPipeWorker(
         }
     }
 
-    // Helper: setProgress từ non-suspend context (writeTo) — bridge qua runBlocking
-    private fun setProgressBlocking(data: androidx.work.Data) {
-        try {
-            kotlinx.coroutines.runBlocking {
-                setProgress(data)
-            }
-        } catch (_: Exception) {}
-    }
 }

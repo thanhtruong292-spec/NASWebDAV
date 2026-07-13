@@ -167,24 +167,21 @@ class LivestreamMonitorWorker(
         val notifId = inputData.getInt(KEY_NOTIF_ID, NOTIFICATION_BASE_ID)
 
         createChannel(applicationContext)
-        if (notificationsEnabled()) {
+
+        // CRITICAL FIX: Dùng setForegroundAsync() thay vì NotificationManagerCompat.notify()
+        // trực tiếp. Android 14+ yêu cầu foreground service phải được khởi tạo qua
+        // setForegroundAsync() — nếu không Worker sẽ bị kill sau vài giây chạy nền.
         try {
-            androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(notifId, buildForegroundInfo(
+            setForegroundAsync(buildForegroundInfo(
                 notifId = notifId,
                 title   = "$platformIcon Đang ghi livestream $platformLabel",
                 content = "Đang kết nối..."
-            ).notification)
-        } catch (e: Exception) {
-            // Android 12+ strict background foreground service restriction. 
-            // Fallback to updating notification normally.
-            try {
-                androidx.core.app.NotificationManagerCompat.from(applicationContext)
-                    .notify(notifId, buildForegroundInfo(notifId, "$platformIcon Đang ghi livestream $platformLabel", "Đang kết nối...").notification)
-            } catch (_: Exception) {}
+            ))
+        } catch (_: Exception) {
+            return@withContext Result.failure()
         }
 
         // Lấy credentials
-        }
 
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
@@ -216,7 +213,8 @@ class LivestreamMonitorWorker(
                 val bodyStr = response.use { resp ->
                     if (!resp.isSuccessful) {
                         consecutiveErrors++
-                        if (consecutiveErrors >= 5) return@use null
+                        // DEAD CODE FIX: bỏ `if (consecutiveErrors >= 5) return@use null` ngay trước return@use null
+                        // — if vô dụng vì đằng nào cũng return null. Logic ngắt vòng lặp nằm ở `if (bodyStr == null)` bên ngoài.
                         return@use null
                     }
                     resp.body?.string() ?: "{}"

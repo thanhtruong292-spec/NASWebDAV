@@ -77,3 +77,7 @@
     public *;
     internal *;
 }
+
+# ─── SMB Library (smbj) missing classes ─────────────────────────────────────
+-dontwarn org.ietf.jgss.**
+-dontwarn javax.el.**

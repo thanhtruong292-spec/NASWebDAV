@@ -153,10 +153,17 @@ class BatchOperationWorker(
                 }
             )
         } catch (e: Exception) {
-            try {
-                androidx.core.app.NotificationManagerCompat.from(applicationContext)
-                    .notify(NOTIFICATION_ID, notificationBuilder.build())
-            } catch (_: Exception) {}
+            // FIX CRITICAL: Không fallback sang NotificationManagerCompat.notify()
+            // Android 14+ Worker sẽ bị kill nếu không được setForeground đúng cách.
+            val isFatal = when {
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+                    e.javaClass.name.contains("ForegroundService") || e.javaClass.name.contains("ForegroundServiceType")
+                else -> false
+            }
+            if (isFatal) {
+                android.util.Log.e(TAG, "setForeground failed (fatal)", e)
+                return@withContext Result.failure()
+            }
         }
 
         val total = filePaths.size
@@ -219,10 +226,16 @@ class BatchOperationWorker(
                         var targetUrl = safeDestUrl + encodedName
                         if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
                         webDavManager.renameFile(sourceUrl, targetUrl)
-                        if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
-                            trashMetaDao.deleteByTrashPath(sourceUrl)
-                        } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
-                            trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                        // DB write riêng — nếu WebDAV thành công mà DB fail,
+                        // vẫn count success (NAS file đã di chuyển).
+                        try {
+                            if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
+                                trashMetaDao.deleteByTrashPath(sourceUrl)
+                            } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
+                                trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                            }
+                        } catch (dbEx: Exception) {
+                            android.util.Log.w(TAG, "DB sync failed after MOVE $fileName (NAS OK)", dbEx)
                         }
                         successCount++
                     }
@@ -232,10 +245,18 @@ class BatchOperationWorker(
                             val targetUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                             try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
                             webDavManager.renameFile(sourceUrl, targetUrl)
-                            trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                            try {
+                                trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                            } catch (dbEx: Exception) {
+                                android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
+                            }
                         } else {
                             webDavManager.deleteFile(sourceUrl, isDirectory)
-                            trashMetaDao.deleteByTrashPath(sourceUrl)
+                            try {
+                                trashMetaDao.deleteByTrashPath(sourceUrl)
+                            } catch (dbEx: Exception) {
+                                android.util.Log.w(TAG, "DB sync failed after DELETE (permanent) $fileName", dbEx)
+                            }
                         }
                         successCount++
                     }
@@ -246,7 +267,11 @@ class BatchOperationWorker(
                             null
                         } ?: buildWebDavRestoreTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                         webDavManager.renameFile(sourceUrl, targetUrl)
-                        trashMetaDao.deleteByTrashPath(sourceUrl)
+                        try {
+                            trashMetaDao.deleteByTrashPath(sourceUrl)
+                        } catch (dbEx: Exception) {
+                            android.util.Log.w(TAG, "DB sync failed after RESTORE $fileName (NAS OK)", dbEx)
+                        }
                         successCount++
                     }
                     else -> {
@@ -307,6 +332,22 @@ class BatchOperationWorker(
             inputData.getString("payloadFile")?.let { File(it).delete() }
         } catch (_: Exception) {}
 
-        return@withContext Result.success()
+        // FIX: Nếu có file thất bại, return Result.failure(workData) để WorkManager biết
+        // operation không hoàn tất. UI sẽ nhận được `failCount > 0` qua setProgress ở trên.
+        // Lưu ý: failure chỉ retry khi worker có retry policy; với batch đã chạy gần hết
+        // thì retry sẽ duplicate work — caller nên check failCount.
+        return@withContext if (failCount > 0) {
+            Result.failure(workDataOf(
+                "completed" to total,
+                "successCount" to successCount,
+                "failCount" to failCount
+            ))
+        } else {
+            Result.success(workDataOf(
+                "completed" to total,
+                "successCount" to successCount,
+                "failCount" to 0
+            ))
+        }
     }
 }

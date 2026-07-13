@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
  * @param onDelete callback khi vuốt vượt qua threshold; trả lời `true` thì
  *                 SwipeToDismissBox sẽ giữ trạng thái dismissed, ngược lại snap back.
  *                 Mặc định luôn `true` vì caller thường remove ngay khỏi list.
+ * @param requireConfirmation khi `true`, luôn snap-back và chỉ xoá khi [confirmDismiss] trả `true`.
+ *                            Dùng khi list đang ở selection mode để tránh xoá nhầm.
  * @param threshold % quãng đường để kích hoạt (0..1), mặc định 0.35.
  * @param shape bo góc của nền đỏ (phải khớp với background của row con).
  */
@@ -49,16 +51,22 @@ fun SwipeDeleteRow(
     iconSize: Dp = 22.dp,
     shape: Shape = RoundedCornerShape(10.dp),
     backgroundPaddingHorizontal: Dp = 16.dp,
+    requireConfirmation: Boolean = false,
     confirmDismiss: (() -> Boolean) = { true },
     content: @Composable () -> Unit
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
-                if (confirmDismiss()) {
+                if (!requireConfirmation && confirmDismiss()) {
                     onDelete()
                     true
-                } else false
+                } else if (requireConfirmation && confirmDismiss()) {
+                    onDelete()
+                    true
+                } else {
+                    false
+                }
             } else false
         },
         positionalThreshold = { totalDistance -> totalDistance * threshold }
