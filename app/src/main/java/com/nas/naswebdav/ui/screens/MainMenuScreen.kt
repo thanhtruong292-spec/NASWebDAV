@@ -944,13 +944,13 @@ private fun MainMenuDashboardHeader(
                             fontWeight = FontWeight.SemiBold
                         )
                     )
-                    viewModel.apiLatencyMs?.let { latency ->
+                    sysMonitorVM.apiLatencyMs?.let { latency ->
                         Spacer(Modifier.width(AppSpacing.SM))
                         Text("API ${latency}ms", style = AppTypography.LabelMedium.copy(color = TextSecondary))
                     }
-                    if (viewModel.apiFailureCount > 0) {
+                    if (sysMonitorVM.apiFailureCount > 0) {
                         Spacer(Modifier.width(AppSpacing.SM))
-                        Text("${viewModel.apiFailureCount} lỗi", style = AppTypography.LabelMedium.copy(color = AccentRed, fontWeight = FontWeight.Bold))
+                        Text("${sysMonitorVM.apiFailureCount} lỗi", style = AppTypography.LabelMedium.copy(color = AccentRed, fontWeight = FontWeight.Bold))
                     }
                 }
                 
@@ -1086,7 +1086,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                         )
                     } else Spacer(Modifier.weight(1f))
                     
-                    val smartStatusText = viewModel.smartInfo.status.uppercase().trim()
+                    val smartStatusText = deviceVM.smartInfo.status.uppercase().trim()
                     
                     val isSmartOk = smartStatusText.contains("PASSED") || smartStatusText == "OK"
                     val isSmartFailed = smartStatusText.contains("FAILED")
@@ -1325,7 +1325,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel
                                 Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
                                     val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                     val currentMode = sysMonitorVM.systemStatus.fanMode
-                                    val isFanControlLocked = viewModel.isFanModeUpdating
+                                    val isFanControlLocked = deviceVM.isFanModeUpdating
                                     modes.forEach { (m, label) ->
                                         val active = m == currentMode
                                         Box(
@@ -1363,7 +1363,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel
                                             }
                                         },
                                         confirmButton = {
-                                            val isFanControlLocked = viewModel.isFanModeUpdating
+                                            val isFanControlLocked = deviceVM.isFanModeUpdating
                                             Button(
                                                 enabled = !isFanControlLocked,
                                                 onClick = { 
@@ -2549,9 +2549,10 @@ private fun MainMenuDiskProfileBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: systemStatus → SystemMonitorVM, omvOverview → DeviceMgmtVM
+    // Phase 7d.2: systemStatus → SystemMonitorVM, omvOverview/smartInfo/storageFolderUsage → DeviceMgmtVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var showTrackingConfirm by remember { mutableStateOf(false) }
@@ -2590,7 +2591,7 @@ private fun MainMenuDiskProfileBottomSheet(
     val dailyBudgetGb = enduranceTbPerYear?.let { ((it * 1024f) / 365f).toInt() } ?: 0
     val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else null
     val activeRecordings = if (isTrackingNewDisk) viewModel.activeLivestreams.size else 0
-    val completedLivestreamLogsToday = viewModel.systemLogsList.filter { log ->
+    val completedLivestreamLogsToday = deviceVM.systemLogsList.filter { log ->
         log.module.equals("Livestream", ignoreCase = true) &&
             log.message.contains("đã ghi xong", ignoreCase = true) &&
             profileIsToday(log.timestamp)
@@ -2602,10 +2603,10 @@ private fun MainMenuDiskProfileBottomSheet(
         profileParseLoggedSizeBytes(log.message)
     } else 0L
     val livestreamSessionsToday = activeRecordings + completedLivestreamSessionsToday
-    val smartTemp = viewModel.smartInfo.temperature
+    val smartTemp = deviceVM.smartInfo.temperature
         .replace("\u00c2\u00b0C", "\u00b0C")
         .replace("--", "Chưa có dữ liệu")
-    val smartStatus = viewModel.smartInfo.status
+    val smartStatus = deviceVM.smartInfo.status
     val diskHealth = viewModel.diskHealthCurrent
     val healthScore = diskHealth?.score
     val trialStatus = when {
@@ -2641,13 +2642,13 @@ private fun MainMenuDiskProfileBottomSheet(
         val state = torrent.state
         state.contains("DL", ignoreCase = false) || state == "downloading" || state == "stalledDL" || state == "forcedDL" || state == "metaDL"
     } else 0
-    val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
-    val estimatedActiveWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
+    val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 1 else 0
+    val estimatedActiveWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 30 else 0
     val completedLivestreamWriteGb = (completedLivestreamBytesToday / (1024.0 * 1024.0 * 1024.0)).toInt()
     val estimatedActualWriteGb = estimatedActiveWriteGb + completedLivestreamWriteGb
     val actualForecastDays = if (isTrackingNewDisk && estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
     val monthlyBudgetTb = enduranceTbPerYear?.let { it / 12 } ?: 0
-    val backupTasks = if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
+    val backupTasks = if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 1 else 0
     val writeRiskLabel = when {
         !isTrackingNewDisk -> "Chưa phân tích"
         heavyWriteTasks >= 4 -> "Khối lượng ghi cao"
@@ -2657,7 +2658,7 @@ private fun MainMenuDiskProfileBottomSheet(
     }
     val cpuLoad = profilePercent(sysMonitorVM.systemStatus.cpu)
     val ramLoad = profilePercent(sysMonitorVM.systemStatus.ramPercent)
-    val storageUsage = viewModel.storageFolderUsage
+    val storageUsage = deviceVM.storageFolderUsage
     val trashUsage = storageUsage.firstOrNull { it.path == ".trash" }
     val trashWarning = if ((trashUsage?.sizeBytes ?: 0L) > 50L * 1024L * 1024L * 1024L) "Nên dọn thùng rác" else "Thùng rác ổn"
     val fillWarning = when {
@@ -3041,7 +3042,7 @@ private fun MainMenuDiskProfileBottomSheet(
                         Spacer(Modifier.width(6.dp))
                         Text("Theo dõi thư mục lớn", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(if (viewModel.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
+                    Text(if (deviceVM.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
                 }
                 Spacer(Modifier.height(6.dp))
                 if (storageUsage.isEmpty()) {
@@ -3219,19 +3220,24 @@ fun MainMenuSystemStatusCards(
     onOpenUsbImport: () -> Unit = {},
     onOpenDuplicateScan: () -> Unit = {}
 ) {
+    // Phase 7d.2: VMs hooks
+    val autoBackupVM = LocalAutoBackupVM.current
+    val smartToolsVM = LocalSmartToolsVM.current
+    val livestreamVM = LocalLivestreamVM.current
+    val deviceVM = LocalDeviceManagementVM.current
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         viewModel.fetchThumbStatus()
         viewModel.syncLivestreamStateWithServer(mContext)
         viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
-            val interval = if (viewModel.thumbRunning || viewModel.thumbPaused) 2_000L else 10_000L
+            val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
             viewModel.fetchThumbStatus()
         }
     }
-    val thumbPercent = if (viewModel.thumbTotal > 0) viewModel.thumbGenerated * 100f / viewModel.thumbTotal else 0f
-    val thumbIsActive = (viewModel.thumbRunning || viewModel.thumbPaused) && viewModel.thumbGenerated < viewModel.thumbTotal && viewModel.thumbTotal > 0
+    val thumbPercent = if (smartToolsVM.thumbTotal > 0) smartToolsVM.thumbGenerated * 100f / smartToolsVM.thumbTotal else 0f
+    val thumbIsActive = (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && smartToolsVM.thumbGenerated < smartToolsVM.thumbTotal && smartToolsVM.thumbTotal > 0
 
     // 2. Duplicate Scan
     val dupStage by DuplicateProgressState.stage.collectAsState()
@@ -3245,12 +3251,12 @@ fun MainMenuSystemStatusCards(
     val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
     val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
     val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
-    val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || viewModel.duplicateFilesList.isNotEmpty()
+    val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
     val sharedPrefs2 = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
     val autoBackupEnabled = sharedPrefs2.getBoolean("auto_backup", false)
-    val autoBackupIsActive = viewModel.isAutoBackupRunning
+    val autoBackupIsActive = autoBackupVM.isAutoBackupRunning
     
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
     val activeStreams = viewModel.activeLivestreams
@@ -3356,26 +3362,26 @@ fun MainMenuSystemStatusCards(
                                     Text("Tạo ảnh thu nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text(
                                         when {
-                                            viewModel.thumbTotal > 0 && viewModel.thumbGenerated >= viewModel.thumbTotal -> "✅ Hoàn tất"
-                                            viewModel.thumbPaused -> "⏸ Tạm dừng"
-                                            viewModel.thumbRunning -> "▶️ Đang tạo thumbnail"
+                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> "✅ Hoàn tất"
+                                            smartToolsVM.thumbPaused -> "⏸ Tạm dừng"
+                                            smartToolsVM.thumbRunning -> "▶️ Đang tạo thumbnail"
                                             else -> "💤 Tạm nghỉ"
                                         },
                                         fontSize = 11.sp,
                                         color = when {
-                                            viewModel.thumbTotal > 0 && viewModel.thumbGenerated >= viewModel.thumbTotal -> Color(0xFF66BB6A)
-                                            viewModel.thumbPaused -> Color(0xFFFFA726)
-                                            viewModel.thumbRunning -> Color(0xFF66BB6A)
+                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> Color(0xFF66BB6A)
+                                            smartToolsVM.thumbPaused -> Color(0xFFFFA726)
+                                            smartToolsVM.thumbRunning -> Color(0xFF66BB6A)
                                             else -> TextSecondary
                                         }
                                     )
                                 }
-                                if ((viewModel.thumbRunning || viewModel.thumbPaused) && !(viewModel.thumbTotal > 0 && viewModel.thumbGenerated >= viewModel.thumbTotal)) {
+                                if ((smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && !(smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal)) {
                                     IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
                                         Icon(
-                                            if (viewModel.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                            if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                             null,
-                                            tint = if (viewModel.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                            tint = if (smartToolsVM.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
@@ -3385,10 +3391,10 @@ fun MainMenuSystemStatusCards(
                                 }
                             }
                             // Chi tiết thumbnail
-                            if (viewModel.thumbLastFile.isNotBlank()) {
+                            if (smartToolsVM.thumbLastFile.isNotBlank()) {
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    "Tệp: " + viewModel.thumbLastFile.substringAfterLast("/"),
+                                    "Tệp: " + smartToolsVM.thumbLastFile.substringAfterLast("/"),
                                     fontSize = 10.sp, color = Color(0xFFAB47BC).copy(alpha = 0.85f),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(start = 50.dp)
@@ -3405,9 +3411,9 @@ fun MainMenuSystemStatusCards(
                                 // Số thumbnail đã tạo / tổng
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text("✓ Đã tạo:", fontSize = 10.sp, color = TextSecondary)
-                                    Text("${viewModel.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
-                                    Text("/ ${viewModel.thumbTotal}", fontSize = 10.sp, color = TextSecondary)
-                                    val thumbMissing = viewModel.thumbTotal - viewModel.thumbGenerated
+                                    Text("${smartToolsVM.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                    Text("/ ${smartToolsVM.thumbTotal}", fontSize = 10.sp, color = TextSecondary)
+                                    val thumbMissing = smartToolsVM.thumbTotal - smartToolsVM.thumbGenerated
                                     if (thumbMissing > 0) {
                                         Text("• Còn ${thumbMissing} thiếu", fontSize = 10.sp, color = Color(0xFFFFA726))
                                     }
@@ -3438,13 +3444,13 @@ fun MainMenuSystemStatusCards(
                                 Column(Modifier.weight(1f)) {
                                     Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     val dupStatusLabel = when {
-                                        viewModel.duplicateFilesList.isNotEmpty() -> "✅ Đã tìm thấy ${viewModel.duplicateFilesList.size} nhóm trùng"
+                                        smartToolsVM.duplicateFilesList.isNotEmpty() -> "✅ Đã tìm thấy ${smartToolsVM.duplicateFilesList.size} nhóm trùng"
                                         dupIsPaused -> "⏸ Đã tạm dừng"
                                         !dupIsRunning -> "Chuẩn bị..."
                                         else -> "🟢 Đang quét — Bước $dupStageNum/${dupTotalStages}"
                                     }
                                     val dupStatusColor = when {
-                                        viewModel.duplicateFilesList.isNotEmpty() -> Color(0xFF64B5F6) // Xanh dương
+                                        smartToolsVM.duplicateFilesList.isNotEmpty() -> Color(0xFF64B5F6) // Xanh dương
                                         dupIsPaused -> Color(0xFFFFA726) // Cam
                                         else -> Color(0xFF66BB6A) // Xanh lá
                                     }
@@ -4216,11 +4222,13 @@ fun MainMenuSectionQuickActionSelectorDialog(
 
 @Composable
 fun MainMenuSectionSystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
+    // Phase 7d.2: systemLogsList → DeviceMgmtVM
+    val deviceVM = LocalDeviceManagementVM.current
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.loadSystemLogs()
     }
     
-    if (viewModel.systemLogsList.isEmpty()) return
+    if (deviceVM.systemLogsList.isEmpty()) return
     
     Spacer(Modifier.height(8.dp))
     
@@ -4264,7 +4272,7 @@ fun MainMenuSectionSystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow
             
             androidx.compose.animation.AnimatedVisibility(visible = isExpanded) {
                 Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    val recentLogs = viewModel.systemLogsList.take(3)
+                    val recentLogs = deviceVM.systemLogsList.take(3)
                     recentLogs.forEach { log ->
                         val logColor = when (log.type) {
                             "SUCCESS" -> Color(0xFF43A047)
@@ -4703,6 +4711,8 @@ fun MainMenuBottomSheetSmbBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
+    // Phase 7d.2: duplicateFilesList/selectedDuplicates → SmartToolsVM
+    val smartToolsVM = LocalSmartToolsVM.current
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (viewModel.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -4969,34 +4979,34 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
                         Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
-                        if (viewModel.duplicateFilesList.isNotEmpty()) {
+                        if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                             Text(
-                                text = "Phát hiện ${viewModel.duplicateFilesList.size} tệp trùng lặp",
+                                text = "Phát hiện ${smartToolsVM.duplicateFilesList.size} tệp trùng lặp",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
-                    if (viewModel.duplicateFilesList.isEmpty()) {
-                        TextButton(onClick = { viewModel.isShowingDuplicates = false; viewModel.selectedDuplicates.clear() }) { 
+                    if (smartToolsVM.duplicateFilesList.isEmpty()) {
+                        TextButton(onClick = { viewModel.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) { 
                             Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) 
                         }
                     } else {
-                        if (viewModel.selectedDuplicates.isNotEmpty()) {
+                        if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
                             TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
-                                Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
-                if (viewModel.duplicateFilesList.isEmpty()) {
+                if (smartToolsVM.duplicateFilesList.isEmpty()) {
                     Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
                 } else {
                     // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                     // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
-                    val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                        viewModel.duplicateFilesList.groupBy { it.partialHash ?: "${it.contentLength}_${it.name}" }.values.filter { it.size >= 2 }.toList()
+                    val groupedDuplicates = remember(smartToolsVM.duplicateFilesList) {
+                        smartToolsVM.duplicateFilesList.groupBy { it.partialHash ?: "${it.contentLength}_${it.name}" }.values.filter { it.size >= 2 }.toList()
                     }
 
                     // ═══ BỘ LỌC NHANH ═══
@@ -5043,12 +5053,12 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         // Nút Tự động chọn thông minh (Giữ lại 1 bản, tick chọn xóa các bản copy)
                         TextButton(
                             onClick = {
-                                viewModel.selectedDuplicates.clear()
+                                smartToolsVM.selectedDuplicates.clear()
                                 groupedDuplicates.forEach { group ->
                                     // BÍ QUYẾT: File gốc thường nằm ở thư mục ngoài cùng (đường dẫn ngắn), file copy thường bị ném vào thư mục con sâu hơn.
                                     // Nên ta sắp xếp độ dài path, giữ lại phần tử đầu tiên và tick chọn xóa các phần tử phía sau.
                                     val filesToDelete = group.sortedBy { it.path.length }.drop(1)
-                                    viewModel.selectedDuplicates.addAll(filesToDelete)
+                                    smartToolsVM.selectedDuplicates.addAll(filesToDelete)
                                 }
                             },
                             modifier = Modifier.align(Alignment.End)
@@ -5078,7 +5088,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             items(items = group, key = { it.path }) { dupFile ->
-                                                val isSelected = viewModel.selectedDuplicates.contains(dupFile)
+                                                val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
                                                 val auth = okhttp3.Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
@@ -5089,8 +5099,8 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                                                         .clip(RoundedCornerShape(8.dp))
                                                         .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
                                                         .clickable {
-                                                            if (isSelected) viewModel.selectedDuplicates.remove(dupFile)
-                                                            else viewModel.selectedDuplicates.add(dupFile)
+                                                            if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
+                                                            else smartToolsVM.selectedDuplicates.add(dupFile)
                                                         }
                                                 ) {
                                                     // 1. Lớp Ảnh Nền (TỐI ƯU HÓA DB CACHE MỚI CHO TẤT CẢ MEDIA)
@@ -5111,8 +5121,8 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                                                     Checkbox(
                                                         checked = isSelected,
                                                         onCheckedChange = {
-                                                            if (it) viewModel.selectedDuplicates.add(dupFile)
-                                                            else viewModel.selectedDuplicates.remove(dupFile)
+                                                            if (it) smartToolsVM.selectedDuplicates.add(dupFile)
+                                                            else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                         },
                                                         modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
                                                         colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
