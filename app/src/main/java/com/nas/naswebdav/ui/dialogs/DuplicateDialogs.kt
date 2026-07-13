@@ -135,6 +135,9 @@ fun DuplicateConfigDialog(
 }
 @Composable
 fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    // All duplicate state (selectedDuplicates, duplicateFilesList, autoCleanEnabled) reads via
+    // facade delegation → SmartToolsVM is source of truth (Phase 7a). Phase 7c full migration
+    // will swap to LocalSmartToolsVM.current directly.
     AlertDialog(
         onDismissRequest = { onDismiss() },
         title = {
