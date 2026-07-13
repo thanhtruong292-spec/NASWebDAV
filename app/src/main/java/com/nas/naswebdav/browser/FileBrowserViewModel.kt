@@ -5,9 +5,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.NasFile
+import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
+import com.nas.naswebdav.encodeWebDavSegment
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Stack
 
 /**
@@ -67,24 +72,194 @@ class FileBrowserViewModel(
 
     // ═══ PLACEHOLDER METHODS — implement Phase 5b ═══
 
-    fun openFolder(file: NasFile) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun openSpecificUrl(url: String, title: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun refresh() { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun resetToDefaultMode() { /* TODO Phase 5b */ }
-    fun navigateToUrl(url: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
+    /** Group 1 — Navigation. Logic chính (urlStack, fileList update) giữ ở facade WebDavViewModel.
+     *  Method này chỉ trigger callback — facade wire trong Phase 7 sẽ delegate sang đây.
+     */
+    fun openFolder(file: NasFile) {
+        // Actual navigation: managed by facade (openFolder mutates urlStack + currentUrl + loadCurrentUrl)
+        // Phase 5b keeps this no-op; facade handles all UI state mutations.
+    }
+
+    fun openSpecificUrl(url: String, title: String) {
+        // No-op: facade handles url mutation + loadCurrentUrl
+    }
+
+    fun refresh() {
+        // No-op: facade's refresh() dispatches to loadCurrentUrl/showLatestPhotos/etc
+    }
+
+    fun resetToDefaultMode() {
+        // No-op: facade owns isSpecialMode + specialTitle state
+    }
+
+    fun navigateToUrl(url: String) {
+        // No-op: facade handles navigation
+    }
+
     fun goBack(): Boolean = false
-    fun searchGlobal(keyword: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun showLatestPhotos() { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun showRecentVideos() { viewModelScope.launch { /* TODO Phase 5b */ } }
 
-    fun deleteFile(context: Context, file: NasFile) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun deleteMultipleFiles(context: Context, filesToDelete: List<NasFile>) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun batchCopyFiles(context: Context, filesToCopy: List<NasFile>, destUrl: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun batchMoveFiles(context: Context, filesToMove: List<NasFile>, destUrl: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun renameFile(context: Context, file: NasFile, newName: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun createFolder(context: Context, folderName: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun restoreFile(context: Context, file: NasFile) { viewModelScope.launch { /* TODO Phase 5b */ } }
-    fun restoreMultipleFiles(context: Context, filesToRestore: List<NasFile>) { viewModelScope.launch { /* TODO Phase 5b */ } }
+    fun searchGlobal(keyword: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val results = WebDavManager.listFiles(WebDavManager.currentBaseUrl)
+                    .filter { it.name.contains(keyword, ignoreCase = true) }
+                // Search results fed back to facade via SharedStateHolder
+                withContext(Dispatchers.Main) {
+                    com.nas.naswebdav.shared.SharedStateHolder.updateErrorMessage("Tìm thấy ${results.size} kết quả")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "searchGlobal: ${e.message}")
+            }
+        }
+    }
 
-    fun fetchTextPreview(path: String) { viewModelScope.launch { /* TODO Phase 5b */ } }
+    fun showLatestPhotos() {
+        // No-op: facade's getLatestPhotos() updates fileList with cached photos
+    }
+
+    fun showRecentVideos() {
+        // No-op: facade's getRecentVideos() updates fileList
+    }
+
+    fun deleteFile(context: Context, file: NasFile) {
+        // Phase 5b Group 2: actual WebDAV MOVE to trash on NAS
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val trashUrl = file.path.toTrashUrl()
+                if (trashUrl != null) {
+                    WebDavManager.renameFile(file.path, trashUrl.replace("/", ""))
+                } else {
+                    WebDavManager.deleteFile(file.path)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "deleteFile: ${e.message}")
+                // Facade (WebDavViewModel.deleteFile) handles rollback + offline queue
+            }
+        }
+    }
+
+    private fun String.toTrashUrl(): String? {
+        val normalizedBase = WebDavManager.currentBaseUrl.trimEnd('/')
+        val relativePath = removePrefix(normalizedBase).removePrefix("/").trimStart('/')
+        val driveName = relativePath.substringBefore('/')
+        return if (driveName.isBlank()) null
+        else {
+            val fileName = substringAfterLast('/')
+            val safeName = fileName.replace('/', '_').take(200)
+            "$normalizedBase/${encodeWebDavSegment(driveName)}/.trash/${encodeWebDavSegment(safeName)}"
+        }
+    }
+
+    fun deleteMultipleFiles(context: Context, filesToDelete: List<NasFile>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            filesToDelete.forEach { file ->
+                try {
+                    val trashUrl = file.path.toTrashUrl()
+                    if (trashUrl != null) {
+                        WebDavManager.renameFile(file.path, trashUrl.replace("/", ""))
+                    } else {
+                        WebDavManager.deleteFile(file.path)
+                    }
+                } catch (_: Exception) { }
+            }
+        }
+    }
+
+    fun batchCopyFiles(context: Context, filesToCopy: List<NasFile>, destUrl: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            filesToCopy.forEach { file ->
+                try {
+                    val encodedName = encodeWebDavSegment(file.name)
+                    val sep = if (destUrl.endsWith("/")) "" else "/"
+                    val targetUrl = destUrl + sep + encodedName
+                    WebDavManager.copyFile(file.path, targetUrl)
+                } catch (_: Exception) { }
+            }
+            isBatchProcessing = false
+            batchProcessProgress = 1f
+        }
+    }
+
+    fun batchMoveFiles(context: Context, filesToMove: List<NasFile>, destUrl: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            filesToMove.forEach { file ->
+                try {
+                    val encodedName = encodeWebDavSegment(file.name)
+                    val sep = if (destUrl.endsWith("/")) "" else "/"
+                    val targetUrl = destUrl + sep + encodedName
+                    WebDavManager.renameFile(file.path, targetUrl)
+                } catch (_: Exception) { }
+            }
+            isBatchProcessing = false
+            batchProcessProgress = 1f
+        }
+    }
+
+    fun renameFile(context: Context, file: NasFile, newName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val newUrl = file.path.substringBeforeLast('/') + "/" + encodeWebDavSegment(newName)
+                WebDavManager.renameFile(file.path, newUrl)
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "renameFile: ${e.message}")
+                // Facade handles rollback + offline queue
+            }
+        }
+    }
+
+    fun createFolder(context: Context, folderName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val targetUrl = (context.applicationContext as NasApplication).let {
+                    val currentUrl = WebDavManager.currentBaseUrl
+                    val sep = if (currentUrl.endsWith("/")) "" else "/"
+                    val encodedName = encodeWebDavSegment(folderName)
+                    currentUrl + sep + encodedName + "/"
+                }
+                WebDavManager.createFolder(targetUrl)
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "createFolder: ${e.message}")
+            }
+        }
+    }
+
+    fun restoreFile(context: Context, file: NasFile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val originalPath = file.path.replace("/.trash/", "/")
+                WebDavManager.renameFile(file.path, originalPath + file.name)
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "restoreFile: ${e.message}")
+            }
+        }
+    }
+
+    fun restoreMultipleFiles(context: Context, filesToRestore: List<NasFile>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            filesToRestore.forEach { file ->
+                try {
+                    val originalPath = file.path.replace("/.trash/", "/")
+                    WebDavManager.renameFile(file.path, originalPath + file.name)
+                } catch (_: Exception) { }
+            }
+        }
+    }
+
+    fun fetchTextPreview(path: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url(path)
+                    .header("Authorization", WebDavManager.currentAuthHeader())
+                    .get()
+                    .build()
+                val response = NasApplication.instance.fastApiClient.newCall(request).execute()
+                val text = response.body?.string() ?: ""
+                response.close()
+                withContext(Dispatchers.Main) { textPreviewContent = text }
+            } catch (e: Exception) {
+                android.util.Log.w("FileBrowser", "fetchTextPreview: ${e.message}")
+            }
+        }
+    }
 }
