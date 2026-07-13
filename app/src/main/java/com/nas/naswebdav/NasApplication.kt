@@ -28,6 +28,7 @@ import android.service.quicksettings.TileService
 import com.nas.naswebdav.utils.WolUtil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
@@ -70,7 +71,7 @@ class NasApplication : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.15) // Limit Coil Memory to 15% of available heap to prevent RAM spikes
+                    .maxSizePercent(0.15)
                     .build()
             }
             .diskCache {
@@ -79,7 +80,8 @@ class NasApplication : Application(), ImageLoaderFactory {
                     .maxSizePercent(0.02)
                     .build()
             }
-            // Mượn chung sharedHttpClient để tránh tạo connection leak
+            // VideoFrameDecoder: trích frame từ MP4/MKV/WebM — coil-video extension
+            .components { add(VideoFrameDecoder.Factory()) }
             .callFactory { request -> fastApiClient.newCall(request) }
             .build()
     }
@@ -102,11 +104,13 @@ class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_9_10,
                 MIGRATION_10_11,
                 MIGRATION_11_12,
-                MIGRATION_12_13
+                MIGRATION_12_13,
+                MIGRATION_13_14,
+                MIGRATION_14_15
             )
-            // v14 bump trong session này: dùng destructive cho bản debug để tránh crash
-            // khi DB schema trên máy cũ hơn code mới (không có MIGRATION_13_14 thật).
-            .fallbackToDestructiveMigration()
+            // FIX F1 CRITICAL: Không dùng fallbackToDestructiveMigration() nữa.
+            // Migration v13→v14→v15 là no-op (cùng identityHash) — explicit migrations
+            // giữ toàn bộ dữ liệu user (sync_queue, trash_meta, scan_checkpoints, logs).
             // Đã gỡ bỏ enableMultiInstanceInvalidation() vì nó có nguy cơ gây deadlock Binder IPC 
             // khiến các tác vụ database.withTransaction() bị treo vĩnh viễn (quay vòng vòng trên UI).
             .build()
@@ -120,9 +124,10 @@ class NasApplication : Application(), ImageLoaderFactory {
             .writeTimeout(60, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.MAIN_CONNECTION_POOL_SIZE, AppConfig.MAIN_CONNECTION_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
             // OPTIMIZE: tăng maxRequestsPerHost để upload nhiều file song song (mặc định OkHttp = 5)
+            // STD-1 fix: giảm 16 → 8. NAS RK3328 yếu, 16 concurrent WebDAV requests gây TCP retransmit tăng.
             .dispatcher(okhttp3.Dispatcher().apply {
                 maxRequests = 32
-                maxRequestsPerHost = 16
+                maxRequestsPerHost = 8
             })
             .build()
     }
@@ -143,9 +148,10 @@ class NasApplication : Application(), ImageLoaderFactory {
             .writeTimeout(15, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(AppConfig.FAST_API_POOL_SIZE, AppConfig.FAST_API_POOL_KEEPALIVE_MINUTES, TimeUnit.MINUTES))
             // OPTIMIZE: tăng maxRequestsPerHost để song song hóa các call API lên cùng NAS
+            // STD-1 fix: giảm 16 → 8 — chia sẻ quota với sharedHttpClient (cùng NAS host).
             .dispatcher(okhttp3.Dispatcher().apply {
                 maxRequests = 32
-                maxRequestsPerHost = 16
+                maxRequestsPerHost = 8
             })
             .build()
     }
@@ -256,6 +262,9 @@ class NasApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // SharedStateHolder: singleton Application-scoped cho shared state giữa domain VMs
+        com.nas.naswebdav.shared.SharedStateHolder.init(this)
 
         val debugPrefs = getSharedPreferences("nas_debug", Context.MODE_PRIVATE)
         if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&

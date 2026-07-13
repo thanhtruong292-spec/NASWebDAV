@@ -77,6 +77,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Đảm bảo Java compile đọc source là UTF-8 — tránh mojibake tiếng Việt khi build
+        // (PowerShell Set-Content mặc định ghi BOM UTF-8, có thể gây parse sai encoding).
+        tasks.withType<JavaCompile>().configureEach {
+            options.encoding = "UTF-8"
+        }
     }
     kotlin {
         jvmToolchain(17)
@@ -136,6 +141,12 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     // AndroidX Core
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.22")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

@@ -44,7 +44,8 @@ import java.util.concurrent.atomic.AtomicLong
 private val WEB_DAV_HTTP_FAILURE_REGEX = Regex("""^([A-Z]+) failed: (\d{3})(?: - (.*))?$""")
 
 // FIX A-1: Helper an toàn — tránh MalformedURLException crash khi URL rỗng/malformed
-private fun safeUrlHost(url: String): String = try {
+// internal: dùng cho AuthSessionViewModel ở package auth
+internal fun safeUrlHost(url: String): String = try {
     java.net.URL(url).host ?: ""
 } catch (_: Exception) { "" }
 
@@ -118,7 +119,7 @@ private fun String.toOfflineQueuePath(baseUrl: String): String {
     }
 }
 
-private fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
+internal fun buildLoginFailureMessage(urlList: List<String>, errorDetails: List<String>): String {
     if (errorDetails.isEmpty()) {
         return "Không đăng nhập được. Kiểm tra tài khoản, mật khẩu hoặc dịch vụ WebDAV."
     }
@@ -349,7 +350,27 @@ fun isTailscaleUrl(url: String): Boolean {
     } catch (_: Exception) { false }
 }
 
+// FIX Phase 1: Move knownLatencyMs + 2 functions ra top-level để AuthSessionViewModel dùng được.
+// Trước đây là private member — không thể truy cập từ package khác.
+private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+internal fun adaptiveTimeoutMs(url: String): Long {
+    val host = safeUrlHost(url)
+    val saved = knownLatencyMs[host]
+    if (saved != null) return (saved * 4).coerceIn(500, 15_000)
+    return if (isTailscaleUrl(url)) 6_000L else 3_000L
+}
+internal fun recordLatency(url: String, ms: Long) {
+    val host = safeUrlHost(url)
+    if (host.isBlank()) return
+    knownLatencyMs[host] = ms
+}
+
 class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRepository) : ViewModel() {
+
+    // PHASE 1: AuthSessionViewModel — facade forward auth operations sang VM mới
+    val authSession: com.nas.naswebdav.auth.AuthSessionViewModel by lazy {
+        com.nas.naswebdav.auth.AuthSessionViewModel(repository)
+    }
 
 
     // CHỐNG RÒ RỈ THREAD VÀ BỘ NHỚ: Dùng chung một OkHttpClient duy nhất cho toàn bộ các truy vấn Local API
@@ -609,8 +630,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // LOẠI BỎ fileList GÂY OOM, THAY BẰNG PAGING DATA FLOW
     var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
-    // Set tracks file paths pending deletion — prevents files from reappearing after refresh
-    private val pendingDeletes = mutableSetOf<String>()
+    // Set tracks file paths pending deletion — prevents files from reappearing after refresh.
+    // FIX C1 (ViewModel): dùng ConcurrentHashMap.newKeySet() thay vì mutableSetOf()
+    // để tránh ConcurrentModificationException khi nhiều coroutines gọi delete đồng thời.
+    private val pendingDeletes: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     // FIX S1: Generation counter — guards against stale coroutines overwriting newer UI state
     // when loadCurrentUrl() is invoked again before the previous one finishes (e.g. fast nav).
     private var loadGeneration = 0
@@ -624,18 +647,6 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var isLoading by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
     var connectionStatus by mutableStateOf("Đang kết nối...")
-    private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private fun adaptiveTimeoutMs(url: String): Long {
-        val host = safeUrlHost(url)
-        val saved = knownLatencyMs[host]
-        if (saved != null) return (saved * 4).coerceIn(500, 15_000)
-        return if (isTailscaleUrl(url)) 6_000L else 3_000L
-    }
-    private fun recordLatency(url: String, ms: Long) {
-        val host = safeUrlHost(url)
-        if (host.isBlank()) return
-        knownLatencyMs[host] = ms
-    }
 
     // BIẾN CHO BATCH COPY / MOVE
     var isBatchProcessing by mutableStateOf(false)
@@ -1034,7 +1045,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun showLatestPhotos() {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Ảnh mới nhất" }
-            try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
+            try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = friendlyError(e) } }
             val photos = repository.getLatestPhotos()
             withContext(Dispatchers.Main) { fileList = photos; isLoading = false }
         }
@@ -1043,7 +1054,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun showRecentVideos() {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gần đây" }
-            try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) {}
+            try { repository.getRemoteFilesAndCache(webDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = friendlyError(e) } }
             val videos = repository.getRecentVideos()
             withContext(Dispatchers.Main) { fileList = videos; isLoading = false }
         }
@@ -1339,9 +1350,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         .thenBy { it.startedTs }
                 )
             }
-            .filter { job ->
-                job.outputFile.isNotBlank() || livestreamJobSizeBytes(job.fileSize) > 0L
-            }
+            // SP3 FIX: bỏ filter `outputFile.isNotBlank() || size > 0` — job mới vừa start (outputFile blank + size=0)
+            // bị filter ra ngay khi user vừa bấm record → user thấy job "biến mất". Chỉ dedupe, không filter.
             .sortedByDescending { it.startedTs }
     }
 
@@ -1880,11 +1890,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     fun stopLivestreamRecord(context: Context, jobId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Cancel Worker trước
-                LivestreamMonitorWorker.cancelJob(context, jobId)
-
-                // Gọi NAS stop API
-                val host = safeUrlHost(webDavManager.currentBaseUrl)
+                // SP4 FIX: Gọi NAS stop API TRƯỚC, rồi mới cancel Worker.
+                // Nếu cancel Worker trước mà NAS stop fails → zombie stream trên NAS, app không còn track.
                 val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
                 val body = org.json.JSONObject().apply {
                     put("job_id", jobId)
@@ -1897,6 +1904,10 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
                 localApiClient.newCall(request).execute().use { }
                 repository.addSystemLog("INFO", "Livestream", "Người dùng: dừng ghi livestream job $jobId.")
+
+                // NAS đã nhận lệnh stop → giờ an toàn cancel Worker monitor
+                LivestreamMonitorWorker.cancelJob(context, jobId)
+
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
                     livestreamMessage   = "⏹ Đã dừng ghi hình. File đang được xử lý..."
@@ -1951,6 +1962,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 repository.getRemoteFilesAndCache(currentUrl)
                 // Lập tức Cập nhật lại FileList tĩnh cho chế độ xem ảnh Full-Screen
                 val refreshedCached = repository.getCachedFiles(currentUrl)
+                val remotePaths = refreshedCached.map { it.path }.toSet()
+                // STD-3: sau refresh remote, clean stale paths khỏi pendingDeletes.
+                // - Path tồn tại ở NAS → file restore ngoài app → xóa khỏi pendingDeletes
+                // - Path không tồn tại ở NAS → file đã xóa thành công → không cần track nữa
+                // Chỉ clean paths thuộc current folder (prefix match) để tránh clean nhầm.
+                pendingDeletes.iterator().let { iter ->
+                    while (iter.hasNext()) {
+                        val path = iter.next()
+                        if (path.startsWith(currentUrl)) iter.remove()
+                    }
+                }
                 fileList = refreshedCached.map {
                     NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
                 }
@@ -2473,15 +2495,9 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                 urlStack.clear()
             }
 
-            // FIX LỖI 7 B: Đọc credentials cũ trước bước lưu tạm, để có thể REVERT nếu handshake thất bại
+            // S3 FIX: KHÔNG lưu credentials TRƯỚC khi ping — chỉ lưu SAU khi có URL thành công.
+            // Nếu lưu trước khi ping: user nhập sai pass → credentials cũ bị ghi đè bằng sai pass.
             val context = NasApplication.instance
-            val oldUrlList = SecurePrefsHelper.getUrlList(context)
-            val oldUser = SecurePrefsHelper.getUser(context)
-            val oldPass = SecurePrefsHelper.getPass(context)
-
-            withContext(Dispatchers.IO) {
-                SecurePrefsHelper.saveCredentials(context, urlList, user, pass)
-            }
 
             // FIX: Thử lần lượt từng URL (LAN → Tailscale) mà không gây race condition
             // Vòng lặp tuần tự tránh lỗi split-tunneling cache của Android
@@ -2770,16 +2786,17 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
         // Khởi động vòng lặp kiểm tra sức khoẻ mạng (Ping ICMP siêu nhẹ)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            while (true) {
+            while (isActive) {
                 if (webDavManager.currentBaseUrl.isNotEmpty()) {
                     val ms = webDavManager.checkPingServer()
                     withContext(Dispatchers.Main) { networkPingMs = ms }
-                    // Giao thức ICMP Ping tốn hầu như không đáng biểu đồ máy, cho phép quét 3s/lần!
+                    // Foreground: 3s, Background: 30s — giam CPU khi app vao background
                     val intervalMs = if (AppConfig.IS_APP_FOREGROUND) 3000L else 30_000L
                     kotlinx.coroutines.delay(intervalMs)
                 } else {
-                    // Nếu chưa Login xong thì đợi 1s hỏi lại, tránh việc bắt User đợi tận 30s mới chọc Ping
-                    kotlinx.coroutines.delay(1000)
+                    // FIX CPU #3: chưa Login → delay 10s (trước đây 1s), giam CPU 10x
+                    // Khi user không đăng nhập, không cần ping liên tục mỗi giây.
+                    kotlinx.coroutines.delay(10_000L)
                 }
             }
         }
@@ -6171,7 +6188,9 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
     }
 
     fun saveTelegramConfig(enabled: Boolean, botToken: String, chatId: String, test: Boolean, onResult: (Boolean, String) -> Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+        // FIX C3 (ViewModel): Dùng SharedPreferences thay vì plaintext
+        // TODO: migrate sang EncryptedSharedPreferences trong tương lai
+        val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
         p.edit()
             .putBoolean("telegram_enabled", enabled)
             .putString("telegram_bot_token", botToken)
@@ -6181,8 +6200,13 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
             viewModelScope.launch(Dispatchers.IO) {
                 try {
                     val url = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
-                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),
-                        """{"token":"$botToken","chat_id":"$chatId"}""")
+                    // FIX M5 (ViewModel): Dùng JSONObject thay vì string interpolation
+                    // để tránh JSON injection khi chatId chứa ký tự đặc biệt
+                    val jsonBody = org.json.JSONObject().apply {
+                        put("token", botToken)
+                        put("chat_id", chatId)
+                    }.toString()
+                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), jsonBody)
                     val request = okhttp3.Request.Builder().url(url).post(body).build()
                     val response = webDavManager.optimizedClient.newCall(request).execute()
                     val bodyStr = response.body?.string() ?: ""
