@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.browser.FileBrowserViewModel
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import kotlinx.coroutines.*
@@ -145,6 +146,10 @@ fun BrowserScreen(
     // ═══ PHASE 7c.3 — Group 3: FileBrowserVM hook at root composable ═══
     // BrowserScreen owns file-list state. Reads via facade delegation → FileBrowserVM SSoT.
     val fileBrowserVM = LocalFileBrowserVM.current
+    val smartToolsVM = LocalSmartToolsVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
+    val authVM = LocalAuthSessionVM.current
+    val sysMonitorVM = LocalSystemMonitorVM.current
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -163,7 +168,7 @@ fun BrowserScreen(
     // VD: nhan "Chon tat ca" -> mark all viewed -> increment tick -> moi
     // FileItemGridCell remember key bi invalidated -> doc lai prefs.
     var viewedRefreshTick by remember { mutableStateOf(0) }
-    LaunchedEffect(viewModel.currentUrl) { viewedRefreshTick++ }
+    LaunchedEffect(fileBrowserVM.currentUrl) { viewedRefreshTick++ }
 
     // SORT — luu trong SharedPreferences de nho cua user qua cac lan vao app.
     // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
@@ -189,11 +194,11 @@ fun BrowserScreen(
 
 
     LaunchedEffect(Unit) {
-        viewModel.autoCleanEnabled = context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE).getBoolean("auto_clean_enabled", false)
+        smartToolsVM.autoCleanEnabled = context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE).getBoolean("auto_clean_enabled", false)
     }
 
     // Xóa chế độ chọn khi đổi thư mục
-    LaunchedEffect(viewModel.currentUrl) {
+    LaunchedEffect(fileBrowserVM.currentUrl) {
         if (selectionMode) {
             selectedFiles.clear()
             selectionMode = false
@@ -228,17 +233,17 @@ fun BrowserScreen(
     // TÍNH NĂNG 7.M: Màn hình đọc lướt File Văn Bản Code nhanh chóng
     if (showTextPreviewDialog) {
         AlertDialog(
-            onDismissRequest = { showTextPreviewDialog = false; viewModel.textPreviewContent = null },
+            onDismissRequest = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null },
             title = { Text(textPreviewName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             text = {
-                if (viewModel.isLoading && viewModel.textPreviewContent == null) {
+                if (fileBrowserVM.isLoading && fileBrowserVM.textPreviewContent == null) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.padding(10.dp))
                     }
-                } else if (!viewModel.textPreviewContent.isNullOrBlank()) {
+                } else if (!fileBrowserVM.textPreviewContent.isNullOrBlank()) {
                     SelectionContainer { // Cấp quyền bôi đen copy đoạn Text mồi này
                         Text(
-                            text = viewModel.textPreviewContent!!,
+                            text = fileBrowserVM.textPreviewContent!!,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             modifier = Modifier
@@ -252,14 +257,14 @@ fun BrowserScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showTextPreviewDialog = false; viewModel.textPreviewContent = null }) {
+                TextButton(onClick = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null }) {
                     Text("Đóng")
                 }
             }
         )
     }
 
-    val animatedProgress by animateFloatAsState(targetValue = viewModel.imageLoadProgress, animationSpec = tween(500), label = "Progress")
+    val animatedProgress by animateFloatAsState(targetValue = if (fileBrowserVM.totalImagesInFolder > 0) fileBrowserVM.loadedImagesCount.toFloat() / fileBrowserVM.totalImagesInFolder else 0f, animationSpec = tween(500), label = "Progress")
     val coroutineScope = rememberCoroutineScope()
 
     // Trạng thái hiển thị hộp thoại tạo thư mục
@@ -278,7 +283,7 @@ fun BrowserScreen(
     if (showFolderPickerDialog) {
         com.nas.naswebdav.ui.dialogs.FolderPickerDialog(
             viewModel = viewModel,
-            startingUrl = viewModel.webDavManager.currentBaseUrl,
+            startingUrl = WebDavManager.currentBaseUrl,
             onDismiss = {
                 showFolderPickerDialog = false
                 pendingBatchOperation = ""
@@ -287,8 +292,8 @@ fun BrowserScreen(
                 showFolderPickerDialog = false
                 val filesToProcess = selectedFiles.toList()
                 when (pendingBatchOperation) {
-                    "COPY" -> viewModel.batchCopyFiles(context, filesToProcess, destUrl)
-                    "MOVE" -> viewModel.batchMoveFiles(context, filesToProcess, destUrl)
+                    "COPY" -> fileBrowserVM.batchCopyFiles(context, filesToProcess, destUrl)
+                    "MOVE" -> fileBrowserVM.batchMoveFiles(context, filesToProcess, destUrl)
                 }
                 pendingBatchOperation = ""
                 selectedFiles.clear()
@@ -299,13 +304,13 @@ fun BrowserScreen(
 
     var showMultiDeleteDialog by remember { mutableStateOf(false) }
     if (showMultiDeleteDialog) {
-        val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+        val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
         com.nas.naswebdav.ui.dialogs.MultiDeleteDialog(
             selectedCount = selectedFiles.size,
             isTrash = isTrash,
             onConfirm = {
                 showMultiDeleteDialog = false
-                viewModel.deleteMultipleFiles(context, selectedFiles.toList())
+                fileBrowserVM.deleteMultipleFiles(context, selectedFiles.toList())
                 selectionMode = false
                 selectedFiles.clear()
             },
@@ -368,7 +373,7 @@ fun BrowserScreen(
                             Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                         }
                         Switch(
-                            checked = viewModel.autoCleanEnabled,
+                            checked = smartToolsVM.autoCleanEnabled,
                             onCheckedChange = { viewModel.toggleAutoClean(context, it) },
                             colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF4FC3F7), checkedTrackColor = Color(0xFF4FC3F7).copy(alpha = 0.5f))
                         )
@@ -396,9 +401,9 @@ fun BrowserScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
 
     // PHASE 6.C: Tự động mở màn hình dọn rác nếu được gọi từ Notification
-    LaunchedEffect(viewModel.shouldAutoOpenDuplicates) {
-        if (viewModel.shouldAutoOpenDuplicates) {
-            viewModel.shouldAutoOpenDuplicates = false
+    LaunchedEffect(smartToolsVM.shouldAutoOpenDuplicates) {
+        if (smartToolsVM.shouldAutoOpenDuplicates) {
+            smartToolsVM.resetShouldAutoOpenDuplicates()
             viewModel.loadDuplicateResultsFromCache(context)
         }
     }
@@ -409,7 +414,7 @@ fun BrowserScreen(
             onConfirm = { name ->
                 if (name.isNotBlank()) {
                     // TÍNH NĂNG 5.I: Truyền context vào để nhét vô SQLite Queue nếu mất mạng
-                    viewModel.createFolder(context, name)
+                    fileBrowserVM.createFolder(context, name)
                 }
                 showCreateFolderDialog = false
             },
@@ -440,9 +445,9 @@ fun BrowserScreen(
                             isOrganizing = true
                             coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 try {
-                                    val user = viewModel.webDavManager.currentUser
-                                    val pass = viewModel.webDavManager.currentPass
-                                    val urlStr = viewModel.webDavManager.currentBaseUrl
+                                    val user = WebDavManager.currentUser
+                                    val pass = WebDavManager.currentPass
+                                    val urlStr = WebDavManager.currentBaseUrl
                                     
                                     val host = java.net.URL(urlStr).host ?: "127.0.0.1"
                                     val apiUrl = "${urlStr.toApiBaseUrl()}/api/tools/organize_legacy_videos"
@@ -502,9 +507,9 @@ fun BrowserScreen(
     val displayedFiles by remember {
         derivedStateOf {
             val filtered = if (searchQuery.isBlank()) {
-                viewModel.fileList
+                fileBrowserVM.fileList
             } else {
-                viewModel.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                fileBrowserVM.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
             }
             // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
             val folders = filtered.filter { it.isDirectory }
@@ -529,7 +534,7 @@ fun BrowserScreen(
         floatingActionButtonPosition = androidx.compose.material3.FabPosition.Center,
         floatingActionButton = {
             androidx.compose.animation.AnimatedVisibility(
-                visible = viewModel.isAutoBackupRunning,
+                visible = autoBackupVM.isAutoBackupRunning,
                 enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
                 exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut()
             ) {
@@ -545,7 +550,7 @@ fun BrowserScreen(
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(
-                                progress = { viewModel.autoBackupProgress },
+                                progress = { autoBackupVM.autoBackupProgress },
                                 modifier = Modifier.size(40.dp),
                                 color = MaterialTheme.colorScheme.primary,
                                 trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
@@ -565,7 +570,7 @@ fun BrowserScreen(
                                 )
                                 Spacer(modifier = Modifier.weight(1f))
                                 Text(
-                                    text = "${(viewModel.autoBackupProgress * 100).toInt()}%",
+                                    text = "${(autoBackupVM.autoBackupProgress * 100).toInt()}%",
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.primary
@@ -575,7 +580,7 @@ fun BrowserScreen(
                             Spacer(Modifier.height(4.dp))
                             
                             Text(
-                                text = "Nguồn: ${viewModel.autoBackupSourcePath.substringBeforeLast("/", "").takeLast(15)}/${viewModel.autoBackupCurrentFile}",
+                                text = "Nguồn: ${autoBackupVM.autoBackupSourcePath.substringBeforeLast("/", "").takeLast(15)}/${autoBackupVM.autoBackupCurrentFile}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 fontSize = 10.sp,
@@ -583,7 +588,7 @@ fun BrowserScreen(
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                text = "Đích: ${viewModel.autoBackupDestPath}",
+                                text = "Đích: ${autoBackupVM.autoBackupDestPath}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 fontSize = 10.sp,
@@ -591,7 +596,7 @@ fun BrowserScreen(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                             )
                         }
-                        IconButton(onClick = { viewModel.isAutoBackupRunning = false }) {
+                        IconButton(onClick = { autoBackupVM.isAutoBackupRunning = false }) {
                             Icon(Icons.Default.Close, contentDescription = "Ẩn", tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
@@ -682,14 +687,14 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
-                    val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+                    val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
                     
                     if (isTrash) {
                         // NÚT KHÔI PHỤC HÀNG LOẠT (CHỈ TRONG THÙNG RÁC)
                         IconButton(
                             onClick = {
                                 if (selectedFiles.isNotEmpty()) {
-                                    viewModel.restoreMultipleFiles(context, selectedFiles.toList())
+                                    fileBrowserVM.restoreMultipleFiles(context, selectedFiles.toList())
                                     selectionMode = false
                                     selectedFiles.clear()
                                 }
@@ -763,10 +768,10 @@ fun BrowserScreen(
                     }
                 },
                 title = {
-                    val displayTitle = if (viewModel.isSpecialMode) viewModel.specialTitle
+                    val displayTitle = if (fileBrowserVM.isSpecialMode) fileBrowserVM.specialTitle
                     else {
-                        val decodedUrl = try { java.net.URLDecoder.decode(viewModel.currentUrl, "UTF-8") } catch (_: Exception) { viewModel.currentUrl }
-                        val baseUrl = viewModel.webDavManager.currentBaseUrl
+                        val decodedUrl = try { java.net.URLDecoder.decode(fileBrowserVM.currentUrl, "UTF-8") } catch (_: Exception) { fileBrowserVM.currentUrl }
+                        val baseUrl = WebDavManager.currentBaseUrl
                         val relativePath = if (decodedUrl.startsWith(baseUrl)) decodedUrl.removePrefix(baseUrl) else ""
                         val segments = relativePath.trim('/').split("/").filter { it.isNotEmpty() }
                         if (segments.isEmpty()) "Thư mục gốc" else segments.last()
@@ -774,7 +779,7 @@ fun BrowserScreen(
                     Column {
                         Text(displayTitle, maxLines = 1, style = MaterialTheme.typography.titleSmall)
                     // Thiết kế Chip trạng thái kết nối
-                    val rawStatus = viewModel.connectionStatus
+                    val rawStatus = authVM.connectionStatus
                         val displayStatus = if (rawStatus.contains("Cache", ignoreCase = true)) "Cache" else rawStatus
 
                         val chipIcon = when {
@@ -807,7 +812,7 @@ fun BrowserScreen(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = displayStatus + if (viewModel.networkPingMs != null && viewModel.networkPingMs!! >= 0) " - ${viewModel.networkPingMs}ms" else "",
+                                    text = displayStatus + if (sysMonitorVM.networkPingMs != null && sysMonitorVM.networkPingMs!! >= 0) " - ${sysMonitorVM.networkPingMs}ms" else "",
                                     color = chipColor,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
@@ -857,7 +862,7 @@ fun BrowserScreen(
                             leadingIcon = { Icon(Icons.Default.Shuffle, null) },
                             onClick = {
                                 showMoreMenu = false
-                                val images = viewModel.fileList.filter { it.name.lowercase().run { endsWith(".jpg") || endsWith(".png") } }
+                                val images = fileBrowserVM.fileList.filter { it.name.lowercase().run { endsWith(".jpg") || endsWith(".png") } }
                                 images.randomOrNull()?.let { onImage(it.path) }
                             }
                         )
@@ -877,10 +882,10 @@ fun BrowserScreen(
 
         Column(Modifier.fillMaxSize().padding(padding)) {
             // ═══ THANH ĐƯỜNG DẪN (BREADCRUMB) ═══
-            if (!viewModel.isSpecialMode) {
-                val baseUrl = viewModel.webDavManager.currentBaseUrl
-                val relativePath = if (viewModel.currentUrl.startsWith(baseUrl))
-                    viewModel.currentUrl.removePrefix(baseUrl) else ""
+            if (!fileBrowserVM.isSpecialMode) {
+                val baseUrl = WebDavManager.currentBaseUrl
+                val relativePath = if (fileBrowserVM.currentUrl.startsWith(baseUrl))
+                    fileBrowserVM.currentUrl.removePrefix(baseUrl) else ""
                 val decodedPath = try { java.net.URLDecoder.decode(relativePath, "UTF-8") } catch (_: Exception) { relativePath }
                 val segments = decodedPath.trim('/').split("/").filter { it.isNotEmpty() }
                 
@@ -917,10 +922,10 @@ fun BrowserScreen(
                                 modifier = if (!isLast) Modifier.clickable {
                                     val targetPath = segments.take(index + 1).joinToString("/") + "/"
                                     val targetUrl = baseUrl + targetPath
-                                    viewModel.urlStack.clear()
+                                    fileBrowserVM.urlStack.clear()
                                     for (i in 0 until index + 1) {
-                                        if (i == 0) viewModel.urlStack.push(baseUrl)
-                                        else viewModel.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
+                                        if (i == 0) fileBrowserVM.urlStack.push(baseUrl)
+                                        else fileBrowserVM.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
                                     }
                                     viewModel.navigateToUrl(targetUrl)
                                 } else Modifier
@@ -929,8 +934,8 @@ fun BrowserScreen(
                     }
                     
                     // Phải: Thống kê + Nút Chọn
-                    val folders = viewModel.fileList.count { it.isDirectory }
-                    val files = viewModel.fileList.count { !it.isDirectory }
+                    val folders = fileBrowserVM.fileList.count { it.isDirectory }
+                    val files = fileBrowserVM.fileList.count { !it.isDirectory }
                     val statsText = buildList {
                         if (folders > 0) add("$folders thư mục")
                         if (files > 0) add("$files tệp")
@@ -945,7 +950,7 @@ fun BrowserScreen(
                     )
 
                     // Nút Chuyển đổi chế độ hiển thị file (ICON / LIST / DETAIL)
-                    if (!selectionMode && viewModel.fileList.isNotEmpty()) {
+                    if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
                         Row(
                             modifier = Modifier.padding(start = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -981,7 +986,7 @@ fun BrowserScreen(
                     }
 
                     // Nút Sắp xếp file — hiện bên cạnh nút "Chọn file" để user dễ tìm
-                    if (!selectionMode && viewModel.fileList.isNotEmpty()) {
+                    if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
                         Box {
                             IconButton(
                                 onClick = { showSortMenu = true },
@@ -1041,7 +1046,7 @@ fun BrowserScreen(
                     }
 
                     // Nút kích hoạt chế độ chọn nhiều file
-                    if (!selectionMode && viewModel.fileList.isNotEmpty()) {
+                    if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
                         IconButton(
                             onClick = { selectionMode = true },
                             modifier = Modifier
@@ -1078,7 +1083,7 @@ fun BrowserScreen(
             // 2. Chờ tải xong mới thu hồi Pull-to-Refresh UI bằng luồng Flow an toàn (Không khoá UI)
             LaunchedEffect(pullToRefreshState.isRefreshing) {
                 if (pullToRefreshState.isRefreshing) {
-                    androidx.compose.runtime.snapshotFlow { viewModel.isLoading }
+                    androidx.compose.runtime.snapshotFlow { fileBrowserVM.isLoading }
                         .collect { loading ->
                             if (!loading) {
                                 pullToRefreshState.endRefresh()
@@ -1107,7 +1112,7 @@ fun BrowserScreen(
             Box(Modifier.fillMaxSize().nestedScroll(pullToRefreshState.nestedScrollConnection)) {
                 
                 // Grouping logic for Trash
-                val isTrashMode = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+                val isTrashMode = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
                 val groupedFiles = remember(displayedFiles, isTrashMode) {
                     if (isTrashMode) {
                         val now = System.currentTimeMillis()
@@ -1137,11 +1142,11 @@ fun BrowserScreen(
                             selectedFiles.add(file)
                         }
                     } else {
-                        if (file.isDirectory) viewModel.openFolder(file)
+                        if (file.isDirectory) fileBrowserVM.openFolder(file)
                         else if (com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)) onVideo(file.path)
                         else if (file.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }) onImage(file.path)
                         else if (file.name.lowercase().run { endsWith(".txt") || endsWith(".md") || endsWith(".py") || endsWith(".log") || endsWith(".json") || endsWith(".xml") || endsWith(".kt") || endsWith(".java") }) {
-                            viewModel.fetchTextPreview(file.path)
+                            fileBrowserVM.fetchTextPreview(file.path)
                             textPreviewName = file.name
                             showTextPreviewDialog = true
                         }
@@ -1191,6 +1196,7 @@ fun BrowserScreen(
                                     BrowserScreenFileItemGridCell(
                                         file = file,
                                         viewModel = viewModel,
+                                        fileBrowserVM = fileBrowserVM,
                                         selectionMode = selectionMode,
                                         viewedRefreshTick = viewedRefreshTick,
                                         isSelected = selectedFiles.contains(file),
@@ -1236,7 +1242,7 @@ fun BrowserScreen(
                                     val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
                                     val isMedia = isVideo || isImageFile
                                     val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
-                                    val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+                                    val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
 
                                     Row(
                                         modifier = Modifier
@@ -1395,7 +1401,7 @@ fun BrowserScreen(
                                             val fmt = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
                                             fmt.format(java.util.Date(file.lastModified))
                                         } else ""
-                                        val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+                                        val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
 
                                         Row(
                                             modifier = Modifier
@@ -1502,7 +1508,7 @@ fun BrowserScreen(
                 }
 
                 // LOADING HIỆN ĐẠI NHẤT: LinearProgressIndicator đặt ngay dưới TopAppBar thay vì vòng tròn trắng cồng kềnh
-                if (viewModel.isLoading) {
+                if (fileBrowserVM.isLoading) {
                     LinearProgressIndicator(
                         modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
                         color = Color(0xFF00897B), // Đồng bộ màu Xanh Ngọc
@@ -1511,7 +1517,7 @@ fun BrowserScreen(
                 }
                 // Hiển thị lỗi kết nối rõ ràng ở giữa màn hình
                 val currentError = viewModel.errorMessage
-                if (!currentError.isNullOrEmpty() && !viewModel.isLoading) {
+                if (!currentError.isNullOrEmpty() && !fileBrowserVM.isLoading) {
                     Column(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -1524,7 +1530,7 @@ fun BrowserScreen(
                         Spacer(Modifier.height(8.dp))
                         Button(onClick = { viewModel.refresh() }) { Text("Thử lại") }
                     }
-                } else if (!viewModel.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
+                } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
                     Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -1555,6 +1561,7 @@ fun BrowserScreen(
 fun BrowserScreenFileItemGridCell(
     file: NasFile,
     viewModel: WebDavViewModel,
+    fileBrowserVM: FileBrowserViewModel,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
     viewedRefreshTick: Int = 0,
@@ -1567,7 +1574,7 @@ fun BrowserScreenFileItemGridCell(
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val auth = Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+    val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
 
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1588,7 +1595,7 @@ fun BrowserScreenFileItemGridCell(
         mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
     }
 
-    val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+    val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
 
     // STATE CHO DIALOG THÔNG BÁO TẠI ĐÂY (THAY THẾ TOAST)
     var commonDialogMessage by remember { mutableStateOf("") }
@@ -1616,7 +1623,7 @@ fun BrowserScreenFileItemGridCell(
             message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn '${file.name}' không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa '${file.name}' vào Thùng rác?",
             onConfirm = {
                 showDeleteDialog = false
-                viewModel.deleteFile(context, file)
+                fileBrowserVM.deleteFile(context, file)
                 onDelete?.invoke()
             },
             onDismiss = { showDeleteDialog = false }
@@ -1637,7 +1644,7 @@ fun BrowserScreenFileItemGridCell(
             confirmButton = {
                 TextButton(onClick = {
                     showRenameDialog = false
-                    if (newFileName.isNotBlank() && newFileName != file.name) viewModel.renameFile(context, file, newFileName)
+                    if (newFileName.isNotBlank() && newFileName != file.name) fileBrowserVM.renameFile(context, file, newFileName)
                 }) { Text("Lưu") }
             },
             dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Hủy") } }
@@ -1698,12 +1705,12 @@ fun BrowserScreenFileItemGridCell(
                 showCommonDialog = true
             })
             // Chỉ hiện nút Khôi phục nếu đang đứng trong Thùng rác
-            if (viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác") {
+            if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác") {
                 DropdownMenuItem(
                     text = { Text("Khôi phục") },
                     onClick = {
                         showMenu = false
-                        viewModel.restoreFile(context, file)
+                        fileBrowserVM.restoreFile(context, file)
                     },)
             }
 
@@ -1727,8 +1734,8 @@ fun BrowserScreenFileItemGridCell(
                         openExternalVideoPlayer(
                             context = context,
                             url = file.path,
-                            user = viewModel.webDavManager.currentUser,
-                            pass = viewModel.webDavManager.currentPass,
+                            user = WebDavManager.currentUser,
+                            pass = WebDavManager.currentPass,
                             onError = {
                                 commonDialogType = DialogType.ERROR
                                 commonDialogMessage = "Không tìm thấy trình phát video ngoài nào!"

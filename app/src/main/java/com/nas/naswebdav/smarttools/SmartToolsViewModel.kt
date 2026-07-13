@@ -115,6 +115,7 @@ class SmartToolsViewModel(
     fun togglePauseDuplicateScan() { /* TODO Phase 2b */ }
     fun toggleAutoClean(context: Context, enabled: Boolean) { /* TODO Phase 2b */ }
     fun dismissDuplicatesView() { isShowingDuplicates = false }
+    fun resetShouldAutoOpenDuplicates() { shouldAutoOpenDuplicates = false }
     fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile, index: Int) { /* TODO Phase 2b */ }
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) { /* TODO Phase 2b */ }
 
