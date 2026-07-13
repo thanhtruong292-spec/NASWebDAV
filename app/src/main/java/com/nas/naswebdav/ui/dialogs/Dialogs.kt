@@ -304,6 +304,8 @@ fun SmartDiskDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: smartInfo/speedTest/lastAutoSpeed/isTestingSpeed → DeviceMgmtVM
+    val deviceVM = LocalDeviceManagementVM.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -326,12 +328,12 @@ fun SmartDiskDialog(
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Trạng thái:", fontSize = 13.sp)
-                            Text(viewModel.smartInfo.status, color = if (viewModel.smartInfo.status == "PASSED") Color(0xFF43A047) else Color.Red, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(deviceVM.smartInfo.status, color = if (deviceVM.smartInfo.status == "PASSED") Color(0xFF43A047) else Color.Red, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Nhiệt độ ổ cứng:", fontSize = 13.sp)
-                            Text(viewModel.smartInfo.temperature, color = Color(0xFFFB8C00), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(deviceVM.smartInfo.temperature, color = Color(0xFFFB8C00), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }
@@ -347,18 +349,18 @@ fun SmartDiskDialog(
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Ghi (Write):", fontSize = 13.sp)
-                            Text(viewModel.speedTestResult.writeSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF8E24AA))
+                            Text(deviceVM.speedTestResult.writeSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF8E24AA))
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Đọc (Read):", fontSize = 13.sp)
-                            Text(viewModel.speedTestResult.readSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1E88E5))
+                            Text(deviceVM.speedTestResult.readSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1E88E5))
                         }
 
-                        if (viewModel.lastAutoSpeedTime.isNotEmpty()) {
+                        if (deviceVM.lastAutoSpeedTime > 0) {
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                text = viewModel.lastAutoSpeedTime,
+                                text = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(deviceVM.lastAutoSpeedTime)),
                                 fontSize = 10.sp,
                                 color = Color.Gray,
                                 fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
@@ -375,22 +377,22 @@ fun SmartDiskDialog(
                                 .fillMaxWidth()
                                 .background(
                                     brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                                        colors = if (viewModel.isTestingSpeed) listOf(Color.Gray, Color.LightGray) else listOf(Color(0xFF00897B), Color(0xFF26A69A))
+                                        colors = if (deviceVM.isTestingSpeed) listOf(Color.Gray, Color.LightGray) else listOf(Color(0xFF00897B), Color(0xFF26A69A))
                                     ),
                                     shape = RoundedCornerShape(24.dp)
                                 ),
                             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, disabledContainerColor = Color.Transparent),
                             contentPadding = PaddingValues(),
                             interactionSource = interactionSource,
-                            enabled = !viewModel.isTestingSpeed
+                            enabled = !deviceVM.isTestingSpeed
                         ) {
                             Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (viewModel.isTestingSpeed) {
+                                    if (deviceVM.isTestingSpeed) {
                                         CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                         Spacer(Modifier.width(8.dp))
                                     }
-                                    Text(if (viewModel.isTestingSpeed) "Đang kiểm tra..." else "Bắt đầu kiểm tra", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(if (deviceVM.isTestingSpeed) "Đang kiểm tra..." else "Bắt đầu kiểm tra", color = Color.White, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1116,6 +1118,8 @@ fun SystemLogDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: systemLogsList owned by DeviceMgmtVM (Phase 7a)
+    val deviceVM = LocalDeviceManagementVM.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1135,21 +1139,21 @@ fun SystemLogDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                if (viewModel.systemLogsList.isNotEmpty()) {
+                if (deviceVM.systemLogsList.isNotEmpty()) {
                     IconButton(onClick = { viewModel.clearSystemLogs() }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935), modifier = Modifier.size(18.dp))
                     }
                 }
             }
 
-            if (viewModel.systemLogsList.isEmpty()) {
+            if (deviceVM.systemLogsList.isEmpty()) {
                 Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray, fontSize = 13.sp)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(items = viewModel.systemLogsList, key = { it.id }) { log ->
+                    items(items = deviceVM.systemLogsList, key = { it.id }) { log ->
                         val logColor = when (log.type) {
                             "SUCCESS" -> Color(0xFF43A047)
                             "ERROR" -> Color(0xFFE53935)
@@ -1198,6 +1202,8 @@ fun DockerDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: isFetchingDocker/dockerContainers → DeviceMgmtVM
+    val deviceVM = LocalDeviceManagementVM.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1206,7 +1212,7 @@ fun DockerDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Quản lý Docker", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                if (viewModel.isFetchingDocker) {
+                if (deviceVM.isFetchingDocker) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color(0xFF1E88E5), strokeWidth = 2.dp)
                 } else {
                     IconButton(onClick = { viewModel.fetchDockerContainers() }, modifier = Modifier.size(24.dp)) {
@@ -1216,14 +1222,14 @@ fun DockerDialog(
             }
         },
         text = {
-            if (viewModel.dockerContainers.isEmpty() && !viewModel.isFetchingDocker) {
+            if (deviceVM.dockerContainers.isEmpty() && !deviceVM.isFetchingDocker) {
                 Text("Không tìm thấy Container nào đang tồn tại.", modifier = Modifier.padding(16.dp), color = Color.Gray)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(items = viewModel.dockerContainers, key = { it.id }) { container ->
+                    items(items = deviceVM.dockerContainers, key = { it.id }) { container ->
                         val isRunning = container.status.lowercase() == "running"
                         Card(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -1291,7 +1297,7 @@ fun DialogsFolderPickerDialog(
     LaunchedEffect(currentUrl) {
         isLoading = true
         try {
-            val items = viewModel.webDavManager.listFiles(currentUrl)
+            val items = WebDavManager.listFiles(currentUrl)
             folderList = items.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         } catch (e: Exception) {
             folderList = emptyList()
@@ -1305,7 +1311,7 @@ fun DialogsFolderPickerDialog(
             Column {
                 Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (_: Exception) { currentUrl }
-                val relativePath = decoded.removePrefix(viewModel.webDavManager.currentBaseUrl)
+                val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
                 Text(
                     text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
                     fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -1318,15 +1324,15 @@ fun DialogsFolderPickerDialog(
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        if (currentUrl.trimEnd('/') != viewModel.webDavManager.currentBaseUrl.trimEnd('/')) {
+                        if (currentUrl.trimEnd('/') != WebDavManager.currentBaseUrl.trimEnd('/')) {
                             item {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
                                             val parentUrl = currentUrl.trimEnd('/').substringBeforeLast('/') + "/"
-                                            currentUrl = if (parentUrl.length < viewModel.webDavManager.currentBaseUrl.length)
-                                                viewModel.webDavManager.currentBaseUrl else parentUrl
+                                            currentUrl = if (parentUrl.length < WebDavManager.currentBaseUrl.length)
+                                                WebDavManager.currentBaseUrl else parentUrl
                                         }
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -1470,6 +1476,7 @@ fun DialogsNotificationDialog(title: String, message: String, icon: ImageVector,
 
 @Composable
 fun DialogsIpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    // pendingIpAddress/approvalMessage/pendingCountryCode stay in facade (not in DeviceMgmtVM)
     val ip = viewModel.pendingIpAddress; val message = viewModel.approvalMessage; val countryCode = viewModel.pendingCountryCode
     val infiniteTransition = rememberInfiniteTransition(label = "shield_pulse")
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
@@ -1536,11 +1543,13 @@ fun DialogsLanWhitelistDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    val ipList = viewModel.lanWhitelistIps
-    val subnetList = viewModel.lanWhitelistSubnets
-    val isLoading = viewModel.lanWhitelistLoading
-    val errorMessage = viewModel.lanWhitelistError
-    val statusMessage = viewModel.lanWhitelistStatus
+    // Phase 7d.2: lanWhitelist* state → DeviceMgmtVM
+    val deviceVM = LocalDeviceManagementVM.current
+    val ipList = deviceVM.lanWhitelistIps
+    val subnetList = deviceVM.lanWhitelistSubnets
+    val isLoading = deviceVM.lanWhitelistLoading
+    val errorMessage = deviceVM.lanWhitelistError
+    val statusMessage = deviceVM.lanWhitelistStatus
 
     var newEntry by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { viewModel.loadLanWhitelist() }
@@ -1667,30 +1676,32 @@ fun DialogsLanWhitelistDialog(
 // (Đã xoá SmartSyncDialog theo yêu cầu)
 @Composable
 fun DialogsOrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    // Phase 7d.2: organizingLegacyRunning/Result → SmartToolsVM
+    val smartToolsVM = LocalSmartToolsVM.current
     androidx.compose.material3.AlertDialog(
-        onDismissRequest = { if (!viewModel.organizingLegacyRunning) onDismiss() },
+        onDismissRequest = { if (!smartToolsVM.organizingLegacyRunning) onDismiss() },
         title = { Text("Phân loại video cũ") },
         text = {
             Column {
-                if (viewModel.organizingLegacyRunning) {
+                if (smartToolsVM.organizingLegacyRunning) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFF00897B), trackColor = Color.Transparent)
                     Text("Đang ra lệnh cho NAS dọn dẹp nội bộ...")
-                } else if (viewModel.organizingLegacyResult != null) {
-                    Text(viewModel.organizingLegacyResult!!)
+                } else if (smartToolsVM.organizingLegacyResult != null) {
+                    Text(smartToolsVM.organizingLegacyResult!!)
                 } else {
                     Text("Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video không phải MP4 (như mpg, flv, mkv, avi...) vào thư mục 'Other Video' không? Thao tác này giúp danh sách video gọn hơn và được xử lý trực tiếp trên NAS.")
                 }
             }
         },
         confirmButton = {
-            if (!viewModel.organizingLegacyRunning && viewModel.organizingLegacyResult == null) {
+            if (!smartToolsVM.organizingLegacyRunning && smartToolsVM.organizingLegacyResult == null) {
                 TextButton(onClick = { viewModel.organizeLegacyVideos() }) { Text("Chạy NAS") }
-            } else if (viewModel.organizingLegacyResult != null) {
+            } else if (smartToolsVM.organizingLegacyResult != null) {
                 TextButton(onClick = { viewModel.resetOrganizingLegacy(); onDismiss() }) { Text("Đóng") }
             }
         },
         dismissButton = {
-            if (!viewModel.organizingLegacyRunning && viewModel.organizingLegacyResult == null) {
+            if (!smartToolsVM.organizingLegacyRunning && smartToolsVM.organizingLegacyResult == null) {
                 TextButton(onClick = onDismiss) { Text("Hủy") }
             }
         }
@@ -1704,6 +1715,8 @@ fun DialogsDuplicateConfigDialog(
     onStartScan: (Boolean, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: autoCleanEnabled → SmartToolsVM
+    val smartToolsVM = LocalSmartToolsVM.current
     var isLightningMode by remember { mutableStateOf(true) }
     var isForceRestartDuplicate by remember { mutableStateOf(false) }
 
@@ -1758,7 +1771,7 @@ fun DialogsDuplicateConfigDialog(
                         Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                     }
                     Switch(
-                        checked = viewModel.autoCleanEnabled,
+                        checked = smartToolsVM.autoCleanEnabled,
                         onCheckedChange = { viewModel.toggleAutoClean(context, it) },
                         colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF4FC3F7), checkedTrackColor = Color(0xFF4FC3F7).copy(alpha = 0.5f))
                     )
@@ -1783,16 +1796,18 @@ fun DialogsDuplicateConfigDialog(
 }
 @Composable
 fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    // Phase 7d.2: duplicateFilesList/selectedDuplicates → SmartToolsVM
+    val smartToolsVM = LocalSmartToolsVM.current
     AlertDialog(
         onDismissRequest = { onDismiss() },
         title = {
             Column {
                 Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
                 // BỔ SUNG: Hiển thị tổng số file rác phát hiện được nếu danh sách không trống
-                if (viewModel.duplicateFilesList.isNotEmpty()) {
+                if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Phát hiện ${viewModel.duplicateFilesList.size} tệp trùng lặp",
+                        text = "Phát hiện ${smartToolsVM.duplicateFilesList.size} tệp trùng lặp",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
@@ -1801,15 +1816,15 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
             }
         },
         text = {
-            if (viewModel.duplicateFilesList.isEmpty()) {
+            if (smartToolsVM.duplicateFilesList.isEmpty()) {
                 Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
             } else {
                 // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                 // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
-                // BỔ SUNG: Nhóm theo Hash/Fingerprint để đảm bảo hiển thị đúng file trùng, 
+                // BỔ SUNG: Nhóm theo Hash/Fingerprint để đảm bảo hiển thị đúng file trùng,
                 // dùng contentLength làm fallback dự phòng.
-                val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                    viewModel.duplicateFilesList.groupBy { it.partialHash ?: it.contentLength }.values.filter { it.size >= 2 }.toList()
+                val groupedDuplicates = remember(smartToolsVM.duplicateFilesList) {
+                    smartToolsVM.duplicateFilesList.groupBy { it.partialHash ?: it.contentLength }.values.filter { it.size >= 2 }.toList()
                 }
 
                 // ═══ BỘ LỌC NHANH ═══
@@ -1856,12 +1871,12 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
                     // Nút Tự động chọn thông minh (Giữ lại 1 bản, tick chọn xóa các bản copy)
                     TextButton(
                         onClick = {
-                            viewModel.selectedDuplicates.clear()
+                            smartToolsVM.selectedDuplicates.clear()
                             groupedDuplicates.forEach { group ->
                                 // BÍ QUYẾT: File gốc thường nằm ở thư mục ngoài cùng (đường dẫn ngắn), file copy thường bị ném vào thư mục con sâu hơn.
                                 // Nên ta sắp xếp độ dài path, giữ lại phần tử đầu tiên và tick chọn xóa các phần tử phía sau.
                                 val filesToDelete = group.sortedBy { it.path.length }.drop(1)
-                                viewModel.selectedDuplicates.addAll(filesToDelete)
+                                smartToolsVM.selectedDuplicates.addAll(filesToDelete)
                             }
                         },
                         modifier = Modifier.align(Alignment.End)
@@ -1891,10 +1906,10 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         items(items = group, key = { it.path }) { dupFile ->
-                                            val isSelected = viewModel.selectedDuplicates.contains(dupFile)
+                                            val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                             val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                             val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                            val auth = okhttp3.Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+                                            val auth = okhttp3.Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
 
                                             Box(
                                                 modifier = Modifier
@@ -1902,8 +1917,8 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
                                                     .clickable {
-                                                        if (isSelected) viewModel.selectedDuplicates.remove(dupFile)
-                                                        else viewModel.selectedDuplicates.add(dupFile)
+                                                        if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
+                                                        else smartToolsVM.selectedDuplicates.add(dupFile)
                                                     }
                                             ) {
                                                 // 1. Lớp Ảnh Nền (TỐI ƯU HÓA DB CACHE MỚI CHO TẤT CẢ MEDIA)
@@ -1924,8 +1939,8 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
                                                 Checkbox(
                                                     checked = isSelected,
                                                     onCheckedChange = {
-                                                        if (it) viewModel.selectedDuplicates.add(dupFile)
-                                                        else viewModel.selectedDuplicates.remove(dupFile)
+                                                        if (it) smartToolsVM.selectedDuplicates.add(dupFile)
+                                                        else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                     },
                                                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
                                                     colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
@@ -1970,14 +1985,14 @@ fun DialogsDuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Uni
         confirmButton = {
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
-                if (viewModel.selectedDuplicates.isNotEmpty()) {
+                if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
                     TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
-                        Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                        Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                     }
                 }
                 TextButton(onClick = {
                     onDismiss()
-                    viewModel.selectedDuplicates.clear() // Xóa danh sách tick chọn tạm thời khi đóng hộp thoại
+                    smartToolsVM.selectedDuplicates.clear() // Xóa danh sách tick chọn tạm thời khi đóng hộp thoại
                 }) { Text("Đóng") }
             }
         }
@@ -2041,6 +2056,8 @@ fun DialogsLivestreamRecordDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: activeLivestreams/livestreamMessage/tiktok* → LivestreamVM
+    val livestreamVM = LocalLivestreamVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
@@ -2056,9 +2073,9 @@ fun DialogsLivestreamRecordDialog(
     var newTikTokWatchUser by remember { mutableStateOf("") }
     var livePanelMode by remember { mutableStateOf("record") }
     var selectedQuality by remember { mutableStateOf("best") }
-    val activeLivestreams = viewModel.activeLivestreams
-    val message = viewModel.livestreamMessage
-    val tiktokWatchUsers = viewModel.tiktokLiveWatchUsers
+    val activeLivestreams = livestreamVM.activeLivestreams
+    val message = livestreamVM.livestreamMessage
+    val tiktokWatchUsers = livestreamVM.tiktokLiveWatchUsers
 
     LaunchedEffect(Unit) { viewModel.fetchTikTokLiveWatch(context) }
 
@@ -2303,12 +2320,12 @@ fun DialogsLivestreamRecordDialog(
                 }
             }
             
-            if (viewModel.isStartingLivestream) {
+            if (livestreamVM.isStartingLivestream) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(livestreamVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else if (message.isNotEmpty()) {
                 // FIX: Auto-clear lỗi sau 5 giây để hiện lại nút "BẮT ĐẦU GHI"
@@ -2327,7 +2344,7 @@ fun DialogsLivestreamRecordDialog(
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
-                        if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) {
+                        if (liveUrl.isNotBlank() && !livestreamVM.isStartingLivestream) {
                             val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
                             // Bóc tách username TikTok tu URL (sau khi resolver da chay xong)
                             // de tu dong them vao danh sach theo doi — lan sau watchdog tu phat hien live.
@@ -3060,6 +3077,8 @@ fun DialogsDiskHealthDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: diskHealthCurrent/History → SystemMonitorVM (Phase 7a)
+    val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) {
         viewModel.fetchDiskHealth(minIntervalMs = 0L)
         viewModel.fetchNasInsights(minIntervalMs = 0L)
@@ -3092,7 +3111,7 @@ fun DialogsDiskHealthDialog(
                 }
             }
 
-            val current = viewModel.diskHealthCurrent
+            val current = sysMonitorVM.diskHealthCurrent
             if (current == null) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF66BB6A))
@@ -3196,7 +3215,7 @@ fun DialogsDiskHealthDialog(
                 AttrRow("Lỗi đọc/ghi dữ liệu", "${current.ioErrorsRecent}", highlight = current.ioErrorsRecent > 0)
 
                 // History trend
-                val history = viewModel.diskHealthHistory
+                val history = sysMonitorVM.diskHealthHistory
                 if (history.size >= 2) {
                     Spacer(Modifier.height(8.dp))
                     HorizontalDivider(color = Color(0xFF2A2A3E))
@@ -3295,6 +3314,8 @@ fun DialogsNasConfigBackupDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7d.2: nasConfigBackups/Message/isCreating/isRestoring → SystemMonitorVM (Phase 7a)
+    val sysMonitorVM = LocalSystemMonitorVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingDeleteFilename by remember { mutableStateOf<String?>(null) }
@@ -3372,7 +3393,7 @@ fun DialogsNasConfigBackupDialog(
             // Create button
             Button(
                 onClick = { viewModel.createNasConfigBackup() },
-                enabled = !viewModel.isCreatingNasConfigBackup,
+                enabled = !sysMonitorVM.isCreatingNasConfigBackup,
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF66BB6A)),
                 shape = RoundedCornerShape(10.dp),
@@ -3381,20 +3402,20 @@ fun DialogsNasConfigBackupDialog(
                 Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (viewModel.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
+                    if (sysMonitorVM.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
                     color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp
                 )
             }
 
             // Status message
-            if (viewModel.nasConfigBackupMessage.isNotEmpty()) {
+            if (sysMonitorVM.nasConfigBackupMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 val msgColor = when {
-                    viewModel.nasConfigBackupMessage.startsWith("Lỗi") -> Color(0xFFEF5350)
-                    viewModel.nasConfigBackupMessage.startsWith("Đã") -> Color(0xFF66BB6A)
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Lỗi") -> Color(0xFFEF5350)
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Đã") -> Color(0xFF66BB6A)
                     else -> Color(0xFF8892B0)
                 }
-                Text(viewModel.nasConfigBackupMessage, color = msgColor, fontSize = 12.sp)
+                Text(sysMonitorVM.nasConfigBackupMessage, color = msgColor, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(6.dp))
@@ -3404,7 +3425,7 @@ fun DialogsNasConfigBackupDialog(
             // List header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "BACKUP HIỆN CÓ (${viewModel.nasConfigBackups.size})",
+                    "BACKUP HIỆN CÓ (${sysMonitorVM.nasConfigBackups.size})",
                     color = Color(0xFF8892B0), fontSize = 11.sp,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
@@ -3415,7 +3436,7 @@ fun DialogsNasConfigBackupDialog(
             }
             Spacer(Modifier.height(4.dp))
 
-            if (viewModel.nasConfigBackups.isEmpty()) {
+            if (sysMonitorVM.nasConfigBackups.isEmpty()) {
                 Text(
                     "Chưa có bản backup nào. Tạo bản đầu tiên bằng nút phía trên.",
                     color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 12.sp,
@@ -3423,7 +3444,7 @@ fun DialogsNasConfigBackupDialog(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    viewModel.nasConfigBackups.forEach { backup ->
+                    sysMonitorVM.nasConfigBackups.forEach { backup ->
                         key(backup.filename) {
                             Column(
                                 Modifier.fillMaxWidth()
@@ -3479,7 +3500,7 @@ fun DialogsNasConfigBackupDialog(
                                     }
                                     TextButton(
                                         onClick = { pendingRestoreFilename = backup.filename },
-                                        enabled = !viewModel.isRestoringNasConfigBackup,
+                                        enabled = !sysMonitorVM.isRestoringNasConfigBackup,
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         modifier = Modifier.weight(1f).height(32.dp)
                                     ) {
@@ -3511,7 +3532,7 @@ fun DialogsNasConfigBackupDialog(
                     Text("Đang tải file từ NAS để share...", color = Color(0xFF8892B0), fontSize = 11.sp)
                 }
             }
-            if (viewModel.isRestoringNasConfigBackup) {
+            if (sysMonitorVM.isRestoringNasConfigBackup) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFFFFA726), strokeWidth = 2.dp)
@@ -4082,6 +4103,8 @@ fun DialogsNasInsightsDialog(
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
 ) {
+    // Phase 7d.2: nasInsights → SystemMonitorVM (Phase 7a)
+    val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) { viewModel.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -4091,7 +4114,7 @@ fun DialogsNasInsightsDialog(
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
-        val insight = viewModel.nasInsights
+        val insight = sysMonitorVM.nasInsights
         Column(
             modifier = Modifier.fillMaxWidth()
                 .fillMaxHeight(0.9f)
