@@ -1,5 +1,7 @@
 package com.nas.naswebdav.auth
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
@@ -59,12 +61,17 @@ class AuthSessionViewModel(
 
     val errorMessage: String? get() = SharedStateHolder.errorMessage.value
 
+    /** True while a connect() call is in flight — backed by Compose State so LoginScreen recomposes. */
+    var isLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
     // ─── AUTH FUNCTIONS ─────────────────────────────────────────────────────
 
     fun cancelLogin() {
         loginJob?.cancel()
         WebDavManager.cancelActiveCalls()
         loginJob = null
+        isLoading = false
         SharedStateHolder.updateConnectionStatus(ConnectionStatus.Cancelled)
     }
 
@@ -83,6 +90,7 @@ class AuthSessionViewModel(
         onError: (String) -> Unit = {}
     ) {
         loginJob?.cancel()
+        isLoading = true
         loginJob = viewModelScope.launch {
             var lastErrorDetail = "Không rõ"
 
@@ -208,6 +216,7 @@ class AuthSessionViewModel(
             }
 
             withContext(Dispatchers.Main) {
+                isLoading = false
                 if (result2) {
                     SharedStateHolder.updateConnectionStatus(ConnectionStatus.Authenticated)
                     onSuccess()

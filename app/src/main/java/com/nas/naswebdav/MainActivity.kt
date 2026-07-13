@@ -9,6 +9,7 @@ package com.nas.naswebdav
 import com.nas.naswebdav.ui.screens.MainMenuScreen
 
 import com.nas.naswebdav.ui.screens.BrowserScreen
+import com.nas.naswebdav.ui.screens.openExternalVideoPlayer
 
 import com.nas.naswebdav.ui.screens.LoginScreen
 
@@ -85,6 +86,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     // Lưu ViewModel cấp độ Activity để nhận Intent khi sống nền
 
+    /** Single source for all 7 Domain VMs — Phase 7b manual DI. */
+    private val domainProvider by lazy(LazyThreadSafetyMode.NONE) {
+        DomainViewModelProvider(WebDavRepository(WebDavManager, NasApplication.instance.database))
+    }
+
     private val viewModelFactory by lazy(LazyThreadSafetyMode.NONE) {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -92,7 +98,14 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     @Suppress("UNCHECKED_CAST")
                     return WebDavViewModel(
                         WebDavManager,
-                        WebDavRepository(WebDavManager, NasApplication.instance.database)
+                        domainProvider.repository,
+                        domainProvider.authSession,
+                        domainProvider.deviceManagement,
+                        domainProvider.smartTools,
+                        domainProvider.livestream,
+                        domainProvider.autoBackup,
+                        domainProvider.systemMonitor,
+                        domainProvider.fileBrowser,
                     ) as T
                 }
                 throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
@@ -235,78 +248,35 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         handleIncomingIntent(intent)
 
-        val dispatcher = okhttp3.Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 4 }
-
-        val customClient = NasApplication.instance.sharedHttpClient.newBuilder()
-
-            .dispatcher(dispatcher)
-
-            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-
-            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-
-            .build()
-
-
-
-        val imageLoaderInstance = coil.ImageLoader.Builder(applicationContext)
-
-            .okHttpClient(customClient)
-
-            .memoryCache {
-
-            // FIX BUG #1: Cache cố định theo MB thay vì % — tránh OOM trên thiết bị yếu
-
-                val maxHeap = Runtime.getRuntime().maxMemory()
-
-                val heapMb = maxHeap / (1024L * 1024L)
-
-                val cacheMb = when {
-
-                    heapMb < 128L -> 50L
-
-                    heapMb > 512L -> 200L
-
-                    else -> (heapMb * 15 / 100)  // 15% nhưng trong bounds an toàn
-
-                }
-
-                coil.memory.MemoryCache.Builder(applicationContext)
-
-                    .maxSizeBytes((cacheMb * 1024 * 1024).toInt())
-
-                    .build()
-
-            }
-
-            .diskCache {
-
-                coil.disk.DiskCache.Builder()
-
-                    .directory(cacheDir.resolve("image_cache"))
-
-                    .maxSizeBytes(800L * 1024 * 1024) // FIX IMAGE CACHE LEAK: Tăng lên 800MB (tối ưu cho thumbnail nhiều)
-
-                    .build()
-
-            }
-
-            .components { add(VideoFrameDecoder.Factory()) }
-
-            .build()
-
-        coil.Coil.setImageLoader(imageLoaderInstance)
+        // S8 FIX: KHÔNG setImageLoader ở MainActivity — để Coil tự lấy từ NasApplication.newImageLoader().
+        // Trước đây mỗi Activity recreate (rotate/dark mode) đều tạo OkHttpClient + disk cache mới,
+        // làm leak memory cache cũ. NasApplication.newImageLoader() đã cấu hình đủ (memory, disk, VideoFrameDecoder).
 
 
 
         setContent {
-            com.nas.naswebdav.ui.screens.NasTheme {
-                Surface(color = DarkSurface) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
+            // ═══ PHASE 7b: Wrap CompositionLocalProvider around NasTheme ═══
+            // The same Domain VM instances owned by `viewModel` are exposed via
+            // static CompositionLocals so individual screens can subscribe directly
+            // during Phase 7c UI migration without prop-drilling through every
+            // composable in the call chain.
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalAuthSessionVM provides domainProvider.authSession,
+                LocalFileBrowserVM provides domainProvider.fileBrowser,
+                LocalSystemMonitorVM provides domainProvider.systemMonitor,
+                LocalDeviceManagementVM provides domainProvider.deviceManagement,
+                LocalSmartToolsVM provides domainProvider.smartTools,
+                LocalLivestreamVM provides domainProvider.livestream,
+                LocalAutoBackupVM provides domainProvider.autoBackup,
+            ) {
+                com.nas.naswebdav.ui.screens.NasTheme {
+                    Surface(color = DarkSurface) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
 
-                        // Floating Screen Recording overlay (global)
-                        ScreenRecordFloatingOverlay()
+                            // Floating Screen Recording overlay (global)
+                            ScreenRecordFloatingOverlay()
+                        }
                     }
                 }
             }
@@ -708,12 +678,18 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 viewModel = viewModel,
 
-                onVideo = { url -> 
-
-                    mediaUrl = url
-
-                    navController.navigate("video") 
-
+                onVideo = { url ->
+                    val auth = viewModel.webDavManager.currentAuthState()
+                    openExternalVideoPlayer(
+                        context = mContext,
+                        url = url,
+                        user = auth.user,
+                        pass = auth.pass,
+                        onError = {
+                            mediaUrl = url
+                            navController.navigate("video")
+                        }
+                    )
                 },
 
                 onImage = { url -> 

@@ -82,6 +82,7 @@ fun SmartOrganizerScreen(
     onBack: () -> Unit
 ) {
     // ── STATE ──
+    // Reads via facade delegating getters → SmartToolsVM is source of truth (Phase 7a)
     val sourceUrl = viewModel.webDavManager.currentBaseUrl
     var selectedFilter by remember { mutableStateOf(OrganizerFilter.ALL) }
     val isScanning = viewModel.organizerScanning

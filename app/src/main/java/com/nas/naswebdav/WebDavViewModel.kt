@@ -365,42 +365,43 @@ internal fun recordLatency(url: String, ms: Long) {
     knownLatencyMs[host] = ms
 }
 
-class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRepository) : ViewModel() {
+class WebDavViewModel(
+    val webDavManager: WebDavManager,
+    val repository: WebDavRepository,
+    // ═══ PHASE 7b: Optional pre-built domain VMs (manual DI) ═══
+    // When provided by MainActivity's DomainViewModelProvider, the facade's
+    // `authSession`/`fileBrowser`/... properties reference the SAME instances
+    // that are exposed via CompositionLocals — preventing state drift between
+    // facade mirror getters and direct CompositionLocal reads.
+    injectedAuthSession: com.nas.naswebdav.auth.AuthSessionViewModel? = null,
+    injectedDeviceManagement: com.nas.naswebdav.device.DeviceManagementViewModel? = null,
+    injectedSmartTools: com.nas.naswebdav.smarttools.SmartToolsViewModel? = null,
+    injectedLivestream: com.nas.naswebdav.livestream.LivestreamViewModel? = null,
+    injectedAutoBackup: com.nas.naswebdav.backup.AutoBackupViewModel? = null,
+    injectedSystemMonitor: com.nas.naswebdav.monitor.SystemMonitorViewModel? = null,
+    injectedFileBrowser: com.nas.naswebdav.browser.FileBrowserViewModel? = null,
+) : ViewModel() {
 
-    // PHASE 1: AuthSessionViewModel — facade forward auth operations sang VM mới
-    val authSession: com.nas.naswebdav.auth.AuthSessionViewModel by lazy {
-        com.nas.naswebdav.auth.AuthSessionViewModel(repository)
-    }
+    val authSession: com.nas.naswebdav.auth.AuthSessionViewModel =
+        injectedAuthSession ?: com.nas.naswebdav.auth.AuthSessionViewModel(repository)
 
-    // PHASE 2: DeviceManagementVM — skeleton, UI migrates ở Phase 7g
-    val deviceManagement: com.nas.naswebdav.device.DeviceManagementViewModel by lazy {
-        com.nas.naswebdav.device.DeviceManagementViewModel(repository)
-    }
+    val deviceManagement: com.nas.naswebdav.device.DeviceManagementViewModel =
+        injectedDeviceManagement ?: com.nas.naswebdav.device.DeviceManagementViewModel(repository)
 
-    // PHASE 2: SmartToolsVM — skeleton, UI migrates ở Phase 7d
-    val smartTools: com.nas.naswebdav.smarttools.SmartToolsViewModel by lazy {
-        com.nas.naswebdav.smarttools.SmartToolsViewModel(repository)
-    }
+    val smartTools: com.nas.naswebdav.smarttools.SmartToolsViewModel =
+        injectedSmartTools ?: com.nas.naswebdav.smarttools.SmartToolsViewModel(repository)
 
-    // PHASE 3: LivestreamVM — skeleton, UI migrates ở Phase 7e
-    val livestream: com.nas.naswebdav.livestream.LivestreamViewModel by lazy {
-        com.nas.naswebdav.livestream.LivestreamViewModel(repository)
-    }
+    val livestream: com.nas.naswebdav.livestream.LivestreamViewModel =
+        injectedLivestream ?: com.nas.naswebdav.livestream.LivestreamViewModel(repository)
 
-    // PHASE 3: AutoBackupVM — skeleton, UI migrates ở Phase 7f
-    val autoBackup: com.nas.naswebdav.backup.AutoBackupViewModel by lazy {
-        com.nas.naswebdav.backup.AutoBackupViewModel(repository)
-    }
+    val autoBackup: com.nas.naswebdav.backup.AutoBackupViewModel =
+        injectedAutoBackup ?: com.nas.naswebdav.backup.AutoBackupViewModel(repository)
 
-    // PHASE 4: SystemMonitorVM — skeleton, UI migrates ở Phase 7c
-    val systemMonitor: com.nas.naswebdav.monitor.SystemMonitorViewModel by lazy {
-        com.nas.naswebdav.monitor.SystemMonitorViewModel(repository)
-    }
+    val systemMonitor: com.nas.naswebdav.monitor.SystemMonitorViewModel =
+        injectedSystemMonitor ?: com.nas.naswebdav.monitor.SystemMonitorViewModel(repository)
 
-    // PHASE 5: FileBrowserVM — skeleton, UI migrates ở Phase 7b (HIGHEST RISK)
-    val fileBrowser: com.nas.naswebdav.browser.FileBrowserViewModel by lazy {
-        com.nas.naswebdav.browser.FileBrowserViewModel(repository)
-    }
+    val fileBrowser: com.nas.naswebdav.browser.FileBrowserViewModel =
+        injectedFileBrowser ?: com.nas.naswebdav.browser.FileBrowserViewModel(repository)
 
 
     // CHỐNG RÒ RỈ THREAD VÀ BỘ NHỚ: Dùng chung một OkHttpClient duy nhất cho toàn bộ các truy vấn Local API

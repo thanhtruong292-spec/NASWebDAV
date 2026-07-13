@@ -66,6 +66,7 @@ private val GpTextSecondary = Color(0xFF8892B0)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
+    // GuestPass state remains in facade (no dedicated domain VM yet — unclassified)
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     var durationMinutes by remember { mutableIntStateOf(AppConfig.GUEST_PASS_DEFAULT_MINUTES) }
     var copiedField by remember { mutableStateOf("") }

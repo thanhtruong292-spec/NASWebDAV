@@ -81,14 +81,20 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 @Composable
 fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
+    // ═══ PHASE 7c: Read auth state from Domain VM ═══
+    // connect/cancelLogin now route through AuthSessionViewModel (single owner).
+    // Shared state (isLoading, errorMessage, connectionStatus) comes from SharedStateHolder
+    // which AuthSessionViewModel writes to. Reading here via authVM getters keeps
+    // LoginScreen reactive to auth state without touching the facade's mutable vars.
+    val authVM = LocalAuthSessionVM.current
     val density = LocalDensity.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
     var historyIps by remember {
         mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
     }
-    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
-    var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
-    var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
+    var ipInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(historyIps.firstOrNull() ?: "") }
+    var user by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
+    var pass by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SecurePrefsHelper.getPass(context)) }
     var expanded by remember { mutableStateOf(false) }
     var ipFieldWidthPx by remember { mutableIntStateOf(0) }
 
@@ -217,23 +223,23 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(14.dp))
         val interactionSource = remember { MutableInteractionSource() }
         Button(onClick = {
-            if (viewModel.isLoading) {
-                viewModel.cancelLogin()
+            if (authVM.isLoading) {
+                authVM.cancelLogin()
             } else {
                 val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
                 val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
                 val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
                 val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
                 historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
-                viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
+                authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
                     viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
                 }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
             }
-        }, enabled = viewModel.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
+        }, enabled = authVM.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
             modifier = Modifier.fillMaxWidth().height(50.dp).background(brush = Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), shape = RoundedCornerShape(24.dp))
         ) {
-            if (viewModel.isLoading) { Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Dừng đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+            if (authVM.isLoading) { Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Dừng đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             else Text("Kết nối NAS", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
 
@@ -266,7 +272,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                                 val urlList = SecurePrefsHelper.getUrlList(context)
                                 val u = SecurePrefsHelper.getUser(context)
                                 val p = SecurePrefsHelper.getPass(context)
-                                viewModel.connect(urlList, u, p, onSuccess = {
+                                authVM.connect(urlList, u, p, onSuccess = {
                                     viewModel.scheduleIdleDuplicateScan(context)
                                     viewModel.scheduleIdleSpeedTest(context)
                                     viewModel.scheduleFingerprintWorker(context)
@@ -290,7 +296,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             }
             // Auto-trigger 1 lan khi screen vua compose (chi khi user chua login va da co credentials)
             LaunchedEffect(Unit) {
-                if (!autoTriggered && !viewModel.isLoading) {
+                if (!autoTriggered && !authVM.isLoading) {
                     autoTriggered = true
                     kotlinx.coroutines.delay(300)  // cho UI settle
                     triggerBiometric()
