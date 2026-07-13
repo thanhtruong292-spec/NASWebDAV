@@ -372,6 +372,16 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         com.nas.naswebdav.auth.AuthSessionViewModel(repository)
     }
 
+    // PHASE 2: DeviceManagementVM — skeleton, UI migrates ở Phase 7g
+    val deviceManagement: com.nas.naswebdav.device.DeviceManagementViewModel by lazy {
+        com.nas.naswebdav.device.DeviceManagementViewModel(repository)
+    }
+
+    // PHASE 2: SmartToolsVM — skeleton, UI migrates ở Phase 7d
+    val smartTools: com.nas.naswebdav.smarttools.SmartToolsViewModel by lazy {
+        com.nas.naswebdav.smarttools.SmartToolsViewModel(repository)
+    }
+
 
     // CHỐNG RÒ RỈ THREAD VÀ BỘ NHỚ: Dùng chung một OkHttpClient duy nhất cho toàn bộ các truy vấn Local API
     internal val localApiClient: okhttp3.OkHttpClient by lazy {
