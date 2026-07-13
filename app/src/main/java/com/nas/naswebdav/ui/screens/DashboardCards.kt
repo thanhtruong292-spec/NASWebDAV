@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import coil.compose.AsyncImage
 import com.nas.naswebdav.NasFile
+import com.nas.naswebdav.WebDavManager
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
@@ -78,7 +79,7 @@ internal fun MainDashboardHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Đèn tín hiệu trạng thái (Pulse animation)
-            val currentStatus = viewModel.systemStatus.status
+            val currentStatus = systemVM.systemStatus.status
             val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
             val statusColor = when {
                 currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
@@ -106,21 +107,21 @@ internal fun MainDashboardHeader(
                         )
                     }
                     Spacer(Modifier.width(AppSpacing.SM))
-                    val isRealtimeStale = viewModel.lastStatusRefreshAt <= 0L || realtimeNow - viewModel.lastStatusRefreshAt > 10_000L
+                    val isRealtimeStale = systemVM.lastStatusRefreshAt <= 0L || realtimeNow - systemVM.lastStatusRefreshAt > 10_000L
                     val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
                     Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
                     Spacer(Modifier.width(AppSpacing.XS))
                     Text(
-                        realtimeFreshnessLabel(viewModel.lastStatusRefreshAt, realtimeNow),
+                        realtimeFreshnessLabel(systemVM.lastStatusRefreshAt, realtimeNow),
                         style = AppTypography.BodySmall.copy(color = realtimeColor, fontWeight = FontWeight.SemiBold)
                     )
-                    viewModel.apiLatencyMs?.let { latency ->
+                    systemVM.apiLatencyMs?.let { latency ->
                         Spacer(Modifier.width(AppSpacing.SM))
                         Text("API ${latency}ms", style = AppTypography.BodySmall.copy(color = TextSecondary))
                     }
-                    if (viewModel.apiFailureCount > 0) {
+                    if (systemVM.apiFailureCount > 0) {
                         Spacer(Modifier.width(AppSpacing.SM))
-                        Text("${viewModel.apiFailureCount} lỗi", style = AppTypography.BodySmall.copy(color = AccentRed, fontWeight = FontWeight.Bold))
+                        Text("${systemVM.apiFailureCount} lỗi", style = AppTypography.BodySmall.copy(color = AccentRed, fontWeight = FontWeight.Bold))
                     }
                 }
                 
@@ -146,7 +147,7 @@ internal fun MainDashboardHeader(
                             style = AppTypography.BodySmall.copy(fontWeight = FontWeight.Bold, color = if (viewModel.isOnLan) AccentGreen else AccentCyan)
                         )
                     }
-                    val ut = viewModel.systemStatus.uptime
+                    val ut = systemVM.systemStatus.uptime
                     if (ut.isNotBlank() && ut != "--") {
                         val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
                         Spacer(Modifier.width(AppSpacing.SM))
@@ -198,6 +199,8 @@ internal fun DashboardSystemOverviewCard(
     onOpenNewDiskProfile: () -> Unit,
     onOpenSmartDetails: () -> Unit,
 ) {
+            val systemVM = LocalSystemMonitorVM.current
+            val deviceVM = LocalDeviceManagementVM.current
             // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -209,13 +212,13 @@ internal fun DashboardSystemOverviewCard(
                     Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
                         letterSpacing = PanelTitleLetterSpacing)
                     Spacer(Modifier.weight(1f))
-                    PanelFreshnessTag(viewModel.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
+                    PanelFreshnessTag(systemVM.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
                 }
                 Spacer(Modifier.height(AppSpacing.SM - AppSpacing.XS))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(
-                        title = "CPU", value = viewModel.systemStatus.cpu,
-                        subValue = viewModel.systemStatus.cpuTemp,
+                        title = "CPU", value = systemVM.systemStatus.cpu,
+                        subValue = systemVM.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
                         gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f)),
                         modifier = Modifier.weight(1f),
@@ -224,18 +227,18 @@ internal fun DashboardSystemOverviewCard(
                         }
                     )
                     GaugeCard(
-                        title = "RAM", value = viewModel.systemStatus.ram, subValue = "${viewModel.systemStatus.ramPercent}%",
+                        title = "RAM", value = systemVM.systemStatus.ram, subValue = "${systemVM.systemStatus.ramPercent}%",
                         icon = Icons.Default.DeveloperBoard,
                         gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f)),
                         modifier = Modifier.weight(1f),
-                        overridePercent = viewModel.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
+                        overridePercent = systemVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
                         onClick = {
                             onShowProcessList("mem")
                         }
                     )
-                    
-                    val hddDisk = viewModel.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
-                        ?: viewModel.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
+
+                    val hddDisk = systemVM.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
+                        ?: systemVM.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
                     if (hddDisk != null) {
                         val fmtTotal = hddDisk.total.let {
                             val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
@@ -251,13 +254,13 @@ internal fun DashboardSystemOverviewCard(
                             onClick = onOpenNewDiskProfile
                         )
                     } else Spacer(Modifier.weight(1f))
-                    
-                    val smartStatusText = viewModel.smartInfo.status.uppercase().trim()
-                    
+
+                    val smartStatusText = deviceVM.smartInfo.status.uppercase().trim()
+
                     val isSmartOk = smartStatusText.contains("PASSED") || smartStatusText == "OK"
                     val isSmartFailed = smartStatusText.contains("FAILED")
                     val isSmartEmmc = smartStatusText.contains("EMMC")
-                    
+
                     val smartColors = when {
                         isSmartOk -> listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
                         isSmartEmmc -> listOf(AccentBlue, AccentBlue.copy(alpha = 0.8f)) // Nhận diện eMMC màu Xanh Dương
@@ -274,7 +277,7 @@ internal fun DashboardSystemOverviewCard(
                         title = "S.M.A.R.T",
                         value = smartStatusText,
                         // Nhiệt độ HDD THỰC TẾ (live, refresh mỗi poll) thay vì nhiệt lúc quét SMART (kẹt cố định).
-                        subValue = viewModel.systemStatus.temp.replace("°C", "°").replace("--", ""),
+                        subValue = systemVM.systemStatus.temp.replace("°C", "°").replace("--", ""),
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
                         modifier = Modifier.weight(1f),
@@ -286,9 +289,9 @@ internal fun DashboardSystemOverviewCard(
                             Spacer(Modifier.height(AppSpacing.SM - AppSpacing.XS))
                             Row(Modifier.fillMaxWidth().background(DarkCard, AppShapes.Badge).padding(AppSpacing.SM - AppSpacing.XS), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val fanStatusStr = viewModel.systemStatus.fanStatus
+                                    val fanStatusStr = systemVM.systemStatus.fanStatus
                                     val statusPercent = Regex("""(\d+)\s*%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val rpmFromApi = viewModel.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val rpmFromApi = systemVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
                                     val realPercent = statusPercent ?: percentFromRpm ?: 0
 
@@ -310,8 +313,8 @@ internal fun DashboardSystemOverviewCard(
                                 var showFanSettings by remember { mutableStateOf(false) }
                                 Row(Modifier.clip(AppShapes.Badge).background(Color.Black)) {
                                     val modes = listOf("custom" to "Tự động", "on" to "Bật", "off" to "Tắt")
-                                    val currentMode = viewModel.systemStatus.fanMode
-                                    val isFanControlLocked = viewModel.isFanModeUpdating
+                                    val currentMode = systemVM.systemStatus.fanMode
+                                    val isFanControlLocked = deviceVM.isFanModeUpdating
                                     modes.forEach { (m, label) ->
                                         val active = m == currentMode
                                         Box(
@@ -332,14 +335,14 @@ internal fun DashboardSystemOverviewCard(
                                         }
                                     }
                                 }
-                                
+
                                 if (showFanSettings) {
-                                    var onTemp by remember { mutableStateOf(viewModel.systemStatus.fanOnTemp.toInt().toString()) }
-                                    var offTemp by remember { mutableStateOf(viewModel.systemStatus.fanOffTemp.toInt().toString()) }
+                                    var onTemp by remember { mutableStateOf(systemVM.systemStatus.fanOnTemp.toInt().toString()) }
+                                    var offTemp by remember { mutableStateOf(systemVM.systemStatus.fanOffTemp.toInt().toString()) }
                                     androidx.compose.material3.AlertDialog(
                                         onDismissRequest = { showFanSettings = false },
                                         title = { Text("Độ trễ nhiệt (Hysteresis)", style = AppTypography.TitleLarge.copy(color = TextPrimary)) },
-                                        text = { 
+                                        text = {
                                             Column {
                                                 Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", style = AppTypography.BodyLarge.copy(color = TextSecondary))
                                                 Spacer(Modifier.height(AppSpacing.MD))
@@ -349,12 +352,12 @@ internal fun DashboardSystemOverviewCard(
                                             }
                                         },
                                         confirmButton = {
-                                            val isFanControlLocked = viewModel.isFanModeUpdating
+                                            val isFanControlLocked = deviceVM.isFanModeUpdating
                                             Button(
                                                 enabled = !isFanControlLocked,
-                                                onClick = { 
+                                                onClick = {
                                                     viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
-                                                    showFanSettings = false 
+                                                    showFanSettings = false
                                                 }
                                             ) { Text("Lưu & Áp dụng") }
                                         },
@@ -373,6 +376,8 @@ internal fun DashboardSystemOverviewCard(
 @Composable
 internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
+        val deviceVM = LocalDeviceManagementVM.current
+        val systemVM = LocalSystemMonitorVM.current
         var pendingServiceName by remember { mutableStateOf("") }
         var pendingServiceTitle by remember { mutableStateOf("") }
         var pendingServiceEnable by remember { mutableStateOf(false) }
@@ -399,7 +404,7 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                 }
             )
         }
-        if (viewModel.omvOverview.services.isNotEmpty() || viewModel.omvOverview.disks.isNotEmpty()) {
+        if (deviceVM.omvOverview.services.isNotEmpty() || deviceVM.omvOverview.disks.isNotEmpty()) {
             // Mo doc quyen: panel mo dong bo voi ExclusivePanelState — khi mo
             // panel khac (Tasks, Chart) thi panel nay tu cup.
             val omvExpanded = ExclusivePanelState.current.value == "omv"
@@ -422,11 +427,11 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                             Icon(Icons.Default.Dashboard, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(AppSpacing.SM - AppSpacing.XS))
                             Text("OMV", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing)
-                            if (viewModel.omvOverview.omvVersion.isNotBlank()) {
+                            if (deviceVM.omvOverview.omvVersion.isNotBlank()) {
                                 Spacer(Modifier.width(AppSpacing.SM - AppSpacing.XS))
-                                Text(viewModel.omvOverview.omvVersion, style = AppTypography.BodySmall.copy(color = TextSecondary))
+                                Text(deviceVM.omvOverview.omvVersion, style = AppTypography.BodySmall.copy(color = TextSecondary))
                             }
-                            val ping = viewModel.networkPingMs
+                            val ping = systemVM.networkPingMs
                             if (ping != null) {
                                 Spacer(Modifier.width(AppSpacing.SM))
                                 val pingColor = when {
@@ -441,9 +446,9 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Tải xuống / Tải lên inline ngay header
-                            Text("↓ ${viewModel.systemStatus.netRx}", style = AppTypography.LabelMedium.copy(color = AccentBlue, fontWeight = FontWeight.Bold))
+                            Text("↓ ${systemVM.systemStatus.netRx}", style = AppTypography.LabelMedium.copy(color = AccentBlue, fontWeight = FontWeight.Bold))
                             Spacer(Modifier.width(AppSpacing.SM))
-                            Text("↑ ${viewModel.systemStatus.netTx}", style = AppTypography.LabelMedium.copy(color = AccentPurple, fontWeight = FontWeight.Bold))
+                            Text("↑ ${systemVM.systemStatus.netTx}", style = AppTypography.LabelMedium.copy(color = AccentPurple, fontWeight = FontWeight.Bold))
                             Spacer(Modifier.width(AppSpacing.XS))
                             Icon(
                                 if (omvExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -460,12 +465,12 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                             Spacer(Modifier.height(AppSpacing.SM - AppSpacing.XS))
 
                             // Services Row
-                            if (viewModel.omvOverview.services.isNotEmpty()) {
+                            if (deviceVM.omvOverview.services.isNotEmpty()) {
                                 Row(
                                     Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    viewModel.omvOverview.services.forEach { svc ->
+                                    deviceVM.omvOverview.services.forEach { svc ->
                                         val svcActive = svc.effectiveEnabled
                                         val svcColor = if (svcActive) AccentGreen else TextSecondary.copy(alpha = 0.45f)
                                         val svcIcon = when (svc.name) {
@@ -496,8 +501,8 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                             }
 
                             // Network + Hardware info
-                            val net = viewModel.omvOverview.network.firstOrNull()
-                            val hdd = selectNasTargetDiskFromDiskProfileScreen(viewModel.omvOverview.disks)
+                            val net = deviceVM.omvOverview.network.firstOrNull()
+                            val hdd = selectNasTargetDiskFromDiskProfileScreen(deviceVM.omvOverview.disks)
                             if (net != null || hdd != null) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     if (net != null) {
@@ -533,12 +538,13 @@ internal fun TorrentActivityCard(
     onGlobalSearch: (String) -> Unit,
 ) {
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
-        val downloadingTorrents = viewModel.systemStatus.torrents.filter { t ->
+        val systemVM = LocalSystemMonitorVM.current
+        val downloadingTorrents = systemVM.systemStatus.torrents.filter { t ->
             val s = t.state
             // Active or paused download - NOT yet completed
             s.contains("DL", ignoreCase = false) || s == "downloading" || s == "stalledDL" || s == "forcedDL" || s == "metaDL" || s.isEmpty()
         }
-        val completedTorrents = viewModel.systemStatus.torrents.filter { t ->
+        val completedTorrents = systemVM.systemStatus.torrents.filter { t ->
             val s = t.state
             // stoppedUP, uploading, pausedUP, forcedUP = seeding after completion
             s.contains("UP", ignoreCase = false) || t.progress >= 1f
@@ -631,7 +637,7 @@ internal fun TorrentActivityCard(
                                             onTap = {
                                                 if (torrent.savePath.isNotEmpty()) {
                                                     // /downloads/* on NAS is symlinked as Downloads/ in WebDAV root
-                                                    val base = viewModel.webDavManager.currentBaseUrl
+                                                    val base = WebDavManager.currentBaseUrl
                                                     val linuxPath = torrent.savePath.trimEnd('/')
                                                     // Replace /downloads prefix with WebDAV symlink folder name "Downloads"
                                                     val webdavRel = if (linuxPath.startsWith("/downloads", ignoreCase = true)) {
