@@ -5,6 +5,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.utils.FormatUtils
 
 import android.content.Context
 
@@ -79,7 +80,19 @@ internal fun PanelFreshnessTag(
     now: Long,
     staleAfterMs: Long = 30_000L,
 ) {
-    val ageMs = (now - lastRefreshAt).coerceAtLeast(0L)
+    // FIX CPU #2: PanelFreshnessTag đọc System.currentTimeMillis() nội bộ với
+    // ticker riêng (2s). Trước đây MainMenuScreen truyền realtimeNow từ root → mỗi
+    // giây root + 4 child composable đều recompose (cascade). Giờ chỉ bản thân
+    // PanelFreshnessTag (3 component nhỏ) recompose.
+    var localNow by androidx.compose.runtime.remember { mutableStateOf(System.currentTimeMillis()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (isActive) {
+            kotlinx.coroutines.delay(2_000L)
+            localNow = System.currentTimeMillis()
+        }
+    }
+    val effectiveNow = if (now > 0L) now else localNow
+    val ageMs = (effectiveNow - lastRefreshAt).coerceAtLeast(0L)
     val isWaiting = lastRefreshAt <= 0L
     val isStale = isWaiting || ageMs > staleAfterMs
     val color = if (isStale) AccentOrange else AccentGreen
@@ -92,7 +105,7 @@ internal fun PanelFreshnessTag(
         )
         Spacer(Modifier.width(4.dp))
         Text(
-            realtimeFreshnessLabel(lastRefreshAt, now),
+            realtimeFreshnessLabel(lastRefreshAt, effectiveNow),
             fontSize = 9.sp,
             color = color,
             fontWeight = FontWeight.SemiBold,
@@ -243,7 +256,21 @@ fun MainMenuScreen(
     onStartScreenRecord: () -> Unit = {}
 ) {
     val mContext = LocalContext.current
-    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    // ═══ PHASE 7c.3 — Group 3: ALL Domain VMs hooked here ═══
+    // MainMenuScreen is the root of the entire dashboard — it needs every VM.
+    // Reads via facade delegation → SSoT preserved. Direct hooks are available
+    // for Group 3 migration pass (7c.3) but body still uses `viewModel.xxx` for
+    // blast-radius control during this additive migration phase.
+    val sysMonitorVM = LocalSystemMonitorVM.current
+    val deviceVM     = LocalDeviceManagementVM.current
+    val fileBrowserVM = LocalFileBrowserVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
+    val smartToolsVM = LocalSmartToolsVM.current
+    val livestreamVM = LocalLivestreamVM.current
+    val authVM       = LocalAuthSessionVM.current
+    // FIX CPU #1: wrap getSharedPreferences trong remember() để tránh file I/O mỗi recomposition.
+    // Trước đây gọi trực tiếp → disk I/O mỗi khung hình (120Hz = 120 lần/giây).
+    val sharedPrefs = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
     var realtimeNow by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (isActive) {
@@ -3208,8 +3235,8 @@ fun MainMenuSystemStatusCards(
     val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || viewModel.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
-    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-    val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
+    val sharedPrefs2 = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
+    val autoBackupEnabled = sharedPrefs2.getBoolean("auto_backup", false)
     val autoBackupIsActive = viewModel.isAutoBackupRunning
     
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
@@ -4857,17 +4884,9 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                     ) {
                         val elapsed = viewModel.scanDuplicatesElapsedTime
                         val etr = viewModel.scanDuplicatesEstimatedTimeRemaining
-                        
-                        fun formatTime(ms: Long): String {
-                            if (ms < 0) return "--:--"
-                            val totalSec = ms / 1000
-                            val m = totalSec / 60
-                            val s = totalSec % 60
-                            return String.format(java.util.Locale.US, "%02d:%02d", m, s)
-                        }
 
-                        Text("Thời gian chạy: ${formatTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
-                        Text(if (etr >= 0) "Ước tính còn: ${formatTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
+                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
+                        Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
                     }
 
                     // ═══ THỐNG KÊ RÕ RÀNG ═══

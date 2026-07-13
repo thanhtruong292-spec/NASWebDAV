@@ -5,6 +5,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.utils.FormatUtils
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -63,6 +64,7 @@ fun ProcessListBottomSheet(
     sortBy: String,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.3: ProcessList state (systemProcesses, isLoadingProcesses) → SystemMonitorVM (Phase 7a).
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
     androidx.compose.runtime.LaunchedEffect(sortBy) {
@@ -311,6 +313,7 @@ fun SmbBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.3: SMB state (isSmbEnabled, isLoadingSmb) → DeviceMgmtVM (Phase 7a).
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
@@ -444,6 +447,8 @@ fun SmbBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
+    // Phase 7c.3: Duplicate scan state (isScanningDuplicates, scanDuplicates*, duplicateFilesList, selectedDuplicates)
+    // → SmartToolsVM (Phase 7a delegation). Direct LocalSmartToolsVM.current available.
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (viewModel.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -638,17 +643,9 @@ fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context:
                     ) {
                         val elapsed = viewModel.scanDuplicatesElapsedTime
                         val etr = viewModel.scanDuplicatesEstimatedTimeRemaining
-                        
-                        fun formatTime(ms: Long): String {
-                            if (ms < 0) return "--:--"
-                            val totalSec = ms / 1000
-                            val m = totalSec / 60
-                            val s = totalSec % 60
-                            return String.format(java.util.Locale.US, "%02d:%02d", m, s)
-                        }
 
-                        Text("Thời gian chạy: ${formatTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
-                        Text(if (etr >= 0) "Ước tính còn: ${formatTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
+                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
+                        Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
                     }
 
                     // ═══ THỐNG KÊ RÕ RÀNG ═══

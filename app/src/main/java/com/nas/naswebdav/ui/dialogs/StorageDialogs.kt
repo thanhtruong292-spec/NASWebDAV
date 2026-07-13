@@ -60,6 +60,8 @@ fun DiskHealthDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.3: diskHealthCurrent/History, isFetchingDiskHealth, lastDiskHealthRefreshAt,
+    // nasInsights owned by SystemMonitorVM (Phase 7a delegation).
     LaunchedEffect(Unit) {
         viewModel.fetchDiskHealth(minIntervalMs = 0L)
         viewModel.fetchNasInsights(minIntervalMs = 0L)

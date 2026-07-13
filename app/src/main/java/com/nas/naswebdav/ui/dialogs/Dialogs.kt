@@ -4,6 +4,22 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
+/**
+ * Dialogs.kt — Phase 7c.3 file-level provenance.
+ *
+ * All 30+ dialog composables in this file read state via `viewModel.xxx` which
+ * delegates to the appropriate Domain VM (Phase 7a):
+ *   - AutoBackupDialog / UsbImportDialog / SleepScheduleDialog → AutoBackupVM
+ *   - DuplicateConfigDialog / FilesDialog / OrganizeLegacyDialog / ConfigDialog → SmartToolsVM
+ *   - DiskHealthDialog / NasConfigBackupDialog / NasInsightsDialog / FilePropertiesDialog → SystemMonitorVM
+ *   - LanWhitelistDialog / DockerDialog / SmartDiskDialog / BandwidthDialog → DeviceMgmtVM
+ *   - LivestreamRecordDialog → LivestreamVM
+ *   - SystemLogDialog → DeviceMgmtVM (systemLogsList)
+ *
+ * Direct migration to LocalXxxVM.current will happen in the Group 3 cleanup pass.
+ * For now, additive annotation only — minimal blast radius for the largest dialog file.
+ */
+
 import android.content.Context
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

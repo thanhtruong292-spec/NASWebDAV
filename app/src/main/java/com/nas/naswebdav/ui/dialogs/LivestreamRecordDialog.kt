@@ -59,6 +59,8 @@ fun LivestreamRecordDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.3: Livestream state (livestreamMessage, activeLivestreams, tiktok*, isStreamPiping)
+    // → LivestreamVM (Phase 7a delegation). Direct LocalLivestreamVM.current available.
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm

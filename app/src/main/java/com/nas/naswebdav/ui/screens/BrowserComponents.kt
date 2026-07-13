@@ -1,4 +1,4 @@
-﻿@file:Suppress("DEPRECATION")
+@file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
@@ -74,6 +74,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 import coil.compose.AsyncImage
+import coil.decode.VideoFrameDecoder
+import coil.imageLoader
 import coil.request.ImageRequest
 
 import okhttp3.Credentials
@@ -86,6 +88,11 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.lazy.items
 
 // ============ Browser components: grid cell, cached thumbnail, external player (tách từ BrowserScreen.kt) ============
+// FIX 2026-07-13: ThumbState giờ exposed ra ngoài để FileItemGridCell đồng bộ icon:
+//   - SUCCESS → play icon cho video (thumb đã load)
+//   - LOADING/ERROR → ẩn play icon, chỉ show icon phù hợp
+//   - ERROR → chỉ show error badge, không chồng chất icon
+// Video thumbnail: bỏ allowHardware(true), thêm VideoFrameDecoder factory
 
 // --- FILE ITEM GRID CELL ---
 @OptIn(ExperimentalFoundationApi::class)
@@ -100,6 +107,7 @@ fun FileItemGridCell(
     onClick: () -> Unit,
     onVideo: (String) -> Unit
 ) {
+    // Phase 7c.3: fileList + thumbnail state owned by FileBrowserVM (Phase 7a delegation).
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
@@ -328,11 +336,16 @@ fun FileItemGridCell(
                 )
         ) {
             if (isMedia) {
-                // MEDIA: Thumbnail edge-to-edge
-                WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
+                // FIX 2026-07-13: thumbState sync để icon play chỉ hiện khi thumbnail load thành công
+                var thumbState by remember { mutableStateOf<ThumbState?>(null) }
+                WebDavCachedThumbnail(
+                    url = file.path, auth = auth, isVideo = isVideo,
+                    modifier = Modifier.fillMaxSize(), viewModel = viewModel,
+                    onStateChange = { thumbState = it }
+                )
 
-                // Badge video play icon
-                if (isVideo) {
+                // Badge video play icon — CHỈ hiện khi thumb load thành công
+                if (isVideo && thumbState == ThumbState.SUCCESS) {
                     Icon(
                         Icons.Default.PlayCircle,
                         contentDescription = null,
@@ -497,14 +510,19 @@ fun FileItemGridCell(
 }
 // --- THUMBNAIL TỐI ƯU HOÁ CHO TẤT CẢ FILE MEDIA: LƯU VÀO DATABASE VĨNH VIỄN ---
 // ════════════════════════════════════════════════════════════════════════════
-// THUMBNAIL LOADER — Phone-only, NAS-free architecture
+// THUMBNAIL LOADER — Multi-strategy: local cache → NAS /api/thumb → Coil client-side
 // ════════════════════════════════════════════════════════════════════════════
-// Nguyên tắc: NAS chỉ là storage, phone tự xử lý thumbnail
-// - Coil manages ALL caching (memory LRU + disk) — không cần Room DB
-// - Video: Coil VideoFrameDecoder (MediaCodec, client-side)
-// - Ảnh: Coil downsampling trực tiếp từ WebDAV URL
-// - Không gọi NAS `/api/thumb` — NAS chỉ serve raw bytes
-// - File lỗi: badge đỏ rõ ràng
+// Strategy 1: local file cache (persistent_thumbnails dir + Room thumbnail_cache)
+// Strategy 2: NAS /api/thumb (server-side generation — fast on NAS hardware)
+// Strategy 3: Coil client-side (VideoFrameDecoder for video, downsampling for images)
+// Fallback: error badge
+// FIX 2026-07-13: khôi phục 3-strategy bị mất trong refactor (bản cũ hoạt động tốt)
+
+private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(6)
+
+private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_VIDEO, CLIENT_IMAGE, ERROR }
+
+enum class ThumbState { LOADING, SUCCESS, ERROR }
 
 @Composable
 fun WebDavCachedThumbnail(
@@ -512,51 +530,133 @@ fun WebDavCachedThumbnail(
     auth: String,
     isVideo: Boolean,
     modifier: Modifier,
-    viewModel: WebDavViewModel
+    viewModel: WebDavViewModel,
+    onStateChange: (ThumbState) -> Unit = {}
 ) {
     val context = LocalContext.current
-    var loadState by remember(url, auth) { mutableStateOf<ThumbState>(ThumbState.LOADING) }
-    var retryKey by remember(url, auth) { mutableStateOf(0) }
+    var strategy by remember(url, auth, isVideo) { mutableStateOf<ThumbStrategy>(ThumbStrategy.LOADING) }
+    var retryKey by remember(url, auth, isVideo) { mutableStateOf(0) }
+    var localThumbPath by remember(url, auth, isVideo) { mutableStateOf<String?>(null) }
 
-    // Coil memory + disk cache handles everything — no Room DB, no NAS API
-    val imageRequest = coil.request.ImageRequest.Builder(context)
-        .data(url)
-        .addHeader("Authorization", auth)
-        .crossfade(true)
-        .size(coil.size.Size(300, 300))
-        .allowHardware(true)
-        .build()
+    val thumbnailDao = remember { com.nas.naswebdav.NasApplication.instance.database.thumbnailDao() }
 
-    if (loadState != ThumbState.ERROR) {
-        AsyncImage(
-            model = imageRequest,
-            contentDescription = null,
-            modifier = modifier,
-            contentScale = ContentScale.Crop,
-            onSuccess = { loadState = ThumbState.SUCCESS },
-            onError = { loadState = ThumbState.ERROR }
-        )
+    LaunchedEffect(url, auth, isVideo, retryKey) {
+        strategy = ThumbStrategy.LOADING
+        withContext(Dispatchers.IO) {
+            try {
+                thumbnailSemaphore.withPermit {
+                    // ── Strategy 1: Check local cache ─────────────────────
+                    val cached = thumbnailDao.getThumbnail(url)
+                    if (cached != null) {
+                        val file = java.io.File(cached.localFilePath)
+                        if (file.exists() && file.length() > 0) {
+                            localThumbPath = file.absolutePath
+                            strategy = ThumbStrategy.LOCAL
+                            return@withPermit
+                        }
+                        thumbnailDao.deleteThumbnail(url)
+                    }
+
+                    val safeHash = Integer.toHexString(url.hashCode())
+                    val thumbDir = context.getDir("persistent_thumbnails", android.content.Context.MODE_PRIVATE)
+                    val thumbFile = java.io.File(thumbDir, "thumb_$safeHash.jpg")
+
+                    if (thumbFile.exists() && thumbFile.length() > 0) {
+                        localThumbPath = thumbFile.absolutePath
+                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
+                        strategy = ThumbStrategy.LOCAL
+                        return@withPermit
+                    }
+
+                    // ── Strategy 2: NAS backend /api/thumb (server-side) ──
+                    val downloaded = viewModel.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
+                    if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
+                        localThumbPath = thumbFile.absolutePath
+                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
+                        strategy = ThumbStrategy.LOCAL
+                        return@withPermit
+                    }
+
+                    // ── Strategy 3: Client-side fallback ─────────────────
+                    strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
+                }
+            } catch (e: Exception) {
+                strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
+            }
+        }
     }
 
-    if (loadState == ThumbState.ERROR) {
-        Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.height(2.dp))
-                // Red error badge
-                Box(
-                    modifier = Modifier
-                        .background(AccentRed, AppShapes.Badge)
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                ) {
-                    Text("!", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+    // Sync state to parent for icon overlay
+    val mappedState = when (strategy) {
+        ThumbStrategy.LOADING -> ThumbState.LOADING
+        ThumbStrategy.LOCAL, ThumbStrategy.CLIENT_VIDEO, ThumbStrategy.CLIENT_IMAGE -> ThumbState.SUCCESS
+        ThumbStrategy.ERROR -> ThumbState.ERROR
+    }
+    LaunchedEffect(mappedState) { onStateChange(mappedState) }
+
+    // ── Render based on strategy ──────────────────────────────────────────
+    when (strategy) {
+        ThumbStrategy.LOADING -> {
+            Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = AccentCyan,
+                    strokeWidth = 2.dp
+                )
+            }
+        }
+        ThumbStrategy.LOCAL -> {
+            AsyncImage(
+                model = coil.request.ImageRequest.Builder(LocalContext.current)
+                    .data(java.io.File(localThumbPath!!))
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
+            )
+        }
+        ThumbStrategy.CLIENT_VIDEO -> {
+            // Coil VideoFrameDecoder: trích frame video trực tiếp trên Android
+            // Dùng ImageLoader đã được config với VideoFrameDecoder
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(url)
+                    .addHeader("Authorization", auth)
+                    .crossfade(true)
+                    .size(coil.size.Size(300, 300))
+                    .build(),
+                imageLoader = LocalContext.current.imageLoader,
+                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
+            )
+        }
+        ThumbStrategy.CLIENT_IMAGE -> {
+            AsyncImage(
+                model = coil.request.ImageRequest.Builder(LocalContext.current)
+                    .data(url)
+                    .addHeader("Authorization", auth)
+                    .crossfade(true)
+                    .size(coil.size.Size(300, 300))
+                    .allowHardware(true)
+                    .build(),
+                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
+            )
+        }
+        ThumbStrategy.ERROR -> {
+            Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.height(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(AccentRed, AppShapes.Badge)
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text("!", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
     }
 }
-
-internal enum class ThumbState { LOADING, SUCCESS, ERROR }
 
 fun openExternalVideoPlayer(
     context: android.content.Context,
@@ -596,12 +696,23 @@ fun openExternalVideoPlayer(
 
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
             setDataAndType(android.net.Uri.parse(videoUrl), "video/*")
+            setPackage("org.videolan.vlc")
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        val chooser = android.content.Intent.createChooser(intent, "Chọn trình phát video (VLC, MX Player...)")
-        chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            val chooser = android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(android.net.Uri.parse(videoUrl), "video/*")
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+                "Chọn trình phát video"
+            )
+            chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        }
     } catch (e: Exception) {
         android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
         onError()

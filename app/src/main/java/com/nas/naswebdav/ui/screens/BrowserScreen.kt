@@ -142,6 +142,9 @@ fun BrowserScreen(
     onLogout: () -> Unit,
     onBackToMenu: () -> Unit // Thêm tham số này
 ) {
+    // ═══ PHASE 7c.3 — Group 3: FileBrowserVM hook at root composable ═══
+    // BrowserScreen owns file-list state. Reads via facade delegation → FileBrowserVM SSoT.
+    val fileBrowserVM = LocalFileBrowserVM.current
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1574,9 +1577,11 @@ fun BrowserScreenFileItemGridCell(
     var showPropertiesDialog by remember { mutableStateOf(false) }
     var newFileName by remember { mutableStateOf(file.name) }
 
-    // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
-    // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
-    val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    // FIX CPU #C2: wrap getSharedPreferences trong remember(context) — mỗi cell gọi 1 lần,
+    // không phải mỗi recomposition (4259 cells × 120Hz = disaster)
+    val viewedPrefs = remember(context) {
+        context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
+    }
     val itemScope = rememberCoroutineScope()
     // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
     var isNewFile by remember(file.path, viewedRefreshTick) {
@@ -1755,11 +1760,16 @@ fun BrowserScreenFileItemGridCell(
                 )
         ) {
             if (isMedia) {
-                // MEDIA: Thumbnail edge-to-edge, sạch sẽ
-                WebDavCachedThumbnail(url = file.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
+                // FIX 2026-07-13: thumbState sync — play icon chỉ hiện khi thumb load thành công
+                var thumbState by remember { mutableStateOf<ThumbState?>(value = null) }
+                WebDavCachedThumbnail(
+                    url = file.path, auth = auth, isVideo = isVideo,
+                    modifier = Modifier.fillMaxSize(), viewModel = viewModel,
+                    onStateChange = { thumbState = it }
+                )
 
-                // Badge video play icon
-                if (isVideo) {
+                // Badge video play icon — CHỈ hiện khi thumb load thành công
+                if (isVideo && thumbState == ThumbState.SUCCESS) {
                     Icon(
                         Icons.Default.PlayCircle,
                         contentDescription = null,
