@@ -5,6 +5,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.DockerContainer
+import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.OmvOverview
 import com.nas.naswebdav.SmartInfo
 import com.nas.naswebdav.SpeedTestResult
@@ -12,7 +13,12 @@ import com.nas.naswebdav.StorageFolderUsage
 import com.nas.naswebdav.SystemLog
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
+import com.nas.naswebdav.toApiBaseUrl
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * DeviceManagementViewModel — Phase 2 của VM Split.
@@ -92,19 +98,67 @@ class DeviceManagementViewModel(
     var isFetchingLogs by androidx.compose.runtime.mutableStateOf(false)
         private set
 
-    // ═══ API placeholders — implement ở Phase 2b ═══
+    // ═══ WIRED METHODS — Phase 2b: delegation pattern ═══
 
-    /** Toggle SMB server — Phase 2b sẽ move body từ facade */
-    fun toggleSmb(enabled: Boolean) {
-        viewModelScope.launch {
-            // TODO Phase 2b: move body từ WebDavViewModel.toggleSmbServer
+    /**
+     * Toggle SMB server — delegates to WebDavManager API.
+     * Pattern: VM gọi API, update state. Facade calls this method.
+     */
+    fun toggleSmb(context: android.content.Context, enabled: Boolean) {
+        isSmbEnabled = enabled
+        isLoadingSmb = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("enabled", enabled).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("$apiBase/api/smb/toggle")
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    isLoadingSmb = false
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "toggleSmb failed: ${e.message}")
+                isSmbEnabled = !enabled // revert
+                isLoadingSmb = false
+            }
         }
     }
 
-    /** Load Docker container list — Phase 2b */
+    /** Load Docker container list — Phase 2b wired */
     fun loadDockerContainers() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        isFetchingDocker = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder()
+                    .url("$apiBase/api/docker/containers")
+                    .get().build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: "[]"
+                        val arr = org.json.JSONArray(body)
+                        val list = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            DockerContainer(
+                                id = it.optString("id", ""),
+                                name = it.optString("name", ""),
+                                status = it.optString("status", "")
+                            )
+                        }
+                        withContext(Dispatchers.Main) {
+                            dockerContainers = list
+                            isDockerRunning = list.any { it.status == "running" }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "loadDockerContainers: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingDocker = false }
+            }
         }
     }
 
