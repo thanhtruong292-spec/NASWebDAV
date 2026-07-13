@@ -5,45 +5,69 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.paging.PagingData
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.NasFile
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.encodeWebDavSegment
+import com.nas.naswebdav.ThumbnailAuditData
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Stack
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * FileBrowserViewModel — Phase 5 của VM Split (HIGHEST RISK).
+ * FileBrowserViewModel — Phase 7a.1: Primary owner of file-browser state.
  *
- * Quản lý: File list, folder navigation (urlStack), pending deletes, batch operations,
- *          Image viewer counter, Text preview.
+ * Quản lý: Navigation (currentUrl, urlStack), file list (fileList, pagedFilesFlow),
+ *          Loading state (isLoading, loadGeneration), pending deletes,
+ *          batch operations, image viewer counter, text preview.
  *
- * Đây là domain lớn nhất (~30% codebase) và phức tạp nhất vì 27 UI files depend.
- *
- * Phase 5 skeleton: state declarations + placeholder methods.
- * KHÔNG MOVE currentUrl — giữ nguyên ở WebDavViewModel cho đến Phase 7 (migration).
- * Function bodies sẽ được move từ facade trong Phase 5b.
- *
- * Design: WebDavViewModel giữ `currentUrl`, `urlStack`, `fileList` làm primary state.
- * FileBrowserVM skeleton chỉ khai báo state types — khi migrate sẽ sync 2 chiều.
+ * Phase 7a.1: State moved from WebDavViewModel facade. Facade retains read-only
+ * mirrors for backwards compatibility until Phase 7 UI migration flips all readers.
  */
 class FileBrowserViewModel(
     private val repository: WebDavRepository
 ) : ViewModel() {
 
-    // ═══ NOTE: currentUrl, urlStack, fileList — GIỮ ở WebDavViewModel ═══
-    // Lý do: 27 UI files đọc trực tiếp `viewModel.currentUrl`, `viewModel.fileList`
-    // Nếu move sang FileBrowserVM → phải đổi 27 files + 500+ references.
-    // Phase 7 sẽ migrate từ từ.
-    //
-    // Khi Phase 7 migrate, FileBrowserVM sẽ có:
-    //   var currentUrl by mutableStateOf("")
-    //   val urlStack = Stack<String>()
-    //   var fileList by mutableStateOf<List<NasFile>>(emptyList())
-    //   var isLoading by mutableStateOf(false)
+    // ═══ NAVIGATION STATE (Phase 7a.1 — moved from facade) ═══
+
+    var currentUrl by androidx.compose.runtime.mutableStateOf("")
+    internal val urlStack: Stack<String> = Stack()
+    var isSpecialMode by androidx.compose.runtime.mutableStateOf(false)
+    var specialTitle by androidx.compose.runtime.mutableStateOf("")
+        internal set
+
+    // ═══ FILE LIST STATE ═══
+
+    var fileList by androidx.compose.runtime.mutableStateOf<List<NasFile>>(emptyList())
+        internal set
+
+    /** Set tracks file paths pending deletion — prevents files from reappearing after refresh. */
+    internal val pendingDeletes: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Guards against stale coroutines overwriting newer UI state when loadCurrentUrl() is invoked again. */
+    internal var loadGeneration = 0
+
+    private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
+    val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
+
+    private val _thumbnailAudit = MutableStateFlow<ThumbnailAuditData?>(null)
+    val thumbnailAudit = _thumbnailAudit.asStateFlow()
+    internal fun updateThumbnailAudit(value: ThumbnailAuditData?) { _thumbnailAudit.value = value }
+    internal fun updatePagedFilesFlow(value: Flow<PagingData<NasFile>>) { _pagedFilesFlow.value = value }
+    internal fun incrementLoadGeneration(): Int { loadGeneration++; return loadGeneration }
+
+    // ═══ LOADING / ERROR STATE ═══
+
+    var isLoading by androidx.compose.runtime.mutableStateOf(false)
+        internal set
 
     // ═══ BATCH OPERATION STATE ═══
 

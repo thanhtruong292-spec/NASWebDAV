@@ -422,22 +422,42 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
             }
             .build()
     }
-    // Biến lưu trữ trạng thái giám sát hệ thống (Local API)
-    var systemStatus by mutableStateOf(NasSystemStatus())
-    var temperatureHistory = androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>()
+    // ═══ PHASE 7a.2: SystemMonitor state mirrors — delegate to systemMonitor VM ═══
+    var systemStatus: NasSystemStatus
+        get() = systemMonitor.systemStatus
+        set(value) { systemMonitor.systemStatus = value }
+    val temperatureHistory: androidx.compose.runtime.snapshots.SnapshotStateList<Pair<Float, Float>>
+        get() = systemMonitor.temperatureHistory
 
     // ─── BIỂU ĐỒ GIÁM SÁT REAL-TIME ──────────────────────────────────────────────
-    var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
-    var metricsHours by mutableIntStateOf(1)         // 1 / 6 / 24 giờ
-    var metricsChartTab by mutableIntStateOf(0)       // 0=Nhiệt độ, 1=Tài nguyên, 2=Mạng
-    var isLoadingMetrics by mutableStateOf(false)
-    var metricsError by mutableStateOf<String?>(null)  // Nếu có lỗi, hiển thị thay vì spinner vô hạn
-    var dailyReport by mutableStateOf<DailyReportData?>(null)
-    var isDailyReportLoading by mutableStateOf(false)
+    val metricsHistory: androidx.compose.runtime.snapshots.SnapshotStateList<MetricsSnapshot>
+        get() = systemMonitor.metricsHistory
+    var metricsHours: Int
+        get() = systemMonitor.metricsHours
+        set(value) { systemMonitor.metricsHours = value }
+    var metricsChartTab: Int
+        get() = systemMonitor.metricsChartTab
+        set(value) { systemMonitor.metricsChartTab = value }
+    var isLoadingMetrics: Boolean
+        get() = systemMonitor.isLoadingMetrics
+        set(value) { systemMonitor.isLoadingMetrics = value }
+    var metricsError: String?
+        get() = systemMonitor.metricsError
+        set(value) { systemMonitor.metricsError = value }
+    var dailyReport: DailyReportData?
+        get() = systemMonitor.dailyReport
+        set(value) { systemMonitor.dailyReport = value }
+    var isDailyReportLoading: Boolean
+        get() = systemMonitor.isDailyReportLoading
+        set(value) { systemMonitor.isDailyReportLoading = value }
 
     // STATE CHO TIẾN TRÌNH HỆ THỐNG
-    var systemProcesses by mutableStateOf<List<SystemProcess>>(emptyList())
-    var isLoadingProcesses by mutableStateOf(false)
+    var systemProcesses: List<SystemProcess>
+        get() = systemMonitor.systemProcesses
+        set(value) { systemMonitor.systemProcesses = value }
+    var isLoadingProcesses: Boolean
+        get() = systemMonitor.isLoadingProcesses
+        set(value) { systemMonitor.isLoadingProcesses = value }
     private var metricsPollingJob: kotlinx.coroutines.Job? = null
     private var dashboardRealtimeJob: kotlinx.coroutines.Job? = null
     internal var statusJob: kotlinx.coroutines.Job? = null
@@ -446,14 +466,30 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private val realtimeMetricBackoffMs = AtomicLong(5_000L)
 
     // TÍNH NĂNG 4.H: Lắng nghe trạng thái mạng Ping (ms)
-    var networkPingMs by mutableStateOf<Long?>(null)
-    var lastStatusRefreshAt by mutableStateOf(0L)
-    var lastMetricsRefreshAt by mutableStateOf(0L)
-    var lastStorageRefreshAt by mutableStateOf(0L)
-    var lastSmartRefreshAt by mutableStateOf(0L)
-    var lastLogsRefreshAt by mutableStateOf(0L)
-    var apiLatencyMs by mutableStateOf<Long?>(null)
-    var apiFailureCount by mutableIntStateOf(0)
+    var networkPingMs: Long?
+        get() = systemMonitor.networkPingMs
+        set(value) { systemMonitor.networkPingMs = value }
+    var lastStatusRefreshAt: Long
+        get() = systemMonitor.lastStatusRefreshAt
+        set(value) { systemMonitor.lastStatusRefreshAt = value }
+    var lastMetricsRefreshAt: Long
+        get() = systemMonitor.lastMetricsRefreshAt
+        set(value) { systemMonitor.lastMetricsRefreshAt = value }
+    var lastStorageRefreshAt: Long
+        get() = systemMonitor.lastStorageRefreshAt
+        set(value) { systemMonitor.lastStorageRefreshAt = value }
+    var lastSmartRefreshAt: Long
+        get() = systemMonitor.lastSmartRefreshAt
+        set(value) { systemMonitor.lastSmartRefreshAt = value }
+    var lastLogsRefreshAt: Long
+        get() = systemMonitor.lastLogsRefreshAt
+        set(value) { systemMonitor.lastLogsRefreshAt = value }
+    var apiLatencyMs: Long?
+        get() = systemMonitor.apiLatencyMs
+        set(value) { systemMonitor.apiLatencyMs = value }
+    var apiFailureCount: Int
+        get() = systemMonitor.apiFailureCount
+        set(value) { systemMonitor.apiFailureCount = value }
 
     // ─── SMART NETWORK – trạng thái đang dùng LAN hay Tailscale ───────────────
     var isOnLan by mutableStateOf(true) // true = LAN, false = Tailscale
@@ -463,14 +499,23 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var isGuestPassLoading by mutableStateOf(false)
     var guestPassError by mutableStateOf<String?>(null)
 
-    // ─── SOCIAL EXTRACTOR STATE ───────────────────────────────────────────────
-    var socialExtractStatus by mutableStateOf("")
-    var isSocialExtracting by mutableStateOf(false)
-    var socialDownloadHistory by mutableStateOf<List<SocialDownloadItem>>(emptyList())
+    // ─── SOCIAL EXTRACTOR STATE (LivestreamVM) ───────────────────────────────
+    var socialExtractStatus: String
+        get() = livestream.socialExtractStatus
+        set(value) { livestream.socialExtractStatus = value }
+    var isSocialExtracting: Boolean
+        get() = livestream.isSocialExtracting
+        set(value) { livestream.isSocialExtracting = value }
+    var socialDownloadHistory: List<SocialDownloadItem>
+        get() = livestream.socialDownloadHistory
+        set(value) { livestream.socialDownloadHistory = value }
 
-    // ─── STREAM PIPE STATE (Điện thoại bơm CDN → NAS trực tiếp) ──────────────
-    var isStreamPiping      by mutableStateOf(false)     // Đang bơm stream
-    // NAS Config Backup/Restore state
+    // ─── STREAM PIPE STATE (LivestreamVM) ────────────────────────────────────
+    var isStreamPiping: Boolean
+        get() = livestream.isStreamPiping
+        set(value) { livestream.isStreamPiping = value }
+
+    // NAS Config Backup/Restore state (SystemMonitorVM)
     data class NasConfigBackup(
         val filename: String,
         val sizeBytes: Long,
@@ -478,12 +523,20 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val createdAt: String,
         val mtime: Double,
     )
-    var nasConfigBackups by mutableStateOf<List<NasConfigBackup>>(emptyList())
-    var isCreatingNasConfigBackup by mutableStateOf(false)
-    var isRestoringNasConfigBackup by mutableStateOf(false)
-    var nasConfigBackupMessage by mutableStateOf("")
+    var nasConfigBackups: List<NasConfigBackup>
+        get() = systemMonitor.nasConfigBackups
+        set(value) { systemMonitor.nasConfigBackups = value }
+    var isCreatingNasConfigBackup: Boolean
+        get() = systemMonitor.isCreatingNasConfigBackup
+        set(value) { systemMonitor.isCreatingNasConfigBackup = value }
+    var isRestoringNasConfigBackup: Boolean
+        get() = systemMonitor.isRestoringNasConfigBackup
+        set(value) { systemMonitor.isRestoringNasConfigBackup = value }
+    var nasConfigBackupMessage: String
+        get() = systemMonitor.nasConfigBackupMessage
+        set(value) { systemMonitor.nasConfigBackupMessage = value }
 
-    // Disk Health Monitor state
+    // Disk Health Monitor state (SystemMonitorVM)
     data class DiskHealthSample(
         val ts: Long,
         val datetime: String,
@@ -501,17 +554,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         val ioErrorsRecent: Int,
         val warnings: List<String>,
     )
-    var diskHealthCurrent by mutableStateOf<DiskHealthSample?>(null)
-    var diskHealthHistory by mutableStateOf<List<DiskHealthSample>>(emptyList())
-    var isFetchingDiskHealth by mutableStateOf(false)
-    var lastDiskHealthRefreshAt by mutableStateOf(0L)
-    var storageFolderUsage by mutableStateOf<List<StorageFolderUsage>>(emptyList())
-    var isFetchingStorageUsage by mutableStateOf(false)
-    var isFetchingOmvOverview by mutableStateOf(false)
-
-    // TÍNH NĂNG SMB
-    var isSmbEnabled by mutableStateOf(false)
-    var isLoadingSmb by mutableStateOf(false)
+    var diskHealthCurrent: DiskHealthSample?
+        get() = systemMonitor.diskHealthCurrent
+        set(value) { systemMonitor.diskHealthCurrent = value }
+    var diskHealthHistory: List<DiskHealthSample>
+        get() = systemMonitor.diskHealthHistory
+        set(value) { systemMonitor.diskHealthHistory = value }
+    var isFetchingDiskHealth: Boolean
+        get() = systemMonitor.isFetchingDiskHealth
+        set(value) { systemMonitor.isFetchingDiskHealth = value }
+    var lastDiskHealthRefreshAt: Long
+        get() = systemMonitor.lastDiskHealthRefreshAt
+        set(value) { systemMonitor.lastDiskHealthRefreshAt = value }
+    // Storage folder usage (DeviceManagementVM)
+    var storageFolderUsage: List<StorageFolderUsage>
+        get() = deviceManagement.storageFolderUsage
+        set(value) { deviceManagement.storageFolderUsage = value }
+    var isFetchingStorageUsage: Boolean
+        get() = deviceManagement.isFetchingStorageUsage
+        set(value) { deviceManagement.isFetchingStorageUsage = value }
 
     // Scheduled backup state
     data class BackupSchedule(
@@ -658,23 +719,25 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     private var _activeStreamPipeWorkId: java.util.UUID? = null
     private var livestreamObserverJob: kotlinx.coroutines.Job? = null
 
-    // LOẠI BỎ fileList GÂY OOM, THAY BẰNG PAGING DATA FLOW
-    var fileList by mutableStateOf<List<NasFile>>(emptyList()) // Giữ lại dự phòng cho tính năng tìm kiếm/đặc biệt
-    // Set tracks file paths pending deletion — prevents files from reappearing after refresh.
-    // FIX C1 (ViewModel): dùng ConcurrentHashMap.newKeySet() thay vì mutableSetOf()
-    // để tránh ConcurrentModificationException khi nhiều coroutines gọi delete đồng thời.
-    private val pendingDeletes: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
-    // FIX S1: Generation counter — guards against stale coroutines overwriting newer UI state
-    // when loadCurrentUrl() is invoked again before the previous one finishes (e.g. fast nav).
-    private var loadGeneration = 0
+    // ═══ PHASE 7a.1b: FileBrowser state mirrors — delegate to fileBrowser VM ═══
+    // Single source of truth is now fileBrowser.xxx. Facade exposes same property
+    // names via get/set so existing 27 UI files compile unchanged.
 
-    private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
-    val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
+    var fileList: List<NasFile>
+        get() = fileBrowser.fileList
+        set(value) { fileBrowser.fileList = value }
+    val pendingDeletes: MutableSet<String>
+        get() = fileBrowser.pendingDeletes
+    val loadGeneration: Int
+        get() = fileBrowser.loadGeneration
+    val pagedFilesFlow: StateFlow<Flow<PagingData<NasFile>>>
+        get() = fileBrowser.pagedFilesFlow
+    val thumbnailAudit: StateFlow<ThumbnailAuditData?>
+        get() = fileBrowser.thumbnailAudit
 
-    private val _thumbnailAudit = MutableStateFlow<ThumbnailAuditData?>(null)
-    val thumbnailAudit = _thumbnailAudit.asStateFlow()
-
-    var isLoading by mutableStateOf(false)
+    var isLoading: Boolean
+        get() = fileBrowser.isLoading
+        set(value) { fileBrowser.isLoading = value }
     var errorMessage by mutableStateOf<String?>(null)
     var connectionStatus by mutableStateOf("Đang kết nối...")
 
@@ -695,23 +758,52 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // Tiến trình tải thumbnail
-    var totalImagesInFolder by mutableIntStateOf(0)
-    var loadedImagesCount by mutableIntStateOf(0)
-    val imageLoadProgress: Float get() = if (totalImagesInFolder > 0) loadedImagesCount.toFloat() / totalImagesInFolder else 0f
-    // Biến trạng thái cho tiến trình Auto Backup
-    var isAutoBackupRunning by mutableStateOf(false)
-    var autoBackupCurrentFile by mutableStateOf("")
-    var autoBackupSourcePath by mutableStateOf("")
-    var autoBackupDestPath by mutableStateOf("")
-    var autoBackupProgress by mutableFloatStateOf(0f)
-    var autoBackupProcessedCount by mutableIntStateOf(0)
-    var autoBackupTotalCount by mutableIntStateOf(0)
-    var autoBackupElapsedTime by mutableLongStateOf(0L)
-    var autoBackupIsPaused by mutableStateOf(false)
-    var autoBackupFileBytesTotal by mutableLongStateOf(0L)
-    var autoBackupFileBytesWritten by mutableLongStateOf(0L)
-    var autoBackupUploadSpeedBps by mutableLongStateOf(0L)
+    // Tiến trình tải thumbnail (FileBrowserVM)
+    var totalImagesInFolder: Int
+        get() = fileBrowser.totalImagesInFolder
+        set(value) { fileBrowser.totalImagesInFolder = value }
+    var loadedImagesCount: Int
+        get() = fileBrowser.loadedImagesCount
+        set(value) { fileBrowser.loadedImagesCount = value }
+    val imageLoadProgress: Float get() = if (fileBrowser.totalImagesInFolder > 0) fileBrowser.loadedImagesCount.toFloat() / fileBrowser.totalImagesInFolder else 0f
+
+    // ═══ PHASE 7a.3: AutoBackup state mirrors (autoBackupVM) ═══
+    var isAutoBackupRunning: Boolean
+        get() = autoBackup.isAutoBackupRunning
+        set(value) { autoBackup.isAutoBackupRunning = value }
+    var autoBackupCurrentFile: String
+        get() = autoBackup.autoBackupCurrentFile
+        set(value) { autoBackup.autoBackupCurrentFile = value }
+    var autoBackupSourcePath: String
+        get() = autoBackup.autoBackupSourcePath
+        set(value) { autoBackup.autoBackupSourcePath = value }
+    var autoBackupDestPath: String
+        get() = autoBackup.autoBackupDestPath
+        set(value) { autoBackup.autoBackupDestPath = value }
+    var autoBackupProgress: Float
+        get() = autoBackup.autoBackupProgress
+        set(value) { autoBackup.autoBackupProgress = value }
+    var autoBackupProcessedCount: Int
+        get() = autoBackup.autoBackupProcessedCount
+        set(value) { autoBackup.autoBackupProcessedCount = value }
+    var autoBackupTotalCount: Int
+        get() = autoBackup.autoBackupTotalCount
+        set(value) { autoBackup.autoBackupTotalCount = value }
+    var autoBackupElapsedTime: Long
+        get() = autoBackup.autoBackupElapsedTime
+        set(value) { autoBackup.autoBackupElapsedTime = value }
+    var autoBackupIsPaused: Boolean
+        get() = autoBackup.autoBackupIsPaused
+        set(value) { autoBackup.autoBackupIsPaused = value }
+    var autoBackupFileBytesTotal: Long
+        get() = autoBackup.autoBackupFileBytesTotal
+        set(value) { autoBackup.autoBackupFileBytesTotal = value }
+    var autoBackupFileBytesWritten: Long
+        get() = autoBackup.autoBackupFileBytesWritten
+        set(value) { autoBackup.autoBackupFileBytesWritten = value }
+    var autoBackupUploadSpeedBps: Long
+        get() = autoBackup.autoBackupUploadSpeedBps
+        set(value) { autoBackup.autoBackupUploadSpeedBps = value }
 
     fun cancelAutoBackup(context: android.content.Context) {
         androidx.work.WorkManager.getInstance(context).cancelAllWorkByTag("com.nas.naswebdav.AutoBackupWorker")
@@ -722,63 +814,101 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
 
     // === Đã gỡ bỏ tính năng Đồng bộ thư mục ===
 
-    // Biến trạng thái cho tính năng Quét và Xóa file trùng lặp
-    var isShowingDuplicates by mutableStateOf(false)
-    var shouldAutoOpenDuplicates by mutableStateOf(false)
-    var duplicateFilesList by mutableStateOf<List<NasFile>>(emptyList())
-    var selectedDuplicates = androidx.compose.runtime.mutableStateListOf<NasFile>()
-    var isScanningDuplicates by mutableStateOf(false)
-    var isWorkerRunning by mutableStateOf(false)
-    var scanDuplicatesCurrentFolderUrl by mutableStateOf("")
-    var scanDuplicatesCurrentItemName by mutableStateOf("")
-    var scanDuplicatesTotalScanned by mutableIntStateOf(0)
-    var scanDuplicatesFound by mutableIntStateOf(0)
-    var scanDuplicatesPercent by mutableFloatStateOf(0f) // Thanh tổng
-    var scanDuplicatesCurrentStagePercent by mutableFloatStateOf(0f) // Thanh hiện tại
-    var scanDuplicatesElapsedTime by mutableLongStateOf(0L) // Thời gian đã chạy
-    var scanDuplicatesEstimatedTimeRemaining by mutableLongStateOf(-1L) // Thời gian còn lại dự kiến
-    var scanDuplicatesIsFolder by mutableStateOf(false)
-    var scanDuplicatesStage by mutableStateOf("Khởi động...") // PHASE 4: Giai đoạn hiện tại
-    var scanDuplicatesStageNumber by mutableIntStateOf(1)      // Số thứ tự giai đoạn (1-4)
-    var scanDuplicatesTotalStages by mutableIntStateOf(4)      // Tổng số giai đoạn
-    var scanDuplicatesStageDescription by mutableStateOf("")   // Mô tả chi tiết giai đoạn
-    internal var scanJob: kotlinx.coroutines.Job? = null
-    
+    // ═══ PHASE 7a.3: DuplicateScan state mirrors (smartToolsVM) ═══
+    var isShowingDuplicates: Boolean
+        get() = smartTools.isShowingDuplicates
+        set(value) { smartTools.isShowingDuplicates = value }
+    var shouldAutoOpenDuplicates: Boolean
+        get() = smartTools.shouldAutoOpenDuplicates
+        set(value) { smartTools.shouldAutoOpenDuplicates = value }
+    var duplicateFilesList: List<NasFile>
+        get() = smartTools.duplicateFilesList
+        set(value) { smartTools.duplicateFilesList = value }
+    val selectedDuplicates: androidx.compose.runtime.snapshots.SnapshotStateList<NasFile>
+        get() = smartTools.selectedDuplicates
+    var isScanningDuplicates: Boolean
+        get() = smartTools.isScanningDuplicates
+        set(value) { smartTools.isScanningDuplicates = value }
+    var isWorkerRunning: Boolean
+        get() = smartTools.isWorkerRunning
+        set(value) { smartTools.isWorkerRunning = value }
+    var scanDuplicatesCurrentFolderUrl: String
+        get() = smartTools.scanDuplicatesCurrentFolderUrl
+        set(value) { smartTools.scanDuplicatesCurrentFolderUrl = value }
+    var scanDuplicatesCurrentItemName: String
+        get() = smartTools.scanDuplicatesCurrentItemName
+        set(value) { smartTools.scanDuplicatesCurrentItemName = value }
+    var scanDuplicatesTotalScanned: Int
+        get() = smartTools.scanDuplicatesTotalScanned
+        set(value) { smartTools.scanDuplicatesTotalScanned = value }
+    var scanDuplicatesFound: Int
+        get() = smartTools.scanDuplicatesFound
+        set(value) { smartTools.scanDuplicatesFound = value }
+    var scanDuplicatesPercent: Float
+        get() = smartTools.scanDuplicatesPercent
+        set(value) { smartTools.scanDuplicatesPercent = value }
+    var scanDuplicatesCurrentStagePercent: Float
+        get() = smartTools.scanDuplicatesCurrentStagePercent
+        set(value) { smartTools.scanDuplicatesCurrentStagePercent = value }
+    var scanDuplicatesElapsedTime: Long
+        get() = smartTools.scanDuplicatesElapsedTime
+        set(value) { smartTools.scanDuplicatesElapsedTime = value }
+    var scanDuplicatesEstimatedTimeRemaining: Long
+        get() = smartTools.scanDuplicatesEstimatedTimeRemaining
+        set(value) { smartTools.scanDuplicatesEstimatedTimeRemaining = value }
+    var scanDuplicatesIsFolder: Boolean
+        get() = smartTools.scanDuplicatesIsFolder
+        set(value) { smartTools.scanDuplicatesIsFolder = value }
+    var scanDuplicatesStage: String
+        get() = smartTools.scanDuplicatesStage
+        set(value) { smartTools.scanDuplicatesStage = value }
+    var scanDuplicatesStageNumber: Int
+        get() = smartTools.scanDuplicatesStageNumber
+        set(value) { smartTools.scanDuplicatesStageNumber = value }
+    var scanDuplicatesTotalStages: Int
+        get() = smartTools.scanDuplicatesTotalStages
+        set(value) { smartTools.scanDuplicatesTotalStages = value }
+    var scanDuplicatesStageDescription: String
+        get() = smartTools.scanDuplicatesStageDescription
+        set(value) { smartTools.scanDuplicatesStageDescription = value }
+    internal var scanJob: kotlinx.coroutines.Job?
+        get() = smartTools.scanJob
+        set(value) { smartTools.scanJob = value }
+
     // ĐIỀU KHIỂN QUÉT RÁC
-    var scanDuplicatesIsPaused by mutableStateOf(false)
+    var scanDuplicatesIsPaused: Boolean
+        get() = smartTools.scanDuplicatesIsPaused
+        set(value) { smartTools.scanDuplicatesIsPaused = value }
     fun togglePauseDuplicateScan() {
         scanDuplicatesIsPaused = !scanDuplicatesIsPaused
         DuplicateProgressState.isPaused.value = scanDuplicatesIsPaused
     }
-    
+
     fun cancelDuplicateScan(context: Context) {
         DuplicateProgressState.isPaused.value = false
         scanDuplicatesIsPaused = false
         androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
         isWorkerRunning = false
-        scanJob?.cancel() // Huỷ luồng theo dõi trạng thái Worker
-        isScanningDuplicates = false // Đóng panel tiến trình
-        duplicateFilesList = emptyList() // Xoá danh sách kết quả (nếu có) để ẩn card Tác vụ nền
-        
-        // Reset trạng thái tiến trình
+        scanJob?.cancel()
+        isScanningDuplicates = false
+        duplicateFilesList = emptyList()
         DuplicateProgressState.stage.value = "Khởi động..."
         DuplicateProgressState.percent.value = 0f
     }
-    
-    // TÍNH NĂNG AUTO-CLEAN DUPLICATES
-    var autoCleanEnabled by mutableStateOf(false)
+
+    // TÍNH NĂNG AUTO-CLEAN DUPLICATES (smartToolsVM)
+    var autoCleanEnabled: Boolean
+        get() = smartTools.autoCleanEnabled
+        set(value) { smartTools.autoCleanEnabled = value }
     fun toggleAutoClean(context: Context, enabled: Boolean) {
-        autoCleanEnabled = enabled
-        // Lưu SharedPreferences
+        smartTools.autoCleanEnabled = enabled
         context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE).edit().putBoolean("auto_clean_enabled", enabled).apply()
-        
         val workManager = androidx.work.WorkManager.getInstance(context)
         if (enabled) {
             val constraints = androidx.work.Constraints.Builder()
                 .setRequiresCharging(true)
-                .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // Cần Wifi
+                .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
                 .build()
-                
             val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(30, java.util.concurrent.TimeUnit.DAYS)
                 .setConstraints(constraints)
                 .build()
@@ -788,7 +918,7 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // --- QUẢN LÝ BẢO MẬT & PHÊ DUYỆT (DEVICE APPROVAL) ---
+    // --- QUẢN LÝ BẢO MẬT & PHÊ DUYỆT (DEVICE APPROVAL) — stay facade ---
     var showApprovalDialog by mutableStateOf(false)
     var pendingIpAddress by mutableStateOf("")
     var approvalMessage by mutableStateOf("")
@@ -796,22 +926,26 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     var weeklyReportText by mutableStateOf("Đang tải dữ liệu...")
 
     internal var webSocket: okhttp3.WebSocket? = null
-    // FIX: tranh reconnect storm — track so lan thu lai de exponential backoff
-    // va co flag chong reconnect tu nhieu listener onFailure cu va race nhau.
     @Volatile internal var wsReconnectAttempt: Int = 0
     @Volatile internal var wsReconnectScheduled: Boolean = false
 
-    // TRÍCH XUẤT HOST CHUẨN ĐỂ FIX LỖI CRASH PORT (8822:5050)
+    // --- QUẢN LÝ NHẬT KÝ HỆ THỐNG (deviceManagementVM) ---
+    var showLogDialog: Boolean
+        get() = deviceManagement.showLogDialog
+        set(value) { deviceManagement.showLogDialog = value }
+    var systemLogsList: List<SystemLog>
+        get() = deviceManagement.systemLogsList
+        set(value) { deviceManagement.systemLogsList = value }
 
-    // --- QUẢN LÝ NHẬT KÝ HỆ THỐNG ---
-    var showLogDialog by mutableStateOf(false)
-    var systemLogsList by mutableStateOf<List<SystemLog>>(emptyList())
+    // Trạng thái cho chế độ xem đặc biệt (Ảnh mới/Video gần đây) — FileBrowserVM
+    var isSpecialMode: Boolean
+        get() = fileBrowser.isSpecialMode
+        set(value) { fileBrowser.isSpecialMode = value }
+    var specialTitle: String
+        get() = fileBrowser.specialTitle
+        set(value) { fileBrowser.specialTitle = value }
 
-    // Trạng thái cho chế độ xem đặc biệt (Ảnh mới/Video gần đây)
-    var isSpecialMode by mutableStateOf(false)
-    var specialTitle by mutableStateOf("")
-
-    // STATE CHO DIALOG THÔNG BÁO CHUNG TỪ VIEWMODEL
+    // STATE CHO DIALOG THÔNG BÁO CHUNG — stay facade (shared across VMs)
     var commonDialogMessage by mutableStateOf("")
     var commonDialogType by mutableStateOf(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS)
     var showCommonDialog by mutableStateOf(false)
@@ -827,61 +961,139 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
         }
     }
 
-    // FIX LỖI 5: Debounce – chỉ hiển thị dialog lỗi mất mạng mỗi 2 phút, tránh spam
+    // FIX LỖI 5: Debounce
     private var lastNetworkErrorDialogAt = 0L
     internal var lastFanModeSettingTime = 0L
-    var isFanModeUpdating by mutableStateOf(false)
-    private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L // 2 phút
+    var isFanModeUpdating: Boolean
+        get() = deviceManagement.isFanModeUpdating
+        set(value) { deviceManagement.isFanModeUpdating = value }
+    private val NETWORK_ERROR_DIALOG_COOLDOWN_MS = 2 * 60 * 1000L
 
-    // STATE CHO SMART DIALOG VÀ SPEED TEST
-    var showSmartDialog by mutableStateOf(false)
-    var smartInfo by mutableStateOf(SmartInfo("Đang tải...", "--", ""))
-    var speedTestResult by mutableStateOf(SpeedTestResult("--", "--"))
-    var isTestingSpeed by mutableStateOf(false)
-    var lastAutoSpeedTime by mutableStateOf("")
+    // STATE CHO SMART DIALOG VÀ SPEED TEST (deviceManagementVM)
+    var showSmartDialog: Boolean
+        get() = deviceManagement.showSmartDialog
+        set(value) { deviceManagement.showSmartDialog = value }
+    var smartInfo: SmartInfo
+        get() = deviceManagement.smartInfo
+        set(value) { deviceManagement.smartInfo = value }
+    var speedTestResult: SpeedTestResult
+        get() = deviceManagement.speedTestResult
+        set(value) { deviceManagement.speedTestResult = value }
+    var isTestingSpeed: Boolean
+        get() = deviceManagement.isTestingSpeed
+        set(value) { deviceManagement.isTestingSpeed = value }
+    var lastAutoSpeedTime: String
+        get() = if (deviceManagement.lastAutoSpeedTime > 0) {
+            java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date(deviceManagement.lastAutoSpeedTime))
+        } else ""
+        set(value) { /* write-once: VM sets via fetch, facade ignores set */ }
 
-    // STATE CHO DOCKER POWER
-    var isDockerRunning by mutableStateOf(false)
-    var isTogglingDocker by mutableStateOf(false)
+    // STATE CHO DOCKER POWER (deviceManagementVM)
+    var isDockerRunning: Boolean
+        get() = deviceManagement.isDockerRunning
+        set(value) { deviceManagement.isDockerRunning = value }
+    var isTogglingDocker: Boolean
+        get() = deviceManagement.isTogglingDocker
+        set(value) { deviceManagement.isTogglingDocker = value }
 
-    // STATE CHO DOCKER MANAGER
+    // STATE CHO DOCKER MANAGER (deviceManagementVM)
     var showDockerDialog by mutableStateOf(false)
-    var dockerContainers by mutableStateOf<List<DockerContainer>>(emptyList())
-    // Quản lý Nhật ký hệ thống
-    var systemLogs by mutableStateOf(listOf<SystemLog>())
-    var isFetchingDocker by mutableStateOf(false)
+    var dockerContainers: List<DockerContainer>
+        get() = deviceManagement.dockerContainers
+        set(value) { deviceManagement.dockerContainers = value }
+    var systemLogs: List<SystemLog>
+        get() = deviceManagement.systemLogs
+        set(value) { deviceManagement.systemLogs = value }
+    var isFetchingDocker: Boolean
+        get() = deviceManagement.isFetchingDocker
+        set(value) { deviceManagement.isFetchingDocker = value }
 
-    // STATE CHO OMV OVERVIEW
-    var omvOverview by mutableStateOf(OmvOverview())
+    // STATE CHO OMV OVERVIEW (deviceManagementVM)
+    var omvOverview: OmvOverview
+        get() = deviceManagement.omvOverview
+        set(value) { deviceManagement.omvOverview = value }
+    var isFetchingOmvOverview: Boolean
+        get() = deviceManagement.isFetchingOmvOverview
+        set(value) { deviceManagement.isFetchingOmvOverview = value }
 
-    // STATE CHO LAN WHITELIST (tách logic ra khỏi UI)
-    var lanWhitelistIps by mutableStateOf<List<String>>(emptyList())
-    var lanWhitelistSubnets by mutableStateOf<List<String>>(emptyList())
-    var lanWhitelistLoading by mutableStateOf(true)
-    var lanWhitelistError by mutableStateOf("")
-    var lanWhitelistStatus by mutableStateOf("")
+    // STATE CHO LAN WHITELIST (deviceManagementVM)
+    var lanWhitelistIps: List<String>
+        get() = deviceManagement.lanWhitelistIps
+        set(value) { deviceManagement.lanWhitelistIps = value }
+    var lanWhitelistSubnets: List<String>
+        get() = deviceManagement.lanWhitelistSubnets
+        set(value) { deviceManagement.lanWhitelistSubnets = value }
+    var lanWhitelistLoading: Boolean
+        get() = deviceManagement.lanWhitelistLoading
+        set(value) { deviceManagement.lanWhitelistLoading = value }
+    var lanWhitelistError: String
+        get() = deviceManagement.lanWhitelistError
+        set(value) { deviceManagement.lanWhitelistError = value }
+    var lanWhitelistStatus: String
+        get() = deviceManagement.lanWhitelistStatus
+        set(value) { deviceManagement.lanWhitelistStatus = value }
 
-    // STATE CHO SMART ORGANIZER (tách logic ra khỏi UI)
-    var organizerScanning by mutableStateOf(false)
-    var organizerExecuting by mutableStateOf(false)
-    var organizerScanResult by mutableStateOf<List<OrganizerGroup>?>(null)
-    var organizerTotalFiles by mutableIntStateOf(0)
-    var organizerResult by mutableStateOf<String?>(null)
-    var organizerError by mutableStateOf<String?>(null)
+    // SMB (deviceManagementVM)
+    var isSmbEnabled: Boolean
+        get() = deviceManagement.isSmbEnabled
+        set(value) { deviceManagement.isSmbEnabled = value }
+    var isLoadingSmb: Boolean
+        get() = deviceManagement.isLoadingSmb
+        set(value) { deviceManagement.isLoadingSmb = value }
 
-    // STATE CHO THUMBNAIL STATUS (API /api/thumb/status)
-    var thumbGenerated by mutableStateOf(0)
-    var thumbTotal by mutableStateOf(0)
-    var thumbErrors by mutableStateOf(0)
-    var thumbRunning by mutableStateOf(false)
-    var thumbLastFile by mutableStateOf("")
-    var thumbElapsed by mutableStateOf(0)
-    var thumbEta by mutableStateOf(-1)
-    var thumbElapsedFmt by mutableStateOf("00:00")
-    var thumbEtaFmt by mutableStateOf("--:--")
-    var thumbPaused by mutableStateOf(false)
+    // STATE CHO SMART ORGANIZER (smartToolsVM)
+    var organizerScanning: Boolean
+        get() = smartTools.organizerScanning
+        set(value) { smartTools.organizerScanning = value }
+    var organizerExecuting: Boolean
+        get() = smartTools.organizerExecuting
+        set(value) { smartTools.organizerExecuting = value }
+    var organizerScanResult: List<OrganizerGroup>?
+        get() = smartTools.organizerScanResult
+        set(value) { smartTools.organizerScanResult = value }
+    var organizerTotalFiles: Int
+        get() = smartTools.organizerTotalFiles
+        set(value) { smartTools.organizerTotalFiles = value }
+    var organizerResult: String?
+        get() = smartTools.organizerResult
+        set(value) { smartTools.organizerResult = value }
+    var organizerError: String?
+        get() = smartTools.organizerError
+        set(value) { smartTools.organizerError = value }
 
-    fun stopThumbGeneration() {
+    // STATE CHO THUMBNAIL STATUS (smartToolsVM)
+    var thumbGenerated: Int
+        get() = smartTools.thumbGenerated
+        set(value) { smartTools.thumbGenerated = value }
+    var thumbTotal: Int
+        get() = smartTools.thumbTotal
+        set(value) { smartTools.thumbTotal = value }
+    var thumbErrors: Int
+        get() = smartTools.thumbErrors
+        set(value) { smartTools.thumbErrors = value }
+    var thumbRunning: Boolean
+        get() = smartTools.thumbRunning
+        set(value) { smartTools.thumbRunning = value }
+    var thumbLastFile: String
+        get() = smartTools.thumbLastFile
+        set(value) { smartTools.thumbLastFile = value }
+    var thumbElapsed: Long
+        get() = smartTools.thumbElapsed
+        set(value) { smartTools.thumbElapsed = value }
+    var thumbEta: Long
+        get() = smartTools.thumbEta
+        set(value) { smartTools.thumbEta = value }
+    var thumbElapsedFmt: String
+        get() = smartTools.thumbElapsedFmt
+        set(value) { smartTools.thumbElapsedFmt = value }
+    var thumbEtaFmt: String
+        get() = smartTools.thumbEtaFmt
+        set(value) { smartTools.thumbEtaFmt = value }
+    var thumbPaused: Boolean
+        get() = smartTools.thumbPaused
+        set(value) { smartTools.thumbPaused = value }
+        fun stopThumbGeneration() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val request = okhttp3.Request.Builder()
@@ -911,8 +1123,8 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         thumbRunning = json.optBoolean("running", false)
                         thumbPaused = json.optBoolean("paused", false)
                         thumbLastFile = json.optString("last_file", "")
-                        thumbElapsed = json.optInt("elapsed_seconds", 0)
-                        thumbEta = json.optInt("eta_seconds", -1)
+                        thumbElapsed = json.optInt("elapsed_seconds", 0).toLong()
+                        thumbEta = json.optInt("eta_seconds", -1).toLong()
                         thumbElapsedFmt = json.optString("elapsed_fmt", "00:00")
                         thumbEtaFmt = json.optString("eta_fmt", "--:--")
 
@@ -1140,14 +1352,14 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
                         val obj = org.json.JSONObject(body)
                         val total = obj.optInt("total_media", 0)
                         val generated = obj.optInt("generated", 0)
-                        _thumbnailAudit.value = ThumbnailAuditData(
+                        fileBrowser.updateThumbnailAudit(ThumbnailAuditData(
                             total = total,
                             thumbnailed = generated,
                             missing = if (total > generated) total - generated else 0,
                             running = obj.optBoolean("running", false),
                             paused = obj.optBoolean("paused", false),
                             errors = obj.optInt("errors", 0)
-                        )
+                        ))
                     }
                 }
             } catch (e: Exception) {
@@ -1956,12 +2168,12 @@ class WebDavViewModel(val webDavManager: WebDavManager, val repository: WebDavRe
     // when loadCurrentUrl() fires again before the previous invocation finishes.
     private fun loadCurrentUrl(forceRefresh: Boolean = false) {
         viewModelScope.launch {
-            val gen = ++loadGeneration
+            val gen = fileBrowser.incrementLoadGeneration()
             errorMessage = null
 
             // SỬA LỖI CHÍ MẠNG TỪ PHASE 1: LUÔN LUÔN KẾT NỐI UI VỚI CSDL TRƯỚC TIÊN!
             // Khi Paging Flow trói buộc vào Room DB, mọi thay đổi dữ liệu từ NAS tải về sẽ lập tức bắn lên UI một cách Auto!
-            _pagedFilesFlow.value = repository.getFilesStream(currentUrl).cachedIn(viewModelScope)
+            fileBrowser.updatePagedFilesFlow(repository.getFilesStream(currentUrl).cachedIn(viewModelScope))
 
             // Lấy danh sách tĩnh để phục vụ ImageViewerScreen
             val cached = repository.getCachedFiles(currentUrl)

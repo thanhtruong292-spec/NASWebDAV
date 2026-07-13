@@ -40,63 +40,63 @@ class DeviceManagementViewModel(
     // ═══ STATE — mirror của WebDavViewModel để UI không break ═══
 
     var isSmbEnabled by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
     var isLoadingSmb by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var lanWhitelistIps by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
-        private set
+        internal set
     var lanWhitelistSubnets by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
-        private set
+        internal set
     var lanWhitelistLoading by androidx.compose.runtime.mutableStateOf(true)
-        private set
+        internal set
     var lanWhitelistError by androidx.compose.runtime.mutableStateOf("")
-        private set
+        internal set
     var lanWhitelistStatus by androidx.compose.runtime.mutableStateOf("")
-        private set
+        internal set
 
     var dockerContainers by androidx.compose.runtime.mutableStateOf<List<DockerContainer>>(emptyList())
-        private set
+        internal set
     var isFetchingDocker by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
     var isDockerRunning by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
     var isTogglingDocker by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var omvOverview by androidx.compose.runtime.mutableStateOf(OmvOverview())
-        private set
+        internal set
     var isFetchingOmvOverview by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var smartInfo by androidx.compose.runtime.mutableStateOf(SmartInfo("Đang tải...", "--", ""))
-        private set
+        internal set
     var showSmartDialog by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var speedTestResult by androidx.compose.runtime.mutableStateOf(SpeedTestResult("--", "--"))
-        private set
+        internal set
     var isTestingSpeed by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
     var lastAutoSpeedTime by androidx.compose.runtime.mutableLongStateOf(0L)
-        private set
+        internal set
 
     var isFanModeUpdating by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var storageFolderUsage by androidx.compose.runtime.mutableStateOf<List<StorageFolderUsage>>(emptyList())
-        private set
+        internal set
     var isFetchingStorageUsage by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     var systemLogs by androidx.compose.runtime.mutableStateOf(listOf<SystemLog>())
-        private set
+        internal set
     var systemLogsList by androidx.compose.runtime.mutableStateOf<List<SystemLog>>(emptyList())
-        private set
+        internal set
     var showLogDialog by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
     var isFetchingLogs by androidx.compose.runtime.mutableStateOf(false)
-        private set
+        internal set
 
     // ═══ WIRED METHODS — Phase 2b: delegation pattern ═══
 

@@ -32,11 +32,16 @@ class SmartToolsViewModel(
 
     var isShowingDuplicates by androidx.compose.runtime.mutableStateOf(false)
         internal set
+    var shouldAutoOpenDuplicates by androidx.compose.runtime.mutableStateOf(false)
+        internal set
     var duplicateFilesList by androidx.compose.runtime.mutableStateOf<List<com.nas.naswebdav.NasFile>>(emptyList())
         internal set
+    val selectedDuplicates = androidx.compose.runtime.mutableStateListOf<com.nas.naswebdav.NasFile>()
     var isScanningDuplicates by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var isWorkerRunning by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var scanJob: kotlinx.coroutines.Job? = null
         internal set
 
     var scanDuplicatesCurrentFolderUrl by androidx.compose.runtime.mutableStateOf("")
@@ -87,6 +92,8 @@ class SmartToolsViewModel(
     // ═══ SMART ORGANIZER STATE ═══
 
     var organizerScanning by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var organizerExecuting by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var organizerScanResult by androidx.compose.runtime.mutableStateOf<List<OrganizerGroup>?>(null)
         internal set
