@@ -162,72 +162,240 @@ class DeviceManagementViewModel(
         }
     }
 
-    /** Toggle Docker daemon on/off — Phase 2b */
+    /** Toggle Docker daemon on/off — Phase 2b wired */
     fun toggleDockerPower(action: String) {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        isTogglingDocker = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("action", action).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/docker/power").post(body).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                loadDockerContainers()
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "toggleDockerPower: ${e.message}")
+            } finally {
+                kotlinx.coroutines.withContext(Dispatchers.Main) { isTogglingDocker = false }
+            }
         }
     }
 
-    /** Load LAN whitelist — Phase 2b */
+    /** Load LAN whitelist — Phase 2b wired */
     fun loadLanWhitelist() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        lanWhitelistLoading = true
+        lanWhitelistError = ""
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/whitelist/list").get().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val ipsArr = json.optJSONArray("ips")
+                    val subnetsArr = json.optJSONArray("subnets")
+                    withContext(Dispatchers.Main) {
+                        lanWhitelistIps = (0 until (ipsArr?.length() ?: 0)).mapNotNull { ipsArr?.optString(it) }
+                        lanWhitelistSubnets = (0 until (subnetsArr?.length() ?: 0)).mapNotNull { subnetsArr?.optString(it) }
+                        lanWhitelistStatus = json.optString("status", "")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { lanWhitelistError = e.message ?: "Lỗi" }
+            } finally {
+                withContext(Dispatchers.Main) { lanWhitelistLoading = false }
+            }
         }
     }
 
-    fun addLanWhitelistIp(ip: String) { /* TODO Phase 2b */ }
-    fun removeLanWhitelistIp(ip: String) { /* TODO Phase 2b */ }
-    fun addLanWhitelistSubnet(subnet: String) { /* TODO Phase 2b */ }
-    fun removeLanWhitelistSubnet(subnet: String) { /* TODO Phase 2b */ }
+    private fun modifyWhitelist(action: String, kind: String, value: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("action", action).put("kind", kind).put("value", value).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder().url("$apiBase/api/whitelist/modify").post(body).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                loadLanWhitelist()
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "modifyWhitelist: ${e.message}")
+            }
+        }
+    }
+    fun addLanWhitelistIp(ip: String) = modifyWhitelist("add", "ip", ip)
+    fun removeLanWhitelistIp(ip: String) = modifyWhitelist("remove", "ip", ip)
+    fun addLanWhitelistSubnet(subnet: String) = modifyWhitelist("add", "subnet", subnet)
+    fun removeLanWhitelistSubnet(subnet: String) = modifyWhitelist("remove", "subnet", subnet)
 
-    /** Load OMV overview — Phase 2b */
+    /** Load OMV overview — Phase 2b wired */
     fun loadOmvOverview() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        isFetchingOmvOverview = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/omv/overview").get().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    withContext(Dispatchers.Main) {
+                        omvOverview = OmvOverview(
+                            hostname = json.optString("hostname", ""),
+                            omvVersion = json.optString("version", ""),
+                            kernel = json.optString("kernel", ""),
+                            powerBtnAction = json.optString("power_btn_action", "")
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "loadOmvOverview: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingOmvOverview = false }
+            }
         }
     }
 
-    /** Run SMART info — Phase 2b */
+    /** Run SMART info — Phase 2b wired */
     fun runSmartInfo() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/info").get().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    withContext(Dispatchers.Main) {
+                        smartInfo = SmartInfo(
+                            status = json.optString("status", "OK"),
+                            temperature = json.optString("temperature", "--"),
+                            rawLog = json.optString("raw", "")
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "runSmartInfo: ${e.message}")
+            }
         }
     }
 
     fun showSmartInfo() { showSmartDialog = true }
     fun hideSmartInfo() { showSmartDialog = false }
 
-    /** Run network speedtest — Phase 2b */
+    /** Run network speedtest — Phase 2b wired */
     fun runNetworkSpeedTest() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        isTestingSpeed = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/network/speedtest").get().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    withContext(Dispatchers.Main) {
+                        speedTestResult = SpeedTestResult(
+                            writeSpeed = json.optString("write_speed", "--"),
+                            readSpeed = json.optString("read_speed", "--")
+                        )
+                        lastAutoSpeedTime = System.currentTimeMillis()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "runNetworkSpeedTest: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isTestingSpeed = false }
+            }
         }
     }
 
-    /** Set fan mode (on/off/auto) — Phase 2b */
+    /** Set fan mode (on/off/auto/custom) — Phase 2b wired */
     fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        if (isFanModeUpdating) return
+        isFanModeUpdating = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val jsonBody = org.json.JSONObject().put("mode", mode)
+                if (mode == "custom" && onTemp != null && offTemp != null) {
+                    jsonBody.put("on_temp", onTemp)
+                    jsonBody.put("off_temp", offTemp)
+                }
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/fan/control")
+                    .post(jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "setFanMode: ${e.message}")
+            } finally {
+                kotlinx.coroutines.withContext(Dispatchers.Main) { isFanModeUpdating = false }
+            }
         }
     }
 
-    /** Fetch storage folder usage — Phase 2b */
+    /** Fetch storage folder usage — Phase 2b wired */
     fun fetchStorageUsage(minIntervalMs: Long = 30_000L) {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        if (isFetchingStorageUsage) return
+        isFetchingStorageUsage = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/storage/usage").get().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "[]"
+                    val arr = org.json.JSONArray(body)
+                    withContext(Dispatchers.Main) {
+                        storageFolderUsage = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            StorageFolderUsage(
+                                name = it.optString("name", ""),
+                                path = it.optString("path", ""),
+                                size = it.optString("size", "--"),
+                                sizeBytes = it.optLong("size_bytes", 0L),
+                                files = it.optInt("files", 0),
+                                partial = it.optBoolean("partial", false)
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "fetchStorageUsage: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingStorageUsage = false }
+            }
         }
     }
 
     fun showSystemLogs() { showLogDialog = true }
     fun fetchSystemLogs() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        isFetchingLogs = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = NasApplication.instance.database
+                val logs = db.logDao().getRecentLogs()
+                withContext(Dispatchers.Main) {
+                    systemLogsList = logs
+                    systemLogs = logs
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "fetchSystemLogs: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingLogs = false }
+            }
         }
     }
     fun clearSystemLogs() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = NasApplication.instance.database
+                db.logDao().clearAllLogs()
+                withContext(Dispatchers.Main) {
+                    systemLogsList = emptyList()
+                    systemLogs = emptyList()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "clearSystemLogs: ${e.message}")
+            }
         }
     }
 }
