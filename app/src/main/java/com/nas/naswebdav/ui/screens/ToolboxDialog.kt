@@ -76,6 +76,8 @@ fun ToolboxDialog(
     showSmbDialog: () -> Unit = {},
     showDuplicateScanDialog: () -> Unit = {}
 ) {
+    // ═══ PHASE 7c.2: Toolbox state (isSmbEnabled, isLoadingSmb, isFanModeUpdating,
+    // dockerContainers) reads via facade delegation → DeviceManagementVM is SSoT. ═══
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
     var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }

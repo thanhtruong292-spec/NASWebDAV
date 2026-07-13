@@ -340,6 +340,8 @@ fun LanWhitelistDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.2: lanWhitelist* state owned by DeviceManagementVM (Phase 7a).
+    // Reads via facade delegation — SSoT preserved.
     val ipList = viewModel.lanWhitelistIps
     val subnetList = viewModel.lanWhitelistSubnets
     val isLoading = viewModel.lanWhitelistLoading
@@ -471,6 +473,7 @@ fun LanWhitelistDialog(
 // (Đã xoá SmartSyncDialog theo yêu cầu)
 @Composable
 fun OrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+    // Phase 7c.2: organizingLegacyRunning/Result owned by SmartToolsVM (Phase 7a delegation).
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!viewModel.organizingLegacyRunning) onDismiss() },
         title = { Text("Phân loại video cũ") },

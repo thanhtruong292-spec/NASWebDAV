@@ -161,6 +161,9 @@ internal fun DiskProfileBottomSheet(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.2: All disk health/SMART/OMV state reads via facade delegation
+    // → SystemMonitorVM (diskHealthCurrent/History, isFetchingDiskHealth,
+    // nasInsights, storageFolderUsage, omvOverview) is SSoT.
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var showTrackingConfirm by remember { mutableStateOf(false) }

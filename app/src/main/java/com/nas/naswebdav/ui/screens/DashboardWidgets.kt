@@ -77,6 +77,8 @@ fun NasInsightsSummaryCard(
     viewModel: WebDavViewModel,
     onOpen: () -> Unit
 ) {
+    // nasInsights now owned by SystemMonitorVM (Phase 7a). Reads via facade
+    // delegating getter — same instance as LocalSystemMonitorVM.current.
     val insight = viewModel.nasInsights
     val modeColor = when (insight.workloadMode) {
         "protect" -> AccentRed

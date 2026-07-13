@@ -379,6 +379,7 @@ fun SleepScheduleDialog(
     viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    // Phase 7c.2: sleepSchedule owned by AutoBackupVM (Phase 7a delegation).
     val context = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) { viewModel.fetchSleepSchedule() }
 

@@ -199,6 +199,7 @@ fun NasInsightsDialog(
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
 ) {
+    // nasInsights, isFetchingNasInsights owned by SystemMonitorVM (Phase 7a).
     LaunchedEffect(Unit) { viewModel.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(

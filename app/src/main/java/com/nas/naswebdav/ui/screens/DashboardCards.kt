@@ -64,6 +64,13 @@ internal fun MainDashboardHeader(
     onReboot: () -> Unit,
     onShutdown: () -> Unit,
 ) {
+    // ═══ PHASE 7c.2: SystemMonitor state (systemStatus, networkPingMs, lastXxxRefreshAt,
+    // apiLatencyMs, isOnLan) reads via facade delegation → SystemMonitorVM is SSoT.
+    // DeviceManagement state (smartInfo, isFanModeUpdating, omvOverview) → DeviceMgmtVM.
+    // Both VMs reference the SAME instances via CompositionLocalProvider in MainActivity,
+    // so facade mirror reads and direct LocalXxxVM reads observe identical Compose State.
+    val systemVM = LocalSystemMonitorVM.current
+    val deviceVM = LocalDeviceManagementVM.current
         // ═══ HEADER ═══
         Row(
             Modifier.fillMaxWidth(),

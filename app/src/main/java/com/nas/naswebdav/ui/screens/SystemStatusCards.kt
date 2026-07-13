@@ -65,6 +65,9 @@ fun DashboardSystemStatusCards(
     onOpenUsbImport: () -> Unit = {},
     onOpenDuplicateScan: () -> Unit = {}
 ) {
+    // Phase 7c.2: All state (autoBackup*, thumb*, isStreamPiping) reads via
+    // facade delegation → respective Domain VMs (AutoBackupVM, SmartToolsVM,
+    // LivestreamVM). Direct LocalXxxVM.current migration deferred to Group 3.
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         viewModel.fetchThumbStatus()
@@ -94,7 +97,9 @@ fun DashboardSystemStatusCards(
     val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || viewModel.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
-    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    val sharedPrefs = androidx.compose.runtime.remember(mContext) {
+        mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    }
     val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
     val autoBackupIsActive = viewModel.isAutoBackupRunning
     
