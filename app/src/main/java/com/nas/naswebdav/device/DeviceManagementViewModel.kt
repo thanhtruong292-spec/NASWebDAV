@@ -38,8 +38,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * WebDavManager/repository trực tiếp để không break UI.
  */
 class DeviceManagementViewModel(
-    private val repository: WebDavRepository
+    private val repository: WebDavRepository,
+    private val injectedGlobalUi: com.nas.naswebdav.GlobalUiViewModel? = null,
 ) : ViewModel() {
+    private val _globalUi: com.nas.naswebdav.GlobalUiViewModel by lazy {
+        injectedGlobalUi ?: com.nas.naswebdav.GlobalUiViewModel()
+    }
+    private val globalUi get() = _globalUi
 
     // ═══ STATE — mirror của WebDavViewModel để UI không break ═══
 
@@ -675,6 +680,133 @@ class DeviceManagementViewModel(
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
+        }
+    }
+
+    // ═══ TELEGRAM CONFIG (Phase 7d.3 — moved from WebDavViewModel facade) ═══
+
+    fun loadTelegramConfig(onResult: (enabled: Boolean, chatId: String, hasToken: Boolean) -> Unit) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+        val enabled = p.getBoolean("telegram_enabled", false)
+        val chatId = p.getString("telegram_chat_id", "") ?: ""
+        val token = p.getString("telegram_bot_token", "") ?: ""
+        onResult(enabled, chatId, token.isNotBlank())
+    }
+
+    fun saveTelegramConfig(
+        enabled: Boolean,
+        botToken: String,
+        chatId: String,
+        test: Boolean,
+        onResult: (Boolean, String) -> Unit,
+    ) {
+        val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+        p.edit()
+            .putBoolean("telegram_enabled", enabled)
+            .putString("telegram_bot_token", botToken)
+            .putString("telegram_chat_id", chatId)
+            .apply()
+        if (test) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                    if (base.isBlank()) { withContext(Dispatchers.Main) { onResult(false, "Chưa có địa chỉ NAS") }; return@launch }
+                    val jsonBody = org.json.JSONObject().apply {
+                        put("token", botToken)
+                        put("chat_id", chatId)
+                    }.toString()
+                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), jsonBody)
+                    val request = okhttp3.Request.Builder().url("$base/api/telegram/test").post(body).build()
+                    val response = WebDavManager.optimizedClient.newCall(request).execute()
+                    val bodyStr = response.body?.string() ?: ""
+                    withContext(Dispatchers.Main) {
+                        onResult(response.isSuccessful, if (response.isSuccessful) "Tin nhắn test đã gửi thành công!" else "Lỗi: $bodyStr")
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { onResult(false, "Lỗi gửi test: ${e.message}") }
+                }
+            }
+        } else {
+            onResult(true, "Đã lưu cấu hình Telegram")
+        }
+    }
+
+    // ═══ RULES CONFIG (Phase 7d.3 — moved from WebDavViewModel facade) ═══
+
+    fun loadRulesConfig(
+        onResult: (enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int) -> Unit,
+    ) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+        onResult(
+            p.getBoolean("alert_enabled", true),
+            p.getBoolean("alert_pause_disk_low", true),
+            p.getBoolean("alert_pause_heat", false),
+            p.getInt("alert_cpu_threshold", 90),
+            p.getInt("alert_ram_threshold", 85),
+        )
+    }
+
+    fun saveRulesConfig(
+        enabled: Boolean,
+        pauseOnDiskLow: Boolean,
+        pauseOnHeat: Boolean,
+        cpuThreshold: Int,
+        ramThreshold: Int,
+        onResult: (Boolean, String) -> Unit,
+    ) {
+        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+        p.edit()
+            .putBoolean("alert_enabled", enabled)
+            .putBoolean("alert_pause_disk_low", pauseOnDiskLow)
+            .putBoolean("alert_pause_heat", pauseOnHeat)
+            .putInt("alert_cpu_threshold", cpuThreshold)
+            .putInt("alert_ram_threshold", ramThreshold)
+            .apply()
+        onResult(true, "Đã lưu quy tắc cảnh báo")
+    }
+
+    // ═══ DEVICE APPROVAL (Phase 7d.3 — moved from WebDavViewModel facade) ═══
+
+    var showApprovalDialog by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var pendingIpAddress by androidx.compose.runtime.mutableStateOf("")
+        internal set
+    var approvalMessage by androidx.compose.runtime.mutableStateOf("")
+        internal set
+
+    fun approveDeviceIp(ip: String) {
+        showApprovalDialog = false
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (base.isBlank()) return@launch
+                val body = org.json.JSONObject().apply {
+                    put("ip", ip); put("approved", true)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
+                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, "Đã cấp quyền truy cập cho IP: $ip")
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun denyDeviceIp(ip: String) {
+        showApprovalDialog = false
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (base.isBlank()) return@launch
+                val body = org.json.JSONObject().apply {
+                    put("ip", ip); put("approved", false)
+                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
+                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.WARNING, "Đã chặn quyền truy cập của IP: $ip")
+                }
+            } catch (_: Exception) {}
         }
     }
 }

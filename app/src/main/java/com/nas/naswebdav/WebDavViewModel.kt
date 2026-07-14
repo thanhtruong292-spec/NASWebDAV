@@ -885,11 +885,17 @@ class WebDavViewModel(
         }
     }
 
-    // --- QUẢN LÝ BẢO MẬT & PHÊ DUYỆT (DEVICE APPROVAL) — stay facade ---
-    var showApprovalDialog by mutableStateOf(false)
-    var pendingIpAddress by mutableStateOf("")
-    var approvalMessage by mutableStateOf("")
-    var pendingCountryCode by mutableStateOf("VN")
+    // ─── DEVICE APPROVAL STATE — delegated to DeviceMgmtVM (Phase 7d.3) ──────
+    var showApprovalDialog: Boolean
+        get() = deviceManagement.showApprovalDialog
+        set(v) { deviceManagement.showApprovalDialog = v }
+    var pendingIpAddress: String
+        get() = deviceManagement.pendingIpAddress
+        set(v) { deviceManagement.pendingIpAddress = v }
+    var approvalMessage: String
+        get() = deviceManagement.approvalMessage
+        set(v) { deviceManagement.approvalMessage = v }
+    var pendingCountryCode by mutableStateOf("VN") // stays — only used by UI, no logic
     var weeklyReportText by mutableStateOf("Đang tải dữ liệu...")
 
     internal var webSocket: okhttp3.WebSocket? = null
@@ -5475,29 +5481,11 @@ fun WebDavViewModel.toggleOmvService(serviceName: String, enable: Boolean) {
 }
 
 fun WebDavViewModel.approveDeviceIp(ip: String) {
-    showApprovalDialog = false
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val host = safeUrlHost(webDavManager.currentBaseUrl)
-            val body = org.json.JSONObject().apply { put("ip", ip); put("approved", true) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
-            localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS; commonDialogMessage = "Đã cấp quyền truy cập cho IP: $ip"; showCommonDialog = true }
-        } catch (_: Exception) {}
-    }
+    deviceManagement.approveDeviceIp(ip)
 }
 
 fun WebDavViewModel.denyDeviceIp(ip: String) {
-    showApprovalDialog = false
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val host = safeUrlHost(webDavManager.currentBaseUrl)
-            val body = org.json.JSONObject().apply { put("ip", ip); put("approved", false) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder().url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/approve_ip").post(body).build()
-            localApiClient.newCall(request).execute().use { }
-            withContext(Dispatchers.Main) { commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING; commonDialogMessage = "Đã chặn quyền truy cập của IP: $ip"; showCommonDialog = true }
-        } catch (_: Exception) {}
-    }
+    deviceManagement.denyDeviceIp(ip)
 }
 
 fun WebDavViewModel.fetchDockerContainers() {
@@ -6053,72 +6041,21 @@ fun WebDavViewModel.toggleSmbShare(enable: Boolean, onResult: (Boolean, String) 
         }
     }
 
-    // --- Missing functions called from dialogs ---
+    // ─── TELEGRAM CONFIG — delegated to DeviceMgmtVM (Phase 7d.3) ───────────
     fun loadTelegramConfig(onResult: (enabled: Boolean, chatId: String, hasToken: Boolean) -> Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        val enabled = p.getBoolean("telegram_enabled", false)
-        val chatId = p.getString("telegram_chat_id", "") ?: ""
-        val token = p.getString("telegram_bot_token", "") ?: ""
-        onResult(enabled, chatId, token.isNotBlank())
+        deviceManagement.loadTelegramConfig(onResult)
     }
 
     fun saveTelegramConfig(enabled: Boolean, botToken: String, chatId: String, test: Boolean, onResult: (Boolean, String) -> Unit) {
-        // FIX C3 (ViewModel): Dùng SharedPreferences thay vì plaintext
-        // TODO: migrate sang EncryptedSharedPreferences trong tương lai
-        val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        p.edit()
-            .putBoolean("telegram_enabled", enabled)
-            .putString("telegram_bot_token", botToken)
-            .putString("telegram_chat_id", chatId)
-            .apply()
-        if (test) {
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    val url = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
-                    // FIX M5 (ViewModel): Dùng JSONObject thay vì string interpolation
-                    // để tránh JSON injection khi chatId chứa ký tự đặc biệt
-                    val jsonBody = org.json.JSONObject().apply {
-                        put("token", botToken)
-                        put("chat_id", chatId)
-                    }.toString()
-                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), jsonBody)
-                    val request = okhttp3.Request.Builder().url(url).post(body).build()
-                    val response = webDavManager.optimizedClient.newCall(request).execute()
-                    val bodyStr = response.body?.string() ?: ""
-                    withContext(Dispatchers.Main) {
-                        onResult(response.isSuccessful, if (response.isSuccessful) "Tin nhắn test đã gửi thành công!" else "Lỗi: $bodyStr")
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        onResult(false, "Lỗi gửi test: ${e.message}")
-                    }
-                }
-            }
-        } else {
-            onResult(true, "Đã lưu cấu hình Telegram")
-        }
+        deviceManagement.saveTelegramConfig(enabled, botToken, chatId, test, onResult)
     }
 
+    // ─── RULES CONFIG — delegated to DeviceMgmtVM (Phase 7d.3) ──────────────
     fun loadRulesConfig(onResult: (enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int) -> Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        onResult(
-            p.getBoolean("alert_enabled", true),
-            p.getBoolean("alert_pause_disk_low", true),
-            p.getBoolean("alert_pause_heat", false),
-            p.getInt("alert_cpu_threshold", 90),
-            p.getInt("alert_ram_threshold", 85)
-        )
+        deviceManagement.loadRulesConfig(onResult)
     }
 
     fun saveRulesConfig(enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int, onResult: (Boolean, String) -> Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        p.edit()
-            .putBoolean("alert_enabled", enabled)
-            .putBoolean("alert_pause_disk_low", pauseOnDiskLow)
-            .putBoolean("alert_pause_heat", pauseOnHeat)
-            .putInt("alert_cpu_threshold", cpuThreshold)
-            .putInt("alert_ram_threshold", ramThreshold)
-            .apply()
-        onResult(true, "Đã lưu quy tắc cảnh báo")
+        deviceManagement.saveRulesConfig(enabled, pauseOnDiskLow, pauseOnHeat, cpuThreshold, ramThreshold, onResult)
     }
 }
