@@ -74,12 +74,10 @@ private fun insightRate(bytesPerSec: Long): String {
 
 @Composable
 fun NasInsightsSummaryCard(
-    viewModel: WebDavViewModel,
     onOpen: () -> Unit
 ) {
-    // nasInsights now owned by SystemMonitorVM (Phase 7a). Reads via facade
-    // delegating getter — same instance as LocalSystemMonitorVM.current.
-    val insight = viewModel.nasInsights
+    val sysMonitorVM = LocalSystemMonitorVM.current
+    val insight = sysMonitorVM.nasInsights
     val modeColor = when (insight.workloadMode) {
         "protect" -> AccentRed
         "balanced" -> AccentOrange

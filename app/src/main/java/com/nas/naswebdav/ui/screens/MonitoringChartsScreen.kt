@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nas.naswebdav.DailyReportData
+import com.nas.naswebdav.LocalSystemMonitorVM
 import com.nas.naswebdav.MetricsSnapshot
 import com.nas.naswebdav.WebDavViewModel
 
@@ -82,18 +83,19 @@ private fun lerpColor(a: Color, b: Color, t: Float): Color {
 }
 
 @Composable
-fun MonitoringChartCard(viewModel: WebDavViewModel) {
+fun MonitoringChartCard() {
+    val sysMonitorVM = LocalSystemMonitorVM.current
     val tabLabels  = listOf("🌡️ Nhiệt độ", "📊 Tài nguyên", "📶 Mạng")
     val hourLabels = listOf("1h", "6h", "24h")
     val hourValues = listOf(1, 6, 24)
     var showReport by remember { mutableStateOf(false) }
-    val report = viewModel.dailyReport
+    val report = sysMonitorVM.dailyReport
 
-    LaunchedEffect(viewModel.metricsHours) {
-        viewModel.fetchMetricsHistory(viewModel.metricsHours)
+    LaunchedEffect(sysMonitorVM.metricsHours) {
+        sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours)
     }
     LaunchedEffect(Unit) {
-        viewModel.fetchDailyReport()
+        sysMonitorVM.fetchDailyReport()
     }
 
     Card(
@@ -119,7 +121,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     Icon(Icons.Default.Insights, null, tint = _ChartAccentCyan, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("GIÁM SÁT", fontSize = _ChartPanelTitleSize, color = _ChartPanelTitle, fontWeight = FontWeight.Black, letterSpacing = _ChartPanelTitleLetterSpacing)
-                    val ageSec = if (viewModel.lastMetricsRefreshAt > 0L) ((System.currentTimeMillis() - viewModel.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
+                    val ageSec = if (sysMonitorVM.lastMetricsRefreshAt > 0L) ((System.currentTimeMillis() - sysMonitorVM.lastMetricsRefreshAt).coerceAtLeast(0L) / 1000L).toInt() else -1
                     val refreshLabel = when {
                         ageSec < 0 -> "Đang chờ dữ liệu"
                         ageSec < 60 -> "Mới ${ageSec}s"
@@ -130,7 +132,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     hourLabels.forEachIndexed { i, label ->
-                        val selected = hourValues[i] == viewModel.metricsHours
+                        val selected = hourValues[i] == sysMonitorVM.metricsHours
                         Surface(
                             shape = RoundedCornerShape(6.dp),
                             color = if (selected) _ChartAccentCyan.copy(alpha = 0.16f) else Color.Transparent,
@@ -140,7 +142,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                             ) {
                                 // Force open chart panel (overrides other panels)
                                 com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "chart"
-                                viewModel.fetchMetricsHistory(hourValues[i])
+                                sysMonitorVM.fetchMetricsHistory(hourValues[i])
                             }
                         ) {
                             Text(label, fontSize = 10.sp,
@@ -166,14 +168,14 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
             // Tab chọn loại biểu đồ
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 tabLabels.forEachIndexed { i, label ->
-                    val sel = i == viewModel.metricsChartTab
+                    val sel = i == sysMonitorVM.metricsChartTab
                     Surface(
                         shape = RoundedCornerShape(8.dp),
                         color = if (sel) Color(0xFF1B5E20).copy(alpha = 0.5f) else _ChartDarkSurface,
                         modifier = Modifier.weight(1f).clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { viewModel.metricsChartTab = i }
+                        ) { sysMonitorVM.metricsChartTab = i }
                     ) {
                         Row(
                             modifier = Modifier.padding(vertical = 5.dp).fillMaxWidth(),
@@ -195,8 +197,8 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
             Spacer(Modifier.height(10.dp))
 
             // Vùng biểu đồ — hiển thị theo trạng thái
-            val history = viewModel.metricsHistory
-            val error   = viewModel.metricsError
+            val history = sysMonitorVM.metricsHistory
+            val error   = sysMonitorVM.metricsError
             when {
                 // Có lỗi: hiện thông báo + nút Refresh
                 error != null -> {
@@ -210,7 +212,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = _ChartAccentCyan.copy(alpha = 0.15f),
-                                modifier = Modifier.clickable { viewModel.fetchMetricsHistory(viewModel.metricsHours) }
+                                modifier = Modifier.clickable { sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours) }
                             ) {
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -223,7 +225,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     }
                 }
                 // Chưa có dữ liệu + đang load: spinner
-                history.isEmpty() && viewModel.isLoadingMetrics -> {
+                history.isEmpty() && sysMonitorVM.isLoadingMetrics -> {
                     Box(Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = _ChartAccentCyan, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -242,7 +244,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = _ChartAccentCyan.copy(alpha = 0.15f),
-                                modifier = Modifier.clickable { viewModel.fetchMetricsHistory(viewModel.metricsHours) }
+                                modifier = Modifier.clickable { sysMonitorVM.fetchMetricsHistory(sysMonitorVM.metricsHours) }
                             ) {
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -255,7 +257,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                     }
                 }
                 // Có dữ liệu: vẽ biểu đồ
-                else -> NasMetricsLineChart(history = history, tabIndex = viewModel.metricsChartTab)
+                else -> NasMetricsLineChart(history = history, tabIndex = sysMonitorVM.metricsChartTab)
             }
 
 
@@ -267,7 +269,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                 color = _ChartDarkSurface,
                 modifier = Modifier.fillMaxWidth().clickable {
                     showReport = !showReport
-                    if (showReport && report == null) viewModel.fetchDailyReport()
+                    if (showReport && report == null) sysMonitorVM.fetchDailyReport()
                 }
             ) {
                 Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically,
@@ -285,7 +287,7 @@ fun MonitoringChartCard(viewModel: WebDavViewModel) {
                                 Text("$icon Sức khoẻ: ${report.healthScore}%  |  ${report.date}",
                                     fontSize = 10.sp, color = _ChartTextSecond)
                             } else {
-                                Text(if (viewModel.isDailyReportLoading) "Đang tải..." else "Nhấn để xem báo cáo ngày hôm qua",
+                                Text(if (sysMonitorVM.isDailyReportLoading) "Đang tải..." else "Nhấn để xem báo cáo ngày hôm qua",
                                     fontSize = 10.sp, color = _ChartTextSecond)
                             }
                         }

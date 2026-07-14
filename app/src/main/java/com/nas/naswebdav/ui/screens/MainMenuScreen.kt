@@ -765,12 +765,11 @@ fun MainMenuScreen(
 
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
         Spacer(Modifier.height(8.dp))
-        com.nas.naswebdav.ui.screens.MonitoringChartCard(viewModel)
+        com.nas.naswebdav.ui.screens.MonitoringChartCard()
         Spacer(Modifier.height(8.dp))
         MainMenuDashboardNasInsightsSummaryCard(
-            viewModel = viewModel,
             onOpen = {
-                viewModel.fetchNasInsights(minIntervalMs = 0L)
+                sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
                 showNasInsightsDialog = true
             }
         )
@@ -1652,10 +1651,10 @@ private fun insightRate(bytesPerSec: Long): String {
 
 @Composable
 fun MainMenuDashboardNasInsightsSummaryCard(
-    viewModel: WebDavViewModel,
     onOpen: () -> Unit
 ) {
-    val insight = viewModel.nasInsights
+    val sysMonitorVM = LocalSystemMonitorVM.current
+    val insight = sysMonitorVM.nasInsights
     val modeColor = when (insight.workloadMode) {
         "protect" -> AccentRed
         "balanced" -> AccentOrange
