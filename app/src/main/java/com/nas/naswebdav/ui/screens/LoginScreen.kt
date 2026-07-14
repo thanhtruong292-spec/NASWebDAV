@@ -87,6 +87,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     // which AuthSessionViewModel writes to. Reading here via authVM getters keeps
     // LoginScreen reactive to auth state without touching the facade's mutable vars.
     val authVM = LocalAuthSessionVM.current
+    val globalUiVM = LocalGlobalUiVM.current
     val density = LocalDensity.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
     var historyIps by remember {
@@ -233,7 +234,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                 historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
                 authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
                     viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
-                }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
+                }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
             }
         }, enabled = authVM.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
@@ -278,9 +279,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                                     viewModel.scheduleFingerprintWorker(context)
                                     onLoginSuccess()
                                 }, onError = { msg ->
-                                    viewModel.commonDialogType = DialogType.ERROR
-                                    viewModel.commonDialogMessage = msg
-                                    viewModel.showCommonDialog = true
+                                    globalUiVM.show(DialogType.ERROR, msg)
                                 })
                             }
                         })

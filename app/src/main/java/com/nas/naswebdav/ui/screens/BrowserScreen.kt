@@ -150,6 +150,7 @@ fun BrowserScreen(
     val autoBackupVM = LocalAutoBackupVM.current
     val authVM = LocalAuthSessionVM.current
     val sysMonitorVM = LocalSystemMonitorVM.current
+    val globalUiVM  = LocalGlobalUiVM.current
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1545,11 +1546,11 @@ fun BrowserScreen(
         }
 
         // LẮNG NGHE VÀ HIỂN THỊ DIALOG TỪ VIEWMODEL TRÊN BROWSER SCREEN
-        if (viewModel.showCommonDialog) {
+        if (globalUiVM.showCommonDialog) {
             AppStatusDialog(
-                type = viewModel.commonDialogType,
-                message = viewModel.commonDialogMessage,
-                onDismiss = { viewModel.showCommonDialog = false }
+                type = globalUiVM.commonDialogType,
+                message = globalUiVM.commonDialogMessage,
+                onDismiss = { globalUiVM.dismiss() }
             )
         }
     }

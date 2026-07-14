@@ -34,6 +34,7 @@ class DomainViewModelProvider(
     val smartTools: SmartToolsViewModel by lazy { SmartToolsViewModel(repository) }
     val livestream: LivestreamViewModel by lazy { LivestreamViewModel(repository) }
     val autoBackup: AutoBackupViewModel by lazy { AutoBackupViewModel(repository) }
+    val globalUi: GlobalUiViewModel by lazy { GlobalUiViewModel() }
 
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T = when {
@@ -44,6 +45,7 @@ class DomainViewModelProvider(
         modelClass.isAssignableFrom(SmartToolsViewModel::class.java) -> smartTools as T
         modelClass.isAssignableFrom(LivestreamViewModel::class.java) -> livestream as T
         modelClass.isAssignableFrom(AutoBackupViewModel::class.java) -> autoBackup as T
+        modelClass.isAssignableFrom(GlobalUiViewModel::class.java) -> globalUi as T
         else -> throw IllegalArgumentException(
             "DomainViewModelProvider: unknown VM class ${modelClass.name}"
         )

@@ -52,3 +52,7 @@ val LocalLivestreamVM = staticCompositionLocalOf<LivestreamViewModel> {
 val LocalAutoBackupVM = staticCompositionLocalOf<AutoBackupViewModel> {
     error("AutoBackupViewModel not provided — wrap setContent in CompositionLocalProvider")
 }
+
+val LocalGlobalUiVM = staticCompositionLocalOf<GlobalUiViewModel> {
+    error("GlobalUiViewModel not provided — wrap setContent in CompositionLocalProvider")
+}

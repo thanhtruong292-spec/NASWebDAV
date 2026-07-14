@@ -380,6 +380,7 @@ class WebDavViewModel(
     injectedAutoBackup: com.nas.naswebdav.backup.AutoBackupViewModel? = null,
     injectedSystemMonitor: com.nas.naswebdav.monitor.SystemMonitorViewModel? = null,
     injectedFileBrowser: com.nas.naswebdav.browser.FileBrowserViewModel? = null,
+    injectedGlobalUi: GlobalUiViewModel? = null,
 ) : ViewModel() {
 
     val authSession: com.nas.naswebdav.auth.AuthSessionViewModel =
@@ -402,6 +403,9 @@ class WebDavViewModel(
 
     val fileBrowser: com.nas.naswebdav.browser.FileBrowserViewModel =
         injectedFileBrowser ?: com.nas.naswebdav.browser.FileBrowserViewModel(repository)
+
+    val globalUi: GlobalUiViewModel =
+        injectedGlobalUi ?: GlobalUiViewModel()
 
 
     // CHỐNG RÒ RỈ THREAD VÀ BỘ NHỚ: Dùng chung một OkHttpClient duy nhất cho toàn bộ các truy vấn Local API
@@ -946,10 +950,16 @@ class WebDavViewModel(
         get() = fileBrowser.specialTitle
         set(value) { fileBrowser.specialTitle = value }
 
-    // STATE CHO DIALOG THÔNG BÁO CHUNG — stay facade (shared across VMs)
-    var commonDialogMessage by mutableStateOf("")
-    var commonDialogType by mutableStateOf(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS)
-    var showCommonDialog by mutableStateOf(false)
+    // STATE CHO DIALOG THÔNG BÁO CHUNG — delegated to GlobalUiVM (SSoT)
+    var commonDialogMessage: String
+        get() = globalUi.commonDialogMessage
+        set(value) { globalUi.commonDialogMessage = value }
+    var commonDialogType: com.nas.naswebdav.ui.dialogs.DialogType
+        get() = globalUi.commonDialogType
+        set(value) { globalUi.commonDialogType = value }
+    var showCommonDialog: Boolean
+        get() = globalUi.showCommonDialog
+        set(value) { globalUi.showCommonDialog = value }
 
     fun logUserAction(module: String, message: String, type: String = "INFO") {
         viewModelScope.launch(Dispatchers.IO) {

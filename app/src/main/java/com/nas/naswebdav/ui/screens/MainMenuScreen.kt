@@ -268,6 +268,7 @@ fun MainMenuScreen(
     val smartToolsVM = LocalSmartToolsVM.current
     val livestreamVM = LocalLivestreamVM.current
     val authVM       = LocalAuthSessionVM.current
+    val globalUiVM   = LocalGlobalUiVM.current
     // FIX CPU #1: wrap getSharedPreferences trong remember() để tránh file I/O mỗi recomposition.
     // Trước đây gọi trực tiếp → disk I/O mỗi khung hình (120Hz = 120 lần/giây).
     val sharedPrefs = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
@@ -831,12 +832,12 @@ fun MainMenuScreen(
                 onDismiss = { showCommonDialog = false }
             )
         }
-        // DIALOG THÔNG BÁO TỪ VIEWMODEL
-        if (viewModel.showCommonDialog) {
+        // DIALOG THÔNG BÁO TỪ GLOBAL UI VM (Phase 7d.3)
+        if (globalUiVM.showCommonDialog) {
             AppStatusDialog(
-                type = viewModel.commonDialogType,
-                message = viewModel.commonDialogMessage,
-                onDismiss = { viewModel.showCommonDialog = false }
+                type = globalUiVM.commonDialogType,
+                message = globalUiVM.commonDialogMessage,
+                onDismiss = { globalUiVM.dismiss() }
             )
         }
 
@@ -3752,6 +3753,7 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 @Composable
 fun MainMenuLoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
+    val globalUiVM = LocalGlobalUiVM.current
     val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
     var historyIps by remember { mutableStateOf(rawHistory.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }) }
     var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
@@ -3865,7 +3867,7 @@ fun MainMenuLoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) 
                 historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
                 viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
                     viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
-                }, onError = { errorMsg -> viewModel.commonDialogType = DialogType.ERROR; viewModel.commonDialogMessage = errorMsg; viewModel.showCommonDialog = true })
+                }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
             }
         }, enabled = viewModel.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
@@ -3910,9 +3912,7 @@ fun MainMenuLoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) 
                                     viewModel.scheduleFingerprintWorker(context)
                                     onLoginSuccess()
                                 }, onError = { msg ->
-                                    viewModel.commonDialogType = DialogType.ERROR
-                                    viewModel.commonDialogMessage = msg
-                                    viewModel.showCommonDialog = true
+                                    globalUiVM.show(DialogType.ERROR, msg)
                                 })
                             }
                         })

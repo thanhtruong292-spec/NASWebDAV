@@ -106,6 +106,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         domainProvider.autoBackup,
                         domainProvider.systemMonitor,
                         domainProvider.fileBrowser,
+                        domainProvider.globalUi,
                     ) as T
                 }
                 throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
@@ -268,6 +269,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 LocalSmartToolsVM provides domainProvider.smartTools,
                 LocalLivestreamVM provides domainProvider.livestream,
                 LocalAutoBackupVM provides domainProvider.autoBackup,
+                LocalGlobalUiVM provides domainProvider.globalUi,
             ) {
                 com.nas.naswebdav.ui.screens.NasTheme {
                     Surface(color = DarkSurface) {
@@ -533,17 +535,17 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
 
 
-    // Dialog thông báo chung từ ViewModel (hiển thị toàn cục)
-
-    if (viewModel.showCommonDialog) {
+    // Dialog thông báo chung từ GlobalUiVM (Phase 7d.3)
+    val globalUiVM = LocalGlobalUiVM.current
+    if (globalUiVM.showCommonDialog) {
 
         com.nas.naswebdav.ui.dialogs.AppStatusDialog(
 
-            type = viewModel.commonDialogType,
+            type = globalUiVM.commonDialogType,
 
-            message = viewModel.commonDialogMessage,
+            message = globalUiVM.commonDialogMessage,
 
-            onDismiss = { viewModel.showCommonDialog = false }
+            onDismiss = { globalUiVM.dismiss() }
 
         )
 
