@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
@@ -357,6 +358,114 @@ class AuthSessionViewModel(
             this.removePrefix(normalized).ifEmpty { "/" }
         } else {
             this
+        }
+    }
+
+    // ─── GUEST PASS (Phase 7d.3 — moved from facade) ────────────────────────
+
+    var activeGuestPass by androidx.compose.runtime.mutableStateOf<com.nas.naswebdav.GuestPassInfo?>(null)
+        internal set
+
+    var isGuestPassLoading by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    var guestPassError by androidx.compose.runtime.mutableStateOf<String?>(null)
+        internal set
+
+    /**
+     * Gọi POST /api/guest/create → NAS trả về thông tin user/host/FTP cho khách.
+     */
+    fun createGuestPass(durationMinutes: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                isGuestPassLoading = true
+                guestPassError = null
+            }
+            try {
+                val baseUrl = WebDavManager.currentBaseUrl
+                val host = safeUrlHost(baseUrl)
+                val json = org.json.JSONObject().apply {
+                    put("duration_minutes", durationMinutes)
+                }
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("${baseUrl.toApiBaseUrl()}/api/guest/create")
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val res = org.json.JSONObject(resp.body?.string() ?: "{}")
+                        val expiresAtUnix = res.optLong("expires_at_unix", 0L)
+                        val pass = com.nas.naswebdav.GuestPassInfo(
+                            username  = res.optString("username", "guest"),
+                            password  = res.optString("password", ""),
+                            host      = res.optString("host", host),
+                            ftpPort   = res.optInt("ftp_port", 21),
+                            expiresAt = if (expiresAtUnix > 0) expiresAtUnix * 1000L
+                                        else System.currentTimeMillis() + durationMinutes * 60_000L
+                        )
+                        withContext(Dispatchers.Main) { activeGuestPass = pass }
+                        repository.addSystemLog(
+                            "SUCCESS", "GuestPass",
+                            "Đã cấp Guest FTP: user='${pass.username}', hết hạn sau $durationMinutes phút"
+                        )
+                    } else {
+                        val errBody = resp.body?.string() ?: ""
+                        withContext(Dispatchers.Main) {
+                            guestPassError = "NAS từ chối (${resp.code}): $errBody"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    guestPassError = "Lỗi kết nối API: ${e.message}"
+                }
+                repository.addSystemLog("ERROR", "GuestPass", "Tạo Guest Pass lỗi: ${e.message?.take(80)}")
+            } finally {
+                withContext(Dispatchers.Main) { isGuestPassLoading = false }
+            }
+        }
+    }
+
+    /**
+     * Gọi POST /api/guest/revoke → NAS xóa FTP user tạm thời.
+     */
+    fun revokeGuestPass(
+        onSuccess: (String) -> Unit = {},
+        onWarning: (String) -> Unit = {}
+    ) {
+        val pass = activeGuestPass ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isGuestPassLoading = true }
+            try {
+                val baseUrl = WebDavManager.currentBaseUrl
+                val json = org.json.JSONObject().put("username", pass.username)
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("${baseUrl.toApiBaseUrl()}/api/guest/revoke")
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    withContext(Dispatchers.Main) {
+                        if (resp.isSuccessful) {
+                            activeGuestPass = null
+                            guestPassError = null
+                            onSuccess("Đã thu hồi Guest Pass của '${pass.username}' thành công!")
+                            repository.addSystemLog("INFO", "GuestPass", "Đã thu hồi Guest FTP user '${pass.username}'")
+                        } else {
+                            guestPassError = "Thu hồi thất bại: HTTP ${resp.code}"
+                            onWarning("Thu hồi thất bại (HTTP ${resp.code}). Pass được giữ lại để thử lại.")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    guestPassError = "Lỗi thu hồi: ${e.message}"
+                    onWarning("Lỗi mạng khi thu hồi Guest Pass. Pass được giữ lại để thử lại.")
+                }
+            } finally {
+                withContext(Dispatchers.Main) { isGuestPassLoading = false }
+            }
         }
     }
 }

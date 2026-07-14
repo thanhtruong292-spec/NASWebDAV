@@ -499,10 +499,16 @@ class WebDavViewModel(
     // ─── SMART NETWORK – trạng thái đang dùng LAN hay Tailscale ───────────────
     var isOnLan by mutableStateOf(true) // true = LAN, false = Tailscale
 
-    // ─── GUEST PASS STATE ─────────────────────────────────────────────────────
-    var activeGuestPass by mutableStateOf<GuestPassInfo?>(null)
-    var isGuestPassLoading by mutableStateOf(false)
-    var guestPassError by mutableStateOf<String?>(null)
+    // ─── GUEST PASS STATE — delegated to AuthSessionVM (Phase 7d.3) ─────────
+    var activeGuestPass: GuestPassInfo?
+        get() = authSession.activeGuestPass
+        set(value) { authSession.activeGuestPass = value }
+    var isGuestPassLoading: Boolean
+        get() = authSession.isGuestPassLoading
+        set(value) { authSession.isGuestPassLoading = value }
+    var guestPassError: String?
+        get() = authSession.guestPassError
+        set(value) { authSession.guestPassError = value }
 
     // ─── SOCIAL EXTRACTOR STATE (LivestreamVM) ───────────────────────────────
     var socialExtractStatus: String
@@ -3284,102 +3290,17 @@ class WebDavViewModel(
         }
     }
 
-    // ============ GUEST PASS ============
+    // ============ GUEST PASS — delegated to AuthSessionViewModel (Phase 7d.3) ============
 
-    /**
-     * Gọi POST /api/guest/create → NAS tạo FTP user tạm thời read-only.
-     * Response JSON: { username, password, host, ftp_port, expires_at_unix }
-     */
     fun createGuestPass(durationMinutes: Int) {
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) {
-                isGuestPassLoading = true
-                guestPassError = null
-            }
-            try {
-                val host = safeUrlHost(webDavManager.currentBaseUrl)
-                val json = org.json.JSONObject().apply {
-                    put("duration_minutes", durationMinutes)
-                }
-                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/guest/create")
-                    .post(body)
-                    .build()
-                localApiClient.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val res = org.json.JSONObject(resp.body?.string() ?: "{}")
-                        val expiresAtUnix = res.optLong("expires_at_unix", 0L)
-                        val pass = GuestPassInfo(
-                            username  = res.optString("username", "guest"),
-                            password  = res.optString("password", ""),
-                            host      = res.optString("host", host),
-                            ftpPort   = res.optInt("ftp_port", 21),
-                            expiresAt = if (expiresAtUnix > 0) expiresAtUnix * 1000L
-                                        else System.currentTimeMillis() + durationMinutes * 60_000L
-                        )
-                        withContext(Dispatchers.Main) { activeGuestPass = pass }
-                        repository.addSystemLog("SUCCESS", "GuestPass",
-                            "Đã cấp Guest FTP: user='${pass.username}', hết hạn sau $durationMinutes phút")
-                    } else {
-                        val errBody = resp.body?.string() ?: ""
-                        withContext(Dispatchers.Main) {
-                            guestPassError = "NAS từ chối (${resp.code}): $errBody"
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    guestPassError = "Lỗi kết nối API: ${e.message}"
-                }
-                repository.addSystemLog("ERROR", "GuestPass", "Tạo Guest Pass lỗi: ${e.message?.take(80)}")
-            } finally {
-                withContext(Dispatchers.Main) { isGuestPassLoading = false }
-            }
-        }
+        authSession.createGuestPass(durationMinutes)
     }
 
-    /**
-     * Gọi POST /api/guest/revoke → NAS xóa FTP user tạm thời.
-     */
-    fun revokeGuestPass() {
-        val pass = activeGuestPass ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isGuestPassLoading = true }
-            try {
-                val json = org.json.JSONObject().put("username", pass.username)
-                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/guest/revoke")
-                    .post(body)
-                    .build()
-                localApiClient.newCall(request).execute().use { resp ->
-                    withContext(Dispatchers.Main) {
-                        if (resp.isSuccessful) {
-                            activeGuestPass = null
-                            guestPassError = null
-                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
-                            commonDialogMessage = "Da thu hoi Guest Pass cua '${pass.username}' thanh cong!"
-                            repository.addSystemLog("INFO", "GuestPass", "Da thu hoi Guest FTP user '${pass.username}'")
-                        } else {
-                            guestPassError = "Thu hoi that bai: HTTP ${resp.code}"
-                            commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                            commonDialogMessage = "Thu hoi that bai (HTTP ${resp.code}). Pass duoc giu lai de thu lai."
-                        }
-                        showCommonDialog = true
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    guestPassError = "Loi thu hoi: ${e.message}"
-                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.WARNING
-                    commonDialogMessage = "Loi mang khi thu hoi Guest Pass. Pass duoc giu lai de thu lai."
-                    showCommonDialog = true
-                }
-            } finally {
-                withContext(Dispatchers.Main) { isGuestPassLoading = false }
-            }
-        }
+    fun revokeGuestPass(
+        onSuccess: (String) -> Unit = {},
+        onWarning: (String) -> Unit = {}
+    ) {
+        authSession.revokeGuestPass(onSuccess, onWarning)
     }
 
     // ============ SOCIAL EXTRACTOR (yt-dlp qua NAS API) ============
