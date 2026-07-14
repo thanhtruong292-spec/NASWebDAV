@@ -78,28 +78,27 @@ private val SoAccentRed = Color(0xFFFF1744)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmartOrganizerScreen(
-    viewModel: WebDavViewModel,
     onBack: () -> Unit
 ) {
+    val smartVM = LocalSmartToolsVM.current
     // ── STATE ──
-    // Reads via facade delegating getters → SmartToolsVM is source of truth (Phase 7a)
-    val sourceUrl = viewModel.webDavManager.currentBaseUrl
+    val sourceUrl = WebDavManager.currentBaseUrl
     var selectedFilter by remember { mutableStateOf(OrganizerFilter.ALL) }
-    val isScanning = viewModel.organizerScanning
-    val isOrganizing = viewModel.organizerExecuting
-    val scanResult = viewModel.organizerScanResult
-    val totalFiles = viewModel.organizerTotalFiles
-    val organizeResult = viewModel.organizerResult
-    val errorMessage = viewModel.organizerError
+    val isScanning = smartVM.organizerScanning
+    val isOrganizing = smartVM.organizerExecuting
+    val scanResult = smartVM.organizerScanResult
+    val totalFiles = smartVM.organizerTotalFiles
+    val organizeResult = smartVM.organizerResult
+    val errorMessage = smartVM.organizerError
 
     // ── Hàm quét ──
     val scanAndPreview: () -> Unit = {
-        viewModel.smartOrganizeScan(selectedFilter)
+        smartVM.smartOrganizeScan(selectedFilter)
     }
 
     // ── Hàm thực thi sắp xếp ──
     val startOrganize: () -> Unit = {
-        viewModel.smartOrganizeExecute(selectedFilter)
+        smartVM.smartOrganizeExecute(selectedFilter)
     }
 
     // ── GIAO DIỆN ──
