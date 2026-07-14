@@ -170,8 +170,7 @@ fun FileItemGridCell(
 
     if (showTransferPickerDialog) {
         com.nas.naswebdav.ui.dialogs.FolderPickerDialog(
-            viewModel = viewModel,
-            startingUrl = viewModel.webDavManager.currentBaseUrl,
+            startingUrl = WebDavManager.currentBaseUrl,
             onDismiss = {
                 showTransferPickerDialog = false
                 pendingTransferOperation = ""

@@ -237,10 +237,10 @@ fun ToolboxDialog(
                 )
             }
             if (showTelegram) {
-                com.nas.naswebdav.ui.dialogs.TelegramSettingsDialog(viewModel = viewModel, onDismiss = { showTelegram = false })
+                com.nas.naswebdav.ui.dialogs.TelegramSettingsDialog(onDismiss = { showTelegram = false })
             }
             if (showRules) {
-                com.nas.naswebdav.ui.dialogs.RulesSettingsDialog(viewModel = viewModel, onDismiss = { showRules = false })
+                com.nas.naswebdav.ui.dialogs.RulesSettingsDialog(onDismiss = { showRules = false })
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {

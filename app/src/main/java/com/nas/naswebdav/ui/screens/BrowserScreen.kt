@@ -283,7 +283,6 @@ fun BrowserScreen(
     // ============ DIALOG: Chọn thư mục đích cho Copy/Move ============
     if (showFolderPickerDialog) {
         com.nas.naswebdav.ui.dialogs.FolderPickerDialog(
-            viewModel = viewModel,
             startingUrl = WebDavManager.currentBaseUrl,
             onDismiss = {
                 showFolderPickerDialog = false

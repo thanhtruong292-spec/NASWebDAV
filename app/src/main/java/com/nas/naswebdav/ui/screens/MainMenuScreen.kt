@@ -623,7 +623,6 @@ fun MainMenuScreen(
     }
     if (showLanWhitelistDialog) {
         LanWhitelistDialog(
-            viewModel = viewModel,
             onDismiss = { showLanWhitelistDialog = false }
         )
     }

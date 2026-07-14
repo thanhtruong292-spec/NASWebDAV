@@ -778,6 +778,7 @@ class DeviceManagementViewModel(
         internal set
     var pendingIpAddress by androidx.compose.runtime.mutableStateOf("")
         internal set
+    var pendingCountryCode by androidx.compose.runtime.mutableStateOf("VN")
     var approvalMessage by androidx.compose.runtime.mutableStateOf("")
         internal set
 

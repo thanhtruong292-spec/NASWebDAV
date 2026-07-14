@@ -525,8 +525,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         com.nas.naswebdav.ui.dialogs.IpApprovalDialog(
 
-            viewModel = viewModel,
-
             onDismiss = { viewModel.showApprovalDialog = false }
 
         )
@@ -821,8 +819,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
         composable("smart_organizer") {
 
             SmartOrganizerScreen(
-
-                viewModel = viewModel,
 
                 onBack = { navController.popBackStack() }
 

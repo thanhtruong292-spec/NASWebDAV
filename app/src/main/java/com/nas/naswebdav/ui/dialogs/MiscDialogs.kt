@@ -53,7 +53,6 @@ import androidx.compose.ui.window.Dialog
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderPickerDialog(
-    viewModel: WebDavViewModel,
     startingUrl: String,
     onDismiss: () -> Unit,
     onFolderSelected: (String) -> Unit
@@ -65,7 +64,7 @@ fun FolderPickerDialog(
     LaunchedEffect(currentUrl) {
         isLoading = true
         try {
-            val items = viewModel.webDavManager.listFiles(currentUrl)
+            val items = WebDavManager.listFiles(currentUrl)
             folderList = items.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         } catch (e: Exception) {
             folderList = emptyList()
@@ -79,7 +78,7 @@ fun FolderPickerDialog(
             Column {
                 Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (_: Exception) { currentUrl }
-                val relativePath = decoded.removePrefix(viewModel.webDavManager.currentBaseUrl)
+                val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
                 Text(
                     text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
                     fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -92,15 +91,15 @@ fun FolderPickerDialog(
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        if (currentUrl.trimEnd('/') != viewModel.webDavManager.currentBaseUrl.trimEnd('/')) {
+                        if (currentUrl.trimEnd('/') != WebDavManager.currentBaseUrl.trimEnd('/')) {
                             item {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
                                             val parentUrl = currentUrl.trimEnd('/').substringBeforeLast('/') + "/"
-                                            currentUrl = if (parentUrl.length < viewModel.webDavManager.currentBaseUrl.length)
-                                                viewModel.webDavManager.currentBaseUrl else parentUrl
+                                            currentUrl = if (parentUrl.length < WebDavManager.currentBaseUrl.length)
+                                                WebDavManager.currentBaseUrl else parentUrl
                                         }
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -273,8 +272,9 @@ fun NotificationDialog(title: String, message: String, icon: ImageVector, iconCo
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
-    val ip = viewModel.pendingIpAddress; val message = viewModel.approvalMessage; val countryCode = viewModel.pendingCountryCode
+fun IpApprovalDialog(onDismiss: () -> Unit) {
+    val deviceVM = LocalDeviceManagementVM.current
+    val ip = deviceVM.pendingIpAddress; val message = deviceVM.approvalMessage; val countryCode = deviceVM.pendingCountryCode
     val infiniteTransition = rememberInfiniteTransition(label = "shield_pulse")
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(0.7f, 1f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "alpha")
@@ -316,13 +316,13 @@ fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = { viewModel.approveDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
+            Button(onClick = { deviceVM.approveDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
                 modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), RoundedCornerShape(24.dp))) {
                 Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Cho phép", color = Color.White, fontWeight = FontWeight.Bold) }
             }
         },
         dismissButton = {
-            Button(onClick = { viewModel.denyDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
+            Button(onClick = { deviceVM.denyDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
                 modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFFE53935), Color(0xFFC62828))), RoundedCornerShape(24.dp))) {
                 Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Chặn IP", color = Color.White, fontWeight = FontWeight.Bold) }
             }
@@ -337,19 +337,18 @@ fun IpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LanWhitelistDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
     // Phase 7c.2: lanWhitelist* state owned by DeviceManagementVM (Phase 7a).
-    // Reads via facade delegation — SSoT preserved.
-    val ipList = viewModel.lanWhitelistIps
-    val subnetList = viewModel.lanWhitelistSubnets
-    val isLoading = viewModel.lanWhitelistLoading
-    val errorMessage = viewModel.lanWhitelistError
-    val statusMessage = viewModel.lanWhitelistStatus
+    val ipList = deviceVM.lanWhitelistIps
+    val subnetList = deviceVM.lanWhitelistSubnets
+    val isLoading = deviceVM.lanWhitelistLoading
+    val errorMessage = deviceVM.lanWhitelistError
+    val statusMessage = deviceVM.lanWhitelistStatus
 
     var newEntry by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { viewModel.loadLanWhitelist() }
+    LaunchedEffect(Unit) { deviceVM.loadLanWhitelist() }
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -383,7 +382,7 @@ fun LanWhitelistDialog(
                 IconButton(
                     onClick = {
                         if (newEntry.isNotBlank()) {
-                            viewModel.addLanWhitelistEntry(newEntry.trim())
+                            deviceVM.addLanWhitelistEntry(newEntry.trim())
                             newEntry = ""
                         }
                     },
@@ -416,7 +415,7 @@ fun LanWhitelistDialog(
                         subnetList.forEach { subnet ->
                             key("subnet-$subnet") {
                                 com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                    onDelete = { viewModel.removeLanWhitelistEntry(subnet, true) },
+                                    onDelete = { deviceVM.removeLanWhitelistEntry(subnet, true) },
                                     shape = RoundedCornerShape(6.dp),
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
@@ -438,7 +437,7 @@ fun LanWhitelistDialog(
                         ipList.forEach { ip ->
                             key("ip-$ip") {
                                 com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                    onDelete = { viewModel.removeLanWhitelistEntry(ip, false) },
+                                    onDelete = { deviceVM.removeLanWhitelistEntry(ip, false) },
                                     shape = RoundedCornerShape(6.dp),
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
@@ -472,32 +471,33 @@ fun LanWhitelistDialog(
 
 // (Đã xoá SmartSyncDialog theo yêu cầu)
 @Composable
-fun OrganizeLegacyDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
-    // Phase 7c.2: organizingLegacyRunning/Result owned by SmartToolsVM (Phase 7a delegation).
+fun OrganizeLegacyDialog(onDismiss: () -> Unit) {
+    val smartVM = LocalSmartToolsVM.current
+    // Phase 7c.2: organizingLegacyRunning/Result owned by SmartToolsVM.
     androidx.compose.material3.AlertDialog(
-        onDismissRequest = { if (!viewModel.organizingLegacyRunning) onDismiss() },
+        onDismissRequest = { if (!smartVM.organizingLegacyRunning) onDismiss() },
         title = { Text("Phân loại video cũ") },
         text = {
             Column {
-                if (viewModel.organizingLegacyRunning) {
+                if (smartVM.organizingLegacyRunning) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFF00897B), trackColor = Color.Transparent)
                     Text("Đang ra lệnh cho NAS dọn dẹp nội bộ...")
-                } else if (viewModel.organizingLegacyResult != null) {
-                    Text(viewModel.organizingLegacyResult!!)
+                } else if (smartVM.organizingLegacyResult != null) {
+                    Text(smartVM.organizingLegacyResult!!)
                 } else {
                     Text("Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video không phải MP4 (như mpg, flv, mkv, avi...) vào thư mục 'Other Video' không? Thao tác này giúp danh sách video gọn hơn và được xử lý trực tiếp trên NAS.")
                 }
             }
         },
         confirmButton = {
-            if (!viewModel.organizingLegacyRunning && viewModel.organizingLegacyResult == null) {
-                TextButton(onClick = { viewModel.organizeLegacyVideos() }) { Text("Chạy NAS") }
-            } else if (viewModel.organizingLegacyResult != null) {
-                TextButton(onClick = { viewModel.resetOrganizingLegacy(); onDismiss() }) { Text("Đóng") }
+            if (!smartVM.organizingLegacyRunning && smartVM.organizingLegacyResult == null) {
+                TextButton(onClick = { smartVM.organizeLegacyVideos() }) { Text("Chạy NAS") }
+            } else if (smartVM.organizingLegacyResult != null) {
+                TextButton(onClick = { smartVM.resetOrganizingLegacy(); onDismiss() }) { Text("Đóng") }
             }
         },
         dismissButton = {
-            if (!viewModel.organizingLegacyRunning && viewModel.organizingLegacyResult == null) {
+            if (!smartVM.organizingLegacyRunning && smartVM.organizingLegacyResult == null) {
                 TextButton(onClick = onDismiss) { Text("Hủy") }
             }
         }
@@ -553,7 +553,7 @@ fun MultiDeleteDialog(
 // ============ Cấu hình thông báo Telegram (#2) ============
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+fun TelegramSettingsDialog(onDismiss: () -> Unit) {
     var enabled by remember { mutableStateOf(false) }
     var botToken by remember { mutableStateOf("") }
     var chatId by remember { mutableStateOf("") }
@@ -646,11 +646,11 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                             .apply()
                         coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
-                                val url = "${viewModel.webDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
+                                val url = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
                                 val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),
                                     """{"token":"$botToken","chat_id":"$chatId"}""")
                                 val request = okhttp3.Request.Builder().url(url).post(body).build()
-                                val response = viewModel.webDavManager.optimizedClient.newCall(request).execute()
+                                val response = WebDavManager.optimizedClient.newCall(request).execute()
                                 val bodyStr = response.body?.string() ?: ""
                                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     busy = false
@@ -678,7 +678,7 @@ fun TelegramSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 // ============ Quy tắc cảnh báo (Rules engine #6) ============
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RulesSettingsDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
+fun RulesSettingsDialog(onDismiss: () -> Unit) {
     var enabled by remember { mutableStateOf(true) }
     var pause by remember { mutableStateOf(false) }
     var disk by remember { mutableStateOf("90") }

@@ -8,10 +8,15 @@ import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.OrganizerGroup
 import com.nas.naswebdav.ThumbnailAuditData
+import com.nas.naswebdav.OrganizerFilter
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.toApiBaseUrl
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * SmartToolsViewModel — Phase 2 của VM Split.
@@ -127,6 +132,102 @@ class SmartToolsViewModel(
     fun triggerSmartOrganizeScan() { /* TODO Phase 2b */ }
     fun executeSmartOrganize(action: String = "move") { /* TODO Phase 2b */ }
     fun resetSmartOrganize() { organizerScanResult = null; organizerError = null; organizerResult = null }
+
+    fun smartOrganizeScan(filter: OrganizerFilter) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) {
+                    organizerScanning = true; organizerScanResult = null; organizerResult = null; organizerError = null
+                }
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
+                val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/scan").post(body).build()
+                val scanClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(3, java.util.concurrent.TimeUnit.MINUTES).build()
+                scanClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string()
+                    withContext(Dispatchers.Main) {
+                        if (response.isSuccessful && responseBody != null) {
+                            try {
+                                val json = org.json.JSONObject(responseBody)
+                                organizerTotalFiles = json.optInt("total", 0)
+                                val groupsArr = json.optJSONArray("groups") ?: org.json.JSONArray()
+                                val groups = mutableListOf<com.nas.naswebdav.OrganizerGroup>()
+                                for (i in 0 until groupsArr.length()) {
+                                    val g = groupsArr.getJSONObject(i)
+                                    val samples = mutableListOf<String>()
+                                    val sf = g.optJSONArray("sample_files") ?: org.json.JSONArray()
+                                    for (j in 0 until sf.length()) samples.add(sf.getJSONObject(j).optString("name", ""))
+                                    groups.add(com.nas.naswebdav.OrganizerGroup(label = g.optString("label", "?"), count = g.optInt("count", 0), size = g.optLong("size", 0L), sampleFiles = samples))
+                                }
+                                organizerScanResult = groups
+                            } catch (e: Exception) { organizerError = "Lỗi phân tích: ${e.message}" }
+                        } else { organizerError = "Lỗi NAS: ${response.code}" }
+                    }
+                }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
+            finally { withContext(Dispatchers.Main) { organizerScanning = false } }
+        }
+    }
+
+    fun smartOrganizeExecute(filter: OrganizerFilter) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) { organizerExecuting = true; organizerResult = null; organizerError = null }
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
+                val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/execute").post(body).build()
+                val execClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).callTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+                execClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: throw Exception("Empty response body")
+                    val json = org.json.JSONObject(responseBody)
+                    val queued = response.code == 202 || json.optBoolean("queued", false)
+                    if (queued) {
+                        val jobId = json.optString("job_id", "")
+                        if (jobId.isEmpty()) throw Exception("Missing job_id")
+                        withContext(Dispatchers.Main) { organizerResult = "Đang sắp xếp..."; organizerScanResult = null }
+                        val finalJson = pollSmartOrganizeJob(apiBase, jobId)
+                        val finalStatus = finalJson.optString("status", "")
+                        val movedCount = finalJson.optInt("moved_count", 0)
+                        val errorCount = finalJson.optInt("error_count", 0)
+                        val errorMessage = finalJson.optString("error", "")
+                        withContext(Dispatchers.Main) {
+                            organizerResult = when (finalStatus) {
+                                "finished" -> "Hoàn tất — $movedCount tệp đã sắp xếp"
+                                "finished_with_errors" -> "Hoàn tất — $movedCount tệp ($errorCount lỗi)"
+                                else -> if (errorMessage.isNotEmpty()) errorMessage else "Smart Organizer thất bại"
+                            }
+                            if (finalStatus == "failed" || finalStatus == "aborted") { organizerError = organizerResult; organizerResult = null }
+                            organizerScanResult = null
+                        }
+                    } else if (response.isSuccessful) {
+                        withContext(Dispatchers.Main) { organizerResult = "Hoàn tất — ${json.optInt("moved_count", 0)} tệp"; organizerScanResult = null }
+                    } else { throw Exception("Lỗi NAS: ${response.code}") }
+                }
+            } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
+            finally { withContext(Dispatchers.Main) { organizerExecuting = false } }
+        }
+    }
+
+    private suspend fun pollSmartOrganizeJob(apiBase: String, jobId: String): org.json.JSONObject {
+        var delayMs = 1000L; val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/status/$jobId").get().build()
+            NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                if (!response.isSuccessful || responseBody == null) throw Exception("Lỗi NAS: ${response.code}")
+                val json = org.json.JSONObject(responseBody)
+                when (json.optString("status", "")) {
+                    "queued", "running" -> Unit
+                    "finished", "finished_with_errors", "failed", "aborted" -> return json
+                    else -> throw Exception("Trạng thái không hợp lệ")
+                }
+            }
+            kotlinx.coroutines.delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(5000L)
+        }
+        throw java.util.concurrent.TimeoutException("Smart organizer timed out")
+    }
 
     fun organizeLegacyVideos() {
         viewModelScope.launch {

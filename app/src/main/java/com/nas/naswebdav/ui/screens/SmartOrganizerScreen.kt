@@ -291,9 +291,9 @@ fun SmartOrganizerScreen(
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = {
-                                viewModel.organizerResult = null
-                                viewModel.organizerScanResult = null
-                                viewModel.organizerError = null
+                                smartVM.organizerResult = null
+                                smartVM.organizerScanResult = null
+                                smartVM.organizerError = null
                             },
                             border = BorderStroke(1.dp, SoAccentCyan.copy(alpha = 0.5f)),
                             shape = RoundedCornerShape(12.dp)
@@ -415,7 +415,7 @@ fun SmartOrganizerScreen(
 
                     // Nút hủy
                     TextButton(
-                        onClick = { viewModel.organizerScanResult = null },
+                        onClick = { smartVM.organizerScanResult = null },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Hủy tác vụ", color = SoTextSecondary)
