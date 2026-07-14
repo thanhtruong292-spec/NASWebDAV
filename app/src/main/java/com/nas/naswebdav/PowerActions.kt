@@ -1,0 +1,177 @@
+@file:Suppress("DEPRECATION")
+package com.nas.naswebdav
+
+import android.content.Context
+import com.nas.naswebdav.utils.WolUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import android.util.Log
+import android.os.SystemClock
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import java.net.URL
+
+/**
+ * PowerActions — extracted from WebDavViewModel facade (Phase 7d.4).
+ *
+ * Wake-on-LAN + Power commands (shutdown/reboot/suspend) require their own
+ * CoroutineScope. Pass any active scope (e.g. rememberCoroutineScope()).
+ */
+
+private fun extractHost(url: String): String? = try { URL(url).host } catch (_: Exception) { null }
+
+fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
+    val workManager = androidx.work.WorkManager.getInstance(context)
+    val constraints = androidx.work.Constraints.Builder()
+        .setRequiresDeviceIdle(true)
+        .setRequiresCharging(true)
+        .setRequiresBatteryNotLow(true)
+        .setRequiresStorageNotLow(true)
+        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+        .build()
+    val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
+    val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
+        168, java.util.concurrent.TimeUnit.HOURS
+    ).setConstraints(constraints).setInputData(inputData).build()
+    workManager.enqueueUniquePeriodicWork(
+        "Auto_Idle_Duplicate_Scan",
+        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+        periodicScanRequest
+    )
+}
+
+fun scheduleIdleSpeedTest(context: Context, currentUrl: String) {
+    val workManager = androidx.work.WorkManager.getInstance(context)
+    val constraints = androidx.work.Constraints.Builder()
+        .setRequiresDeviceIdle(true)
+        .setRequiresCharging(true)
+        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+        .build()
+    val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
+    val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
+        30, java.util.concurrent.TimeUnit.DAYS
+    ).setConstraints(constraints).setInputData(inputData).build()
+    workManager.enqueueUniquePeriodicWork(
+        "Auto_Idle_Speed_Test",
+        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+        periodicSpeedTestRequest
+    )
+}
+
+fun scheduleFingerprintWorker(context: Context) {
+    val workManager = androidx.work.WorkManager.getInstance(context)
+    val constraints = androidx.work.Constraints.Builder()
+        .setRequiresDeviceIdle(true)
+        .setRequiresCharging(true)
+        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+        .build()
+    val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
+        168, java.util.concurrent.TimeUnit.HOURS
+    ).setConstraints(constraints).build()
+    workManager.enqueueUniquePeriodicWork(
+        "Auto_Fingerprint_Worker",
+        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+        periodicRequest
+    )
+}
+
+suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    coroutineScope {
+        urlList.distinct().map { url ->
+            async(Dispatchers.IO) {
+                url to try {
+                    val safeUrl = if (url.endsWith("/")) url else "$url/"
+                    val timeoutMs = adaptiveTimeoutMs(safeUrl).toInt()
+                    val uri = java.net.URI(safeUrl)
+                    val host = uri.host ?: return@async url to -1L
+                    val port = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
+                    var best = Long.MAX_VALUE
+                    repeat(if (isTailscaleUrl(url)) 1 else 3) {
+                        val start = SystemClock.elapsedRealtime()
+                        try {
+                            val socket = java.net.Socket()
+                            socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+                            socket.close()
+                            best = minOf(best, SystemClock.elapsedRealtime() - start)
+                        } catch (_: Exception) {}
+                    }
+                    if (best == Long.MAX_VALUE) -1L else { recordLatency(url, best); best }
+                } catch (_: Exception) { -1L }
+            }
+        }.associate { it.await() }
+    }
+}
+
+fun sendWakeOnLan(
+    scope: CoroutineScope,
+    macStr: String,
+    targetHost: String? = null,
+    onResult: ((WolUtil.WolResult) -> Unit)? = null
+): Job {
+    return scope.launch(Dispatchers.IO) {
+        val preferredHost = targetHost?.trim()?.takeIf { it.isNotBlank() } ?: runCatching {
+            extractHost(WebDavManager.currentBaseUrl)
+        }.getOrNull()
+        val result = WolUtil.smartWakeOnLan(macStr, preferredHost)
+        Log.i("Power", if (result.success) "WOL success: ${result.message}" else "WOL failed: ${result.message}")
+        withContext(Dispatchers.Main) { onResult?.invoke(result) }
+    }
+}
+
+fun sendPowerCommandFromLogin(
+    scope: CoroutineScope,
+    ipInput: String,
+    user: String,
+    pass: String,
+    endpoint: String,
+    onResult: (Boolean, String) -> Unit
+): Job {
+    return scope.launch(Dispatchers.IO) {
+        try {
+            val trimmed = ipInput.trim()
+            if (trimmed.isEmpty()) {
+                withContext(Dispatchers.Main) { onResult(false, "Vui lòng nhập IP của NAS") }
+                return@launch
+            }
+            val host = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                if (trimmed.startsWith("https://")) trimmed.removePrefix("https://") else trimmed.removePrefix("http://")
+            } else trimmed.substringBefore(":")
+            val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
+            val cmdName = when {
+                endpoint.contains("reboot") -> "Khởi động lại"
+                endpoint.contains("suspend") -> "Ngủ"
+                endpoint.contains("shutdown") -> "Tắt nguồn"
+                else -> endpoint
+            }
+            val reqBuilder = okhttp3.Request.Builder()
+                .url(apiUrl)
+                .post(ByteArray(0).toRequestBody(null, 0, 0))
+            if (user.isNotBlank() && pass.isNotBlank()) {
+                reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+            }
+            val client = NasApplication.instance.fastApiClient.newBuilder()
+                .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            client.newCall(reqBuilder.build()).execute().use { resp ->
+                val ok = resp.isSuccessful
+                val code = resp.code
+                withContext(Dispatchers.Main) {
+                    if (ok) onResult(true, "Đã gửi lệnh $cmdName NAS!")
+                    else onResult(false, "NAS từ chối (HTTP $code) — kiểm tra IP/tài khoản/mật khẩu")
+                }
+                Log.w("Power", "LoginScreen: gửi $cmdName NAS tại $host (HTTP $code)")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult(false, "Không kết nối được NAS: ${e.message?.take(80) ?: "lỗi mạng"}")
+            }
+        }
+    }
+}

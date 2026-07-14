@@ -79,8 +79,9 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
+fun LoginScreen(onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
+    val loginCoroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     // ═══ PHASE 7c: Read auth state from Domain VM ═══
     // connect/cancelLogin now route through AuthSessionViewModel (single owner).
     // Shared state (isLoading, errorMessage, connectionStatus) comes from SharedStateHolder
@@ -119,7 +120,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
             try {
                 val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
                 if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                    val results = viewModel.pingUrlsForDisplay(fullUrls, user, pass)
+                    val results = com.nas.naswebdav.pingUrlsForDisplay(fullUrls, user, pass)
                     ipPingStatus = results
                 }
             } catch (_: Exception) {}
@@ -233,7 +234,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                 val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
                 historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
                 authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
-                    viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
+                    com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrlList.first()); com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrlList.first()); com.nas.naswebdav.scheduleFingerprintWorker(context); onLoginSuccess()
                 }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
             }
         }, enabled = authVM.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
@@ -274,9 +275,9 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                                 val u = SecurePrefsHelper.getUser(context)
                                 val p = SecurePrefsHelper.getPass(context)
                                 authVM.connect(urlList, u, p, onSuccess = {
-                                    viewModel.scheduleIdleDuplicateScan(context)
-                                    viewModel.scheduleIdleSpeedTest(context)
-                                    viewModel.scheduleFingerprintWorker(context)
+                                    com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrl)
+                                    com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrl)
+                                    com.nas.naswebdav.scheduleFingerprintWorker(context)
                                     onLoginSuccess()
                                 }, onError = { msg ->
                                     globalUiVM.show(DialogType.ERROR, msg)
@@ -385,7 +386,7 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
                     showWolDialog = false
                     emergencyIsError = false
                     emergencyMsg = "Đang gửi Wake-on-LAN..."
-                    viewModel.sendWakeOnLan(wolMac, ipInput) { result ->
+                    com.nas.naswebdav.sendWakeOnLan(loginCoroutineScope, wolMac, ipInput) { result ->
                         emergencyIsError = !result.success
                         emergencyMsg = result.message
                     }
@@ -398,7 +399,8 @@ fun LoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
         com.nas.naswebdav.ui.dialogs.RebootConfirmDialog(
             onConfirm = {
                 showRebootConfirm = false
-                viewModel.sendPowerCommandFromLogin(
+                com.nas.naswebdav.sendPowerCommandFromLogin(
+                    scope = loginCoroutineScope,
                     ipInput = ipInput,
                     user = user.trim(),
                     pass = pass.trim(),

@@ -2853,40 +2853,7 @@ class WebDavViewModel(
         }
     }
 
-    suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        coroutineScope {
-            urlList.distinct().map { url ->
-                async(Dispatchers.IO) {
-                    url to try {
-                        val safeUrl = if (url.endsWith("/")) url else "$url/"
-                        val timeoutMs = adaptiveTimeoutMs(safeUrl).toInt()
-                        val uri = java.net.URI(safeUrl)
-                        val host = uri.host ?: return@async url to -1L
-                        val port = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
-
-                        var best = Long.MAX_VALUE
-                        repeat(if (isTailscaleUrl(url)) 1 else 3) {
-                            val start = android.os.SystemClock.elapsedRealtime()
-                            try {
-                                val socket = java.net.Socket()
-                                socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
-                                socket.close()
-                                best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
-                            } catch (e: Exception) {
-                                // Ignore individual failures
-                            }
-                        }
-                        if (best == Long.MAX_VALUE) -1L else {
-                            recordLatency(url, best)
-                            best
-                        }
-                    } catch (_: Exception) {
-                        -1L
-                    }
-                }
-            }.associate { it.await() }
-        }
-    }
+    suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = com.nas.naswebdav.pingUrlsForDisplay(urlList, user, pass)
 
     init {
         // Cập nhật trạng thái Auto Backup từ WorkManager
@@ -4595,36 +4562,11 @@ fun WebDavViewModel.deleteSelectedDuplicates() {
         }
     }
 
-fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) {
+fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) { com.nas.naswebdav.scheduleIdleDuplicateScan(context, currentUrl) }
 
-        val workManager = androidx.work.WorkManager.getInstance(context)
-        val constraints = androidx.work.Constraints.Builder()
-            .setRequiresDeviceIdle(true)
-            .setRequiresCharging(true)
-            .setRequiresBatteryNotLow(true) // Tránh đập NAS khi pin yếu — chỉ chạy khi pin đủ
-            .setRequiresStorageNotLow(true) // Tránh đập NAS khi bộ nhớ trong thiếu — chỉ chạy khi còn dung lượng
-            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
-            .build()
+fun WebDavViewModel.scheduleIdleSpeedTest(context: android.content.Context) { com.nas.naswebdav.scheduleIdleSpeedTest(context, currentUrl) }
 
-        val inputData = androidx.work.workDataOf(
-            "currentUrl" to currentUrl
-        )
-
-        val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
-            168, java.util.concurrent.TimeUnit.HOURS // 7 ngày (was 24h — quá nhiều)
-        )
-            .setConstraints(constraints)
-            .setInputData(inputData)
-            .build()
-
-        workManager.enqueueUniquePeriodicWork(
-            "Auto_Idle_Duplicate_Scan",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP, // Giữ nguyên nếu đã schedule
-            periodicScanRequest
-        )
-    }
-
-fun WebDavViewModel.scheduleIdleSpeedTest(context: android.content.Context) {
+fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) { com.nas.naswebdav.scheduleFingerprintWorker(context) }
         val workManager = androidx.work.WorkManager.getInstance(context)
         val constraints = androidx.work.Constraints.Builder()
             .setRequiresDeviceIdle(true) // ĐIỀU KIỆN 1: Điện thoại đang tắt màn hình, không sử dụng
@@ -5146,22 +5088,7 @@ fun WebDavViewModel.sendWakeOnLan(
     macStr: String,
     targetHost: String? = null,
     onResult: ((com.nas.naswebdav.utils.WolUtil.WolResult) -> Unit)? = null
-) {
-    viewModelScope.launch(Dispatchers.IO) {
-        val preferredHost = targetHost?.trim()?.takeIf { it.isNotBlank() } ?: runCatching {
-            safeUrlHost(webDavManager.currentBaseUrl)
-        }.getOrNull()
-        val result = com.nas.naswebdav.utils.WolUtil.smartWakeOnLan(macStr, preferredHost)
-        val logType = if (result.success) "INFO" else "ERROR"
-        val logMessage = if (result.success) {
-            "Người dùng đã gửi Wake-on-LAN đánh thức NAS tại MAC ${macStr.trim()}: ${result.message}"
-        } else {
-            "Gửi Wake-on-LAN tới MAC ${macStr.trim()} thất bại: ${result.message}"
-        }
-        repository.addSystemLog(logType, "Power", logMessage)
-        withContext(Dispatchers.Main) { onResult?.invoke(result) }
-    }
-}
+) { com.nas.naswebdav.sendWakeOnLan(viewModelScope, macStr, targetHost, onResult) }
 
 private suspend fun WebDavViewModel.refreshWakeOnLanMacFromNas(): String? {
     return try {
@@ -5221,54 +5148,7 @@ fun WebDavViewModel.sendPowerCommandFromLogin(
     pass: String,
     endpoint: String,
     onResult: (Boolean, String) -> Unit
-) {
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val trimmed = ipInput.trim()
-            if (trimmed.isEmpty()) {
-                withContext(Dispatchers.Main) { onResult(false, "Vui lòng nhập IP của NAS") }
-                return@launch
-            }
-            // Tu IP -> http://<ip>:<API_PORT>
-            val host = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                safeUrlHost(trimmed)
-            } else trimmed.substringBefore(":")
-            val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
-            val cmdName = when {
-                endpoint.contains("reboot") -> "Khởi động lại"
-                endpoint.contains("suspend") -> "Ngủ"
-                endpoint.contains("shutdown") -> "Tắt nguồn"
-                else -> endpoint
-            }
-            val reqBuilder = okhttp3.Request.Builder()
-                .url(apiUrl)
-                .post(ByteArray(0).toRequestBody(null, 0, 0))
-            if (user.isNotBlank() && pass.isNotBlank()) {
-                reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
-            }
-            // Dung fastApiClient cua NasApplication (KHONG dung localApiClient
-            // vi localApiClient co interceptor doc webDavManager.currentUser/pass
-            // — luc nay con rong vi chua connect)
-            val client = NasApplication.instance.fastApiClient.newBuilder()
-                .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            client.newCall(reqBuilder.build()).execute().use { resp ->
-                val ok = resp.isSuccessful
-                val code = resp.code
-                withContext(Dispatchers.Main) {
-                    if (ok) onResult(true, "Đã gửi lệnh $cmdName NAS!")
-                    else onResult(false, "NAS từ chối (HTTP $code) — kiểm tra IP/tài khoản/mật khẩu")
-                }
-                try { repository.addSystemLog("WARNING", "Power", "LoginScreen: gửi $cmdName NAS tại $host (HTTP $code)") } catch (_: Exception) {}
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                onResult(false, "Không kết nối được NAS: ${e.message?.take(80) ?: "lỗi mạng"}")
-            }
-        }
-    }
-}
+) { com.nas.naswebdav.sendPowerCommandFromLogin(viewModelScope, ipInput, user, pass, endpoint, onResult) }
 
 fun WebDavViewModel.checkDockerStatus() {
     viewModelScope.launch(Dispatchers.IO) {
