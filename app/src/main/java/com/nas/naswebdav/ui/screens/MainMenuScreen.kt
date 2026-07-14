@@ -789,7 +789,7 @@ fun MainMenuScreen(
                 }
             }
         )
-        MainMenuSectionSystemLogsSummaryCard(viewModel)
+        MainMenuSectionSystemLogsSummaryCard()
 
         MainMenuDashboardTorrentActivityCard(
             viewModel = viewModel,
@@ -4214,13 +4214,12 @@ fun MainMenuSectionQuickActionSelectorDialog(
 }
 
 @Composable
-fun MainMenuSectionSystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
-    // Phase 7d.2: systemLogsList → DeviceMgmtVM
+fun MainMenuSectionSystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
     val deviceVM = LocalDeviceManagementVM.current
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        viewModel.loadSystemLogs()
+        deviceVM.loadSystemLogs()
     }
-    
+
     if (deviceVM.systemLogsList.isEmpty()) return
     
     Spacer(Modifier.height(8.dp))
@@ -4252,10 +4251,10 @@ fun MainMenuSectionSystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                PanelFreshnessTag(viewModel.lastLogsRefreshAt, realtimeNow, staleAfterMs = 30_000L)
+                PanelFreshnessTag(deviceVM.lastLogsRefreshAt, realtimeNow, staleAfterMs = 30_000L)
                 Spacer(Modifier.weight(1f))
                 TextButton(
-                    onClick = { viewModel.showLogDialog = true },
+                    onClick = { deviceVM.showLogDialog = true },
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.height(24.dp)
                 ) {

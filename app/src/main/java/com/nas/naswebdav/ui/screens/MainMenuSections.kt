@@ -123,12 +123,12 @@ fun QuickActionSelectorDialog(
 }
 
 @Composable
-fun SystemLogsSummaryCard(viewModel: WebDavViewModel, realtimeNow: Long = System.currentTimeMillis()) {
-    // Phase 7c.3: systemLogsList owned by DeviceMgmtVM (Phase 7a delegation).
+fun SystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
+    val viewModel = LocalDeviceManagementVM.current
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.loadSystemLogs()
     }
-    
+
     if (viewModel.systemLogsList.isEmpty()) return
     
     var isExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }

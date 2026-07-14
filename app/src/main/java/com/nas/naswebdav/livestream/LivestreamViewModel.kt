@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavViewModel
+import com.nas.naswebdav.LivestreamMonitorWorker
 import com.nas.naswebdav.SocialDownloadItem
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.toApiBaseUrl
@@ -108,6 +109,44 @@ class LivestreamViewModel(
 
     fun restoreLivestreamStateIfRunning() {
         viewModelScope.launch { /* TODO Phase 3b */ }
+    }
+
+    fun fetchLivestreamStatusOnly(context: android.content.Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (apiBaseUrl.isBlank()) return@launch
+                val reqBuilder = okhttp3.Request.Builder().url("$apiBaseUrl/api/livestream/status")
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(context)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(context)
+                if (user.isNotEmpty() && pass.isNotEmpty()) reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                NasApplication.instance.fastApiClient.newCall(reqBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful) return@use
+                    val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                    val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
+                    val newJobs = mutableListOf<com.nas.naswebdav.WebDavViewModel.LivestreamJob>()
+                    val serverRecordingIds = mutableSetOf<String>()
+                    for (i in 0 until jobsArray.length()) {
+                        val obj = jobsArray.getJSONObject(i)
+                        val status = obj.optString("status", "")
+                        val jobId = obj.optString("job_id", "")
+                        if (status == "recording" && jobId.isNotEmpty()) {
+                            serverRecordingIds.add(jobId)
+                            newJobs.add(com.nas.naswebdav.WebDavViewModel.LivestreamJob(jobId = jobId, platform = obj.optString("platform", ""), status = status, watchUsername = obj.optString("watch_username", ""), durationSeconds = obj.optLong("duration_seconds", 0L), startedTs = obj.optLong("started_ts", 0L), fileSize = obj.optString("file_size", "0 B"), duration = obj.optString("duration_display", "0h00m00s"), speed = obj.optString("avg_speed", "—"), outputFile = obj.optString("output_file", "")))
+                        }
+                    }
+                    lastLivestreamServerSyncAt = System.currentTimeMillis()
+                    if (serverRecordingIds.isEmpty()) LivestreamMonitorWorker.cancelAll(context)
+                    val displayJobs = dedupeLivestreamJobsForDisplay(newJobs)
+                    lastLivestreamServerRecordingIds = displayJobs.map { it.jobId }.toSet()
+                    withContext(Dispatchers.Main) {
+                        if (activeLivestreams.size != displayJobs.size || activeLivestreams.toList() != displayJobs) {
+                            activeLivestreams.clear(); activeLivestreams.addAll(displayJobs)
+                        }
+                    }
+                }
+            } catch (e: Exception) { android.util.Log.w("Livestream", "fetchLivestreamStatusOnly: ${e.message}") }
+        }
     }
 
     fun observeLivestreamWorker(context: android.content.Context) {

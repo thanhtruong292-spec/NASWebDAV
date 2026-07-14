@@ -124,14 +124,68 @@ class SmartToolsViewModel(
     fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile, index: Int) { /* TODO Phase 2b */ }
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) { /* TODO Phase 2b */ }
 
-    fun startThumbnailScan() { /* TODO Phase 2b */ }
-    fun stopThumbnailGeneration() { /* TODO Phase 2b */ }
-    fun toggleThumbPause() { /* TODO Phase 2b */ }
+    fun startThumbnailScanTODO() { /* TODO Phase 2b */ }
+    fun stopThumbnailGenerationTODO() { /* TODO Phase 2b */ }
+    fun toggleThumbPauseTODO() { /* TODO Phase 2b */ }
     fun fetchThumbnailAudit() { /* TODO Phase 2b */ }
 
     fun triggerSmartOrganizeScan() { /* TODO Phase 2b */ }
     fun executeSmartOrganize(action: String = "move") { /* TODO Phase 2b */ }
     fun resetSmartOrganize() { organizerScanResult = null; organizerError = null; organizerResult = null }
+
+    fun fetchThumbStatus() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status").build()
+                NasApplication.instance.fastApiClient.newBuilder().readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+                    .newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                        withContext(Dispatchers.Main) {
+                            thumbGenerated = json.optInt("generated", 0)
+                            thumbTotal = json.optInt("total_media", 0)
+                            thumbErrors = json.optInt("errors", 0)
+                            thumbRunning = json.optBoolean("running", false)
+                            thumbPaused = json.optBoolean("paused", false)
+                            thumbLastFile = json.optString("last_file", "")
+                            thumbElapsed = json.optInt("elapsed_seconds", 0).toLong()
+                            thumbEta = json.optInt("eta_seconds", -1).toLong()
+                            thumbElapsedFmt = json.optString("elapsed_fmt", "00:00")
+                            thumbEtaFmt = json.optString("eta_fmt", "--:--")
+                        }
+                    }
+                }
+            } catch (e: Exception) { android.util.Log.w("SmartToolsVM", "fetchThumbStatus: ${e.message}") }
+        }
+    }
+
+    fun stopThumbGeneration() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/stop").build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+            } catch (_: Exception) {}
+            thumbRunning = false
+        }
+    }
+
+    fun toggleThumbPause() {
+        val action = if (thumbPaused) "resume" else "pause"
+        thumbPaused = action == "pause"
+        if (thumbPaused) thumbRunning = false
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val body = org.json.JSONObject().put("action", action).toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control").post(body).build()
+                NasApplication.instance.fastApiClient.newBuilder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+                    .newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) withContext(Dispatchers.Main) { thumbPaused = action != "pause" }
+                }
+                kotlinx.coroutines.delay(1500)
+                fetchThumbStatus()
+            } catch (e: Exception) { withContext(Dispatchers.Main) { thumbPaused = action != "pause" } }
+        }
+    }
 
     fun smartOrganizeScan(filter: OrganizerFilter) {
         viewModelScope.launch(Dispatchers.IO) {

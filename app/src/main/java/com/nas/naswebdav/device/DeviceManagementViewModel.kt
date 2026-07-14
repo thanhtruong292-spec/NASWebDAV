@@ -101,6 +101,7 @@ class DeviceManagementViewModel(
     var systemLogs by androidx.compose.runtime.mutableStateOf(listOf<SystemLog>())
         internal set
     var systemLogsList by androidx.compose.runtime.mutableStateOf<List<SystemLog>>(emptyList())
+    var lastLogsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
         internal set
     var showLogDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
@@ -411,6 +412,50 @@ class DeviceManagementViewModel(
                 }
             } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "clearSystemLogs: ${e.message}")
+            }
+        }
+    }
+
+    fun loadSystemLogs(minIntervalMs: Long = 15_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastLogsRefreshAt < minIntervalMs) return
+        lastLogsRefreshAt = now
+        viewModelScope.launch(Dispatchers.IO) {
+            val allLogs = NasApplication.instance.database.logDao().getRecentLogs().toMutableList()
+            try {
+                if (WebDavManager.currentBaseUrl.isNotEmpty()) {
+                    val req = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/system_logs").build()
+                    NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string()
+                            if (body != null) {
+                                val json = org.json.JSONObject(body)
+                                if (json.optString("status") == "success") {
+                                    val logsArray = json.optJSONArray("logs")
+                                    if (logsArray != null) {
+                                        val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                                        format.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                                        for (i in 0 until logsArray.length()) {
+                                            val obj = logsArray.getJSONObject(i)
+                                            val ts = obj.optString("timestamp")
+                                            val timestamp = try { format.parse(ts)?.time ?: System.currentTimeMillis() } catch (_: Exception) { System.currentTimeMillis() }
+                                            val remoteMessage = obj.optString("message")
+                                            val remoteType = obj.optString("type")
+                                            val remoteLog = SystemLog(id = -(obj.optInt("id")), type = remoteType, module = obj.optString("module"), message = remoteMessage, timestamp = timestamp)
+                                            if (allLogs.none { it.message == remoteMessage && it.type == remoteType }) allLogs.add(remoteLog)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) { android.util.Log.e("DevMgmt", "loadSystemLogs: ${e.message}") }
+            allLogs.sortByDescending { it.timestamp }
+            withContext(Dispatchers.Main) {
+                systemLogsList = allLogs.take(200)
+                systemLogs = systemLogsList
+                lastLogsRefreshAt = System.currentTimeMillis()
             }
         }
     }

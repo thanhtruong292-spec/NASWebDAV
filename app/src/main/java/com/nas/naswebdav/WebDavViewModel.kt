@@ -5602,68 +5602,7 @@ fun WebDavViewModel.fetchSystemProcesses(sortBy: String = "cpu") {
 }
 
 
-fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) {
-    viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-        try {
-            val apiBaseUrl = currentUrl.toApiBaseUrl()
-            if (apiBaseUrl.isBlank()) return@launch
-            val requestBuilder = okhttp3.Request.Builder().url(apiBaseUrl + "/api/livestream/status")
-            val user = com.nas.naswebdav.SecurePrefsHelper.getUser(context)
-            val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(context)
-            if (user.isNotEmpty() && pass.isNotEmpty()) {
-                requestBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
-            }
-            localApiClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@use
-                val responseStr = response.body?.string() ?: "{}"
-                val json = org.json.JSONObject(responseStr)
-                val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
-                
-                val newJobs = mutableListOf<WebDavViewModel.LivestreamJob>()
-                val serverRecordingIds = mutableSetOf<String>()
-                for (i in 0 until jobsArray.length()) {
-                    val jobObj = jobsArray.getJSONObject(i)
-                    val status = jobObj.optString("status", "")
-                    val jobId = jobObj.optString("job_id", "")
-                    val platform = jobObj.optString("platform", "")
-                    val watchUser = jobObj.optString("watch_username", "")
-                    if (status == "recording" && jobId.isNotEmpty()) {
-                        serverRecordingIds.add(jobId)
-                        newJobs.add(
-                            WebDavViewModel.LivestreamJob(
-                                jobId = jobId,
-                                platform = platform,
-                                status = status,
-                                watchUsername = watchUser,
-                                durationSeconds = jobObj.optLong("duration_seconds", 0L),
-                                startedTs = jobObj.optLong("started_ts", 0L),
-                                fileSize = jobObj.optString("file_size", "0 B"),
-                                duration = jobObj.optString("duration_display", "0h00m00s"),
-                                speed = jobObj.optString("avg_speed", "—"),
-                                outputFile = jobObj.optString("output_file", "")
-                            )
-                        )
-                    }
-                }
-                lastLivestreamServerSyncAt = System.currentTimeMillis()
-                lastLivestreamServerRecordingIds = serverRecordingIds.toSet()
-                if (serverRecordingIds.isEmpty()) {
-                    LivestreamMonitorWorker.cancelAll(context)
-                }
-                val displayJobs = dedupeLivestreamJobsForDisplay(newJobs)
-                lastLivestreamServerRecordingIds = displayJobs.map { it.jobId }.toSet()
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    if (activeLivestreams.size != displayJobs.size || activeLivestreams != displayJobs) {
-                        activeLivestreams.clear()
-                        activeLivestreams.addAll(displayJobs)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w("WebDavViewModel", "fetchLivestreamStatusOnly failed", e)
-        }
-    }
-}
+fun WebDavViewModel.fetchLivestreamStatusOnly(context: android.content.Context) { livestream.fetchLivestreamStatusOnly(context) }
 
 fun WebDavViewModel.fetchSmbStatus() {
     viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
