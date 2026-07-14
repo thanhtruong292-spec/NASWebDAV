@@ -4673,27 +4673,8 @@ fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) 
         periodicRequest
     )
 }
-/**
- * Tải video từ NAS về cache rồi mở bằng trình phát cục bộ.
- * Đảm bảo mọi định dạng (.mpg, .avi, .wmv, .flv, ...) đều phát được
- * vì file cục bộ không có vấn đề auth hay streaming.
- */
+// ─── VideoDownloadHelper — thin wrappers to top-level MediaUtils.kt (Phase 7d.4) ───
 object VideoDownloadHelper {
-
-    private const val TAG = "VideoDownloadHelper"
-    private const val VIDEO_CACHE_DIR = "video_temp"
-
-    /**
-     * Tải video về cache và mở bằng trình phát bên ngoài.
-     * Hiển thị progress qua callback.
-     *
-     * @param onProgress Callback (bytesDownloaded, totalBytes) để cập nhật UI
-     * @param onReady Callback khi file đã sẵn sàng phát
-     * @param onError Callback khi có lỗi
-     */
-    // FIX A3a: Nhận CoroutineScope từ caller thay vì tự tạo CoroutineScope(IO) riêng.
-    // Scope rời rạc sẽ không bao giờ bị cancel khi ViewModel bị destroy → memory leak.
-    // Caller (thường là ViewModel) phải truyền viewModelScope để lifecycle được quản lý đúng.
     fun downloadAndPlay(
         scope: CoroutineScope,
         context: Context,
@@ -4703,135 +4684,9 @@ object VideoDownloadHelper {
         onProgress: (Long, Long) -> Unit = { _, _ -> },
         onReady: () -> Unit = {},
         onError: (String) -> Unit = {}
-    ): Job {
-        return scope.launch(Dispatchers.IO) {
-            try {
-                // 1. Tạo thư mục cache cho video
-                val cacheDir = File(context.cacheDir, VIDEO_CACHE_DIR)
-                if (!cacheDir.exists()) cacheDir.mkdirs()
+    ): Job = com.nas.naswebdav.downloadAndPlay(scope, context, url, user, pass, onProgress, onReady, onError)
 
-                // Xóa file cũ để giải phóng bộ nhớ (chỉ giữ file mới nhất)
-                cacheDir.listFiles()?.forEach { it.delete() }
-
-                // 2. Lấy tên file từ URL
-                val fileName = url.substringAfterLast('/').substringBefore('?')
-                    .let { java.net.URLDecoder.decode(it, "UTF-8") }
-                    .replace("[^a-zA-Z0-9._-]".toRegex(), "_")
-                val targetFile = File(cacheDir, fileName)
-
-                Log.i(TAG, "Đang tải: $url → ${targetFile.absolutePath}")
-
-                // 3. Tải file từ NAS với xác thực
-                val request = okhttp3.Request.Builder()
-                    .url(url)
-                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
-                    .build()
-
-                // FIX A3b: Bọc response trong use {} để đảm bảo body luôn được đóng,
-                // kể cả khi exception xảy ra giữa chừng (tránh connection pool exhaustion).
-                NasApplication.instance.videoStreamingClient
-                    .newBuilder()
-                    .readTimeout(600, java.util.concurrent.TimeUnit.SECONDS) // 10 phút cho file lớn
-                    .build()
-                    .newCall(request)
-                    .execute()
-                    .use { response ->
-                        if (!response.isSuccessful) {
-                            withContext(Dispatchers.Main) {
-                                onError("NAS trả về lỗi: ${response.code}")
-                            }
-                            return@use
-                        }
-
-                        val totalBytes = response.header("Content-Length")?.toLongOrNull() ?: -1L
-                        var downloadedBytes = 0L
-
-                        // 4. Ghi file ra cache với progress
-                        response.body?.byteStream()?.use { input ->
-                            targetFile.outputStream().use { output ->
-                                val buffer = ByteArray(131072) // 128KB buffer
-                                var bytesRead: Int
-                                var lastProgressTime = 0L
-                                while (input.read(buffer).also { bytesRead = it } != -1) {
-                                    if (!isActive) {
-                                        targetFile.delete()
-                                        return@use
-                                    }
-                                    output.write(buffer, 0, bytesRead)
-                                    downloadedBytes += bytesRead
-
-                                    val currentTime = System.currentTimeMillis()
-                                    if (currentTime - lastProgressTime > 150L) {
-                                        lastProgressTime = currentTime
-                                        withContext(Dispatchers.Main) {
-                                            onProgress(downloadedBytes, totalBytes)
-                                        }
-                                    }
-                                }
-                                withContext(Dispatchers.Main) {
-                                    onProgress(downloadedBytes, totalBytes)
-                                }
-                            }
-                        }
-
-                        Log.i(TAG, "Tải xuống hoàn tất: ${downloadedBytes / 1024}KB")
-
-                        // 5. Mở file cục bộ bằng trình phát video
-                        withContext(Dispatchers.Main) {
-                            onReady()
-                            openLocalFile(context, targetFile)
-                        }
-                    }
-
-            } catch (e: CancellationException) {
-                Log.d(TAG, "Đã hủy tải xuống")
-            } catch (e: Exception) {
-                Log.e(TAG, "Tải xuống thất bại: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    onError("Lỗi tải video: ${e.message}")
-                }
-            }
-        }
-    }
-
-
-    /** Mở file video cục bộ bằng trình phát cài trên máy */
-    private fun openLocalFile(context: Context, file: File) {
-        try {
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-
-            // Xác định MIME type phù hợp
-            val ext = file.extension.lowercase()
-            val mimeType = when (ext) {
-                "mp4", "m4v" -> "video/mp4"
-                "mkv" -> "video/x-matroska"
-                "avi" -> "video/x-msvideo"
-                "mpg", "mpeg" -> "video/mpeg"
-                "wmv" -> "video/x-ms-wmv"
-                "flv" -> "video/x-flv"
-                "mov" -> "video/quicktime"
-                "ts" -> "video/mp2ts"
-                "webm" -> "video/webm"
-                else -> "video/*"
-            }
-
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, mimeType)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-
-            val chooser = Intent.createChooser(intent, "Chọn trình phát video")
-            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(chooser)
-        } catch (e: Exception) {
-            Log.e(TAG, "Cannot open file: ${e.message}")
-        }
-    }
+    fun openLocalFile(context: Context, file: File) = com.nas.naswebdav.openLocalFile(context, file)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
