@@ -26,7 +26,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * SystemMonitorViewModel — Phase 4 của VM Split.
  *
  * Quản lý: System status, Metrics history, Daily report, Disk health, SMART,
- *          Fan mode, Network ping, NasConfigBackups, NasInsights, System processes.
+ *          Fan mode, Network ping, WebDavViewModel.NasConfigBackups, WebDavViewModel.NasInsights, System processes.
  *
  * Phase 4 skeleton: state declarations + placeholder methods.
  * Function bodies sẽ được move từ facade trong Phase 4b.

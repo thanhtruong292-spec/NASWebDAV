@@ -715,7 +715,7 @@ class DeviceManagementViewModel(
                         put("token", botToken)
                         put("chat_id", chatId)
                     }.toString()
-                    val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), jsonBody)
+                    val body = jsonBody.toRequestBody("application/json".toMediaTypeOrNull())
                     val request = okhttp3.Request.Builder().url("$base/api/telegram/test").post(body).build()
                     val response = WebDavManager.optimizedClient.newCall(request).execute()
                     val bodyStr = response.body?.string() ?: ""

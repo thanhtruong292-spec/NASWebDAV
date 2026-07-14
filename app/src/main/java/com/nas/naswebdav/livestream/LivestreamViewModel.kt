@@ -142,7 +142,7 @@ class LivestreamViewModel(
                         tiktokWatchDaemonLastTick = json.optString("last_tick", "")
                         tiktokWatchDaemonSummary = json.optString("summary", "")
                         tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
-                        tiktokLiveWatchError = json.optString("error", null)
+                        tiktokLiveWatchError = json.optString("error").ifEmpty { null }
                         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
                         tiktokCookiesMessage = json.optString("cookies_message", "")
                         val usersArr = json.optJSONArray("users")

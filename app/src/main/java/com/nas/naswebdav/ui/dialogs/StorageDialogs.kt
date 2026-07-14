@@ -57,15 +57,15 @@ import androidx.compose.ui.window.Dialog
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiskHealthDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7c.3: diskHealthCurrent/History, isFetchingDiskHealth, lastDiskHealthRefreshAt,
     // nasInsights owned by SystemMonitorVM (Phase 7a delegation).
+    val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) {
-        viewModel.fetchDiskHealth(minIntervalMs = 0L)
-        viewModel.fetchNasInsights(minIntervalMs = 0L)
-        viewModel.fetchDiskHealthHistory(7)
+        sysMonitorVM.fetchDiskHealth(minIntervalMs = 0L)
+        sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
+        sysMonitorVM.fetchDiskHealthHistory(7)
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -91,12 +91,12 @@ fun DiskHealthDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Sức khoẻ ổ cứng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchDiskHealth(minIntervalMs = 0L); viewModel.fetchNasInsights(minIntervalMs = 0L); viewModel.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { sysMonitorVM.fetchDiskHealth(minIntervalMs = 0L); sysMonitorVM.fetchNasInsights(minIntervalMs = 0L); sysMonitorVM.fetchDiskHealthHistory(7) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }
 
-            val current = viewModel.diskHealthCurrent
+            val current = sysMonitorVM.diskHealthCurrent
             if (current == null) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 12.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(0xFF66BB6A))
@@ -200,7 +200,7 @@ fun DiskHealthDialog(
                 AttrRow("Lỗi đọc/ghi dữ liệu", "${current.ioErrorsRecent}", highlight = current.ioErrorsRecent > 0)
 
                 // History trend
-                val history = viewModel.diskHealthHistory
+                val history = sysMonitorVM.diskHealthHistory
                 if (history.size >= 2) {
                     Spacer(Modifier.height(8.dp))
                     HorizontalDivider(color = Color(0xFF2A2A3E))
@@ -296,11 +296,11 @@ fun DiskHealthDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NasConfigBackupDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
+    val sysMonitorVM = LocalSystemMonitorVM.current
     var pendingDeleteFilename by remember { mutableStateOf<String?>(null) }
     var pendingRestoreFilename by remember { mutableStateOf<String?>(null) }
     var isPreparingShare by remember { mutableStateOf(false) }
@@ -315,7 +315,7 @@ fun NasConfigBackupDialog(
             text = { Text("Sẽ xoá vĩnh viễn:\n$target", color = Color(0xFFE8E8E8), fontSize = 13.sp) },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteNasConfigBackup(target)
+                    sysMonitorVM.deleteNasConfigBackup(target)
                     pendingDeleteFilename = null
                 }) { Text("XOÁ", color = Color(0xFFEF5350), fontWeight = FontWeight.Bold) }
             },
@@ -340,7 +340,7 @@ fun NasConfigBackupDialog(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.restoreNasConfigBackup(target)
+                    sysMonitorVM.restoreNasConfigBackup(target)
                     pendingRestoreFilename = null
                 }) { Text("KHÔI PHỤC", color = Color(0xFFFFA726), fontWeight = FontWeight.Bold) }
             },
@@ -375,8 +375,8 @@ fun NasConfigBackupDialog(
 
             // Create button
             Button(
-                onClick = { viewModel.createNasConfigBackup() },
-                enabled = !viewModel.isCreatingNasConfigBackup,
+                onClick = { sysMonitorVM.createNasConfigBackup() },
+                enabled = !sysMonitorVM.isCreatingNasConfigBackup,
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF66BB6A)),
                 shape = RoundedCornerShape(10.dp),
@@ -385,20 +385,20 @@ fun NasConfigBackupDialog(
                 Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (viewModel.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
+                    if (sysMonitorVM.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
                     color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp
                 )
             }
 
             // Status message
-            if (viewModel.nasConfigBackupMessage.isNotEmpty()) {
+            if (sysMonitorVM.nasConfigBackupMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 val msgColor = when {
-                    viewModel.nasConfigBackupMessage.startsWith("Lỗi") -> Color(0xFFEF5350)
-                    viewModel.nasConfigBackupMessage.startsWith("Đã") -> Color(0xFF66BB6A)
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Lỗi") -> Color(0xFFEF5350)
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Đã") -> Color(0xFF66BB6A)
                     else -> Color(0xFF8892B0)
                 }
-                Text(viewModel.nasConfigBackupMessage, color = msgColor, fontSize = 12.sp)
+                Text(sysMonitorVM.nasConfigBackupMessage, color = msgColor, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(6.dp))
@@ -408,18 +408,18 @@ fun NasConfigBackupDialog(
             // List header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    "BACKUP HIỆN CÓ (${viewModel.nasConfigBackups.size})",
+                    "BACKUP HIỆN CÓ (${sysMonitorVM.nasConfigBackups.size})",
                     color = Color(0xFF8892B0), fontSize = 11.sp,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchNasConfigBackups() }, modifier = Modifier.size(28.dp)) {
+                IconButton(onClick = { sysMonitorVM.fetchNasConfigBackups() }, modifier = Modifier.size(28.dp)) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
                 }
             }
             Spacer(Modifier.height(4.dp))
 
-            if (viewModel.nasConfigBackups.isEmpty()) {
+            if (sysMonitorVM.nasConfigBackups.isEmpty()) {
                 Text(
                     "Chưa có bản backup nào. Tạo bản đầu tiên bằng nút phía trên.",
                     color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 12.sp,
@@ -427,7 +427,7 @@ fun NasConfigBackupDialog(
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    viewModel.nasConfigBackups.forEach { backup ->
+                    sysMonitorVM.nasConfigBackups.forEach { backup ->
                         key(backup.filename) {
                             Column(
                                 Modifier.fillMaxWidth()
@@ -448,7 +448,7 @@ fun NasConfigBackupDialog(
                                             if (isPreparingShare) return@TextButton
                                             isPreparingShare = true
                                             scope.launch {
-                                                val f = viewModel.downloadNasConfigBackup(context, backup.filename)
+                                                val f = sysMonitorVM.downloadNasConfigBackup(context, backup.filename)
                                                 isPreparingShare = false
                                                 if (f != null) {
                                                     try {
@@ -483,7 +483,7 @@ fun NasConfigBackupDialog(
                                     }
                                     TextButton(
                                         onClick = { pendingRestoreFilename = backup.filename },
-                                        enabled = !viewModel.isRestoringNasConfigBackup,
+                                        enabled = !sysMonitorVM.isRestoringNasConfigBackup,
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         modifier = Modifier.weight(1f).height(32.dp)
                                     ) {
@@ -515,7 +515,7 @@ fun NasConfigBackupDialog(
                     Text("Đang tải file từ NAS để share...", color = Color(0xFF8892B0), fontSize = 11.sp)
                 }
             }
-            if (viewModel.isRestoringNasConfigBackup) {
+            if (sysMonitorVM.isRestoringNasConfigBackup) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFFFFA726), strokeWidth = 2.dp)
@@ -535,10 +535,10 @@ fun NasConfigBackupDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UsbImportDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    val state = viewModel.usbImportState
+    val deviceVM = LocalDeviceManagementVM.current
+    val state = deviceVM.usbImportState
     val settings = state.settings
     var enabled by remember(settings) { mutableStateOf(settings.enabled) }
     var autoMount by remember(settings) { mutableStateOf(settings.autoMount) }
@@ -550,12 +550,12 @@ fun UsbImportDialog(
     var settingsExpanded by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    LaunchedEffect(Unit) { viewModel.fetchUsbImportStatus() }
+    LaunchedEffect(Unit) { deviceVM.fetchUsbImportStatus() }
     val isPollingStatus = state.status == "copying" || state.status == "cancelling"
     LaunchedEffect(isPollingStatus) {
         while (isPollingStatus) {
             delay(2500)
-            viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
+            deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
         }
     }
 
@@ -607,7 +607,7 @@ fun UsbImportDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("USB Import", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { deviceVM.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }
@@ -627,7 +627,7 @@ fun UsbImportDialog(
                     Spacer(Modifier.width(6.dp))
                     Text(state.status.uppercase(), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
-                    if (viewModel.isUsbImportLoading) {
+                    if (deviceVM.isUsbImportLoading) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF42A5F5), strokeWidth = 2.dp)
                     }
                 }
@@ -753,18 +753,18 @@ fun UsbImportDialog(
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             OutlinedButton(
-                                onClick = { viewModel.resolveUsbImportConflicts("skip") },
+                                onClick = { deviceVM.resolveUsbImportConflicts("skip") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) { Text("Bỏ qua", fontSize = 11.sp) }
                             Button(
-                                onClick = { viewModel.resolveUsbImportConflicts("rename") },
+                                onClick = { deviceVM.resolveUsbImportConflicts("rename") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
                                 shape = RoundedCornerShape(8.dp)
                             ) { Text("Đổi tên", fontSize = 11.sp) }
                             Button(
-                                onClick = { viewModel.resolveUsbImportConflicts("overwrite") },
+                                onClick = { deviceVM.resolveUsbImportConflicts("overwrite") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
                                 shape = RoundedCornerShape(8.dp)
@@ -871,16 +871,16 @@ fun UsbImportDialog(
                 }
             }
 
-            if (viewModel.usbImportMessage.isNotBlank()) {
+            if (deviceVM.usbImportMessage.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(viewModel.usbImportMessage, color = Color(0xFF66BB6A), fontSize = 12.sp)
+                Text(deviceVM.usbImportMessage, color = Color(0xFF66BB6A), fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        viewModel.saveUsbImportSettings(
+                        deviceVM.saveUsbImportSettings(
                             UsbImportSettings(
                                 enabled = enabled,
                                 destFolder = destFolder,
@@ -905,7 +905,7 @@ fun UsbImportDialog(
                     onClick = {
                         if (isRunning) {
                             enabled = false
-                            viewModel.saveUsbImportSettings(
+                            deviceVM.saveUsbImportSettings(
                                 UsbImportSettings(
                                     enabled = false,
                                     destFolder = destFolder,
@@ -917,9 +917,9 @@ fun UsbImportDialog(
                                     verifyChecksum = verifyChecksum,
                                 )
                             )
-                            viewModel.cancelUsbImport()
+                            deviceVM.cancelUsbImport()
                         } else {
-                            viewModel.startUsbImportNow()
+                            deviceVM.startUsbImportNow()
                         }
                     },
                     modifier = Modifier.weight(1f).height(40.dp),

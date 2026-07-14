@@ -118,9 +118,11 @@ private fun rewriteMediaUrlToActiveBase(originalUrl: String, currentBaseUrl: Str
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavViewModel? = null, onBack: () -> Unit) {
+fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+    val fileBrowserVM = LocalFileBrowserVM.current
+    val globalUiVM = LocalGlobalUiVM.current
     val resolvedAuth = remember(user, pass) {
         if (user.isNotBlank() && pass.isNotBlank()) {
             user to pass
@@ -140,11 +142,11 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
     val resolvedPass = resolvedAuth.second
     var playbackUrl by remember(url) { mutableStateOf(url) }
 
-    LaunchedEffect(url, viewModel) {
+    LaunchedEffect(url) {
         val activeBaseUrl = withContext(Dispatchers.IO) {
             SmartNetworkManager.getActiveBaseUrl(context.applicationContext)
         }
-        val currentBaseUrl = viewModel?.webDavManager?.currentBaseUrl.orEmpty()
+        val currentBaseUrl = WebDavManager.currentBaseUrl.orEmpty()
         playbackUrl = rewriteMediaUrlToActiveBase(url, currentBaseUrl, activeBaseUrl)
     }
 
@@ -300,15 +302,14 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
                         // Ví dụ: Video 4K HDR HEVC trên máy tính bảng cũ, hoặc Âm thanh Dolby AC3 trong file MKV.
                         // Tại đây, ta báo cho giao diện bật Dialog hỏi chuyển sang VLC
                         (activity as? MainActivity)?.runOnUiThread {
-                            viewModel?.showCommonDialog = true
-                            viewModel?.commonDialogType = DialogType.ERROR
-                            viewModel?.commonDialogMessage = if (invalidResponseCode == 416) {
+                            val msg = if (invalidResponseCode == 416) {
                                 "Tệp MP4 này bị hỏng hoặc chưa được hoàn tất metadata (HTTP 416, ${error.errorCodeName}).\n\nNAS sẽ tự ẩn các bản ghi livestream thiếu moov atom sau khi dọn nền. Vui lòng chọn một bản ghi khác hoặc ghi lại livestream."
                             } else if (invalidResponseCode != null) {
                                 "Không thể tải luồng video từ NAS (HTTP $invalidResponseCode, ${error.errorCodeName}).\n\nVui lòng thử lại sau vài giây hoặc nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC/MX Player qua proxy cục bộ."
                             } else {
                                 "Thiết bị của bạn không hỗ trợ giải mã định dạng phim này (Lỗi: ${error.errorCodeName}).\n\nVui lòng nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC hoặc MX Player."
                             }
+                            globalUiVM.show(DialogType.ERROR, msg)
                         }
                     }
                     
@@ -656,17 +657,15 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
                         ) {
                             Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = Color.White, modifier = Modifier.size(20.dp))
                         }
-                        if (viewModel != null) {
-                            IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
-                            }
+                        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
                         }
                     }
                 }
             }
 
             // Dialog xác nhận xóa video
-            if (showDeleteDialog && viewModel != null) {
+            if (showDeleteDialog) {
                 val fileName = url.substringAfterLast("/").let {
                     try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
                 }
@@ -681,7 +680,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, viewModel: WebDavVi
                                 showDeleteDialog = false
                                 exoPlayer.pause()
                                 val fileToDelete = NasFile(fileName, url, false, "video/*", 0, 0)
-                                viewModel.deleteFile(context, fileToDelete)
+                                fileBrowserVM.deleteFile(context, fileToDelete)
                                 onBack()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))

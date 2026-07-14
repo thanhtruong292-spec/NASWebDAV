@@ -758,8 +758,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 pass = viewModel.webDavManager.currentPass,
 
-                viewModel = viewModel,
-
                 onBack = { navController.popBackStack() }
 
             )

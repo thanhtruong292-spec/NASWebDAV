@@ -1540,7 +1540,6 @@ fun DialogsIpApprovalDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun DialogsLanWhitelistDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7d.2: lanWhitelist* state → DeviceMgmtVM
@@ -1552,7 +1551,7 @@ fun DialogsLanWhitelistDialog(
     val statusMessage = deviceVM.lanWhitelistStatus
 
     var newEntry by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { viewModel.loadLanWhitelist() }
+    LaunchedEffect(Unit) { deviceVM.loadLanWhitelist() }
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,

@@ -68,7 +68,6 @@ class VideoPlayerActivity : ComponentActivity() {
                             url = url,
                             user = user,
                             pass = pass,
-                            viewModel = null,
                             onBack = { finish() }
                         )
                     }
