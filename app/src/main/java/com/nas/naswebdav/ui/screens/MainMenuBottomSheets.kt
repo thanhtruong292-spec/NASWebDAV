@@ -60,16 +60,17 @@ import com.nas.naswebdav.NasFile
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun ProcessListBottomSheet(
-    viewModel: WebDavViewModel,
     sortBy: String,
     onDismiss: () -> Unit
 ) {
     // Phase 7c.3: ProcessList state (systemProcesses, isLoadingProcesses) → SystemMonitorVM (Phase 7a).
+    val systemMonitorVM = LocalSystemMonitorVM.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    
+
     androidx.compose.runtime.LaunchedEffect(sortBy) {
         while (isActive) {
-            viewModel.fetchSystemProcesses(sortBy)
+            systemMonitorVM.fetchSystemProcesses(context)
             kotlinx.coroutines.delay(3000) // Tự động làm mới mỗi 3 giây
         }
     }
@@ -92,7 +93,7 @@ fun ProcessListBottomSheet(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
-                if (viewModel.isLoadingProcesses) {
+                if (systemMonitorVM.isLoadingProcesses) {
                     androidx.compose.material3.CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
@@ -109,11 +110,11 @@ fun ProcessListBottomSheet(
             }
             androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
-            val displayProcesses = viewModel.systemProcesses.filter {
+            val displayProcesses = systemMonitorVM.systemProcesses.filter {
                 if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
             }
 
-            if (displayProcesses.isEmpty() && !viewModel.isLoadingProcesses) {
+            if (displayProcesses.isEmpty() && !systemMonitorVM.isLoadingProcesses) {
                 Text(
                     "Không có dữ liệu tiến trình.",
                     color = TextSecondary,
@@ -310,10 +311,11 @@ fun SmartDetailBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SmbBottomSheet(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7c.3: SMB state (isSmbEnabled, isLoadingSmb) → DeviceMgmtVM (Phase 7a).
+    val deviceVM = LocalDeviceManagementVM.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
@@ -347,7 +349,7 @@ fun SmbBottomSheet(
                     )
                 }
 
-                if (viewModel.isLoadingSmb) {
+                if (deviceVM.isLoadingSmb) {
                     androidx.compose.material3.CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = AccentCyan,
@@ -355,11 +357,9 @@ fun SmbBottomSheet(
                     )
                 } else {
                     androidx.compose.material3.Switch(
-                        checked = viewModel.isSmbEnabled,
+                        checked = deviceVM.isSmbEnabled,
                         onCheckedChange = { isChecked ->
-                            viewModel.toggleSmbShare(isChecked) { success, msg ->
-                                // Optional toast
-                            }
+                            deviceVM.toggleSmb(context, isChecked)
                         },
                         colors = androidx.compose.material3.SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
@@ -373,7 +373,7 @@ fun SmbBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (viewModel.isSmbEnabled) {
+            if (deviceVM.isSmbEnabled) {
                 Text(
                     "Truy cập qua máy tính (LAN):",
                     color = AccentCyan,
@@ -446,9 +446,12 @@ fun SmbBottomSheet(
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun DuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
-    // Phase 7c.3: Duplicate scan state (isScanningDuplicates, scanDuplicates*, duplicateFilesList, selectedDuplicates)
-    // → SmartToolsVM (Phase 7a delegation). Direct LocalSmartToolsVM.current available.
+fun DuplicateScanGlobalUI(
+    viewModel: com.nas.naswebdav.WebDavViewModel,
+    context: android.content.Context
+) {
+    // Phase 7c.3: Duplicate scan state lives in WebDavViewModel (not yet in SmartToolsVM).
+    // Only SmartToolsVM-backed calls use LocalSmartToolsVM.current below.
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (viewModel.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)

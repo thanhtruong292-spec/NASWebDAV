@@ -453,7 +453,6 @@ fun MainMenuScreen(
     
     if (showProcessDialog) {
         MainMenuBottomSheetProcessListBottomSheet(
-            viewModel = viewModel,
             sortBy = processSortType,
             onDismiss = { showProcessDialog = false }
         )
@@ -572,7 +571,7 @@ fun MainMenuScreen(
         )
     }
     if (viewModel.showSmartDialog) {
-        SmartDiskDialog(viewModel = viewModel, onDismiss = { viewModel.showSmartDialog = false })
+        SmartDiskDialog(viewModel, onDismiss = { viewModel.showSmartDialog = false })
     }
     if (showAutoBackupDialog) {
         AutoBackupDialog(
@@ -616,10 +615,10 @@ fun MainMenuScreen(
         )
     }
     if (viewModel.showLogDialog) {
-        SystemLogDialog(viewModel = viewModel, onDismiss = { viewModel.showLogDialog = false })
+        SystemLogDialog(onDismiss = { viewModel.showLogDialog = false })
     }
     if (viewModel.showDockerDialog) {
-        DockerDialog(viewModel = viewModel, onDismiss = { viewModel.showDockerDialog = false })
+        DockerDialog(viewModel, onDismiss = { viewModel.showDockerDialog = false })
     }
     if (showLanWhitelistDialog) {
         LanWhitelistDialog(
@@ -628,7 +627,6 @@ fun MainMenuScreen(
     }
     if (showSmbDialog) {
         MainMenuBottomSheetSmbBottomSheet(
-            viewModel = viewModel,
             onDismiss = { showSmbDialog = false }
         )
     }
@@ -638,18 +636,17 @@ fun MainMenuScreen(
         )
     }
     if (showNasBackupDialog) {
-        com.nas.naswebdav.ui.dialogs.NasConfigBackupDialog(
+        DialogsNasConfigBackupDialog(
             onDismiss = { showNasBackupDialog = false }
         )
     }
     if (showDiskHealthDialog) {
-        com.nas.naswebdav.ui.dialogs.DiskHealthDialog(
+        DialogsDiskHealthDialog(
             onDismiss = { showDiskHealthDialog = false }
         )
     }
     if (showNewDiskProfileSheet) {
         MainMenuDiskProfileBottomSheet(
-            viewModel = viewModel,
             onDismiss = { showNewDiskProfileSheet = false }
         )
     }
@@ -660,12 +657,12 @@ fun MainMenuScreen(
         )
     }
     if (showUsbImportDialog) {
-        com.nas.naswebdav.ui.dialogs.UsbImportDialog(
+        DialogsUsbImportDialog(
             onDismiss = { showUsbImportDialog = false }
         )
     }
     if (showNasInsightsDialog) {
-        com.nas.naswebdav.ui.dialogs.NasInsightsDialog(
+        DialogsNasInsightsDialog(
             onDismiss = { showNasInsightsDialog = false },
             onTaskClick = { taskLabel ->
                 showNasInsightsDialog = false
@@ -2540,13 +2537,13 @@ private fun profileStatusColor(status: String): Color = when {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MainMenuDiskProfileBottomSheet(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7d.2: systemStatus → SystemMonitorVM, omvOverview/smartInfo/storageFolderUsage → DeviceMgmtVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
     val autoBackupVM = LocalAutoBackupVM.current
+    val livestreamVM = LocalLivestreamVM.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var showTrackingConfirm by remember { mutableStateOf(false) }
@@ -2584,7 +2581,7 @@ private fun MainMenuDiskProfileBottomSheet(
     val enduranceTbPerYear = profileDiskEnduranceTbPerYear(diskModel)
     val dailyBudgetGb = enduranceTbPerYear?.let { ((it * 1024f) / 365f).toInt() } ?: 0
     val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else null
-    val activeRecordings = if (isTrackingNewDisk) viewModel.activeLivestreams.size else 0
+    val activeRecordings = if (isTrackingNewDisk) livestreamVM.activeLivestreams.size else 0
     val completedLivestreamLogsToday = deviceVM.systemLogsList.filter { log ->
         log.module.equals("Livestream", ignoreCase = true) &&
             log.message.contains("đã ghi xong", ignoreCase = true) &&
@@ -2601,7 +2598,7 @@ private fun MainMenuDiskProfileBottomSheet(
         .replace("\u00c2\u00b0C", "\u00b0C")
         .replace("--", "Chưa có dữ liệu")
     val smartStatus = deviceVM.smartInfo.status
-    val diskHealth = viewModel.diskHealthCurrent
+    val diskHealth = sysMonitorVM.diskHealthCurrent
     val healthScore = diskHealth?.score
     val trialStatus = when {
         isTrackingNewDisk && healthScore != null && healthScore < 60 -> "Cần kiểm tra"
@@ -2728,7 +2725,7 @@ private fun MainMenuDiskProfileBottomSheet(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.loadSystemLogs()
+        deviceVM.loadSystemLogs()
     }
 
     if (showTrackingConfirm) {
@@ -2751,7 +2748,7 @@ private fun MainMenuDiskProfileBottomSheet(
                         .putString("${activeDiskKey}_model", diskModel)
                         .putString("${activeDiskKey}_serial", diskSerial)
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
+                    deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
                     installedAt = now
                     showTrackingConfirm = false
                 }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
@@ -2780,7 +2777,7 @@ private fun MainMenuDiskProfileBottomSheet(
                         .remove("${activeDiskKey}_model")
                         .remove("${activeDiskKey}_serial")
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
+                    deviceVM.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
                     installedAt = 0L
                     showResetTrackingConfirm = false
                 }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
@@ -2984,15 +2981,15 @@ private fun MainMenuDiskProfileBottomSheet(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     MainMenuDiskProfileOperationModeChip("stream", "Ghi live", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     MainMenuDiskProfileOperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     MainMenuDiskProfileOperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                 }
             }
@@ -4318,15 +4315,16 @@ fun MainMenuScreenFormatElapsedTimeUI(millis: Long): String {
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun MainMenuBottomSheetProcessListBottomSheet(
-    viewModel: WebDavViewModel,
     sortBy: String,
     onDismiss: () -> Unit
 ) {
+    val systemMonitorVM = LocalSystemMonitorVM.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    
+
     androidx.compose.runtime.LaunchedEffect(sortBy) {
         while (isActive) {
-            viewModel.fetchSystemProcesses(sortBy)
+            systemMonitorVM.fetchSystemProcesses(context)
             kotlinx.coroutines.delay(3000) // Tự động làm mới mỗi 3 giây
         }
     }
@@ -4349,7 +4347,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
-                if (viewModel.isLoadingProcesses) {
+                if (systemMonitorVM.isLoadingProcesses) {
                     androidx.compose.material3.CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
@@ -4366,11 +4364,11 @@ fun MainMenuBottomSheetProcessListBottomSheet(
             }
             androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
-            val displayProcesses = viewModel.systemProcesses.filter {
+            val displayProcesses = systemMonitorVM.systemProcesses.filter {
                 if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
             }
 
-            if (displayProcesses.isEmpty() && !viewModel.isLoadingProcesses) {
+            if (displayProcesses.isEmpty() && !systemMonitorVM.isLoadingProcesses) {
                 Text(
                     "Không có dữ liệu tiến trình.",
                     color = TextSecondary,
@@ -4567,9 +4565,10 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuBottomSheetSmbBottomSheet(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
@@ -4603,7 +4602,7 @@ fun MainMenuBottomSheetSmbBottomSheet(
                     )
                 }
 
-                if (viewModel.isLoadingSmb) {
+                if (deviceVM.isLoadingSmb) {
                     androidx.compose.material3.CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = AccentCyan,
@@ -4611,11 +4610,9 @@ fun MainMenuBottomSheetSmbBottomSheet(
                     )
                 } else {
                     androidx.compose.material3.Switch(
-                        checked = viewModel.isSmbEnabled,
+                        checked = deviceVM.isSmbEnabled,
                         onCheckedChange = { isChecked ->
-                            viewModel.toggleSmbShare(isChecked) { success, msg ->
-                                // Optional toast
-                            }
+                            deviceVM.toggleSmb(context, isChecked)
                         },
                         colors = androidx.compose.material3.SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
@@ -4629,7 +4626,7 @@ fun MainMenuBottomSheetSmbBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (viewModel.isSmbEnabled) {
+            if (deviceVM.isSmbEnabled) {
                 Text(
                     "Truy cập qua máy tính (LAN):",
                     color = AccentCyan,

@@ -324,7 +324,7 @@ internal fun DashboardSystemOverviewCard(
                                                 indication = null
                                             ) {
                                                 if (m == "custom") showFanSettings = true else {
-                                                    viewModel.setFanMode(m)
+                                                    deviceVM.setFanMode(m)
                                                 }
                                             }
                                                 .background(if (active) if (m == "off") AccentRed else AccentGreen else Color.Transparent)
@@ -356,7 +356,7 @@ internal fun DashboardSystemOverviewCard(
                                             Button(
                                                 enabled = !isFanControlLocked,
                                                 onClick = {
-                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
+                                                    deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
                                                     showFanSettings = false
                                                 }
                                             ) { Text("Lưu & Áp dụng") }
@@ -395,6 +395,7 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                 },
                 confirmButton = {
                     TextButton(onClick = {
+                        // toggleOmvService lives in WebDavViewModel (not yet in DeviceMgmtVM)
                         viewModel.toggleOmvService(pendingServiceName, pendingServiceEnable)
                         pendingServiceName = ""
                     }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }

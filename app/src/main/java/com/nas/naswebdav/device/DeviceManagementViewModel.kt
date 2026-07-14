@@ -416,6 +416,17 @@ class DeviceManagementViewModel(
         }
     }
 
+    fun logUserAction(module: String, message: String, type: String = "INFO") {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                repository.addSystemLog(type, module, "Người dùng: $message")
+                loadSystemLogs()
+            } catch (e: Exception) {
+                android.util.Log.w("UserActionLog", "log failed: ${e.message}")
+            }
+        }
+    }
+
     fun loadSystemLogs(minIntervalMs: Long = 15_000L) {
         val now = System.currentTimeMillis()
         if (minIntervalMs > 0L && now - lastLogsRefreshAt < minIntervalMs) return

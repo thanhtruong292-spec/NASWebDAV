@@ -63,7 +63,6 @@ import com.nas.naswebdav.NasFile
 
 @Composable
 fun DashboardSystemStatusCards(
-    viewModel: WebDavViewModel,
     mContext: android.content.Context,
     onOpenAutoBackup: () -> Unit = {},
     onOpenLivestream: () -> Unit = {},
@@ -80,13 +79,13 @@ fun DashboardSystemStatusCards(
     // LivestreamVM). Direct LocalXxxVM.current migration deferred to Group 3.
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
-        viewModel.fetchThumbStatus()
-        viewModel.syncLivestreamStateWithServer(mContext)
-        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
+        smartToolsVM.fetchThumbStatus()
+        livestreamVM.syncLivestreamStateWithServer(mContext)
+        deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
             val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
-            viewModel.fetchThumbStatus()
+            smartToolsVM.fetchThumbStatus()
         }
     }
     val thumbPercent = if (smartToolsVM.thumbTotal > 0) smartToolsVM.thumbGenerated * 100f / smartToolsVM.thumbTotal else 0f
@@ -120,23 +119,23 @@ fun DashboardSystemStatusCards(
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
-        viewModel.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer(mContext)
         while (isActive) {
             kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
-            viewModel.fetchLivestreamStatusOnly(mContext)
-            viewModel.fetchTikTokLiveWatch(mContext)
+            livestreamVM.fetchLivestreamStatusOnly(mContext)
+            livestreamVM.fetchTikTokLiveWatch(mContext)
         }
     }
     // Phase 7d.2: usbImportState is in WebDavViewModel (not yet migrated to DeviceMgmtVM).
-    val usbImport = viewModel.usbImportState
+    val usbImport = deviceMgmtVM.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
     LaunchedEffect(Unit) {
-        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
+        deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
     }
     LaunchedEffect(usbImport.status) {
         while (usbImport.status == "copying" || usbImport.status == "cancelling") {
             kotlinx.coroutines.delay(2_500L)
-            viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
+            deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
         }
     }
     val usbImportProgress = if (usbImport.bytesTotal > 0L) {
@@ -236,7 +235,7 @@ fun DashboardSystemStatusCards(
                                     )
                                 }
                                 if ((smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && !(smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal)) {
-                                    IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
                                         Icon(
                                             if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                             null,
@@ -245,11 +244,11 @@ fun DashboardSystemStatusCards(
                                         )
                                     }
                                     // Nút Dừng hẳn thumbnail
-                                    IconButton(onClick = { viewModel.stopThumbGeneration() }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.stopThumbGeneration() }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.Stop, contentDescription = "Dừng thumbnail", tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                     }
                                 }
-                                IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = { smartToolsVM.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp))
                                 }
                             }
@@ -321,10 +320,10 @@ fun DashboardSystemStatusCards(
                                     Text(dupStatusLabel, fontSize = 11.sp, color = dupStatusColor)
                                 }
                                 if (dupIsRunning || dupIsPaused) {
-                                    IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
                                         Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
                                     }
-                                    IconButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                     }
                                 }
@@ -430,7 +429,7 @@ fun DashboardSystemStatusCards(
                                     Spacer(Modifier.weight(1f))
                                     // Nút Tạm dừng / Tiếp tục
                                     IconButton(
-                                        onClick = { viewModel.toggleAutoBackupPause() },
+                                        onClick = { autoBackupVM.toggleAutoBackupPause() },
                                         modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
@@ -442,7 +441,7 @@ fun DashboardSystemStatusCards(
                                     }
                                     // Nút Huỷ bỏ
                                     IconButton(
-                                        onClick = { viewModel.cancelAutoBackup(mContext) },
+                                        onClick = { autoBackupVM.cancelAutoBackup(mContext) },
                                         modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
@@ -561,7 +560,7 @@ fun DashboardSystemStatusCards(
                                         )
                                     }
                                 }
-                                IconButton(onClick = { viewModel.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = { deviceMgmtVM.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                 }
                             }
