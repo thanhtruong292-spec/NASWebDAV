@@ -555,7 +555,7 @@ fun UsbImportDialog(
     LaunchedEffect(isPollingStatus) {
         while (isPollingStatus) {
             delay(2500)
-            viewModel.fetchUsbImportStatusSuspend(compact = true, minIntervalMs = 2_000L)
+            viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
         }
     }
 
@@ -881,7 +881,7 @@ fun UsbImportDialog(
                 Button(
                     onClick = {
                         viewModel.saveUsbImportSettings(
-                            WebDavViewModel.UsbImportSettings(
+                            UsbImportSettings(
                                 enabled = enabled,
                                 destFolder = destFolder,
                                 copyMode = copyMode,
@@ -906,7 +906,7 @@ fun UsbImportDialog(
                         if (isRunning) {
                             enabled = false
                             viewModel.saveUsbImportSettings(
-                                WebDavViewModel.UsbImportSettings(
+                                UsbImportSettings(
                                     enabled = false,
                                     destFolder = destFolder,
                                     copyMode = copyMode,

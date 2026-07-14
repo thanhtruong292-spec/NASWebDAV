@@ -9,6 +9,8 @@ import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.WebDavViewModel
+import com.nas.naswebdav.UsbImportConflict
+import com.nas.naswebdav.UsbImportSettings
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -188,7 +190,7 @@ class AutoBackupViewModel(
         }
     }
 
-    fun saveUsbImportSettings(settings: WebDavViewModel.UsbImportSettings) {
+    fun saveUsbImportSettings(settings: UsbImportSettings) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
@@ -236,7 +238,7 @@ class AutoBackupViewModel(
         }
     }
 
-    fun resolveUsbImportConflicts(conflicts: List<WebDavViewModel.UsbImportConflict>) {
+    fun resolveUsbImportConflicts(conflicts: List<UsbImportConflict>) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()

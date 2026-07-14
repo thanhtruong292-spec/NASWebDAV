@@ -5,6 +5,6 @@ package com.nas.naswebdav.backup
 
 typealias BackupSchedule = com.nas.naswebdav.WebDavViewModel.BackupSchedule
 typealias SleepSchedule = com.nas.naswebdav.WebDavViewModel.SleepSchedule
-typealias UsbImportState = com.nas.naswebdav.WebDavViewModel.UsbImportState
-typealias UsbImportSettings = com.nas.naswebdav.WebDavViewModel.UsbImportSettings
-typealias UsbImportConflict = com.nas.naswebdav.WebDavViewModel.UsbImportConflict
+typealias UsbImportState = com.nas.naswebdav.UsbImportState
+typealias UsbImportSettings = com.nas.naswebdav.UsbImportSettings
+typealias UsbImportConflict = com.nas.naswebdav.UsbImportConflict

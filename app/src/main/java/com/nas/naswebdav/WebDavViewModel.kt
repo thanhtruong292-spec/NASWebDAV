@@ -600,61 +600,17 @@ class WebDavViewModel(
     var backupSchedule by mutableStateOf(BackupSchedule())
     var backupScheduleMessage by mutableStateOf("")
 
-    // USB Import state (NAS-side daemon)
-    data class UsbImportSettings(
-        val enabled: Boolean = true,
-        val destFolder: String = "USB Import",
-        val copyMode: String = "new_only",
-        val autoMount: Boolean = true,
-        val mountReadonly: Boolean = true,
-        val pollSeconds: Int = 15,
-        val resumeEnabled: Boolean = true,
-        val verifyChecksum: Boolean = false,
-    )
-    data class UsbImportConflict(
-        val rel: String = "",
-        val sourceName: String = "",
-        val destName: String = "",
-        val sourceSize: Long = 0L,
-        val destSize: Long = 0L,
-    )
-    data class UsbImportState(
-        val enabled: Boolean = true,
-        val status: String = "idle",
-        val message: String = "",
-        val activeDevice: String = "",
-        val activeMount: String = "",
-        val destDir: String = "",
-        val startedAt: Long = 0L,
-        val finishedAt: Long = 0L,
-        val filesTotal: Int = 0,
-        val filesDone: Int = 0,
-        val filesSkipped: Int = 0,
-        val filesFailed: Int = 0,
-        val bytesDone: Long = 0L,
-        val bytesProcessed: Long = 0L,
-        val bytesTotal: Long = 0L,
-        val currentFile: String = "",
-        val currentSource: String = "",
-        val currentDest: String = "",
-        val currentFileBytesDone: Long = 0L,
-        val currentFileBytesTotal: Long = 0L,
-        val copySpeedBps: Long = 0L,
-        val etaSeconds: Long = 0L,
-        val lastProgressAt: Long = 0L,
-        val lastError: String = "",
-        val settings: UsbImportSettings = UsbImportSettings(),
-        val detectedDevicesInfo: String = "",
-        val needsAction: Boolean = false,
-        val pendingConflictsCount: Int = 0,
-        val pendingErrorsCount: Int = 0,
-        val pendingConflicts: List<UsbImportConflict> = emptyList(),
-    )
-    var usbImportState by mutableStateOf(UsbImportState())
-    var usbImportMessage by mutableStateOf("")
-    var isUsbImportLoading by mutableStateOf(false)
-    private var lastUsbImportStatusFetchAt = 0L
-    private val usbImportStatusInFlight = AtomicBoolean(false)
+    // USB Import models — use top-level UsbModels.kt (Phase 7d.3)
+    // ─── USB IMPORT STATE — delegated to DeviceMgmtVM (Phase 7d.3) ─────────
+    var usbImportState: UsbImportState
+        get() = deviceManagement.usbImportState
+        set(value) { deviceManagement.usbImportState = value }
+    var usbImportMessage: String
+        get() = deviceManagement.usbImportMessage
+        set(value) { deviceManagement.usbImportMessage = value }
+    var isUsbImportLoading: Boolean
+        get() = deviceManagement.isUsbImportLoading
+        set(value) { deviceManagement.isUsbImportLoading = value }
 
     data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
     data class InsightFlowTask(
@@ -4245,280 +4201,25 @@ class WebDavViewModel(
         }
     }
 
-    // ============== USB IMPORT ==============
-    private fun parseUsbImportState(o: org.json.JSONObject): UsbImportState {
-        val settingsJson = o.optJSONObject("settings") ?: org.json.JSONObject()
-        val settings = UsbImportSettings(
-            enabled = settingsJson.optBoolean("enabled", o.optBoolean("enabled", true)),
-            destFolder = settingsJson.optString("dest_folder", "USB Import"),
-            copyMode = settingsJson.optString("copy_mode", "new_only"),
-            autoMount = settingsJson.optBoolean("auto_mount", true),
-            mountReadonly = settingsJson.optBoolean("mount_readonly", true),
-            pollSeconds = settingsJson.optInt("poll_seconds", 15),
-            resumeEnabled = settingsJson.optBoolean("resume_enabled", true),
-            verifyChecksum = settingsJson.optBoolean("verify_checksum", false),
-        )
-        return UsbImportState(
-            enabled = o.optBoolean("enabled", settings.enabled),
-            status = o.optString("status", "idle"),
-            message = o.optString("message", ""),
-            activeDevice = o.optString("active_device", ""),
-            activeMount = o.optString("active_mount", ""),
-            destDir = o.optString("dest_dir", ""),
-            startedAt = o.optLong("started_at", 0L),
-            finishedAt = o.optLong("finished_at", 0L),
-            filesTotal = o.optInt("files_total", 0),
-            filesDone = o.optInt("files_done", 0),
-            filesSkipped = o.optInt("files_skipped", 0),
-            filesFailed = o.optInt("files_failed", 0),
-            bytesDone = o.optLong("bytes_done", 0L),
-            bytesProcessed = o.optLong("bytes_processed", o.optLong("bytes_done", 0L)),
-            bytesTotal = o.optLong("bytes_total", 0L),
-            currentFile = o.optString("current_file", ""),
-            currentSource = o.optString("current_source", ""),
-            currentDest = o.optString("current_dest", ""),
-            currentFileBytesDone = o.optLong("current_file_bytes_done", 0L),
-            currentFileBytesTotal = o.optLong("current_file_bytes_total", 0L),
-            copySpeedBps = o.optLong("copy_speed_bps", 0L),
-            etaSeconds = o.optLong("eta_seconds", 0L),
-            lastProgressAt = o.optLong("last_progress_at", 0L),
-            lastError = o.optString("last_error", ""),
-            settings = settings,
-            detectedDevicesInfo = parseDetectedDevicesInfo(o.optJSONArray("detected_devices")),
-            needsAction = o.optBoolean("needs_action", false),
-            pendingConflictsCount = o.optInt("pending_conflicts_count", 0),
-            pendingErrorsCount = o.optInt("pending_errors_count", 0),
-            pendingConflicts = parseUsbImportConflicts(o.optJSONArray("pending_conflicts")),
-        )
-    }
-
-    private fun parseUsbImportConflicts(arr: org.json.JSONArray?): List<UsbImportConflict> {
-        if (arr == null) return emptyList()
-        val out = mutableListOf<UsbImportConflict>()
-        for (i in 0 until arr.length()) {
-            val item = arr.optJSONObject(i) ?: continue
-            out.add(
-                UsbImportConflict(
-                    rel = item.optString("rel", ""),
-                    sourceName = item.optString("source_name", ""),
-                    destName = item.optString("dest_name", ""),
-                    sourceSize = item.optLong("source_size", 0L),
-                    destSize = item.optLong("dest_size", 0L),
-                )
-            )
-        }
-        return out
-    }
-
-    private fun parseDetectedDevicesInfo(arr: org.json.JSONArray?): String {
-        if (arr == null) return ""
-        val devices = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            val dev = arr.optJSONObject(i) ?: continue
-            val reason = dev.optString("reason", "")
-            if (reason == "hop le" || reason.startsWith("hop le")) {
-                val label = dev.optString("label", "")
-                val path = dev.optString("path", "")
-                val name = label.ifBlank { path }.ifBlank { "USB Không tên" }
-                devices.add(name)
-            }
-        }
-        return devices.joinToString(", ")
-    }
-
-    internal suspend fun fetchUsbImportStatusSuspend(compact: Boolean = false, minIntervalMs: Long = 0L) {
-        val now = System.currentTimeMillis()
-        if (minIntervalMs > 0L && now - lastUsbImportStatusFetchAt < minIntervalMs) return
-        if (!usbImportStatusInFlight.compareAndSet(false, true)) return
-        lastUsbImportStatusFetchAt = now
-        withContext(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = true }
-                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
-                val path = if (compact) "/api/usb_import/status?compact=1" else "/api/usb_import/status"
-                val req = okhttp3.Request.Builder()
-                    .url("$base$path")
-                    .let(WebDavManager::tagCurrentAuth)
-                    .build()
-                localApiClient.newCall(req).execute().use { resp ->
-                    val body = resp.body?.string() ?: "{}"
-                    if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }
-                        return@use
-                    }
-                    val state = parseUsbImportState(org.json.JSONObject(body))
-                    withContext(Dispatchers.Main) {
-                        usbImportState = state
-                        usbImportMessage = ""
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
-            } finally {
-                usbImportStatusInFlight.set(false)
-                withContext(Dispatchers.Main) { if (!compact) isUsbImportLoading = false }
-            }
-        }
-    }
-
+    // ─── USB IMPORT — delegated to DeviceMgmtVM (Phase 7d.3) ─────────────────
     fun fetchUsbImportStatus(compact: Boolean = false, minIntervalMs: Long = 0L) {
-        viewModelScope.launch { fetchUsbImportStatusSuspend(compact = compact, minIntervalMs = minIntervalMs) }
+        deviceManagement.fetchUsbImportStatus(compact = compact, minIntervalMs = minIntervalMs)
     }
 
     fun saveUsbImportSettings(settings: UsbImportSettings) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
-                val body = org.json.JSONObject().apply {
-                    put("enabled", settings.enabled)
-                    put("dest_folder", settings.destFolder)
-                    put("copy_mode", settings.copyMode)
-                    put("auto_mount", settings.autoMount)
-                    put("mount_readonly", settings.mountReadonly)
-                    put("poll_seconds", settings.pollSeconds)
-                    put("resume_enabled", settings.resumeEnabled)
-                    put("verify_checksum", settings.verifyChecksum)
-                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder()
-                    .url("$base/api/usb_import/settings")
-                    .post(body)
-                    .let(WebDavManager::tagCurrentAuth)
-                    .build()
-                localApiClient.newCall(req).execute().use { resp ->
-                    val raw = resp.body?.string() ?: "{}"
-                    if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi lưu USB Import: HTTP ${resp.code}" }
-                        return@use
-                    }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
-                    val ok = resp.isSuccessful && o.optBoolean("saved", false)
-                    val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(
-                        if (ok) "INFO" else "WARNING",
-                        "USBImport",
-                        "Người dùng: ${if (ok) "lưu" else "lưu thất bại"} cấu hình USB Import (${if (settings.enabled) "bật" else "tắt"}, ${settings.copyMode}, đích '${settings.destFolder}', readonly=${settings.mountReadonly})."
-                    )
-                    withContext(Dispatchers.Main) {
-                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = if (ok) "Đã lưu cấu hình USB Import" else "Lỗi lưu USB Import"
-                    }
-                }
-                fetchUsbImportStatus()
-            } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: lưu cấu hình USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
-            }
-        }
+        deviceManagement.saveUsbImportSettings(settings)
     }
 
     fun startUsbImportNow() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { isUsbImportLoading = true }
-                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
-                val req = okhttp3.Request.Builder()
-                    .url("$base/api/usb_import/start")
-                    .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
-                    .let(WebDavManager::tagCurrentAuth)
-                    .build()
-                localApiClient.newCall(req).execute().use { resp ->
-                    val raw = resp.body?.string() ?: "{}"
-                    if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi bắt đầu USB Import: HTTP ${resp.code}" }
-                        return@use
-                    }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
-                    val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay (${o.optString("message", "không có phản hồi")}).")
-                    withContext(Dispatchers.Main) {
-                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã bắt đầu copy USB" else "Không bắt đầu được")
-                    }
-                }
-                fetchUsbImportStatus()
-            } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
-            } finally {
-                withContext(Dispatchers.Main) { isUsbImportLoading = false }
-            }
-        }
+        deviceManagement.startUsbImportNow()
     }
 
     fun cancelUsbImport() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { isUsbImportLoading = true }
-                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
-                val req = okhttp3.Request.Builder()
-                    .url("$base/api/usb_import/cancel")
-                    .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
-                    .let(WebDavManager::tagCurrentAuth)
-                    .build()
-                localApiClient.newCall(req).execute().use { resp ->
-                    val raw = resp.body?.string() ?: "{}"
-                    if (!resp.isSuccessful) {
-                        withContext(Dispatchers.Main) { usbImportMessage = "Lỗi huỷ USB Import: HTTP ${resp.code}" }
-                        return@use
-                    }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
-                    val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(if (resp.isSuccessful) "INFO" else "WARNING", "USBImport", "Người dùng: gửi lệnh hủy USB Import (${if (resp.isSuccessful) "đã gửi" else "thất bại"}).")
-                    withContext(Dispatchers.Main) {
-                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = if (resp.isSuccessful) "Đã gửi lệnh hủy" else "Không hủy được"
-                    }
-                }
-                fetchUsbImportStatus()
-            } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
-            } finally {
-                withContext(Dispatchers.Main) { isUsbImportLoading = false }
-            }
-        }
+        deviceManagement.cancelUsbImport()
     }
 
     fun resolveUsbImportConflicts(action: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                withContext(Dispatchers.Main) { isUsbImportLoading = true }
-                val base = webDavManager.currentBaseUrl.toApiBaseUrl().ifBlank { currentUrl.toApiBaseUrl() }
-                if (base.isBlank()) throw IllegalStateException("Chưa có địa chỉ NAS hợp lệ")
-                val body = org.json.JSONObject().apply {
-                    put("action", action)
-                }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder()
-                    .url("$base/api/usb_import/resolve_conflicts")
-                    .post(body)
-                    .let(WebDavManager::tagCurrentAuth)
-                    .build()
-                localApiClient.newCall(req).execute().use { resp ->
-                    val raw = resp.body?.string() ?: "{}"
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
-                    val stateJson = o.optJSONObject("state")
-                    repository.addSystemLog(
-                        if (resp.isSuccessful) "INFO" else "WARNING",
-                        "USBImport",
-                        "Người dùng: xử lý file trùng USB Import bằng $action (${o.optString("message", "không có phản hồi")})."
-                    )
-                    withContext(Dispatchers.Main) {
-                        if (stateJson != null) usbImportState = parseUsbImportState(stateJson)
-                        usbImportMessage = o.optString("message", if (resp.isSuccessful) "Đã gửi lệnh xử lý file trùng" else "Không xử lý được file trùng")
-                    }
-                }
-                fetchUsbImportStatus()
-            } catch (e: Exception) {
-                repository.addSystemLog("WARNING", "USBImport", "Người dùng: xử lý file trùng USB Import thất bại: ${e.message?.take(120)}")
-                withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
-            } finally {
-                withContext(Dispatchers.Main) { isUsbImportLoading = false }
-            }
-        }
+        deviceManagement.resolveUsbImportConflicts(action)
     }
 
     // ============== SLEEP SCHEDULE ==============
