@@ -792,8 +792,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
             GuestPassScreen(
 
-                viewModel = viewModel,
-
                 onBack = { navController.popBackStack() }
 
             )

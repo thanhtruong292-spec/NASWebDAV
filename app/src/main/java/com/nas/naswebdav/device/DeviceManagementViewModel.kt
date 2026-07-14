@@ -237,6 +237,13 @@ class DeviceManagementViewModel(
     fun addLanWhitelistSubnet(subnet: String) = modifyWhitelist("add", "subnet", subnet)
     fun removeLanWhitelistSubnet(subnet: String) = modifyWhitelist("remove", "subnet", subnet)
 
+    fun addLanWhitelistEntry(entry: String) {
+        if (entry.contains("/")) addLanWhitelistSubnet(entry) else addLanWhitelistIp(entry)
+    }
+    fun removeLanWhitelistEntry(entry: String, isSubnet: Boolean) {
+        if (isSubnet) removeLanWhitelistSubnet(entry) else removeLanWhitelistIp(entry)
+    }
+
     /** Load OMV overview — Phase 2b wired */
     fun loadOmvOverview() {
         isFetchingOmvOverview = true

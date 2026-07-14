@@ -641,13 +641,11 @@ fun MainMenuScreen(
     }
     if (showNasBackupDialog) {
         com.nas.naswebdav.ui.dialogs.NasConfigBackupDialog(
-            viewModel = viewModel,
             onDismiss = { showNasBackupDialog = false }
         )
     }
     if (showDiskHealthDialog) {
         com.nas.naswebdav.ui.dialogs.DiskHealthDialog(
-            viewModel = viewModel,
             onDismiss = { showDiskHealthDialog = false }
         )
     }
@@ -665,7 +663,6 @@ fun MainMenuScreen(
     }
     if (showUsbImportDialog) {
         com.nas.naswebdav.ui.dialogs.UsbImportDialog(
-            viewModel = viewModel,
             onDismiss = { showUsbImportDialog = false }
         )
     }

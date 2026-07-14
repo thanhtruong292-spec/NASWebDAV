@@ -462,6 +462,31 @@ class SystemMonitorViewModel(
         }
     }
 
+    suspend fun downloadNasConfigBackup(context: Context, filename: String): java.io.File? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val encoded = java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
+                val url = "$base/api/backup/download?filename=$encoded"
+                val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
+                val client = NasApplication.instance.fastApiClient.newBuilder()
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val src = resp.body?.byteStream() ?: return@withContext null
+                    val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
+                    val safe = filename.replace("/", "_").replace("\\", "_")
+                    val out = java.io.File(outDir, safe)
+                    out.outputStream().use { o -> src.copyTo(o) }
+                    out
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "download err: ${e.message}")
+                null
+            }
+        }
+    }
+
     fun fetchSystemProcesses(context: Context) {
         isLoadingProcesses = true
         viewModelScope.launch(Dispatchers.IO) {

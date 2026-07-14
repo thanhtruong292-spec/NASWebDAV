@@ -1585,7 +1585,7 @@ fun DialogsLanWhitelistDialog(
                 IconButton(
                     onClick = {
                         if (newEntry.isNotBlank()) {
-                            viewModel.addLanWhitelistEntry(newEntry.trim())
+                            deviceVM.addLanWhitelistEntry(newEntry.trim())
                             newEntry = ""
                         }
                     },
@@ -1618,7 +1618,7 @@ fun DialogsLanWhitelistDialog(
                         subnetList.forEach { subnet ->
                             key("subnet-$subnet") {
                                 com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                    onDelete = { viewModel.removeLanWhitelistEntry(subnet, true) },
+                                    onDelete = { deviceVM.removeLanWhitelistEntry(subnet, true) },
                                     shape = RoundedCornerShape(6.dp),
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
@@ -1640,7 +1640,7 @@ fun DialogsLanWhitelistDialog(
                         ipList.forEach { ip ->
                             key("ip-$ip") {
                                 com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                    onDelete = { viewModel.removeLanWhitelistEntry(ip, false) },
+                                    onDelete = { deviceVM.removeLanWhitelistEntry(ip, false) },
                                     shape = RoundedCornerShape(6.dp),
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
