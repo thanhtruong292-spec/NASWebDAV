@@ -195,12 +195,12 @@ internal fun dialogInsightRate(bytesPerSec: Long): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NasInsightsDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
 ) {
-    // nasInsights, isFetchingNasInsights owned by SystemMonitorVM (Phase 7a).
-    LaunchedEffect(Unit) { viewModel.fetchNasInsights(minIntervalMs = 5_000L) }
+    val sysVM = LocalSystemMonitorVM.current
+    // nasInsights, isFetchingNasInsights owned by SystemMonitorVM.
+    LaunchedEffect(Unit) { sysVM.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -209,7 +209,7 @@ fun NasInsightsDialog(
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { CompactBottomSheetHandle() }
     ) {
-        val insight = viewModel.nasInsights
+        val insight = sysVM.nasInsights
         Column(
             // Bỏ fillMaxHeight(0.9f): co theo nội dung, tránh thừa khoảng trống đáy khi
             // nội dung ngắn; verticalScroll vẫn cuộn khi dài (sheet tự giới hạn ~màn hình).
@@ -224,7 +224,7 @@ fun NasInsightsDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Tổng quan hệ thống NAS", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { sysVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
                 }
             }

@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.livestream.LivestreamViewModel
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -103,7 +104,7 @@ internal fun CompactBottomSheetHandle() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TikTokLiveWatchSection(
-    viewModel: WebDavViewModel,
+    liveVM: LivestreamViewModel,
     context: Context,
     users: List<WebDavViewModel.TikTokLiveWatchUser>,
     newUsername: String,
@@ -141,7 +142,7 @@ internal fun TikTokLiveWatchSection(
                     val deletedUsername = target.username
                     pendingDeleteUser = null
                     if (expandedUserName == deletedUsername) expandedUserName = null
-                    viewModel.removeTikTokLiveWatchUser(context, deletedUsername)
+                    liveVM.removeTikTokLiveWatchUser(context, deletedUsername)
                     snackbarScope.launch {
                         val result = snackbarHostState.showSnackbar(
                             message = "Đã xoá @$deletedUsername khỏi danh sách theo dõi.",
@@ -149,7 +150,7 @@ internal fun TikTokLiveWatchSection(
                             duration = SnackbarDuration.Long
                         )
                         if (result == SnackbarResult.ActionPerformed) {
-                            viewModel.addTikTokLiveWatchUser(context, deletedUsername)
+                            liveVM.addTikTokLiveWatchUser(context, deletedUsername)
                         }
                     }
                 }) {
@@ -230,11 +231,11 @@ internal fun TikTokLiveWatchSection(
                         )
                     }
                 } else {
-                    viewModel.addTikTokLiveWatchUser(context, cleanUsername)
+                    liveVM.addTikTokLiveWatchUser(context, cleanUsername)
                     onUsernameChange("")
                 }
             },
-            enabled = newUsername.isNotBlank() && !viewModel.isLoadingTikTokWatch,
+            enabled = newUsername.isNotBlank() && !liveVM.isLoadingTikTokWatch,
             modifier = Modifier.height(40.dp).widthIn(min = 80.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF424242)),
             shape = RoundedCornerShape(10.dp),
@@ -245,16 +246,17 @@ internal fun TikTokLiveWatchSection(
             Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
     }
-    if (viewModel.tiktokLiveWatchError.isNotEmpty()) {
+    val watchError = liveVM.tiktokLiveWatchError ?: ""
+    if (watchError.isNotEmpty()) {
         Spacer(Modifier.height(4.dp))
-        Text(viewModel.tiktokLiveWatchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(watchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
     Spacer(Modifier.height(4.dp))
-    val daemonColor = if (viewModel.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726)
+    val daemonColor = if (liveVM.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726)
     Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
         val checkLine = buildString {
-            append(if (viewModel.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
-            if (viewModel.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Lần kiểm tra cuối: ${viewModel.tiktokWatchDaemonLastTick}")
+            append(if (liveVM.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
+            if (liveVM.tiktokWatchDaemonLastTick.isNotEmpty()) append(" • Lần kiểm tra cuối: ${liveVM.tiktokWatchDaemonLastTick}")
         }
         Text(
             checkLine,
@@ -264,8 +266,8 @@ internal fun TikTokLiveWatchSection(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        if (viewModel.tiktokWatchDaemonSummary.isNotEmpty()) {
-            val summaryText = viewModel.tiktokWatchDaemonSummary
+        if (liveVM.tiktokWatchDaemonSummary.isNotEmpty()) {
+            val summaryText = liveVM.tiktokWatchDaemonSummary
             Text(
                 buildAnnotatedString {
                     append(summaryText)
@@ -286,7 +288,7 @@ internal fun TikTokLiveWatchSection(
         }
     }
     // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
-    val cookiesStatus = viewModel.tiktokCookiesStatus
+    val cookiesStatus = liveVM.tiktokCookiesStatus
     if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
         Spacer(Modifier.height(4.dp))
         val (bannerBg, bannerFg, label) = when (cookiesStatus) {
@@ -302,7 +304,7 @@ internal fun TikTokLiveWatchSection(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(label, color = bannerFg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                val detail = viewModel.tiktokCookiesMessage
+                val detail = liveVM.tiktokCookiesMessage
                 if (detail.isNotEmpty()) {
                     Text(detail, color = bannerFg.copy(alpha = 0.85f), fontSize = 11.sp)
                 }
@@ -511,8 +513,8 @@ internal fun TikTokLiveWatchSection(
             Text("Không kiểm tra livestream trong khoảng giờ này", color = Color(0xFF8892B0), fontSize = 11.sp)
         }
         Switch(
-            checked = viewModel.tiktokExcludeEnabled,
-            onCheckedChange = { viewModel.updateTikTokLiveWatchSettings(context, it) }
+            checked = liveVM.tiktokExcludeEnabled,
+            onCheckedChange = { liveVM.updateTikTokLiveWatchSettings(context, it) }
         )
         Spacer(Modifier.width(6.dp))
         Icon(
@@ -527,8 +529,8 @@ internal fun TikTokLiveWatchSection(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
-                    value = viewModel.tiktokExcludeStart,
-                    onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, it, viewModel.tiktokExcludeEnd) },
+                    value = liveVM.tiktokExcludeStart,
+                    onValueChange = { if (it.length <= 5) liveVM.updateTikTokLiveWatchSettings(context, liveVM.tiktokExcludeEnabled, it, liveVM.tiktokExcludeEnd) },
                     textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
                     accentColor = Color(0xFFEE1D52),
                     shape = RoundedCornerShape(8.dp),
@@ -537,8 +539,8 @@ internal fun TikTokLiveWatchSection(
                 Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
                 Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
-                    value = viewModel.tiktokExcludeEnd,
-                    onValueChange = { if (it.length <= 5) viewModel.updateTikTokLiveWatchSettings(context, viewModel.tiktokExcludeEnabled, viewModel.tiktokExcludeStart, it) },
+                    value = liveVM.tiktokExcludeEnd,
+                    onValueChange = { if (it.length <= 5) liveVM.updateTikTokLiveWatchSettings(context, liveVM.tiktokExcludeEnabled, liveVM.tiktokExcludeStart, it) },
                     textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
                     accentColor = Color(0xFFEE1D52),
                     shape = RoundedCornerShape(8.dp),

@@ -634,7 +634,6 @@ fun MainMenuScreen(
     }
     if (showLivestreamDialog) {
         LivestreamRecordDialog(
-            viewModel = viewModel,
             onDismiss = { showLivestreamDialog = false }
         )
     }
@@ -667,7 +666,6 @@ fun MainMenuScreen(
     }
     if (showNasInsightsDialog) {
         com.nas.naswebdav.ui.dialogs.NasInsightsDialog(
-            viewModel = viewModel,
             onDismiss = { showNasInsightsDialog = false },
             onTaskClick = { taskLabel ->
                 showNasInsightsDialog = false

@@ -128,6 +128,10 @@ class LivestreamViewModel(
         viewModelScope.launch { /* TODO Phase 3b */ }
     }
 
+    fun clearLivestreamMessage() { livestreamMessage = "" }
+
+    fun fetchTikTokLiveWatch(context: android.content.Context) { fetchTikTokLiveWatch() }
+
     fun fetchTikTokLiveWatch() {
         isLoadingTikTokWatch = true
         viewModelScope.launch(Dispatchers.IO) {
@@ -169,6 +173,8 @@ class LivestreamViewModel(
         }
     }
 
+    fun addTikTokLiveWatchUser(context: android.content.Context, username: String) { addTikTokLiveWatchUser(username) }
+
     fun addTikTokLiveWatchUser(username: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -183,6 +189,8 @@ class LivestreamViewModel(
         }
     }
 
+    fun removeTikTokLiveWatchUser(context: android.content.Context, username: String) { removeTikTokLiveWatchUser(username) }
+
     fun removeTikTokLiveWatchUser(username: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -196,6 +204,10 @@ class LivestreamViewModel(
             }
         }
     }
+
+    fun updateTikTokLiveWatchSettings(context: android.content.Context, enabled: Boolean) { updateTikTokLiveWatchSettings(enabled, tiktokExcludeStart, tiktokExcludeEnd) }
+
+    fun updateTikTokLiveWatchSettings(context: android.content.Context, enabled: Boolean, start: String, end: String) { updateTikTokLiveWatchSettings(enabled, start, end) }
 
     fun updateTikTokLiveWatchSettings(enabled: Boolean, start: String, end: String) {
         tiktokExcludeEnabled = enabled

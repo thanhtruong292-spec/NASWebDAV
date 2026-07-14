@@ -56,15 +56,13 @@ import androidx.compose.ui.window.Dialog
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LivestreamRecordDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.3: Livestream state (livestreamMessage, activeLivestreams, tiktok*, isStreamPiping)
-    // → LivestreamVM (Phase 7a delegation). Direct LocalLivestreamVM.current available.
+    val liveVM = LocalLivestreamVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
-    LaunchedEffect(Unit) { viewModel.syncLivestreamStateWithServer(context) }
+    LaunchedEffect(Unit) { liveVM.syncLivestreamStateWithServer(context) }
     // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
     // giao dien gon, user chu dong bam header de xem section can xem.
     androidx.compose.runtime.DisposableEffect(Unit) {
@@ -76,11 +74,11 @@ fun LivestreamRecordDialog(
     var newTikTokWatchUser by remember { mutableStateOf("") }
     var livePanelMode by remember { mutableStateOf("record") }
     var selectedQuality by remember { mutableStateOf("best") }
-    val activeLivestreams = viewModel.activeLivestreams
-    val message = viewModel.livestreamMessage
-    val tiktokWatchUsers = viewModel.tiktokLiveWatchUsers
+    val activeLivestreams = liveVM.activeLivestreams
+    val message = liveVM.livestreamMessage
+    val tiktokWatchUsers = liveVM.tiktokLiveWatchUsers
 
-    LaunchedEffect(Unit) { viewModel.fetchTikTokLiveWatch(context) }
+    LaunchedEffect(Unit) { liveVM.fetchTikTokLiveWatch(context) }
 
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
     LaunchedEffect(Unit) {
@@ -88,7 +86,7 @@ fun LivestreamRecordDialog(
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
             liveUrl = clipText.trim()
             livePanelMode = "record"
-            viewModel.clearLivestreamMessage()
+            liveVM.clearLivestreamMessage()
         }
     }
 
@@ -157,7 +155,7 @@ fun LivestreamRecordDialog(
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                             if (liveUrl == originalUrl) {
                                 liveUrl = newUrl
-                                viewModel.clearLivestreamMessage()
+                                liveVM.clearLivestreamMessage()
                             }
                         }
                     }
@@ -253,7 +251,7 @@ fun LivestreamRecordDialog(
 
             if (livePanelMode == "watch") {
                 TikTokLiveWatchSection(
-                    viewModel = viewModel,
+                    liveVM = liveVM,
                     context = context,
                     users = tiktokWatchUsers,
                     newUsername = newTikTokWatchUser,
@@ -267,7 +265,7 @@ fun LivestreamRecordDialog(
                 value = liveUrl,
                 onValueChange = {
                     liveUrl = it
-                    viewModel.clearLivestreamMessage()
+                    liveVM.clearLivestreamMessage()
                 },
                 placeholder = "Dán link livestream — https://www.tiktok.com/@user/live",
                 accentColor = accentColor,
@@ -323,31 +321,31 @@ fun LivestreamRecordDialog(
                 }
             }
             
-            if (viewModel.isStartingLivestream) {
+            if (liveVM.isStartingLivestream) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text(viewModel.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(liveVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else if (message.isNotEmpty()) {
                 // FIX: Auto-clear lỗi sau 5 giây để hiện lại nút "BẮT ĐẦU GHI"
                 LaunchedEffect(message) {
                     kotlinx.coroutines.delay(5000L)
-                    viewModel.clearLivestreamMessage()
+                    liveVM.clearLivestreamMessage()
                 }
                 Spacer(Modifier.height(6.dp))
                 val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
                 Text(
                     message, color = msgColor, fontSize = 13.sp,
-                    modifier = Modifier.fillMaxWidth().clickable { viewModel.clearLivestreamMessage() },
+                    modifier = Modifier.fillMaxWidth().clickable { liveVM.clearLivestreamMessage() },
                     textAlign = TextAlign.Center
                 )
             } else {
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
-                        if (liveUrl.isNotBlank() && !viewModel.isStartingLivestream) {
+                        if (liveUrl.isNotBlank() && !liveVM.isStartingLivestream) {
                             val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
                             // Bóc tách username TikTok tu URL (sau khi resolver da chay xong)
                             // de tu dong them vao danh sach theo doi — lan sau watchdog tu phat hien live.
@@ -357,10 +355,10 @@ fun LivestreamRecordDialog(
                             if (isVOD) {
                                 // Tự động phát hiện Video On Demand (VOD) thay vì Livestream
                                 // Chuyển hướng sang yt-dlp nhưng lưu vào Livestream/ để user dễ tìm
-                                viewModel.requestSocialDownload(liveUrl.trim(), "Livestream/")
+                                liveVM.requestSocialDownload(liveUrl.trim(), "Livestream/")
                                 onDismiss()
                             } else {
-                                viewModel.startLivestreamRecord(context, liveUrl.trim(), selectedQuality)
+                                liveVM.startLivestreamRecord(liveUrl.trim(), selectedQuality)
                             }
                         }
                     },
@@ -483,7 +481,7 @@ fun LivestreamRecordDialog(
                             if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
-                                onClick = { viewModel.stopLivestreamRecord(context, job.jobId) },
+                                onClick = { liveVM.stopLivestreamRecord(context, job.jobId) },
                                 modifier = Modifier.fillMaxWidth().height(38.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
                                 shape = RoundedCornerShape(10.dp)

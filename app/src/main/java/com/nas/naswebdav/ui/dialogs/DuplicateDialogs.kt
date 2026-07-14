@@ -51,11 +51,11 @@ import androidx.compose.ui.window.Dialog
 
 @Composable
 fun DuplicateConfigDialog(
-    viewModel: WebDavViewModel,
     context: android.content.Context,
     onStartScan: (Boolean, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val viewModel = LocalSmartToolsVM.current
     var isLightningMode by remember { mutableStateOf(true) }
     var isForceRestartDuplicate by remember { mutableStateOf(false) }
 
@@ -134,10 +134,9 @@ fun DuplicateConfigDialog(
     )
 }
 @Composable
-fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
-    // All duplicate state (selectedDuplicates, duplicateFilesList, autoCleanEnabled) reads via
-    // facade delegation → SmartToolsVM is source of truth (Phase 7a). Phase 7c full migration
-    // will swap to LocalSmartToolsVM.current directly.
+fun DuplicateFilesDialog(onDismiss: () -> Unit) {
+    val viewModel = LocalSmartToolsVM.current
+    // All duplicate state (selectedDuplicates, duplicateFilesList, autoCleanEnabled) owned by SmartToolsVM.
     AlertDialog(
         onDismissRequest = { onDismiss() },
         title = {
@@ -249,7 +248,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                                             val isSelected = viewModel.selectedDuplicates.contains(dupFile)
                                             val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                             val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                            val authSnapshot = viewModel.webDavManager.currentAuthState()
+                                            val authSnapshot = WebDavManager.currentAuthState()
                                             val auth = okhttp3.Credentials.basic(authSnapshot.user, authSnapshot.pass)
 
                                             Box(
@@ -265,7 +264,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
                                                 // 1. Lớp Ảnh Nền (TỐI ƯU HÓA DB CACHE MỚI CHO TẤT CẢ MEDIA)
                                                 if (isImage || isVideo) {
                                                     Box(modifier = Modifier.fillMaxSize()) {
-                                                        WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
+                                                        WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                     }
                                                 } else {
                                                     Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
@@ -327,7 +326,7 @@ fun DuplicateFilesDialog(viewModel: WebDavViewModel, onDismiss: () -> Unit) {
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
                 if (viewModel.selectedDuplicates.isNotEmpty()) {
-                    TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
+                    TextButton(onClick = { viewModel.deleteSelectedDuplicates(viewModel.selectedDuplicates.toList()) }) {
                         Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                     }
                 }
