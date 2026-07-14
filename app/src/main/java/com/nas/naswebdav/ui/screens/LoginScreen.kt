@@ -275,8 +275,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                 val u = SecurePrefsHelper.getUser(context)
                                 val p = SecurePrefsHelper.getPass(context)
                                 authVM.connect(urlList, u, p, onSuccess = {
-                                    com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrl)
-                                    com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrl)
+                                    com.nas.naswebdav.scheduleIdleDuplicateScan(context, urlList.firstOrNull() ?: "")
+                                    com.nas.naswebdav.scheduleIdleSpeedTest(context, urlList.firstOrNull() ?: "")
                                     com.nas.naswebdav.scheduleFingerprintWorker(context)
                                     onLoginSuccess()
                                 }, onError = { msg ->

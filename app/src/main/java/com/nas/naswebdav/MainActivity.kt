@@ -555,7 +555,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
         composable("login") {
 
-            LoginScreen(viewModel) {
+            LoginScreen {
 
                 navController.navigate("main_menu") {
 
@@ -857,11 +857,11 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                         viewModel.connect(urlList, user, pass)
 
-                        viewModel.scheduleIdleDuplicateScan(mContext)
+                        com.nas.naswebdav.scheduleIdleDuplicateScan(mContext, urlList.firstOrNull() ?: "")
 
-                        viewModel.scheduleIdleSpeedTest(mContext)
+                        com.nas.naswebdav.scheduleIdleSpeedTest(mContext, urlList.firstOrNull() ?: "")
 
-                        viewModel.scheduleFingerprintWorker(mContext)
+                        com.nas.naswebdav.scheduleFingerprintWorker(mContext)
 
 
 

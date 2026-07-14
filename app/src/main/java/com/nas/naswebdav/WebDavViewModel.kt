@@ -4567,54 +4567,6 @@ fun WebDavViewModel.scheduleIdleDuplicateScan(context: android.content.Context) 
 fun WebDavViewModel.scheduleIdleSpeedTest(context: android.content.Context) { com.nas.naswebdav.scheduleIdleSpeedTest(context, currentUrl) }
 
 fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) { com.nas.naswebdav.scheduleFingerprintWorker(context) }
-        val workManager = androidx.work.WorkManager.getInstance(context)
-        val constraints = androidx.work.Constraints.Builder()
-            .setRequiresDeviceIdle(true) // ĐIỀU KIỆN 1: Điện thoại đang tắt màn hình, không sử dụng
-            .setRequiresCharging(true)   // ĐIỀU KIỆN 2: Đang cắm sạc (Đảm bảo an toàn pin)
-            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED) // ĐIỀU KIỆN 3: Có Wi-Fi
-            .build()
-
-        val inputData = androidx.work.workDataOf(
-            "currentUrl" to currentUrl
-        )
-
-        // CHU KỲ BẢO VỆ Ổ CỨNG: Chỉ lén chạy Stress Test 30 ngày 1 lần để không làm giảm tuổi thọ ổ đĩa
-        val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
-            30, java.util.concurrent.TimeUnit.DAYS
-        )
-            .setConstraints(constraints)
-            .setInputData(inputData)
-            .build()
-
-        workManager.enqueueUniquePeriodicWork(
-            "Auto_Idle_Speed_Test",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP, // Giữ nguyên lịch trình cũ nếu đã tồn tại
-            periodicSpeedTestRequest
-        )
-    }
-
-// PHASE 5.B: Lên lịch cho FingerprintWorker chạy mồi vân tay ngầm
-fun WebDavViewModel.scheduleFingerprintWorker(context: android.content.Context) {
-    val workManager = androidx.work.WorkManager.getInstance(context)
-    val constraints = androidx.work.Constraints.Builder()
-        .setRequiresDeviceIdle(true) // Tắt màn hình
-        .setRequiresCharging(true)   // Đang sạc
-        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED) // Có mạng
-        .build()
-
-    // Chạy mỗi 7 ngày để tạo vân tay (was 24h — quá nhiều lần scan file mới)
-    val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
-        168, java.util.concurrent.TimeUnit.HOURS // 7 ngày
-    )
-        .setConstraints(constraints)
-        .build()
-
-    workManager.enqueueUniquePeriodicWork(
-        "Auto_Fingerprint_Worker",
-        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicRequest
-    )
-}
 // ─── VideoDownloadHelper — thin wrappers to top-level MediaUtils.kt (Phase 7d.4) ───
 object VideoDownloadHelper {
     fun downloadAndPlay(
