@@ -57,7 +57,6 @@ import com.nas.naswebdav.WebDavManager
 
 @Composable
 internal fun MainDashboardHeader(
-    viewModel: WebDavViewModel,
     realtimeNow: Long,
     showPowerMenu: Boolean,
     onPowerMenuChange: (Boolean) -> Unit,
@@ -131,20 +130,20 @@ internal fun MainDashboardHeader(
                     Row(
                         modifier = Modifier
                             .clip(AppShapes.Badge)
-                            .background(if (viewModel.isOnLan) AccentGreen.copy(alpha = 0.15f) else AccentCyan.copy(alpha = 0.15f))
+                            .background(if (deviceVM.isOnLan) AccentGreen.copy(alpha = 0.15f) else AccentCyan.copy(alpha = 0.15f))
                             .padding(horizontal = AppSpacing.SM - AppSpacing.XS, vertical = AppSpacing.XXS),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (viewModel.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
+                            if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
                             contentDescription = null,
-                            tint = if (viewModel.isOnLan) AccentGreen else AccentCyan,
+                            tint = if (deviceVM.isOnLan) AccentGreen else AccentCyan,
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(Modifier.width(AppSpacing.XS))
                         Text(
-                            if (viewModel.isOnLan) "LAN" else "Tailscale",
-                            style = AppTypography.BodySmall.copy(fontWeight = FontWeight.Bold, color = if (viewModel.isOnLan) AccentGreen else AccentCyan)
+                            if (deviceVM.isOnLan) "LAN" else "Tailscale",
+                            style = AppTypography.BodySmall.copy(fontWeight = FontWeight.Bold, color = if (deviceVM.isOnLan) AccentGreen else AccentCyan)
                         )
                     }
                     val ut = systemVM.systemStatus.uptime
@@ -193,7 +192,6 @@ internal fun MainDashboardHeader(
 
 @Composable
 internal fun DashboardSystemOverviewCard(
-    viewModel: WebDavViewModel,
     realtimeNow: Long,
     onShowProcessList: (String) -> Unit,
     onOpenNewDiskProfile: () -> Unit,
@@ -374,7 +372,7 @@ internal fun DashboardSystemOverviewCard(
 }
 
 @Composable
-internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
+internal fun OmvServicesHardwarePanel() {
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
         val deviceVM = LocalDeviceManagementVM.current
         val systemVM = LocalSystemMonitorVM.current
@@ -396,7 +394,7 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
                 confirmButton = {
                     TextButton(onClick = {
                         // toggleOmvService lives in WebDavViewModel (not yet in DeviceMgmtVM)
-                        viewModel.toggleOmvService(pendingServiceName, pendingServiceEnable)
+                        deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
                         pendingServiceName = ""
                     }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }
                 },
@@ -534,12 +532,12 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
 
 @Composable
 internal fun TorrentActivityCard(
-    viewModel: WebDavViewModel,
     onOpenFolder: (webdavPath: String) -> Unit,
     onGlobalSearch: (String) -> Unit,
 ) {
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val systemVM = LocalSystemMonitorVM.current
+        val deviceVM = LocalDeviceManagementVM.current
         val downloadingTorrents = systemVM.systemStatus.torrents.filter { t ->
             val s = t.state
             // Active or paused download - NOT yet completed
@@ -594,7 +592,7 @@ internal fun TorrentActivityCard(
                                     }
                                     Box(
                                         modifier = Modifier.size(26.dp).clip(CircleShape).background(DarkSurface).clickable {
-                                            if (isPaused) viewModel.controlTorrent("resume", torrent.hash) else viewModel.controlTorrent("pause", torrent.hash)
+                                            if (isPaused) deviceVM.controlTorrent("resume", torrent.hash) else deviceVM.controlTorrent("pause", torrent.hash)
                                         },
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -602,9 +600,9 @@ internal fun TorrentActivityCard(
                                     }
                                 }
                                 DropdownMenu(expanded = showTorrentMenu, onDismissRequest = { showTorrentMenu = false }) {
-                                    DropdownMenuItem(text = { Text("Tạm dừng") }, leadingIcon = { Icon(Icons.Default.Pause, null, tint = AccentOrange) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("pause", torrent.hash) })
-                                    DropdownMenuItem(text = { Text("Tiếp tục") }, leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = AccentGreen) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("resume", torrent.hash) })
-                                    DropdownMenuItem(text = { Text("Xóa", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Tạm dừng") }, leadingIcon = { Icon(Icons.Default.Pause, null, tint = AccentOrange) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("pause", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Tiếp tục") }, leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = AccentGreen) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("resume", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Xóa", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("delete", torrent.hash) })
                                 }
                             }
                         }
@@ -626,7 +624,7 @@ internal fun TorrentActivityCard(
                             var showCompletedMenu by remember { mutableStateOf(false) }
                             androidx.compose.runtime.key(torrent.hash) {
                             com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                onDelete = { viewModel.controlTorrent("delete", torrent.hash) },
+                                onDelete = { deviceVM.controlTorrent("delete", torrent.hash) },
                                 shape = AppShapes.Badge,
                                 backgroundPaddingHorizontal = 8.dp,
                                 iconSize = 18.dp
@@ -662,7 +660,7 @@ internal fun TorrentActivityCard(
                                     Text(torrent.name, style = AppTypography.BodyLarge.copy(color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                 }
                                 DropdownMenu(expanded = showCompletedMenu, onDismissRequest = { showCompletedMenu = false }) {
-                                    DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; deviceVM.controlTorrent("delete", torrent.hash) })
                                 }
                             }
                             } // SwipeDeleteRow content

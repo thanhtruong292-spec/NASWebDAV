@@ -753,7 +753,7 @@ fun MainMenuScreen(
             onOpenSmartDetails = { showSmartDialog = true }
         )
 
-        MainMenuDashboardOmvServicesHardwarePanel(viewModel = viewModel)
+        MainMenuDashboardOmvServicesHardwarePanel()
 
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
         Spacer(Modifier.height(8.dp))
@@ -1108,7 +1108,7 @@ private fun MainMenuDashboardSystemOverviewCard(
 }
 
 @Composable
-private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel) {
+private fun MainMenuDashboardOmvServicesHardwarePanel() {
     // Phase 7d.2: systemStatus → SystemMonitorVM, omvOverview/networkPingMs → DeviceMgmtVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
@@ -1130,7 +1130,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        viewModel.toggleOmvService(pendingServiceName, pendingServiceEnable)
+                        deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
                         pendingServiceName = ""
                     }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }
                 },
@@ -1323,7 +1323,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel
                                                 indication = null
                                             ) {
                                                 if (m == "custom") showFanSettings = true else {
-                                                    viewModel.setFanMode(m)
+                                                    deviceVM.setFanMode(m)
                                                 }
                                             }
                                                 .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
@@ -1355,7 +1355,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel(viewModel: WebDavViewModel
                                             Button(
                                                 enabled = !isFanControlLocked,
                                                 onClick = { 
-                                                    viewModel.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
+                                                    deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
                                                     showFanSettings = false 
                                                 }
                                             ) { Text("Lưu & Áp dụng") }

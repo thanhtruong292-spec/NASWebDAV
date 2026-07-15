@@ -497,7 +497,9 @@ class WebDavViewModel(
         set(value) { systemMonitor.apiFailureCount = value }
 
     // ─── SMART NETWORK – trạng thái đang dùng LAN hay Tailscale ───────────────
-    var isOnLan by mutableStateOf(true) // true = LAN, false = Tailscale
+    var isOnLan: Boolean
+        get() = deviceManagement.isOnLan
+        set(value) { deviceManagement.isOnLan = value }
 
     // ─── GUEST PASS STATE — delegated to AuthSessionVM (Phase 7d.3) ─────────
     var activeGuestPass: GuestPassInfo?
@@ -1293,22 +1295,7 @@ class WebDavViewModel(
 
     // GỬI LINK TẢI XUỐNG TỪ XA CHO NAS (QBITTORRENT / WGET)
     fun controlTorrent(action: String, hash: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val host = safeUrlHost(webDavManager.currentBaseUrl)
-                val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-                val json = org.json.JSONObject().apply {
-                    put("action", action)
-                    put("hash", hash)
-                }
-                val requestBody = json.toString().toRequestBody(jsonMediaType)
-                val request = okhttp3.Request.Builder()
-                    .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/control")
-                    .post(requestBody)
-                    .build()
-                localApiClient.newCall(request).execute().use { }
-            } catch (_: Exception) { }
-        }
+        deviceManagement.controlTorrent(action, hash)
     }
 
     fun fetchThumbnailAudit() {
@@ -5137,34 +5124,7 @@ fun WebDavViewModel.toggleDockerPower(turnOn: Boolean) {
 }
 
 fun WebDavViewModel.toggleOmvService(serviceName: String, enable: Boolean) {
-    viewModelScope.launch(Dispatchers.IO) {
-        try {
-            val body = org.json.JSONObject()
-                .put("name", serviceName)
-                .put("enable", enable)
-                .toString()
-                .toRequestBody("application/json".toMediaTypeOrNull())
-            val request = okhttp3.Request.Builder()
-                .url("${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/service/toggle")
-                .post(body)
-                .build()
-            localApiClient.newCall(request).execute().use { response ->
-                val ok = response.isSuccessful
-                withContext(Dispatchers.Main) {
-                    commonDialogType = if (ok) com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                    commonDialogMessage = if (ok) "Đã ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()}." else "Không thể ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()} (HTTP ${response.code})."
-                    showCommonDialog = true
-                }
-            }
-            fetchOmvOverview()
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.ERROR
-                commonDialogMessage = "Lỗi điều khiển dịch vụ: ${e.message?.take(120)}"
-                showCommonDialog = true
-            }
-        }
-    }
+    deviceManagement.toggleOmvService(serviceName, enable)
 }
 
 fun WebDavViewModel.approveDeviceIp(ip: String) {

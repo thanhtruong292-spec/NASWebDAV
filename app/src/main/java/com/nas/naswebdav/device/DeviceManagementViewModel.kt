@@ -90,6 +90,9 @@ class DeviceManagementViewModel(
     var lastAutoSpeedTime by androidx.compose.runtime.mutableLongStateOf(0L)
         internal set
 
+    var isOnLan by androidx.compose.runtime.mutableStateOf(true) // true = LAN, false = Tailscale
+        internal set
+
     var isFanModeUpdating by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
@@ -468,6 +471,59 @@ class DeviceManagementViewModel(
                 systemLogs = systemLogsList
                 lastLogsRefreshAt = System.currentTimeMillis()
             }
+        }
+    }
+
+    // ═══ OMV / TORRENT (Phase 7d.6 — moved from WebDavViewModel facade) ═══
+
+    fun toggleOmvService(serviceName: String, enable: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val body = org.json.JSONObject()
+                    .put("name", serviceName)
+                    .put("enable", enable)
+                    .toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/service/toggle")
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    val ok = response.isSuccessful
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        globalUi.show(
+                            if (ok) com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS else com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
+                            if (ok) "Đã ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()}." else "Không thể ${if (enable) "bật" else "tắt"} dịch vụ ${serviceName.uppercase()} (HTTP ${response.code})."
+                        )
+                    }
+                }
+                loadOmvOverview()
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    globalUi.show(
+                        com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
+                        "Lỗi điều khiển dịch vụ: ${e.message?.take(120)}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun controlTorrent(action: String, hash: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+                val json = org.json.JSONObject().apply {
+                    put("action", action)
+                    put("hash", hash)
+                }
+                val requestBody = json.toString().toRequestBody(jsonMediaType)
+                val request = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/control")
+                    .post(requestBody)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+            } catch (_: Exception) { }
         }
     }
 
