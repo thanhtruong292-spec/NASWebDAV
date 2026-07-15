@@ -768,7 +768,6 @@ fun MainMenuScreen(
         Spacer(Modifier.height(4.dp))
 
         MainMenuSystemStatusCards(
-            viewModel = viewModel,
             mContext = mContext,
             onOpenAutoBackup = { showAutoBackupDialog = true },
             onOpenLivestream = { showLivestreamDialog = true },
@@ -2433,7 +2432,6 @@ fun MainMenuToolboxDialog(
 
 @Composable
 fun MainMenuSystemStatusCards(
-    viewModel: WebDavViewModel,
     mContext: android.content.Context,
     onOpenAutoBackup: () -> Unit = {},
     onOpenLivestream: () -> Unit = {},
@@ -2447,13 +2445,13 @@ fun MainMenuSystemStatusCards(
     val deviceVM = LocalDeviceManagementVM.current
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
-        viewModel.fetchThumbStatus()
-        viewModel.syncLivestreamStateWithServer(mContext)
-        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
+        smartToolsVM.fetchThumbStatus()
+        livestreamVM.syncLivestreamStateWithServer(mContext)
+        deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
             val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
             kotlinx.coroutines.delay(interval)
-            viewModel.fetchThumbStatus()
+            smartToolsVM.fetchThumbStatus()
         }
     }
     val thumbPercent = if (smartToolsVM.thumbTotal > 0) smartToolsVM.thumbGenerated * 100f / smartToolsVM.thumbTotal else 0f
@@ -2479,25 +2477,25 @@ fun MainMenuSystemStatusCards(
     val autoBackupIsActive = autoBackupVM.isAutoBackupRunning
     
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
-    val activeStreams = viewModel.activeLivestreams
+    val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
-        viewModel.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer(mContext)
         while (isActive) {
             kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
-            viewModel.fetchLivestreamStatusOnly(mContext)
-            viewModel.fetchTikTokLiveWatch(mContext)
+            livestreamVM.fetchLivestreamStatusOnly(mContext)
+            livestreamVM.fetchTikTokLiveWatch(mContext)
         }
     }
-    val usbImport = viewModel.usbImportState
+    val usbImport = deviceVM.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
     LaunchedEffect(Unit) {
-        viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
+        deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
     }
     LaunchedEffect(usbImport.status) {
         while (usbImport.status == "copying" || usbImport.status == "cancelling") {
             kotlinx.coroutines.delay(2_500L)
-            viewModel.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
+            deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 2_000L)
         }
     }
     val usbImportProgress = if (usbImport.bytesTotal > 0L) {
@@ -2597,7 +2595,7 @@ fun MainMenuSystemStatusCards(
                                     )
                                 }
                                 if ((smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) && !(smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal)) {
-                                    IconButton(onClick = { viewModel.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.toggleThumbPause() }, modifier = Modifier.size(32.dp)) {
                                         Icon(
                                             if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                             null,
@@ -2606,7 +2604,7 @@ fun MainMenuSystemStatusCards(
                                         )
                                     }
                                 }
-                                IconButton(onClick = { viewModel.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = { smartToolsVM.fetchThumbStatus() }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Default.Refresh, "Làm mới", tint = TextSecondary, modifier = Modifier.size(18.dp))
                                 }
                             }
@@ -2677,10 +2675,10 @@ fun MainMenuSystemStatusCards(
                                     Text(dupStatusLabel, fontSize = 11.sp, color = dupStatusColor)
                                 }
                                 if (dupIsRunning || dupIsPaused) {
-                                    IconButton(onClick = { viewModel.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
                                         Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
                                     }
-                                    IconButton(onClick = { viewModel.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { smartToolsVM.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                     }
                                 }
@@ -2769,35 +2767,35 @@ fun MainMenuSystemStatusCards(
                                     Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Spacer(Modifier.height(4.dp))
                                     
-                                    val speed = if (viewModel.autoBackupElapsedTime > 1000L) {
-                                        "%.1f file/s".format(viewModel.autoBackupProcessedCount * 1000f / viewModel.autoBackupElapsedTime)
+                                    val speed = if (autoBackupVM.autoBackupElapsedTime > 1000L) {
+                                        "%.1f file/s".format(autoBackupVM.autoBackupProcessedCount * 1000f / autoBackupVM.autoBackupElapsedTime)
                                     } else "Đang chuẩn bị..."
-                                    
+
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("Tệp: ${viewModel.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                         Text(speed, fontSize = 11.sp, color = Color(0xFF66BB6A), modifier = Modifier.padding(start = 4.dp))
                                     }
-                                    
-                                    if (viewModel.autoBackupSourcePath.isNotEmpty()) {
-                                        val src = viewModel.autoBackupSourcePath.substringAfterLast("0/").trim('/')
+
+                                    if (autoBackupVM.autoBackupSourcePath.isNotEmpty()) {
+                                        val src = autoBackupVM.autoBackupSourcePath.substringAfterLast("0/").trim('/')
                                         Text("Từ: /$src", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
-                                    if (viewModel.autoBackupDestPath.isNotEmpty()) {
-                                        val dst = viewModel.autoBackupDestPath.substringAfter("/webdav/").trim('/')
+                                    if (autoBackupVM.autoBackupDestPath.isNotEmpty()) {
+                                        val dst = autoBackupVM.autoBackupDestPath.substringAfter("/webdav/").trim('/')
                                         Text("Lưu: /$dst", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
 
                                     Spacer(Modifier.height(6.dp))
                                     LinearProgressIndicator(
-                                        progress = { viewModel.autoBackupProgress.coerceIn(0f, 1f) },
+                                        progress = { autoBackupVM.autoBackupProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
                                         color = Color(0xFF66BB6A), trackColor = Color(0xFF161616)
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("Tổng tiến trình: ${viewModel.autoBackupProcessedCount} / ${viewModel.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
-                                        val totalPercent = if(viewModel.autoBackupTotalCount > 0) (viewModel.autoBackupProcessedCount * 100f / viewModel.autoBackupTotalCount) else 0f
+                                        Text("Tổng tiến trình: ${autoBackupVM.autoBackupProcessedCount} / ${autoBackupVM.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
+                                        val totalPercent = if(autoBackupVM.autoBackupTotalCount > 0) (autoBackupVM.autoBackupProcessedCount * 100f / autoBackupVM.autoBackupTotalCount) else 0f
                                         Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
                                     }
                                 }
@@ -2864,7 +2862,7 @@ fun MainMenuSystemStatusCards(
                                         )
                                     }
                                 }
-                                IconButton(onClick = { viewModel.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = { deviceVM.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
                                 }
                             }

@@ -104,7 +104,7 @@ class LivestreamViewModel(
     }
 
     fun syncLivestreamStateWithServer(context: android.content.Context) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
+        syncLivestreamStateWithServer()
     }
 
     fun restoreLivestreamStateIfRunning() {

@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
+import com.nas.naswebdav.DuplicateProgressState
 import com.nas.naswebdav.OrganizerGroup
 import com.nas.naswebdav.ThumbnailAuditData
 import com.nas.naswebdav.OrganizerFilter
@@ -122,8 +123,22 @@ class SmartToolsViewModel(
     fun resetShouldAutoOpenDuplicates() { shouldAutoOpenDuplicates = false }
     fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile, index: Int) { /* TODO Phase 2b */ }
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) { /* TODO Phase 2b */ }
-    fun togglePauseDuplicateScan() { /* TODO Phase 2b */ }
-    fun cancelDuplicateScan(context: android.content.Context) { /* TODO Phase 2b */ }
+    fun togglePauseDuplicateScan() {
+        scanDuplicatesIsPaused = !scanDuplicatesIsPaused
+        DuplicateProgressState.isPaused.value = scanDuplicatesIsPaused
+    }
+
+    fun cancelDuplicateScan(context: android.content.Context) {
+        DuplicateProgressState.isPaused.value = false
+        scanDuplicatesIsPaused = false
+        androidx.work.WorkManager.getInstance(context).cancelUniqueWork("Unique_Scan_V3")
+        isWorkerRunning = false
+        scanJob?.cancel()
+        isScanningDuplicates = false
+        duplicateFilesList = emptyList()
+        DuplicateProgressState.stage.value = "Khởi động..."
+        DuplicateProgressState.percent.value = 0f
+    }
 
     fun triggerSmartOrganizeScan() { /* TODO Phase 2b */ }
     fun executeSmartOrganize(action: String = "move") { /* TODO Phase 2b */ }
