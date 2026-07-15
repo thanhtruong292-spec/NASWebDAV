@@ -306,15 +306,18 @@ class AutoBackupViewModel(
         }
     }
 
-    fun spindownHddNow() {
+    fun spindownHddNow(onDone: ((Boolean, String) -> Unit)? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/hdd/spindown")
                     .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    withContext(Dispatchers.Main) { onDone?.invoke(resp.isSuccessful, if (resp.isSuccessful) "OK" else "HTTP ${resp.code}") }
+                }
             } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "spindownHddNow: ${e.message}")
+                withContext(Dispatchers.Main) { onDone?.invoke(false, e.message ?: "Lỗi") }
             }
         }
     }

@@ -1282,113 +1282,6 @@ fun DockerDialog(
 
 
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DialogsFolderPickerDialog(
-    viewModel: WebDavViewModel,
-    startingUrl: String,
-    onDismiss: () -> Unit,
-    onFolderSelected: (String) -> Unit
-) {
-    var currentUrl by remember { mutableStateOf(startingUrl) }
-    var folderList by remember { mutableStateOf<List<NasFile>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(currentUrl) {
-        isLoading = true
-        try {
-            val items = WebDavManager.listFiles(currentUrl)
-            folderList = items.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
-        } catch (e: Exception) {
-            folderList = emptyList()
-        }
-        isLoading = false
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Column {
-                Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (_: Exception) { currentUrl }
-                val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
-                Text(
-                    text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
-                    fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
-        },
-        text = {
-            Box(modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 400.dp)) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        if (currentUrl.trimEnd('/') != WebDavManager.currentBaseUrl.trimEnd('/')) {
-                            item {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            val parentUrl = currentUrl.trimEnd('/').substringBeforeLast('/') + "/"
-                                            currentUrl = if (parentUrl.length < WebDavManager.currentBaseUrl.length)
-                                                WebDavManager.currentBaseUrl else parentUrl
-                                        }
-                                        .padding(vertical = 12.dp, horizontal = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(Modifier.width(16.dp))
-                                    Text(".. (Quay lại)", fontWeight = FontWeight.Medium)
-                                }
-                                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
-                            }
-                        }
-
-                        if (folderList.isEmpty()) {
-                            item {
-                                Text(
-                                    text = "(Thư mục trống)",
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(16.dp).fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally)
-                                )
-                            }
-                        } else {
-                            lazyItems(folderList) { folder ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { currentUrl = folder.path }
-                                        .padding(vertical = 12.dp, horizontal = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Folder, contentDescription = "Thư mục", tint = Color(0xFFFFCA28))
-                                    Spacer(Modifier.width(16.dp))
-                                    Text(folder.name, fontWeight = FontWeight.Medium)
-                                }
-                                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onFolderSelected(currentUrl) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
-            ) {
-                Text("Chép/Di chuyển vào đây", color = Color.White, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Hủy", color = Color.Gray)
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // AppStatusDialog + DialogType enum (từ ui.components.AppStatusDialog)
@@ -2528,10 +2421,11 @@ fun DialogsLivestreamRecordDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DialogsBiometricSettingsDialog(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
@@ -2690,7 +2584,7 @@ fun DialogsBiometricSettingsDialog(
                             .putBoolean("biometric_enabled", enabled)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
+                        deviceVM.logUserAction("Security","cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
@@ -2704,8 +2598,8 @@ fun DialogsBiometricSettingsDialog(
                             .putBoolean("biometric_enabled", true)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
-                        viewModel.lockNowRequested = true
+                        deviceVM.logUserAction("Security","Kích hoạt khoá sinh trắc học cục bộ.")
+                        autoBackupVM.lockNowRequested = true
                         onDismiss()
                     },
                     enabled = bioStatus == "available",
@@ -2734,10 +2628,10 @@ fun DialogsBiometricSettingsDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DialogsBandwidthThrottleDialog(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
     val presets = listOf(
         0L to "Không giới hạn",
         1L * 1024 * 1024 to "1 MB/s",
@@ -2816,7 +2710,7 @@ fun DialogsBandwidthThrottleDialog(
                     sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
-                    viewModel.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
+                    deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),
@@ -2834,238 +2728,6 @@ fun DialogsBandwidthThrottleDialog(
 }
 
 
-// ====================================================================
-// DIALOG LICH NGU NAS — HDD spindown / full suspend theo gio
-// Bao ve o cung khoi mon: ngoai gio dung, parking head + ngung quay.
-// Tich hop voi Disk Health Monitor de keo dai tuoi tho o cu.
-// ====================================================================
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DialogsSleepScheduleDialog(
-    viewModel: WebDavViewModel,
-    onDismiss: () -> Unit
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(Unit) { viewModel.fetchSleepSchedule() }
-
-    val sched = viewModel.sleepSchedule
-    var localEnabled by remember(sched.enabled) { mutableStateOf(sched.enabled) }
-    var localMode by remember(sched.mode) { mutableStateOf(sched.mode) }
-    var localStartHour by remember(sched.startHour) { mutableStateOf(sched.startHour) }
-    var localEndHour by remember(sched.endHour) { mutableStateOf(sched.endHour) }
-    var localIdleOnly by remember(sched.idleOnly) { mutableStateOf(sched.idleOnly) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DialogsCompactBottomSheetHandle() }
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth()
-                .fillMaxHeight(0.6f)
-                .verticalScroll(rememberScrollState())
-                .navigationBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
-        ) {
-            // Header
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.Bedtime, null, tint = Color(0xFF7E57C2), modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Lịch ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchSleepSchedule() }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
-                }
-            }
-            Text(
-                "Tự động parking head + ngừng quay HDD ngoài giờ dùng → giảm hao mòn (đặc biệt với ổ đã già). " +
-                    "NAS vẫn online (ping/SSH OK), chỉ HDD spindown. Khi có request đụng disk → tự wake.",
-                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
-            )
-
-            // Current HDD state badge
-            Spacer(Modifier.height(6.dp))
-            val stateColor = when {
-                sched.currentHddState.contains("active", true) -> Color(0xFF66BB6A)
-                sched.currentHddState.contains("standby", true) || sched.currentHddState.contains("sleeping", true) -> Color(0xFF7E57C2)
-                else -> Color(0xFF8892B0)
-            }
-            Row(
-                Modifier.fillMaxWidth()
-                    .background(stateColor.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
-                    .border(1.dp, stateColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(Icons.Default.Storage, null, tint = stateColor, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("HDD: ${sched.currentHddState}", color = stateColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        if (sched.inWindowNow) "Đang trong khung giờ ngủ" else "Ngoài khung giờ ngủ",
-                        color = Color(0xFF8892B0), fontSize = 11.sp
-                    )
-                }
-            }
-
-            // Enable toggle
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF2A2A3E))
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localEnabled = !localEnabled }) {
-                Switch(
-                    checked = localEnabled,
-                    onCheckedChange = { localEnabled = it },
-                    modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
-                )
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Bật lịch ngủ", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = Color(0xFF8892B0), fontSize = 11.sp)
-                }
-            }
-
-            // Time range
-            Spacer(Modifier.height(8.dp))
-            Text("KHUNG GIỜ NGỦ (24h)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
-                com.nas.naswebdav.ui.components.CompactTextField(
-                    value = localStartHour.toString(),
-                    onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localStartHour = it } },
-                    accentColor = Color(0xFF7E57C2),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                    modifier = Modifier.width(60.dp)
-                )
-                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
-                Spacer(Modifier.width(8.dp))
-                Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
-                Spacer(Modifier.width(8.dp))
-                Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
-                com.nas.naswebdav.ui.components.CompactTextField(
-                    value = localEndHour.toString(),
-                    onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localEndHour = it } },
-                    accentColor = Color(0xFF7E57C2),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                    modifier = Modifier.width(60.dp)
-                )
-                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
-            }
-            Text(
-                if (localStartHour < localEndHour) "Trong ngày (${localStartHour}h-${localEndHour}h)"
-                else "Qua đêm (${localStartHour}h-${localEndHour}h sáng hôm sau)",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp,
-                modifier = Modifier.padding(top = 3.dp)
-            )
-
-            // Mode picker
-            Spacer(Modifier.height(8.dp))
-            Text("CHẾ ĐỘ NGỦ", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                listOf(
-                    "spindown" to "HDD Spindown",
-                    "suspend" to "Full Suspend",
-                ).forEach { (value, label) ->
-                    val selected = localMode == value
-                    FilterChip(
-                        selected = selected,
-                        onClick = { localMode = value },
-                        label = { Text(label, fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF7E57C2).copy(alpha = 0.2f),
-                            selectedLabelColor = Color(0xFF7E57C2),
-                            containerColor = Color.Transparent,
-                            labelColor = Color(0xFF8892B0)
-                        ),
-                        border = FilterChipDefaults.filterChipBorder(
-                            borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                            selectedBorderColor = Color(0xFF7E57C2).copy(alpha = 0.6f),
-                            enabled = true, selected = selected
-                        ),
-                        modifier = Modifier.weight(1f).height(32.dp)
-                    )
-                }
-            }
-            Text(
-                when (localMode) {
-                    "spindown" -> "HDD ngừng quay, NAS vẫn online (mạng, SSH, ping OK). Wake tự động khi có request."
-                    else -> "NAS suspend hoàn toàn — cần WoL để đánh thức. KHÔNG khuyến nghị khi đang theo dõi TikTok live."
-                },
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp,
-                modifier = Modifier.padding(top = 3.dp)
-            )
-
-            // Idle only toggle
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localIdleOnly = !localIdleOnly }) {
-                Switch(
-                    checked = localIdleOnly,
-                    onCheckedChange = { localIdleOnly = it },
-                    modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
-                )
-                Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Chỉ ngủ khi NAS rảnh", color = Color(0xFFE8E8E8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("CPU<30% + không có recording + không backup chạy", color = Color(0xFF8892B0), fontSize = 11.sp)
-                }
-            }
-
-            // Save + test buttons
-            Spacer(Modifier.height(10.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
-                    onClick = {
-                        viewModel.saveSleepSchedule(
-                            WebDavViewModel.SleepSchedule(
-                                enabled = localEnabled,
-                                mode = localMode,
-                                startHour = localStartHour,
-                                endHour = localEndHour,
-                                idleOnly = localIdleOnly,
-                            )
-                        )
-                    },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7E57C2)),
-                    shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-                OutlinedButton(
-                    onClick = {
-                        viewModel.spindownHddNow { ok, msg ->
-                            android.widget.Toast.makeText(context, if (ok) "Spindown OK" else "Lỗi: $msg", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7E57C2).copy(alpha = 0.6f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7E57C2))
-                ) { Text("SPINDOWN NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-            }
-
-            // Status message
-            if (viewModel.sleepScheduleMessage.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                val msgColor = if (viewModel.sleepScheduleMessage.startsWith("Lỗi")) Color(0xFFEF5350) else Color(0xFF66BB6A)
-                Text(viewModel.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
-            }
-            if (sched.lastActionState.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Lần ngủ cuối: ${sched.lastActionState}",
-                    color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-    }
-}
 
 // ====================================================================
 // DIALOG SUC KHOE O CUNG — Hien score, attributes, warnings tu SMART

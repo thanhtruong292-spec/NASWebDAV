@@ -148,7 +148,6 @@ fun ToolboxDialog(
             Spacer(Modifier.height(AppSpacing.SM))
             if (showBiometricSettings) {
                 com.nas.naswebdav.ui.dialogs.DialogsBiometricSettingsDialog(
-                    viewModel = viewModel,
                     sharedPrefs = sharedPrefs,
                     onDismiss = {
                         showBiometricSettings = false
