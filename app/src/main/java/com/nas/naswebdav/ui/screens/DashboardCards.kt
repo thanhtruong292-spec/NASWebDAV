@@ -503,7 +503,7 @@ internal fun OmvServicesHardwarePanel(viewModel: WebDavViewModel) {
 
                             // Network + Hardware info
                             val net = deviceVM.omvOverview.network.firstOrNull()
-                            val hdd = selectNasTargetDiskFromDiskProfileScreen(deviceVM.omvOverview.disks)
+                            val hdd = selectNasTargetDisk(deviceVM.omvOverview.disks)
                             if (net != null || hdd != null) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     if (net != null) {

@@ -66,6 +66,7 @@ fun BiometricSettingsDialogCompat(
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
@@ -224,7 +225,7 @@ fun BiometricSettingsDialogCompat(
                             .putBoolean("biometric_enabled", enabled)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
+                        deviceVM.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
@@ -238,7 +239,7 @@ fun BiometricSettingsDialogCompat(
                             .putBoolean("biometric_enabled", true)
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
-                        viewModel.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
+                        deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
                         viewModel.lockNowRequested = true
                         onDismiss()
                     },
@@ -268,10 +269,10 @@ fun BiometricSettingsDialogCompat(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BandwidthThrottleDialog(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
     val presets = listOf(
         0L to "Không giới hạn",
         1L * 1024 * 1024 to "1 MB/s",
@@ -350,7 +351,7 @@ fun BandwidthThrottleDialog(
                     sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
-                    viewModel.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
+                    deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),
@@ -376,14 +377,13 @@ fun BandwidthThrottleDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepScheduleDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.2: sleepSchedule owned by AutoBackupVM (Phase 7a delegation).
+    val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(Unit) { viewModel.fetchSleepSchedule() }
+    LaunchedEffect(Unit) { autoBackupVM.fetchSleepSchedule() }
 
-    val sched = viewModel.sleepSchedule
+    val sched = autoBackupVM.sleepSchedule
     var localEnabled by remember(sched.enabled) { mutableStateOf(sched.enabled) }
     var localMode by remember(sched.mode) { mutableStateOf(sched.mode) }
     var localStartHour by remember(sched.startHour) { mutableStateOf(sched.startHour) }
@@ -412,7 +412,7 @@ fun SleepScheduleDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Lịch ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { viewModel.fetchSleepSchedule() }, modifier = Modifier.size(28.dp)) {
+                IconButton(onClick = { autoBackupVM.fetchSleepSchedule() }, modifier = Modifier.size(28.dp)) {
                     Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
                 }
             }
@@ -558,7 +558,7 @@ fun SleepScheduleDialog(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = {
-                        viewModel.saveSleepSchedule(
+                        autoBackupVM.saveSleepSchedule(
                             WebDavViewModel.SleepSchedule(
                                 enabled = localEnabled,
                                 mode = localMode,
@@ -574,9 +574,7 @@ fun SleepScheduleDialog(
                 ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                 OutlinedButton(
                     onClick = {
-                        viewModel.spindownHddNow { ok, msg ->
-                            android.widget.Toast.makeText(context, if (ok) "Spindown OK" else "Lỗi: $msg", android.widget.Toast.LENGTH_SHORT).show()
-                        }
+                        autoBackupVM.spindownHddNow()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(10.dp),
@@ -586,10 +584,10 @@ fun SleepScheduleDialog(
             }
 
             // Status message
-            if (viewModel.sleepScheduleMessage.isNotEmpty()) {
+            if (autoBackupVM.sleepScheduleMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                val msgColor = if (viewModel.sleepScheduleMessage.startsWith("Lỗi")) Color(0xFFEF5350) else Color(0xFF66BB6A)
-                Text(viewModel.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
+                val msgColor = if (autoBackupVM.sleepScheduleMessage.startsWith("Lỗi")) Color(0xFFEF5350) else Color(0xFF66BB6A)
+                Text(autoBackupVM.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
             }
             if (sched.lastActionState.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))

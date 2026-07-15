@@ -116,7 +116,7 @@ private fun isNasTargetDisk(disk: OmvDiskInfo): Boolean {
         "N300" in blob
 }
 
-internal fun selectNasTargetDiskFromDiskProfileScreen(disks: List<OmvDiskInfo>): OmvDiskInfo? =
+fun selectNasTargetDisk(disks: List<OmvDiskInfo>): OmvDiskInfo? =
     disks.firstOrNull { isNasTargetDisk(it) } ?:
         disks.firstOrNull { !it.isRoot && !it.isUsbImport && it.name != "sdb" && it.device != "/dev/sdb" }
 
@@ -158,23 +158,26 @@ private fun profileStatusColor(status: String): Color = when {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 internal fun DiskProfileBottomSheet(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7c.2: All disk health/SMART/OMV state reads via facade delegation
     // → SystemMonitorVM (diskHealthCurrent/History, isFetchingDiskHealth,
     // nasInsights, storageFolderUsage, omvOverview) is SSoT.
+    val sysMonitorVM = LocalSystemMonitorVM.current
+    val deviceVM = LocalDeviceManagementVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
+    val livestreamVM = LocalLivestreamVM.current
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
     var showTrackingConfirm by remember { mutableStateOf(false) }
     var showResetTrackingConfirm by remember { mutableStateOf(false) }
     var writePanelExpanded by remember { mutableStateOf(false) }
     var operationMode by remember { mutableStateOf(prefs.getString("operation_mode", "balanced") ?: "balanced") }
-    val hddDisk = viewModel.systemStatus.diskParts
+    val hddDisk = sysMonitorVM.systemStatus.diskParts
         .filter { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
         .sortedByDescending { it.mount.startsWith("/srv/dev-disk-by-label-data") }
         .maxByOrNull { parseProfileSizeBytes(it.total) }
-    val omvDisk = selectNasTargetDiskFromDiskProfileScreen(viewModel.omvOverview.disks)
+    val omvDisk = selectNasTargetDisk(deviceVM.omvOverview.disks)
     val activeDiskKey = profileDiskKey(omvDisk, hddDisk?.mount ?: "unknown")
     var installedAt by remember(activeDiskKey) {
         val serialValue = prefs.getLong("${activeDiskKey}_installed_at", 0L)
@@ -182,9 +185,9 @@ internal fun DiskProfileBottomSheet(
         mutableStateOf(if (serialValue > 0L) serialValue else legacyValue)
     }
     val isTrackingNewDisk = installedAt > 0L
-    val usedPercent = hddDisk?.percent ?: profilePercent(viewModel.systemStatus.disk)
+    val usedPercent = hddDisk?.percent ?: profilePercent(sysMonitorVM.systemStatus.disk)
     val remainingPercent = (100f - usedPercent).coerceIn(0f, 100f)
-    val fsBytes = viewModel.omvOverview.filesystems
+    val fsBytes = deviceVM.omvOverview.filesystems
         .filter { it.mountpoint != "/" && !it.mountpoint.startsWith("/mnt/usb-import") }
         .sortedByDescending { it.mountpoint.startsWith("/srv/dev-disk-by-label-data") }
         .maxOfOrNull { it.sizeBytes }
@@ -201,8 +204,8 @@ internal fun DiskProfileBottomSheet(
     val enduranceTbPerYear = profileDiskEnduranceTbPerYear(diskModel)
     val dailyBudgetGb = enduranceTbPerYear?.let { ((it * 1024f) / 365f).toInt() } ?: 0
     val remainingDays = if (isTrackingNewDisk && dailyBudgetGb > 0) ((estimatedFreeTiB * 1024f) / dailyBudgetGb).toInt().coerceAtLeast(0) else null
-    val activeRecordings = if (isTrackingNewDisk) viewModel.activeLivestreams.size else 0
-    val completedLivestreamLogsToday = viewModel.systemLogsList.filter { log ->
+    val activeRecordings = if (isTrackingNewDisk) livestreamVM.activeLivestreams.size else 0
+    val completedLivestreamLogsToday = deviceVM.systemLogsList.filter { log ->
         log.module.equals("Livestream", ignoreCase = true) &&
             log.message.contains("đã ghi xong", ignoreCase = true) &&
             profileIsToday(log.timestamp)
@@ -214,11 +217,11 @@ internal fun DiskProfileBottomSheet(
         profileParseLoggedSizeBytes(log.message)
     } else 0L
     val livestreamSessionsToday = activeRecordings + completedLivestreamSessionsToday
-    val smartTemp = viewModel.smartInfo.temperature
+    val smartTemp = deviceVM.smartInfo.temperature
         .replace("\u00c2\u00b0C", "\u00b0C")
         .replace("--", "Chưa có dữ liệu")
-    val smartStatus = viewModel.smartInfo.status
-    val diskHealth = viewModel.diskHealthCurrent
+    val smartStatus = deviceVM.smartInfo.status
+    val diskHealth = sysMonitorVM.diskHealthCurrent
     val healthScore = diskHealth?.score
     val trialStatus = when {
         isTrackingNewDisk && healthScore != null && healthScore < 60 -> "Cần kiểm tra"
@@ -249,17 +252,17 @@ internal fun DiskProfileBottomSheet(
         tempValue >= 45f -> "Cần theo dõi"
         else -> "Ổn định"
     }
-    val downloadTasks = if (isTrackingNewDisk) viewModel.systemStatus.torrents.count { torrent ->
+    val downloadTasks = if (isTrackingNewDisk) sysMonitorVM.systemStatus.torrents.count { torrent ->
         val state = torrent.state
         state.contains("DL", ignoreCase = false) || state == "downloading" || state == "stalledDL" || state == "forcedDL" || state == "metaDL"
     } else 0
-    val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
-    val estimatedActiveWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 30 else 0
+    val heavyWriteTasks = activeRecordings + downloadTasks + if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 1 else 0
+    val estimatedActiveWriteGb = activeRecordings * 8 + downloadTasks * 20 + if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 30 else 0
     val completedLivestreamWriteGb = (completedLivestreamBytesToday / (1024.0 * 1024.0 * 1024.0)).toInt()
     val estimatedActualWriteGb = estimatedActiveWriteGb + completedLivestreamWriteGb
     val actualForecastDays = if (isTrackingNewDisk && estimatedActualWriteGb > 0) ((estimatedFreeTiB * 1024f) / estimatedActualWriteGb).toInt().coerceAtLeast(0) else remainingDays
     val monthlyBudgetTb = enduranceTbPerYear?.let { it / 12 } ?: 0
-    val backupTasks = if (isTrackingNewDisk && viewModel.isAutoBackupRunning) 1 else 0
+    val backupTasks = if (isTrackingNewDisk && autoBackupVM.isAutoBackupRunning) 1 else 0
     val writeRiskLabel = when {
         !isTrackingNewDisk -> "Chưa phân tích"
         heavyWriteTasks >= 4 -> "Khối lượng ghi cao"
@@ -267,9 +270,9 @@ internal fun DiskProfileBottomSheet(
         heavyWriteTasks == 1 -> "Khối lượng ghi thấp"
         else -> "Trạng thái rảnh (Không ghi)"
     }
-    val cpuLoad = profilePercent(viewModel.systemStatus.cpu)
-    val ramLoad = profilePercent(viewModel.systemStatus.ramPercent)
-    val storageUsage = viewModel.storageFolderUsage
+    val cpuLoad = profilePercent(sysMonitorVM.systemStatus.cpu)
+    val ramLoad = profilePercent(sysMonitorVM.systemStatus.ramPercent)
+    val storageUsage = deviceVM.storageFolderUsage
     val trashUsage = storageUsage.firstOrNull { it.path == ".trash" }
     val trashWarning = if ((trashUsage?.sizeBytes ?: 0L) > 50L * 1024L * 1024L * 1024L) "Nên dọn thùng rác" else "Thùng rác ổn"
     val fillWarning = when {
@@ -345,7 +348,7 @@ internal fun DiskProfileBottomSheet(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.loadSystemLogs()
+        deviceVM.loadSystemLogs()
     }
 
     if (showTrackingConfirm) {
@@ -368,7 +371,7 @@ internal fun DiskProfileBottomSheet(
                         .putString("${activeDiskKey}_model", diskModel)
                         .putString("${activeDiskKey}_serial", diskSerial)
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
+                    deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
                     installedAt = now
                     showTrackingConfirm = false
                 }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
@@ -397,7 +400,7 @@ internal fun DiskProfileBottomSheet(
                         .remove("${activeDiskKey}_model")
                         .remove("${activeDiskKey}_serial")
                         .apply()
-                    viewModel.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
+                    deviceVM.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
                     installedAt = 0L
                     showResetTrackingConfirm = false
                 }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
@@ -601,15 +604,15 @@ internal fun DiskProfileBottomSheet(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OperationModeChip("stream", "Ghi live", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     OperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                     OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
                         operationMode = it
-                        viewModel.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
+                        deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
                 }
             }
@@ -653,7 +656,7 @@ internal fun DiskProfileBottomSheet(
                         Spacer(Modifier.width(6.dp))
                         Text("Theo dõi thư mục lớn", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(if (viewModel.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
+                    Text(if (deviceVM.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
                 }
                 Spacer(Modifier.height(6.dp))
                 if (storageUsage.isEmpty()) {

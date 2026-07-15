@@ -91,11 +91,11 @@ private val SeTextSecondary = Color(0xFF8892B0)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SocialExtractorScreen(
-    viewModel: WebDavViewModel,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    val livestreamVM = LocalLivestreamVM.current
 
     // ── State cục bộ ─────────────────────────────────────────────────────────
     var linkInput by remember {
@@ -120,7 +120,7 @@ fun SocialExtractorScreen(
         if (mp4Url.isNotEmpty() && usePipeMode) {
             val platform = detectPlatform(linkInput)
             val fileName = "social_${platform}_${System.currentTimeMillis()}.mp4"
-            viewModel.startStreamPipe(mp4Url, fileName)
+            livestreamVM.startStreamPipe(mp4Url, fileName)
             extractedVideoUrl = null
             webViewStatus = ""
             isExtracting = false
@@ -138,7 +138,7 @@ fun SocialExtractorScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        viewModel.cancelStreamPipe()
+                        livestreamVM.cancelStreamPipe()
                         onBack()
                     }) { Icon(Icons.Default.ArrowBack, null, tint = SeTextPrimary) }
                 },
@@ -187,7 +187,7 @@ fun SocialExtractorScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Thư mục đích ─────────────────────────────────────────────────
-            DestFolderRow(viewModel)
+            DestFolderRow()
             Spacer(Modifier.height(12.dp))
 
             // ── Trạng thái WebView extraction ────────────────────────────────
@@ -197,25 +197,25 @@ fun SocialExtractorScreen(
             }
 
             // ── Stream Pipe Progress ──────────────────────────────────────────
-            AnimatedVisibility(visible = viewModel.streamPipeStatus.isNotEmpty()) {
-                StreamPipeProgressCard(viewModel)
+            AnimatedVisibility(visible = livestreamVM.streamPipeStatus.isNotEmpty()) {
+                StreamPipeProgressCard()
                 Spacer(Modifier.height(10.dp))
             }
 
             // ── Trạng thái yt-dlp (fallback mode) ────────────────────────────
-            AnimatedVisibility(visible = !usePipeMode && viewModel.socialExtractStatus.isNotEmpty()) {
-                SocialStatusCard(viewModel.socialExtractStatus, viewModel.isSocialExtracting)
+            AnimatedVisibility(visible = !usePipeMode && livestreamVM.socialExtractStatus.isNotEmpty()) {
+                SocialStatusCard(livestreamVM.socialExtractStatus, livestreamVM.isSocialExtracting)
                 Spacer(Modifier.height(10.dp))
             }
 
             // ── Lịch sử ──────────────────────────────────────────────────────
-            if (viewModel.socialDownloadHistory.isNotEmpty()) {
-                HistoryCard(viewModel.socialDownloadHistory)
+            if (livestreamVM.socialDownloadHistory.isNotEmpty()) {
+                HistoryCard(livestreamVM.socialDownloadHistory)
                 Spacer(Modifier.height(12.dp))
             }
 
             // ── Nút hành động chính ───────────────────────────────────────────
-            val isWorking = viewModel.isSocialExtracting || viewModel.isStreamPiping || isExtracting
+            val isWorking = livestreamVM.isSocialExtracting || livestreamVM.isStreamPiping || isExtracting
             MainActionButton(
                 isPipeMode = usePipeMode,
                 isWorking = isWorking,
@@ -229,12 +229,12 @@ fun SocialExtractorScreen(
                         extractTriggerUrl = linkInput.trim()
                     } else {
                         // Chế độ NAS tự tải: gửi URL thẳng về NAS qua yt-dlp
-                        viewModel.requestSocialDownload(linkInput.trim())
+                        livestreamVM.requestSocialDownload(linkInput.trim(), AppConfig.SOCIAL_DOWNLOAD_FOLDER)
                         linkInput = ""
                     }
                 },
                 onCancel = {
-                    viewModel.cancelStreamPipe()
+                    livestreamVM.cancelStreamPipe()
                     isExtracting = false
                     webViewStatus = ""
                     extractTriggerUrl = ""
@@ -265,7 +265,7 @@ fun SocialExtractorScreen(
                 webViewStatus = "✅ Đã lấy được liên kết video HD. Đang truyền về NAS..."
             },
             onLivestreamFound = { liveUrl, referer, userAgent ->
-                viewModel.startLivestreamRecord(context, liveUrl, "best", referer, userAgent)
+                livestreamVM.startLivestreamRecord(liveUrl, "best", referer, userAgent)
                 extractTriggerUrl = ""
                 webViewStatus = "✅ Đã bắt được luồng Livestream (M3U8)! Đang ra lệnh NAS ghi hình..."
                 isExtracting = false
@@ -275,7 +275,7 @@ fun SocialExtractorScreen(
                 extractTriggerUrl = ""
                 webViewStatus = "⚠️ Không lấy được liên kết tự động ($reason). Đang chuyển sang chế độ NAS tự tải..."
                 // Tự động fallback sang yt-dlp
-                viewModel.requestSocialDownload(linkInput.trim())
+                livestreamVM.requestSocialDownload(linkInput.trim(), AppConfig.SOCIAL_DOWNLOAD_FOLDER)
             },
             onWebViewReady = { wv -> webViewRef = wv }
         )
@@ -710,7 +710,7 @@ private fun LinkInputCard(
 }
 
 @Composable
-private fun DestFolderRow(viewModel: WebDavViewModel) {
+private fun DestFolderRow() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -724,7 +724,7 @@ private fun DestFolderRow(viewModel: WebDavViewModel) {
         Column {
             Text("Lưu vào NAS:", fontSize = 10.sp, color = SeTextSecondary)
             Text(
-                (viewModel.webDavManager.currentBaseUrl) + AppConfig.SOCIAL_DOWNLOAD_FOLDER,
+                WebDavManager.currentBaseUrl + AppConfig.SOCIAL_DOWNLOAD_FOLDER,
                 fontSize = 11.sp, color = SeAccentCyan,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
@@ -754,8 +754,9 @@ private fun ExtractionStatusCard(status: String, isLoading: Boolean) {
 }
 
 @Composable
-private fun StreamPipeProgressCard(viewModel: WebDavViewModel) {
-    val status = viewModel.streamPipeStatus
+private fun StreamPipeProgressCard() {
+    val livestreamVM = LocalLivestreamVM.current
+    val status = livestreamVM.streamPipeStatus
     val isError = status.contains("Lỗi", ignoreCase = true)
     val isDone  = status.contains("Hoàn tất", ignoreCase = true)
     Card(
@@ -775,7 +776,7 @@ private fun StreamPipeProgressCard(viewModel: WebDavViewModel) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (viewModel.isStreamPiping) {
+                if (livestreamVM.isStreamPiping) {
                     CircularProgressIndicator(
                         color = SeAccentOrange, modifier = Modifier.size(18.dp), strokeWidth = 2.dp
                     )
@@ -792,10 +793,10 @@ private fun StreamPipeProgressCard(viewModel: WebDavViewModel) {
             }
 
             // Progress bar
-            if (viewModel.isStreamPiping && viewModel.streamPipeProgress > 0f) {
+            if (livestreamVM.isStreamPiping && livestreamVM.streamPipeProgress > 0f) {
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
-                    progress = { viewModel.streamPipeProgress },
+                    progress = { livestreamVM.streamPipeProgress },
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                     color = SeAccentOrange,
                     trackColor = SeTextSecondary.copy(0.2f)
@@ -803,11 +804,11 @@ private fun StreamPipeProgressCard(viewModel: WebDavViewModel) {
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        "${(viewModel.streamPipeProgress * 100).toInt()}% — ${viewModel.streamPipeSpeedStr}",
+                        "${(livestreamVM.streamPipeProgress * 100).toInt()}% — ${livestreamVM.streamPipeSpeedStr}",
                         fontSize = 11.sp, color = SeTextSecondary
                     )
                     Text(
-                        "ETA: ${viewModel.streamPipeEtaStr}",
+                        "ETA: ${livestreamVM.streamPipeEtaStr}",
                         fontSize = 11.sp, color = SeTextSecondary
                     )
                 }

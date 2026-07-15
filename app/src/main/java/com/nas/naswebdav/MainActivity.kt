@@ -770,8 +770,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 initialUrl = mediaUrl,
 
-                viewModel = viewModel,
-
                 user = viewModel.webDavManager.currentUser,
 
                 pass = viewModel.webDavManager.currentPass,
@@ -803,8 +801,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
         composable("social_extractor") {
 
             SocialExtractorScreen(
-
-                viewModel = viewModel,
 
                 onBack = { navController.popBackStack() }
 
