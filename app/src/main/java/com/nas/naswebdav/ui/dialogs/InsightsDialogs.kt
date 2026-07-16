@@ -286,7 +286,7 @@ fun NasInsightsDialog(
 
             InsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
                 insight.maintenanceActions.ifEmpty {
-                    listOf(WebDavViewModel.InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
+                    listOf(InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
                 }.forEach { action ->
                     val color = when (action.priority) {
                         "high" -> Color(0xFFEF5350)

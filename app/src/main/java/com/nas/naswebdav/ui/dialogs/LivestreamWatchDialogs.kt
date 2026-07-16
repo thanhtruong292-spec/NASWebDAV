@@ -106,7 +106,7 @@ internal fun CompactBottomSheetHandle() {
 internal fun TikTokLiveWatchSection(
     liveVM: LivestreamViewModel,
     context: Context,
-    users: List<WebDavViewModel.TikTokLiveWatchUser>,
+    users: List<TikTokLiveWatchUser>,
     newUsername: String,
     onUsernameChange: (String) -> Unit,
     snackbarHostState: SnackbarHostState
@@ -115,7 +115,7 @@ internal fun TikTokLiveWatchSection(
     // tiktokLiveWatchUsers) reads via facade delegation → LivestreamVM is source of truth.
     // Phase 7c full migration will swap to LocalLivestreamVM.current directly.
     var expandedUserName by remember { mutableStateOf<String?>(null) }
-    var pendingDeleteUser by remember { mutableStateOf<WebDavViewModel.TikTokLiveWatchUser?>(null) }
+    var pendingDeleteUser by remember { mutableStateOf<TikTokLiveWatchUser?>(null) }
     val snackbarScope = rememberCoroutineScope()
     // Các panel theo dõi TikTok / thời gian loại trừ / đang ghi hình — chi 1 panel mo
     // cung luc thong qua LivestreamPanelState. Mac dinh tat ca dong (current.value == null).

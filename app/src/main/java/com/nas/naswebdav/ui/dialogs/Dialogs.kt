@@ -468,13 +468,13 @@ private fun DialogsCompactBottomSheetHandle() {
 private fun DialogsTikTokLiveWatchSection(
     livestreamVM: com.nas.naswebdav.livestream.LivestreamViewModel,
     context: Context,
-    users: List<com.nas.naswebdav.WebDavViewModel.TikTokLiveWatchUser>,
+    users: List<com.nas.naswebdav.TikTokLiveWatchUser>,
     newUsername: String,
     onUsernameChange: (String) -> Unit,
     snackbarHostState: SnackbarHostState
 ) {
     var expandedUserName by remember { mutableStateOf<String?>(null) }
-    var pendingDeleteUser by remember { mutableStateOf<com.nas.naswebdav.WebDavViewModel.TikTokLiveWatchUser?>(null) }
+    var pendingDeleteUser by remember { mutableStateOf<com.nas.naswebdav.TikTokLiveWatchUser?>(null) }
     val snackbarScope = rememberCoroutineScope()
     // Các panel theo dõi TikTok / thời gian loại trừ / đang ghi hình — chi 1 panel mo
     // cung luc thong qua DialogsLivestreamPanelState. Mac dinh tat ca dong (current.value == null).
@@ -3847,7 +3847,7 @@ fun DialogsNasInsightsDialog(
 
             DialogsInsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
                 insight.maintenanceActions.ifEmpty {
-                    listOf(WebDavViewModel.InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
+                    listOf(InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
                 }.forEach { action ->
                     val color = when (action.priority) {
                         "high" -> Color(0xFFEF5350)

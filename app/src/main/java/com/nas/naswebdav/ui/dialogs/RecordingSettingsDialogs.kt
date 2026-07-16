@@ -559,7 +559,7 @@ fun SleepScheduleDialog(
                 Button(
                     onClick = {
                         autoBackupVM.saveSleepSchedule(
-                            WebDavViewModel.SleepSchedule(
+                            SleepSchedule(
                                 enabled = localEnabled,
                                 mode = localMode,
                                 startHour = localStartHour,

@@ -69,6 +69,14 @@ import kotlinx.coroutines.launch
 import androidx.lifecycle.viewModelScope
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import com.nas.naswebdav.auth.AuthSessionViewModel
+import com.nas.naswebdav.browser.FileBrowserViewModel
+import com.nas.naswebdav.device.DeviceManagementViewModel
+import com.nas.naswebdav.livestream.LivestreamViewModel
+import com.nas.naswebdav.backup.AutoBackupViewModel
+import com.nas.naswebdav.monitor.SystemMonitorViewModel
+import com.nas.naswebdav.smarttools.SmartToolsViewModel
 
 
 
@@ -93,27 +101,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     private val viewModelFactory by lazy(LazyThreadSafetyMode.NONE) {
         object : ViewModelProvider.Factory {
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                if (modelClass.isAssignableFrom(WebDavViewModel::class.java)) {
-                    @Suppress("UNCHECKED_CAST")
-                    return WebDavViewModel(
-                        WebDavManager,
-                        domainProvider.repository,
-                        domainProvider.authSession,
-                        domainProvider.deviceManagement,
-                        domainProvider.smartTools,
-                        domainProvider.livestream,
-                        domainProvider.autoBackup,
-                        domainProvider.systemMonitor,
-                        domainProvider.fileBrowser,
-                        domainProvider.globalUi,
-                    ) as T
-                }
-                throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
-            }
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = domainProvider as T
         }
     }
-    private val viewModel: WebDavViewModel by viewModels { viewModelFactory }
     private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
     private lateinit var notificationPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>
 
@@ -222,7 +213,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
                 lifecycleScope.launch {
                     val activeBaseUrl = SmartNetworkManager.getActiveBaseUrl(this@MainActivity)
-                        .ifBlank { viewModel.webDavManager.currentBaseUrl }
+                        .ifBlank { WebDavManager.currentBaseUrl }
                     val serviceIntent = android.content.Intent(this@MainActivity, ScreenRecordService::class.java).apply {
                         action = ScreenRecordService.ACTION_START
                         putExtra(ScreenRecordService.EXTRA_RESULT_CODE, result.resultCode)
@@ -274,7 +265,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 com.nas.naswebdav.ui.screens.NasTheme {
                     Surface(color = DarkSurface) {
                         Box(modifier = Modifier.fillMaxSize()) {
-                            NasAppNavigation(viewModel, onStartScreenRecord = { requestScreenRecordPermission() })
+                            NasAppNavigation(domainProvider, onStartScreenRecord = { requestScreenRecordPermission() })
 
                             // Floating Screen Recording overlay (global)
                             ScreenRecordFloatingOverlay()
@@ -301,7 +292,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val incomingIntent = intent ?: return
 
         if (incomingIntent.getBooleanExtra("SHOW_DUPLICATES", false)) {
-            viewModel.shouldAutoOpenDuplicates = true
+            domainProvider.smartTools.shouldAutoOpenDuplicates = true
         }
 
         handleShareIntent(incomingIntent)
@@ -339,7 +330,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         val savedPass = SecurePrefsHelper.getPass(applicationContext)
         if (savedUrl.isBlank()) return
 
-        viewModel.webDavManager.connect(savedUrl, savedUser, savedPass)
+        WebDavManager.connect(savedUrl, savedUser, savedPass)
 
         sharedUris.forEach { uri ->
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -368,7 +359,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         }
                         temp.outputStream().use { inputStream.copyTo(it) }
                         val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
-                        viewModel.webDavManager.uploadFile(destUrl, temp, mimeType)
+                        WebDavManager.uploadFile(destUrl, temp, mimeType)
                     }
                 } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
@@ -427,18 +418,52 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
 /// --- NAVIGATION ---
 
+/**
+ * Phase 7d.7: refreshNasStateOnForeground — replaces WebDavViewModel's method.
+ * Orchestrates refresh of all domain VMs on app foreground.
+ */
+private fun refreshNasStateOnForeground(
+    domainProvider: DomainViewModelProvider,
+    context: android.content.Context,
+    force: Boolean = false
+) {
+    // Smart network check (was on AuthSessionVM facade)
+    domainProvider.authSession.checkSmartNetwork(context)
+    // Dashboard monitoring (was on SystemMonitorVM facade)
+    domainProvider.systemMonitor.startDashboardMonitoring(resetStatusPoll = false)
+    // Thumbnail status (was on SmartToolsVM facade)
+    domainProvider.smartTools.fetchThumbStatus()
+    // Live data (was on LivestreamVM facade)
+    domainProvider.livestream.fetchLivestreamStatusOnly(context)
+    domainProvider.livestream.fetchTikTokLiveWatch(context)
+    // USB import + storage (was on AutoBackup/DeviceMgmt)
+    domainProvider.autoBackup.fetchUsbImportStatus()
+    domainProvider.systemMonitor.fetchNasInsights()
+    // Heavy refresh: OMV overview, storage, logs
+    domainProvider.deviceManagement.fetchOmvOverview()
+    domainProvider.deviceManagement.fetchStorageUsage()
+    domainProvider.deviceManagement.loadSystemLogs()
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 
 @Composable
 
-fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit = {}) {
+fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecord: () -> Unit = {}) {
 
     val mContext = androidx.compose.ui.platform.LocalContext.current
 
     val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
 
+    // Phase 7d.7: NasAppNavigation reads directly from domain VMs via the CompositionLocals
+    // that MainActivity's setContent provides — no more facade pass-through.
+    val autoBackupVM = LocalAutoBackupVM.current
+    val deviceMgmtVM = LocalDeviceManagementVM.current
+    val fileBrowserVM = LocalFileBrowserVM.current
+    val livestreamVM = LocalLivestreamVM.current
+
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        viewModel.lockNowRequested = false
+        autoBackupVM.lockNowRequested = false
     }
     var showBiometricLock by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var hasCompletedFirstResume by remember { mutableStateOf(false) }
@@ -482,7 +507,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
                     if (!isLoginScreen) {
-                        viewModel.refreshNasStateOnForeground(mContext.applicationContext, force = true)
+                        refreshNasStateOnForeground(domainProvider, mContext.applicationContext, force = true)
                     }
                     if (!hasCompletedFirstResume) {
                         hasCompletedFirstResume = true
@@ -521,11 +546,11 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
     // ============ DIALOG PHÊ DUYỆT IP LẠ (TOÀN CỤC - HIỂN THỊ TRÊN MỌI SCREEN) ============
 
-    if (viewModel.showApprovalDialog) {
+    if (deviceMgmtVM.showApprovalDialog) {
 
         com.nas.naswebdav.ui.dialogs.IpApprovalDialog(
 
-            onDismiss = { viewModel.showApprovalDialog = false }
+            onDismiss = { deviceMgmtVM.showApprovalDialog = false }
 
         )
 
@@ -579,7 +604,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onOpenFiles = {
 
-                    viewModel.resetToDefaultMode()
+                    fileBrowserVM.resetToDefaultMode()
 
                     navController.navigate("browser")
 
@@ -587,7 +612,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onOpenFolder = { webdavPath ->
 
-                    viewModel.openSpecificUrl(webdavPath, "Downloads")
+                    fileBrowserVM.openSpecificUrl(webdavPath, "Downloads")
 
                     navController.navigate("browser")
 
@@ -595,7 +620,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onGlobalSearch = { keyword ->
 
-                    viewModel.searchGlobal(keyword)
+                    fileBrowserVM.searchGlobal(keyword)
 
                     navController.navigate("browser")
 
@@ -603,7 +628,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onOpenLatestPhotos = {
 
-                    viewModel.showLatestPhotos()
+                    fileBrowserVM.showLatestPhotos()
 
                     navController.navigate("browser")
 
@@ -611,7 +636,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onOpenRecentVideos = {
 
-                    viewModel.showRecentVideos()
+                    fileBrowserVM.showRecentVideos()
 
                     navController.navigate("browser")
 
@@ -620,13 +645,13 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                 onOpenTrash = {
 
                     val trashUrl = buildWebDavTrashTargetUrl(
-                        viewModel.webDavManager.currentBaseUrl,
-                        viewModel.currentUrl.ifBlank { viewModel.webDavManager.currentBaseUrl },
+                        WebDavManager.currentBaseUrl,
+                        fileBrowserVM.currentUrl.ifBlank { WebDavManager.currentBaseUrl },
                         "",
                         false
                     )
 
-                    viewModel.openSpecificUrl(trashUrl, "Thùng rác")
+                    fileBrowserVM.openSpecificUrl(trashUrl, "Thùng rác")
 
                     navController.navigate("browser")
 
@@ -640,9 +665,9 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onLogout = {
 
-                    viewModel.viewModelScope.launch {
+                    domainProvider.livestream.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        domainProvider.repository.addSystemLog("INFO", "Network", "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -675,7 +700,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
             com.nas.naswebdav.ui.screens.BrowserScreen(
 
                 onVideo = { url ->
-                    val auth = viewModel.webDavManager.currentAuthState()
+                    val auth = WebDavManager.currentAuthState()
                     openExternalVideoPlayer(
                         context = mContext,
                         url = url,
@@ -688,19 +713,19 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
                     )
                 },
 
-                onImage = { url -> 
+                onImage = { url ->
 
                     mediaUrl = url
 
-                    navController.navigate("image") 
+                    navController.navigate("image")
 
                 },
 
                 onLogout = {
 
-                    viewModel.viewModelScope.launch {
+                    domainProvider.livestream.viewModelScope.launch {
 
-                        viewModel.repository.addSystemLog("INFO", "Network", "Người dùng '${viewModel.webDavManager.currentUser}' đã chủ động Đăng xuất.")
+                        domainProvider.repository.addSystemLog("INFO", "Network", "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
 
                     }
 
@@ -714,7 +739,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 onBackToMenu = {
 
-                    viewModel.resetToDefaultMode()
+                    fileBrowserVM.resetToDefaultMode()
 
                     navController.navigate("main_menu") {
 
@@ -748,9 +773,9 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 url = mediaUrl,
 
-                user = viewModel.webDavManager.currentUser,
+                user = WebDavManager.currentUser,
 
-                pass = viewModel.webDavManager.currentPass,
+                pass = WebDavManager.currentPass,
 
                 onBack = { navController.popBackStack() }
 
@@ -766,9 +791,9 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                 initialUrl = mediaUrl,
 
-                user = viewModel.webDavManager.currentUser,
+                user = WebDavManager.currentUser,
 
-                pass = viewModel.webDavManager.currentPass,
+                pass = WebDavManager.currentPass,
 
                 onBack = { navController.popBackStack() }
 
@@ -847,7 +872,7 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
                     if (urlList.isNotEmpty() && user.isNotEmpty()) {
 
-                        viewModel.connect(urlList, user, pass)
+                        domainProvider.authSession.connect(urlList, user, pass)
 
                         com.nas.naswebdav.scheduleIdleDuplicateScan(mContext, urlList.firstOrNull() ?: "")
 

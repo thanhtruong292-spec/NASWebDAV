@@ -6,8 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.WebDavManager
-import com.nas.naswebdav.WebDavViewModel
 import com.nas.naswebdav.LivestreamMonitorWorker
+import com.nas.naswebdav.LivestreamJob
+import com.nas.naswebdav.TikTokLiveWatchUser
 import com.nas.naswebdav.SocialDownloadItem
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.toApiBaseUrl
@@ -42,7 +43,7 @@ class LivestreamViewModel(
     internal var lastLivestreamServerRecordingIds: Set<String> = emptySet()
 
     /** Danh sách các stream đang ghi — dùng mutableStateListOf cho Compose */
-    var activeLivestreams = androidx.compose.runtime.mutableStateListOf<WebDavViewModel.LivestreamJob>()
+    var activeLivestreams = androidx.compose.runtime.mutableStateListOf<LivestreamJob>()
         private set
 
     // ═══ STREAM PIPE (CDN → NAS) ═══
@@ -69,7 +70,7 @@ class LivestreamViewModel(
 
     // ═══ TIKTOK LIVE WATCH ═══
 
-    var tiktokLiveWatchUsers by androidx.compose.runtime.mutableStateOf<List<WebDavViewModel.TikTokLiveWatchUser>>(emptyList())
+    var tiktokLiveWatchUsers by androidx.compose.runtime.mutableStateOf<List<TikTokLiveWatchUser>>(emptyList())
         internal set
 
     var tiktokWatchDaemonRunning by androidx.compose.runtime.mutableStateOf(false)
@@ -124,7 +125,7 @@ class LivestreamViewModel(
                     if (!response.isSuccessful) return@use
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")
                     val jobsArray = json.optJSONArray("jobs") ?: org.json.JSONArray()
-                    val newJobs = mutableListOf<com.nas.naswebdav.WebDavViewModel.LivestreamJob>()
+                    val newJobs = mutableListOf<LivestreamJob>()
                     val serverRecordingIds = mutableSetOf<String>()
                     for (i in 0 until jobsArray.length()) {
                         val obj = jobsArray.getJSONObject(i)
@@ -132,7 +133,7 @@ class LivestreamViewModel(
                         val jobId = obj.optString("job_id", "")
                         if (status == "recording" && jobId.isNotEmpty()) {
                             serverRecordingIds.add(jobId)
-                            newJobs.add(com.nas.naswebdav.WebDavViewModel.LivestreamJob(jobId = jobId, platform = obj.optString("platform", ""), status = status, watchUsername = obj.optString("watch_username", ""), durationSeconds = obj.optLong("duration_seconds", 0L), startedTs = obj.optLong("started_ts", 0L), fileSize = obj.optString("file_size", "0 B"), duration = obj.optString("duration_display", "0h00m00s"), speed = obj.optString("avg_speed", "—"), outputFile = obj.optString("output_file", "")))
+                            newJobs.add(LivestreamJob(jobId = jobId, platform = obj.optString("platform", ""), status = status, watchUsername = obj.optString("watch_username", ""), durationSeconds = obj.optLong("duration_seconds", 0L), startedTs = obj.optLong("started_ts", 0L), fileSize = obj.optString("file_size", "0 B"), duration = obj.optString("duration_display", "0h00m00s"), speed = obj.optString("avg_speed", "—"), outputFile = obj.optString("output_file", "")))
                         }
                     }
                     lastLivestreamServerSyncAt = System.currentTimeMillis()
@@ -192,7 +193,7 @@ class LivestreamViewModel(
                         tiktokLiveWatchUsers = if (usersArr != null) {
                             (0 until usersArr.length()).mapNotNull { idx ->
                                 val u = usersArr.optJSONObject(idx) ?: return@mapNotNull null
-                                WebDavViewModel.TikTokLiveWatchUser(
+                                TikTokLiveWatchUser(
                                     username = u.optString("username", ""),
                                     status = u.optString("status", ""),
                                     lastCheck = u.optString("last_check", ""),
@@ -394,7 +395,7 @@ class LivestreamViewModel(
         }
     }
 
-    fun dedupeLivestreamJobsForDisplay(jobs: List<WebDavViewModel.LivestreamJob>): List<WebDavViewModel.LivestreamJob> {
+    fun dedupeLivestreamJobsForDisplay(jobs: List<LivestreamJob>): List<LivestreamJob> {
         // SP3 fix already applied in WebDavViewModel facade — keep behavior identical
         return jobs
     }

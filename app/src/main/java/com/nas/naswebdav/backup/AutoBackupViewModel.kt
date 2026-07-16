@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
-import com.nas.naswebdav.WebDavViewModel
 import com.nas.naswebdav.UsbImportConflict
 import com.nas.naswebdav.UsbImportSettings
 import com.nas.naswebdav.toApiBaseUrl
@@ -60,7 +59,7 @@ class AutoBackupViewModel(
 
     // ═══ BACKUP SCHEDULE ═══
 
-    var backupSchedule by androidx.compose.runtime.mutableStateOf(WebDavViewModel.BackupSchedule())
+    var backupSchedule by androidx.compose.runtime.mutableStateOf(BackupSchedule())
         internal set
     var backupScheduleMessage by androidx.compose.runtime.mutableStateOf("")
         internal set
@@ -76,7 +75,7 @@ class AutoBackupViewModel(
 
     // ═══ SLEEP SCHEDULE ═══
 
-    var sleepSchedule by androidx.compose.runtime.mutableStateOf(WebDavViewModel.SleepSchedule())
+    var sleepSchedule by androidx.compose.runtime.mutableStateOf(SleepSchedule())
         internal set
     var sleepScheduleMessage by androidx.compose.runtime.mutableStateOf("")
         internal set
@@ -128,7 +127,7 @@ class AutoBackupViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
-                        backupSchedule = WebDavViewModel.BackupSchedule(
+                        backupSchedule = BackupSchedule(
                             enabled = json.optBoolean("enabled", false),
                             frequency = json.optString("frequency", "weekly"),
                             hour = json.optInt("hour", 3),
@@ -144,7 +143,7 @@ class AutoBackupViewModel(
         }
     }
 
-    fun saveBackupSchedule(newSchedule: WebDavViewModel.BackupSchedule) {
+    fun saveBackupSchedule(newSchedule: BackupSchedule) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
@@ -268,7 +267,7 @@ class AutoBackupViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
-                        sleepSchedule = WebDavViewModel.SleepSchedule(
+                        sleepSchedule = SleepSchedule(
                             enabled = json.optBoolean("enabled", false),
                             mode = json.optString("mode", "spindown"),
                             startHour = json.optInt("start_hour", 23),
@@ -283,7 +282,7 @@ class AutoBackupViewModel(
         }
     }
 
-    fun saveSleepSchedule(newSchedule: WebDavViewModel.SleepSchedule) {
+    fun saveSleepSchedule(newSchedule: SleepSchedule) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()

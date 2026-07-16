@@ -12,7 +12,10 @@ import com.nas.naswebdav.NasSystemStatus
 import com.nas.naswebdav.SystemProcess
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
-import com.nas.naswebdav.WebDavViewModel
+import com.nas.naswebdav.DiskHealthSample
+import com.nas.naswebdav.InsightAction
+import com.nas.naswebdav.NasConfigBackup
+import com.nas.naswebdav.NasInsights
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,7 +29,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * SystemMonitorViewModel — Phase 4 của VM Split.
  *
  * Quản lý: System status, Metrics history, Daily report, Disk health, SMART,
- *          Fan mode, Network ping, WebDavViewModel.NasConfigBackups, WebDavViewModel.NasInsights, System processes.
+ *          Fan mode, Network ping, NasConfigBackups, NasInsights, System processes.
  *
  * Phase 4 skeleton: state declarations + placeholder methods.
  * Function bodies sẽ được move từ facade trong Phase 4b.
@@ -87,9 +90,9 @@ class SystemMonitorViewModel(
 
     // ═══ DISK HEALTH ═══
 
-    var diskHealthCurrent by androidx.compose.runtime.mutableStateOf<WebDavViewModel.DiskHealthSample?>(null)
+    var diskHealthCurrent by androidx.compose.runtime.mutableStateOf<DiskHealthSample?>(null)
         internal set
-    var diskHealthHistory by androidx.compose.runtime.mutableStateOf<List<WebDavViewModel.DiskHealthSample>>(emptyList())
+    var diskHealthHistory by androidx.compose.runtime.mutableStateOf<List<DiskHealthSample>>(emptyList())
         internal set
     var isFetchingDiskHealth by androidx.compose.runtime.mutableStateOf(false)
         internal set
@@ -98,7 +101,7 @@ class SystemMonitorViewModel(
 
     // ═══ NAS CONFIG BACKUPS ═══
 
-    var nasConfigBackups by androidx.compose.runtime.mutableStateOf<List<WebDavViewModel.NasConfigBackup>>(emptyList())
+    var nasConfigBackups by androidx.compose.runtime.mutableStateOf<List<NasConfigBackup>>(emptyList())
         internal set
     var isCreatingNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
         internal set
@@ -109,7 +112,7 @@ class SystemMonitorViewModel(
 
     // ═══ NAS INSIGHTS ═══
 
-    var nasInsights by androidx.compose.runtime.mutableStateOf(WebDavViewModel.NasInsights())
+    var nasInsights by androidx.compose.runtime.mutableStateOf(NasInsights())
         internal set
     var isFetchingNasInsights by androidx.compose.runtime.mutableStateOf(false)
         internal set
@@ -275,7 +278,7 @@ class SystemMonitorViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
-                        diskHealthCurrent = WebDavViewModel.DiskHealthSample(
+                        diskHealthCurrent = DiskHealthSample(
                             ts = System.currentTimeMillis(),
                             datetime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
                             score = json.optInt("score", 0),
@@ -315,7 +318,7 @@ class SystemMonitorViewModel(
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
                         diskHealthHistory = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            WebDavViewModel.DiskHealthSample(
+                            DiskHealthSample(
                                 ts = it.optLong("ts", 0L),
                                 datetime = it.optString("datetime", ""),
                                 score = it.optInt("score", 0),
@@ -351,7 +354,7 @@ class SystemMonitorViewModel(
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
                         nasConfigBackups = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            WebDavViewModel.NasConfigBackup(
+                            NasConfigBackup(
                                 filename = it.optString("filename", ""),
                                 createdAt = it.optString("created_at", ""),
                                 sizeBytes = it.optLong("size_bytes", 0L),
@@ -435,7 +438,7 @@ class SystemMonitorViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
-                        nasInsights = WebDavViewModel.NasInsights(
+                        nasInsights = NasInsights(
                             hddScore = json.optInt("hdd_score", 0),
                             hddStatusText = json.optString("hdd_status", ""),
                             hddTempC = json.optInt("hdd_temp_c", 0),
@@ -443,7 +446,7 @@ class SystemMonitorViewModel(
                             emmcLogPercent = json.optInt("emmc_log_percent", 0),
                             maintenanceActions = json.optJSONArray("recommendations")?.let { arr ->
                                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                                    WebDavViewModel.InsightAction(
+                                    InsightAction(
                                         priority = it.optString("priority", ""),
                                         title = it.optString("title", ""),
                                         detail = it.optString("detail", "")
