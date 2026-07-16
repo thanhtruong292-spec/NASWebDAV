@@ -872,7 +872,6 @@ private fun MainMenuDashboardHeader(
     onReboot: () -> Unit,
     onShutdown: () -> Unit,
 ) {
-    // Phase 7d.2: systemStatus/apiLatency/isOnLan/lastRefresh → SystemMonitorVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
         // ═══ HEADER ═══
@@ -1012,7 +1011,6 @@ private fun MainMenuDashboardSystemOverviewCard(
     onOpenNewDiskProfile: () -> Unit,
     onOpenSmartDetails: () -> Unit,
 ) {
-    // Phase 7d.2: systemStatus/lastMetricsRefreshAt → SystemMonitorVM, smartInfo/isFanModeUpdating → DeviceMgmtVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
             // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
@@ -1104,7 +1102,6 @@ private fun MainMenuDashboardSystemOverviewCard(
 
 @Composable
 private fun MainMenuDashboardOmvServicesHardwarePanel() {
-    // Phase 7d.2: systemStatus → SystemMonitorVM, omvOverview/networkPingMs → DeviceMgmtVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
@@ -1375,7 +1372,6 @@ private fun MainMenuDashboardTorrentActivityCard(
     onOpenFolder: (webdavPath: String) -> Unit,
     onGlobalSearch: (String) -> Unit,
 ) {
-    // Phase 7d.2: systemStatus.torrents → SystemMonitorVM
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
@@ -2433,7 +2429,6 @@ fun MainMenuSystemStatusCards(
     onOpenUsbImport: () -> Unit = {},
     onOpenDuplicateScan: () -> Unit = {}
 ) {
-    // Phase 7d.2: VMs hooks
     val autoBackupVM = LocalAutoBackupVM.current
     val smartToolsVM = LocalSmartToolsVM.current
     val livestreamVM = LocalLivestreamVM.current
@@ -3495,7 +3490,6 @@ fun MainMenuBottomSheetSmbBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
-    // Phase 7d.2: duplicateFilesList/selectedDuplicates → SmartToolsVM
     val smartToolsVM = LocalSmartToolsVM.current
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (smartToolsVM.isScanningDuplicates) {

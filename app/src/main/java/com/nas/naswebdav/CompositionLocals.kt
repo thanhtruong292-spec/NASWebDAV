@@ -10,13 +10,10 @@ import com.nas.naswebdav.monitor.SystemMonitorViewModel
 import com.nas.naswebdav.smarttools.SmartToolsViewModel
 
 /**
- * CompositionLocals for the 7 Domain ViewModels — Phase 7b.
+ * CompositionLocals for the 7 Domain ViewModels.
  *
- * Provides type-safe injection points for Composables during Phase 7 UI migration.
- * MainActivity's setContent wraps NasTheme + NavHost in CompositionLocalProvider
- * that supplies the SAME instances referenced by WebDavViewModel's facade mirror
- * properties — preventing state drift between facade and direct CompositionLocal
- * readers.
+ * Provides type-safe injection points for Composables. MainActivity's setContent
+ * wraps NasTheme + NavHost in CompositionLocalProvider.
  *
  * `staticCompositionLocalOf` is used (not `compositionLocalOf`) because:
  *   - These are root-level singletons; only `setContent` provides them once.

@@ -160,7 +160,6 @@ private fun profileStatusColor(status: String): Color = when {
 internal fun DiskProfileBottomSheet(
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.2: All disk health/SMART/OMV state reads via facade delegation
     // → SystemMonitorVM (diskHealthCurrent/History, isFetchingDiskHealth,
     // nasInsights, storageFolderUsage, omvOverview) is SSoT.
     val sysMonitorVM = LocalSystemMonitorVM.current

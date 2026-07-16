@@ -11,17 +11,10 @@ import com.nas.naswebdav.monitor.SystemMonitorViewModel
 import com.nas.naswebdav.smarttools.SmartToolsViewModel
 
 /**
- * DomainViewModelProvider — Phase 7b.1 (manual DI).
+ * DomainViewModelProvider — manual DI for 7 Domain ViewModels.
  *
- * Holds the 7 Domain VMs that back Phase 7c UI migration. Single source for
- * both the Facade (WebDavViewModel's `authSession`/`fileBrowser`/... lazy
- * properties) and the CompositionLocals consumed by individual screens.
- *
- * Critical: this provider creates each VM exactly ONCE per Activity. Passing
- * the same instances into both WebDavViewModel's constructor and the
- * CompositionLocalProvider guarantees that state mutations through either path
- * stay in sync — preventing the drift that would occur if both created their
- * own copies.
+ * Holds the 7 Domain VMs. Single source for the CompositionLocals
+ * consumed by individual screens. Creates each VM exactly ONCE per Activity.
  */
 class DomainViewModelProvider(
     val repository: WebDavRepository

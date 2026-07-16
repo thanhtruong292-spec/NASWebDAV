@@ -340,7 +340,6 @@ fun LanWhitelistDialog(
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
-    // Phase 7c.2: lanWhitelist* state owned by DeviceManagementVM (Phase 7a).
     val ipList = deviceVM.lanWhitelistIps
     val subnetList = deviceVM.lanWhitelistSubnets
     val isLoading = deviceVM.lanWhitelistLoading
@@ -473,7 +472,6 @@ fun LanWhitelistDialog(
 @Composable
 fun OrganizeLegacyDialog(onDismiss: () -> Unit) {
     val smartVM = LocalSmartToolsVM.current
-    // Phase 7c.2: organizingLegacyRunning/Result owned by SmartToolsVM.
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!smartVM.organizingLegacyRunning) onDismiss() },
         title = { Text("Phân loại video cũ") },

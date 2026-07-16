@@ -31,16 +31,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * AuthSessionViewModel — quản lý login, smart-network switch, offline queue.
  *
- * Trích xuất từ WebDavViewModel (6236 dòng) — Phase 1 của VM Split plan.
- *
  * State shared qua [SharedStateHolder]:
  *  - currentUrl, connectionStatus, isOnLan, errorMessage
  *
  * State nội bộ auth:
  *  - loginJob, lastErrorDetail
- *
- * Facade trong [WebDavViewModel] forward connect(), cancelLogin(), checkSmartNetwork()
- * đến ViewModel này để không break 27 UI files.
  */
 class AuthSessionViewModel(
     private val repository: WebDavRepository

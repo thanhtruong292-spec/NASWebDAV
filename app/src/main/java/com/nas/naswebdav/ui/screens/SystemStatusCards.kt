@@ -74,7 +74,6 @@ fun DashboardSystemStatusCards(
     val deviceMgmtVM = LocalDeviceManagementVM.current
     val livestreamVM = LocalLivestreamVM.current
 
-    // Phase 7c.2: All state (autoBackup*, thumb*, isStreamPiping) reads via
     // facade delegation → respective Domain VMs (AutoBackupVM, SmartToolsVM,
     // LivestreamVM). Direct LocalXxxVM.current migration deferred to Group 3.
     // 1. Thumbnail Status
@@ -103,7 +102,6 @@ fun DashboardSystemStatusCards(
     val dupEta by DuplicateProgressState.estimatedTimeRemaining.collectAsState()
     val dupIsPaused by DuplicateProgressState.isPaused.collectAsState()
     val dupIsRunning = dupStage != "Khởi động..." && dupStage != "Hoàn tất" && (dupPercent < 1f && dupPercent > 0f || dupStage.contains("Đang phân tích"))
-    // Phase 7d.2: duplicateFilesList owned by SmartToolsVM (Phase 7a).
     val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
@@ -111,11 +109,9 @@ fun DashboardSystemStatusCards(
         mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
     }
     val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
-    // Phase 7d.2: isAutoBackupRunning owned by AutoBackupVM (Phase 7a).
     val autoBackupIsActive = autoBackupVM.isAutoBackupRunning
 
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
-    // Phase 7d.2: activeLivestreams owned by LivestreamVM (Phase 7a).
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
@@ -126,7 +122,6 @@ fun DashboardSystemStatusCards(
             livestreamVM.fetchTikTokLiveWatch(mContext)
         }
     }
-    // Phase 7d.2: usbImportState is in WebDavViewModel (not yet migrated to DeviceMgmtVM).
     val usbImport = deviceMgmtVM.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
     LaunchedEffect(Unit) {
@@ -205,7 +200,6 @@ fun DashboardSystemStatusCards(
                 androidx.compose.animation.AnimatedVisibility(visible = tasksExpanded) {
                     Column {
                         // --- THUMBNAIL ---
-                        // Phase 7d.2: thumb* state owned by SmartToolsVM (Phase 7a).
                         if (showThumbTask && thumbIsActive) {
                             Spacer(Modifier.height(10.dp))
                             Row(
@@ -305,7 +299,6 @@ fun DashboardSystemStatusCards(
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    // Phase 7d.2: duplicateFilesList owned by SmartToolsVM (Phase 7a).
                                     val dupStatusLabel = when {
                                         smartToolsVM.duplicateFilesList.isNotEmpty() -> "✅ Đã tìm thấy ${smartToolsVM.duplicateFilesList.size} nhóm trùng"
                                         dupIsPaused -> "⏸ Đã tạm dừng"
@@ -393,7 +386,6 @@ fun DashboardSystemStatusCards(
                         }
 
                         // --- AUTO BACKUP ---
-                        // Phase 7d.2: autoBackup* state owned by AutoBackupVM (Phase 7a).
                         if (autoBackupIsActive) {
                             Column(
                                 modifier = Modifier.fillMaxWidth().clickable(

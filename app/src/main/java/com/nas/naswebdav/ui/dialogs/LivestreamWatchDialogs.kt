@@ -113,7 +113,6 @@ internal fun TikTokLiveWatchSection(
 ) {
     // TikTok state (isLoadingTikTokWatch, tiktokLiveWatchError, tiktokWatchDaemonRunning,
     // tiktokLiveWatchUsers) reads via facade delegation → LivestreamVM is source of truth.
-    // Phase 7c full migration will swap to LocalLivestreamVM.current directly.
     var expandedUserName by remember { mutableStateOf<String?>(null) }
     var pendingDeleteUser by remember { mutableStateOf<TikTokLiveWatchUser?>(null) }
     val snackbarScope = rememberCoroutineScope()

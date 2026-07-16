@@ -108,7 +108,6 @@ fun FileItemGridCell(
     onClick: () -> Unit,
     onVideo: (String) -> Unit
 ) {
-    // Phase 7c.3: fileList + thumbnail state owned by FileBrowserVM (Phase 7a delegation).
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
     val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)

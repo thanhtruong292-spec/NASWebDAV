@@ -59,7 +59,6 @@ import androidx.compose.ui.window.Dialog
 fun DiskHealthDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.3: diskHealthCurrent/History, isFetchingDiskHealth, lastDiskHealthRefreshAt,
     // nasInsights owned by SystemMonitorVM (Phase 7a delegation).
     val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) {

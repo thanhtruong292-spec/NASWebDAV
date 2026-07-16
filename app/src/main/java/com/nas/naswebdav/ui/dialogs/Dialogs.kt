@@ -303,7 +303,6 @@ fun WolDialog(
 fun SmartDiskDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: smartInfo/speedTest/lastAutoSpeed/isTestingSpeed → DeviceMgmtVM
     val deviceVM = LocalDeviceManagementVM.current
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1117,7 +1116,6 @@ fun formatLogMessage(raw: String): String {
 fun SystemLogDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: systemLogsList owned by DeviceMgmtVM (Phase 7a)
     val deviceVM = LocalDeviceManagementVM.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
@@ -1200,7 +1198,6 @@ fun SystemLogDialog(
 fun DockerDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: isFetchingDocker/dockerContainers → DeviceMgmtVM
     val deviceVM = LocalDeviceManagementVM.current
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1436,7 +1433,6 @@ fun DialogsIpApprovalDialog(
 fun DialogsLanWhitelistDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: lanWhitelist* state → DeviceMgmtVM
     val deviceVM = LocalDeviceManagementVM.current
     val ipList = deviceVM.lanWhitelistIps
     val subnetList = deviceVM.lanWhitelistSubnets
@@ -1569,7 +1565,6 @@ fun DialogsLanWhitelistDialog(
 // (Đã xoá SmartSyncDialog theo yêu cầu)
 @Composable
 fun DialogsOrganizeLegacyDialog(onDismiss: () -> Unit) {
-    // Phase 7d.2: organizingLegacyRunning/Result → SmartToolsVM
     val smartToolsVM = LocalSmartToolsVM.current
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!smartToolsVM.organizingLegacyRunning) onDismiss() },
@@ -1607,7 +1602,6 @@ fun DialogsDuplicateConfigDialog(
     onStartScan: (Boolean, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: autoCleanEnabled → SmartToolsVM
     val smartToolsVM = LocalSmartToolsVM.current
     var isLightningMode by remember { mutableStateOf(true) }
     var isForceRestartDuplicate by remember { mutableStateOf(false) }
@@ -1688,7 +1682,6 @@ fun DialogsDuplicateConfigDialog(
 }
 @Composable
 fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
-    // Phase 7d.2: duplicateFilesList/selectedDuplicates → SmartToolsVM
     val smartToolsVM = LocalSmartToolsVM.current
     AlertDialog(
         onDismissRequest = { onDismiss() },
@@ -1947,7 +1940,6 @@ fun DialogsMultiDeleteDialog(
 fun DialogsLivestreamRecordDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: activeLivestreams/livestreamMessage/tiktok* → LivestreamVM
     val livestreamVM = LocalLivestreamVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
@@ -2736,7 +2728,6 @@ fun DialogsBandwidthThrottleDialog(
 fun DialogsDiskHealthDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: diskHealthCurrent/History → SystemMonitorVM (Phase 7a)
     val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) {
         sysMonitorVM.fetchDiskHealth(minIntervalMs = 0L)
@@ -2972,7 +2963,6 @@ fun DialogsDiskHealthDialog(
 fun DialogsNasConfigBackupDialog(
     onDismiss: () -> Unit
 ) {
-    // Phase 7d.2: nasConfigBackups/Message/isCreating/isRestoring → SystemMonitorVM (Phase 7a)
     val sysMonitorVM = LocalSystemMonitorVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3760,7 +3750,6 @@ fun DialogsNasInsightsDialog(
     onDismiss: () -> Unit,
     onTaskClick: (String) -> Unit = {}
 ) {
-    // Phase 7d.2: nasInsights → SystemMonitorVM (Phase 7a)
     val sysMonitorVM = LocalSystemMonitorVM.current
     LaunchedEffect(Unit) { sysMonitorVM.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)

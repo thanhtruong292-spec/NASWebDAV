@@ -63,7 +63,6 @@ fun ProcessListBottomSheet(
     sortBy: String,
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.3: ProcessList state (systemProcesses, isLoadingProcesses) → SystemMonitorVM (Phase 7a).
     val systemMonitorVM = LocalSystemMonitorVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -313,7 +312,6 @@ fun SmartDetailBottomSheet(
 fun SmbBottomSheet(
     onDismiss: () -> Unit
 ) {
-    // Phase 7c.3: SMB state (isSmbEnabled, isLoadingSmb) → DeviceMgmtVM (Phase 7a).
     val deviceVM = LocalDeviceManagementVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
