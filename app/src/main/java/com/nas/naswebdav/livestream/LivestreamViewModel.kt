@@ -179,6 +179,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/watch/list").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -318,6 +319,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/status").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     val jobsArr = json.optJSONArray("jobs")

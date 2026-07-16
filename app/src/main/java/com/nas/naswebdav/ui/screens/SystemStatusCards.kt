@@ -81,10 +81,14 @@ fun DashboardSystemStatusCards(
         smartToolsVM.fetchThumbStatus()
         livestreamVM.syncLivestreamStateWithServer(mContext)
         deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
+        var consecutiveFails = 0
         while (isActive) {
-            val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
-            kotlinx.coroutines.delay(interval)
+            val active = smartToolsVM.thumbRunning || smartToolsVM.thumbPaused
             smartToolsVM.fetchThumbStatus()
+            val stillActive = smartToolsVM.thumbRunning || smartToolsVM.thumbPaused
+            if (stillActive) { consecutiveFails = 0; kotlinx.coroutines.delay(2_000L) }
+            else if (active && !stillActive) { consecutiveFails = 0; kotlinx.coroutines.delay(10_000L) }
+            else { consecutiveFails++; kotlinx.coroutines.delay((10_000L + consecutiveFails.coerceAtMost(10) * 5_000L).coerceAtMost(120_000L)) }
         }
     }
     val thumbPercent = if (smartToolsVM.thumbTotal > 0) smartToolsVM.thumbGenerated * 100f / smartToolsVM.thumbTotal else 0f

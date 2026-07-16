@@ -124,6 +124,7 @@ class AutoBackupViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/backup/schedule").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -175,6 +176,7 @@ class AutoBackupViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/status").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -264,6 +266,7 @@ class AutoBackupViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/sleep/schedule").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {

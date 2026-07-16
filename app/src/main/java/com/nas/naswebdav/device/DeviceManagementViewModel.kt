@@ -371,6 +371,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/whitelist/list").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     val ipsArr = json.optJSONArray("ips")
@@ -423,6 +424,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/omv/overview").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -449,6 +451,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/smart/info").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -476,6 +479,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/network/speedtest").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -530,6 +534,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/storage/usage").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
@@ -867,6 +872,7 @@ class DeviceManagementViewModel(
                 .let(WebDavManager::tagCurrentAuth)
                 .build()
             usbImportApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                 val body = resp.body?.string() ?: "{}"
                 if (!resp.isSuccessful) {
                     withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }

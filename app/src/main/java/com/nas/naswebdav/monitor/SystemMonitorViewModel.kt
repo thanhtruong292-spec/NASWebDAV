@@ -127,15 +127,17 @@ class SystemMonitorViewModel(
     fun startDashboardMonitoring(resetStatusPoll: Boolean = false) {
         statusPollingJob?.cancel()
         statusPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            var consecutiveFails = 0
             while (true) {
-                fetchStatusNow()
-                delay(15_000L) // poll every 15s
+                val ok = fetchStatusNow()
+                if (ok) { consecutiveFails = 0; delay(15_000L) }
+                else { consecutiveFails++; delay((15_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
             }
         }
     }
 
-    private suspend fun fetchStatusNow() {
-        try {
+    private suspend fun fetchStatusNow(): Boolean {
+        return try {
             val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
             val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().build()
             NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
@@ -156,19 +158,26 @@ class SystemMonitorViewModel(
                             ramPercent = json.optString("mem_percent", "0")
                         )
                     }
-                }
+                    true
+                } else false
             }
         } catch (e: Exception) {
             android.util.Log.w("SysMonitor", "fetchStatusNow: ${e.message}")
+            false
         }
     }
 
     fun launchMetricsPolling() {
         metricsPollingJob?.cancel()
         metricsPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            var consecutiveFails = 0
+            var lastSize = metricsHistory.size
             while (true) {
                 fetchRealtimeMetricPoint()
-                delay(5_000L)
+                val changed = metricsHistory.size > lastSize
+                lastSize = metricsHistory.size
+                if (changed) { consecutiveFails = 0; delay(5_000L) }
+                else { consecutiveFails++; delay((5_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
             }
         }
     }
@@ -181,6 +190,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
@@ -212,6 +222,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/realtime").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -241,6 +252,7 @@ class SystemMonitorViewModel(
                 val dateParam = if (date.isNotBlank()) "&date=$date" else ""
                 val req = okhttp3.Request.Builder().url("$apiBase/api/daily-report?$dateParam").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -275,6 +287,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/smart/health").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -314,6 +327,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/smart/history?days=$days").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
@@ -350,6 +364,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/config/backups").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
@@ -435,6 +450,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/insights").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -497,6 +513,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/system/processes").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
                     val arr = org.json.JSONArray(body)
                     withContext(Dispatchers.Main) {
