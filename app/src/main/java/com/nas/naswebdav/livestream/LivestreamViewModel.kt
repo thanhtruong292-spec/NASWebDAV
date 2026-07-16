@@ -39,12 +39,12 @@ class LivestreamViewModel(
         internal set
     var isStartingLivestream by androidx.compose.runtime.mutableStateOf(false)
         internal set
-    internal var lastLivestreamServerSyncAt = 0L
-    internal var lastLivestreamServerRecordingIds: Set<String> = emptySet()
+    private var lastLivestreamServerSyncAt = 0L
+    private var lastLivestreamServerRecordingIds: Set<String> = emptySet()
 
     /** Danh sách các stream đang ghi — dùng mutableStateListOf cho Compose */
     var activeLivestreams = androidx.compose.runtime.mutableStateListOf<LivestreamJob>()
-        private set
+        internal set
 
     // ═══ STREAM PIPE (CDN → NAS) ═══
 

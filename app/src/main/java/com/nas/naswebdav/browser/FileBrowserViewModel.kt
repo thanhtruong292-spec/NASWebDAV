@@ -54,7 +54,7 @@ class FileBrowserViewModel(
     internal val pendingDeletes: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Guards against stale coroutines overwriting newer UI state when loadCurrentUrl() is invoked again. */
-    internal var loadGeneration = 0
+    private var loadGeneration = 0
 
     private val _pagedFilesFlow = MutableStateFlow<Flow<PagingData<NasFile>>>(emptyFlow())
     val pagedFilesFlow = _pagedFilesFlow.asStateFlow()
