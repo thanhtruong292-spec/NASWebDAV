@@ -369,7 +369,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/whitelist/list").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -396,7 +396,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("action", action).put("kind", kind).put("value", value).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/whitelist/modify").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadLanWhitelist()
             } catch (e: Exception) {
@@ -449,7 +449,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/info").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/smart").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -477,7 +477,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/network/speedtest").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/speedtest").post(okhttp3.RequestBody.create(null, ByteArray(0))).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"

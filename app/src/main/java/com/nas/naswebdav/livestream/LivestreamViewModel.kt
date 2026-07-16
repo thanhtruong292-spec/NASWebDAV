@@ -177,7 +177,7 @@ class LivestreamViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/watch/list").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -222,7 +222,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("username", username).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/watch/add").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "addTikTokLiveWatchUser: ${e.message}")
@@ -238,7 +238,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("username", username).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/watch/remove").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "removeTikTokLiveWatchUser: ${e.message}")
@@ -260,7 +260,7 @@ class LivestreamViewModel(
                 val body = org.json.JSONObject()
                     .put("enabled", enabled).put("start", start).put("end", end).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/watch/settings").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "updateTikTokLiveWatchSettings: ${e.message}")

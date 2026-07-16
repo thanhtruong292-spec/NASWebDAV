@@ -264,7 +264,7 @@ class AutoBackupViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/sleep/schedule").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -296,7 +296,7 @@ class AutoBackupViewModel(
                     put("end_hour", newSchedule.endHour)
                     put("idle_only", newSchedule.idleOnly)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/sleep/schedule").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) {
                         sleepScheduleMessage = if (resp.isSuccessful) "Đã lưu lịch ngủ" else "Lỗi lưu"

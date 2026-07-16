@@ -220,7 +220,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/realtime").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/process_state").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -249,8 +249,8 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val dateParam = if (date.isNotBlank()) "&date=$date" else ""
-                val req = okhttp3.Request.Builder().url("$apiBase/api/daily-report?$dateParam").get().build()
+                val dateParam = if (date.isNotBlank()) "?date=$date" else ""
+                val req = okhttp3.Request.Builder().url("$apiBase/api/report/daily$dateParam").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -448,7 +448,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/insights").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/insights").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -511,7 +511,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/system/processes").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
