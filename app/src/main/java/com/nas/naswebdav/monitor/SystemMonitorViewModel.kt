@@ -191,19 +191,28 @@ class SystemMonitorViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
-                    val body = resp.body?.string() ?: "[]"
-                    val arr = org.json.JSONArray(body)
+                    val body = resp.body?.string() ?: "{}"
+                    // Server trả về columnar format: {timestamps:[...], cpu_percent:[...], ...}
+                    // Không phải mảng objects, phải parse ra từng array riêng
+                    val json = org.json.JSONObject(body)
+                    val timestamps = json.optJSONArray("timestamps")
+                    val cpuArr     = json.optJSONArray("cpu_percent")
+                    val ramArr     = json.optJSONArray("ram_percent")
+                    val cpuTempArr = json.optJSONArray("cpu_temp")
+                    val netRxArr   = json.optJSONArray("net_rx_kbps")
+                    val netTxArr   = json.optJSONArray("net_tx_kbps")
+                    val count = timestamps?.length() ?: 0
                     withContext(Dispatchers.Main) {
                         metricsHours = hours
                         metricsHistory.clear()
-                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.forEach { json ->
+                        for (i in 0 until count) {
                             metricsHistory.add(MetricsSnapshot(
-                                timestamp = json.optString("timestamp", System.currentTimeMillis().toString()),
-                                cpuTemp = json.optDouble("cpu_temp", 0.0).toFloat(),
-                                cpuPercent = json.optDouble("cpu_load", 0.0).toFloat(),
-                                ramPercent = json.optDouble("mem_used_pct", 0.0).toFloat(),
-                                netRxKbps = json.optDouble("net_in_kbps", 0.0).toFloat(),
-                                netTxKbps = json.optDouble("net_out_kbps", 0.0).toFloat()
+                                timestamp = timestamps?.optString(i, "") ?: "",
+                                cpuTemp   = cpuTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                                cpuPercent = cpuArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                                ramPercent = ramArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                                netRxKbps  = netRxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                                netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
                             ))
                         }
                     }
@@ -220,19 +229,21 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/process_state").get().let(WebDavManager::tagCurrentAuth).build()
+                // FIX: endpoint đúng cho realtime metrics là /api/status/realtime,
+                // không phải /api/process_state (là worker cursor data, không phải metrics)
+                val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
                         val point = MetricsSnapshot(
-                            timestamp = System.currentTimeMillis().toString(),
-                            cpuTemp = json.optDouble("cpu_temp", 0.0).toFloat(),
-                            cpuPercent = json.optDouble("cpu_load", 0.0).toFloat(),
-                            ramPercent = json.optDouble("mem_used_pct", 0.0).toFloat(),
-                            netRxKbps = json.optDouble("net_in_kbps", 0.0).toFloat(),
-                            netTxKbps = json.optDouble("net_out_kbps", 0.0).toFloat()
+                            timestamp  = System.currentTimeMillis().toString(),
+                            cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
+                            cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
+                            ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
+                            netRxKbps  = json.optDouble("net_rx_kbps", 0.0).toFloat(),
+                            netTxKbps  = json.optDouble("net_tx_kbps", 0.0).toFloat()
                         )
                         metricsHistory.add(point)
                         if (metricsHistory.size > 1000) {

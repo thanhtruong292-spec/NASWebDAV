@@ -153,6 +153,20 @@ class NasApplication : Application(), ImageLoaderFactory {
                 maxRequests = 32
                 maxRequestsPerHost = 8
             })
+            // AUTH FIX: Interceptor inject Authorization header vào mọi API call dùng fastApiClient.
+            // tagCurrentAuth() chỉ gắn AuthState làm OkHttp tag — không có interceptor này thì
+            // header không bao giờ được gửi đi (fastApiClient khác với optimizedClient của WebDavManager).
+            .addInterceptor { chain ->
+                val authState = WebDavManager.currentAuthState()
+                val req = if (authState.user.isNotEmpty()) {
+                    chain.request().newBuilder()
+                        .header("Authorization", authState.authHeader)
+                        .build()
+                } else {
+                    chain.request()
+                }
+                chain.proceed(req)
+            }
             .build()
     }
 
