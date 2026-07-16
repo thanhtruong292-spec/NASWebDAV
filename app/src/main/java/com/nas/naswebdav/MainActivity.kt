@@ -577,8 +577,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
 
             com.nas.naswebdav.ui.screens.MainMenuScreen(
 
-                viewModel = viewModel,
-
                 onOpenFiles = {
 
                     viewModel.resetToDefaultMode()
@@ -675,8 +673,6 @@ fun NasAppNavigation(viewModel: WebDavViewModel, onStartScreenRecord: () -> Unit
         composable("browser") {
 
             com.nas.naswebdav.ui.screens.BrowserScreen(
-
-                viewModel = viewModel,
 
                 onVideo = { url ->
                     val auth = viewModel.webDavManager.currentAuthState()

@@ -5,8 +5,6 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
 
 import android.content.Context
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.collectAsState
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
@@ -57,7 +55,6 @@ import com.nas.naswebdav.NasFile
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ToolboxDialog(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     context: android.content.Context,
     onDismiss: () -> Unit,
@@ -76,6 +73,9 @@ fun ToolboxDialog(
     showSmbDialog: () -> Unit = {},
     showDuplicateScanDialog: () -> Unit = {}
 ) {
+    val deviceVM = com.nas.naswebdav.LocalDeviceManagementVM.current
+    val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
+    val livestreamVM = com.nas.naswebdav.LocalLivestreamVM.current
     // ═══ PHASE 7c.2: Toolbox state (isSmbEnabled, isLoadingSmb, isFanModeUpdating,
     // dockerContainers) reads via facade delegation → DeviceManagementVM is SSoT. ═══
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
@@ -113,8 +113,8 @@ fun ToolboxDialog(
             // Trước đây chỉ Docker fetch khi mở -> SMB/USB Import hiển thị sai cho tới khi
             // người dùng mở riêng dialog tương ứng.
             androidx.compose.runtime.LaunchedEffect(Unit) {
-                viewModel.fetchSmbStatus()
-                viewModel.fetchUsbImportStatus()
+                deviceVM.fetchSmbStatus()
+                deviceVM.fetchUsbImportStatus()
             }
 
             var showBiometricSettings by remember { mutableStateOf(false) }
@@ -183,7 +183,7 @@ fun ToolboxDialog(
                     icon = Icons.Default.Usb,
                     color = AccentGreen,
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.usbImportState.settings.enabled,
+                    checked = deviceVM.usbImportState.settings.enabled,
                     onClick = { onDismiss(); showUsbImportDialog() }
                 )
                 MainMenuSettingsMenuCard(
@@ -243,15 +243,15 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
-                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
+                androidx.compose.runtime.LaunchedEffect(Unit) { deviceVM.checkDockerStatus() }
                 MainMenuSettingsMenuCard(
                     title = "Docker / qBittorrent",
-                    subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang thực thi" else "Đã ngắt",
+                    subtitle = if (deviceVM.isTogglingDocker) "Đang xử lý..." else if (deviceVM.isDockerRunning) "Đang thực thi" else "Đã ngắt",
                     icon = Icons.Default.ViewInAr,
                     color = AccentBlue,
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.isDockerRunning,
-                    onClick = { viewModel.toggleDockerPower(!viewModel.isDockerRunning) }
+                    checked = deviceVM.isDockerRunning,
+                    onClick = { deviceVM.toggleDockerPower(if (deviceVM.isDockerRunning) "stop" else "start") }
                 )
                 MainMenuSettingsMenuCard(
                     title = "Tải BitTorrent",
@@ -271,9 +271,9 @@ fun ToolboxDialog(
                     color = AccentCyan,
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        viewModel.loadSystemLogs()
+                        deviceVM.loadSystemLogs()
                         onDismiss()
-                        viewModel.showLogDialog = true
+                        deviceVM.showLogDialog = true
                     }
                 )
                 MainMenuSettingsMenuCard(
@@ -297,7 +297,7 @@ fun ToolboxDialog(
                 )
                 MainMenuSettingsMenuCard(
                     title = "Ghi Livestream",
-                    subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
+                    subtitle = if (livestreamVM.activeLivestreams.isNotEmpty()) "Đang ghi ${livestreamVM.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
                     icon = Icons.Default.Videocam,
                     color = AccentRed,
                     modifier = Modifier.weight(1f),
@@ -312,22 +312,22 @@ fun ToolboxDialog(
                     icon = Icons.Default.DeleteSweep,
                     color = AccentRed,
                     modifier = Modifier.weight(1f),
-                    onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
+                    onClick = { onDismiss(); deviceVM.cleanTrashOnDemand(context, maxAgeDays = 30) }
                 )
                 MainMenuSettingsMenuCard(
                     title = "Ổ đĩa LAN (SMB)",
-                    subtitle = if (viewModel.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
+                    subtitle = if (deviceVM.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
                     icon = Icons.Default.Dns,
                     color = AccentOrange,
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.isSmbEnabled,
+                    checked = deviceVM.isSmbEnabled,
                     onClick = { onDismiss(); showSmbDialog() }
                 )
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
-                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.fetchThumbnailAudit() }
-                val thumbAudit by viewModel.thumbnailAudit.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(Unit) { smartToolsVM.fetchThumbnailAudit() }
+                val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
                 val ta = thumbAudit
                 MainMenuSettingsMenuCard(
                     title = "Kiểm tra Thumbnail",
@@ -347,15 +347,15 @@ fun ToolboxDialog(
                     onClick = {
                         when {
                             ta != null && ta.running -> {
-                                viewModel.fetchThumbnailAudit()
+                                smartToolsVM.fetchThumbnailAudit()
                                 android.widget.Toast.makeText(context, "Đang quét nền — đã làm mới trạng thái.", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             ta != null && ta.missing > 0 -> {
-                                viewModel.triggerThumbnailScan()
+                                smartToolsVM.triggerThumbnailScan()
                                 android.widget.Toast.makeText(context, "Đã gửi lệnh quét ${ta.missing} ảnh còn thiếu vào nền.", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             else -> {
-                                viewModel.triggerThumbnailScan()
+                                smartToolsVM.triggerThumbnailScan()
                                 android.widget.Toast.makeText(context, "Đã kích hoạt quét tiếp phần còn lại của thư viện.", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }

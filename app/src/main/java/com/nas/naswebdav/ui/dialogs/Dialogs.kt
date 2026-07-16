@@ -301,7 +301,6 @@ fun WolDialog(
 // ====================================================================
 @Composable
 fun SmartDiskDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7d.2: smartInfo/speedTest/lastAutoSpeed/isTestingSpeed → DeviceMgmtVM
@@ -372,7 +371,7 @@ fun SmartDiskDialog(
 
                         val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                         Button(
-                            onClick = { viewModel.runSpeedTest() },
+                            onClick = { deviceVM.runSpeedTest() },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
@@ -1199,7 +1198,6 @@ fun SystemLogDialog(
 // ====================================================================
 @Composable
 fun DockerDialog(
-    viewModel: WebDavViewModel,
     onDismiss: () -> Unit
 ) {
     // Phase 7d.2: isFetchingDocker/dockerContainers → DeviceMgmtVM
@@ -1215,7 +1213,7 @@ fun DockerDialog(
                 if (deviceVM.isFetchingDocker) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color(0xFF1E88E5), strokeWidth = 2.dp)
                 } else {
-                    IconButton(onClick = { viewModel.fetchDockerContainers() }, modifier = Modifier.size(24.dp)) {
+                    IconButton(onClick = { deviceVM.loadDockerContainers() }, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Default.Refresh, "Làm mới", tint = Color.Gray)
                     }
                 }
@@ -1253,14 +1251,14 @@ fun DockerDialog(
                                 }
 
                                 if (isRunning) {
-                                    IconButton(onClick = { viewModel.controlDockerContainer("restart", container.name) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { deviceVM.controlDockerContainer("restart", container.name) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.RestartAlt, "Khởi động lại", tint = Color(0xFFFB8C00), modifier = Modifier.size(20.dp))
                                     }
-                                    IconButton(onClick = { viewModel.controlDockerContainer("stop", container.name) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { deviceVM.controlDockerContainer("stop", container.name) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.Stop, "Dừng", tint = Color(0xFFE53935), modifier = Modifier.size(20.dp))
                                     }
                                 } else {
-                                    IconButton(onClick = { viewModel.controlDockerContainer("start", container.name) }, modifier = Modifier.size(32.dp)) {
+                                    IconButton(onClick = { deviceVM.controlDockerContainer("start", container.name) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.PlayArrow, "Bật", tint = Color(0xFF43A047), modifier = Modifier.size(24.dp))
                                     }
                                 }

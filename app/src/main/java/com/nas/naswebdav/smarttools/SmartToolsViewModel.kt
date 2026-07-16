@@ -12,6 +12,8 @@ import com.nas.naswebdav.ThumbnailAuditData
 import com.nas.naswebdav.OrganizerFilter
 import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
+import com.nas.naswebdav.AutoDuplicateScanWorker
+import com.nas.naswebdav.DuplicateScanWorker
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,15 +116,174 @@ class SmartToolsViewModel(
     var organizingLegacyResult by androidx.compose.runtime.mutableStateOf<String?>(null)
         internal set
 
-    // ═══ PLACEHOLDER METHODS — implement Phase 2b ═══
+    private val _globalUi: com.nas.naswebdav.GlobalUiViewModel by lazy {
+        com.nas.naswebdav.GlobalUiViewModel()
+    }
 
-    fun startScanDuplicates() { /* TODO Phase 2b */ }
-    fun cancelScanDuplicates() { /* TODO Phase 2b */ }
-    fun toggleAutoClean(context: Context, enabled: Boolean) { /* TODO Phase 2b */ }
+    // ═══ AUTO CLEAN ═══
+
+    fun toggleAutoClean(context: Context, enabled: Boolean) {
+        autoCleanEnabled = enabled
+        context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("auto_clean_enabled", enabled).apply()
+        val workManager = androidx.work.WorkManager.getInstance(context)
+        if (enabled) {
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiresCharging(true)
+                .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+                .build()
+            val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(
+                30, java.util.concurrent.TimeUnit.DAYS)
+                .setConstraints(constraints)
+                .build()
+            workManager.enqueueUniquePeriodicWork(
+                "AutoCleanDuplicates", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, req)
+        } else {
+            workManager.cancelUniqueWork("AutoCleanDuplicates")
+        }
+    }
+
+    // ═══ BACKGROUND DUPLICATE SCAN ═══
+
+    fun startBackgroundDuplicateScan(context: Context, forceRestart: Boolean = false, lightningMode: Boolean = true) {
+        _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS,
+            "Đã nhận lệnh! Đang khởi động trình quét rác...")
+        isScanningDuplicates = true
+        viewModelScope.launch {
+            repository.addSystemLog("INFO", "DuplicateScan",
+                "Hệ thống: Người dùng đã phân công quét thủ công trùng lặp")
+        }
+        if (isWorkerRunning) return
+
+        isWorkerRunning = true
+        scanDuplicatesCurrentFolderUrl = "Đang kết nối..."
+        scanDuplicatesCurrentItemName = "Khởi tạo..."
+        scanDuplicatesTotalScanned = 0
+        scanDuplicatesFound = 0
+        scanDuplicatesStage = "Khởi động..."
+
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch(Dispatchers.Main) {
+            kotlinx.coroutines.delay(500)
+            try {
+                val workManager = androidx.work.WorkManager.getInstance(context)
+                val currentUrl = com.nas.naswebdav.WebDavManager.currentBaseUrl
+                val inputData = androidx.work.workDataOf(
+                    "currentUrl" to currentUrl,
+                    "forceRestart" to forceRestart,
+                    "lightningMode" to lightningMode
+                )
+                val scanWorkRequest = androidx.work.OneTimeWorkRequestBuilder<DuplicateScanWorker>()
+                    .setInputData(inputData)
+                    .build()
+                workManager.enqueueUniqueWork("Unique_Scan_V3",
+                    androidx.work.ExistingWorkPolicy.REPLACE, scanWorkRequest)
+
+                workManager.getWorkInfoByIdFlow(scanWorkRequest.id).collect { workInfo ->
+                    if (workInfo != null) {
+                        when (workInfo.state) {
+                            androidx.work.WorkInfo.State.SUCCEEDED -> {
+                                scanDuplicatesStage = "Hoàn tất"
+                                scanDuplicatesCurrentFolderUrl = "Hoàn tất!"
+                                scanDuplicatesCurrentItemName = "Đã quét xong toàn bộ."
+                                scanDuplicatesPercent = 1f
+                                scanDuplicatesCurrentStagePercent = 1f
+                                scanDuplicatesStageNumber = 4
+                                scanDuplicatesStageDescription = "Đã quét xong toàn bộ."
+                                isWorkerRunning = false
+                                loadDuplicateResultsFromCache(context)
+                            }
+                            androidx.work.WorkInfo.State.FAILED -> {
+                                scanDuplicatesCurrentFolderUrl = "Gặp lỗi hệ thống!"
+                                isWorkerRunning = false
+                            }
+                            androidx.work.WorkInfo.State.CANCELLED -> {
+                                isWorkerRunning = false
+                            }
+                            else -> { /* RUNNING, ENQUEUED, BLOCKED */ }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                isWorkerRunning = false
+            }
+        }
+    }
+
+    fun loadDuplicateResultsFromCache(context: Context) {
+        viewModelScope.launch {
+            try {
+                val duplicates = withContext(Dispatchers.IO) {
+                    repository.getDuplicateFiles()
+                }
+                withContext(Dispatchers.Main) {
+                    duplicateFilesList = duplicates
+                    isShowingDuplicates = true
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
+                        "Lỗi nạp danh sách từ DB: ${e.message}")
+                }
+            }
+        }
+    }
+
+    // ═══ UNZIP ═══
+
+    fun unzipFile(filePath: String) {
+        val uri = java.net.URI(filePath)
+        val relativePath = uri.path.substringAfter("/webdav")
+        val fileName = filePath.substringAfterLast("/")
+        val jsonBody = org.json.JSONObject().apply {
+            put("file_path", relativePath)
+        }.toString()
+
+        _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS,
+            "Tác vụ giải nén ($fileName) đang chạy ngầm trên NAS!")
+
+        val inputData = androidx.work.Data.Builder()
+            .putString("taskType", "UNZIP")
+            .putString("apiUrl",
+                "${com.nas.naswebdav.WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/file/unzip")
+            .putString("jsonBody", jsonBody)
+            .putString("taskLabel", "Giải nén $fileName")
+            .build()
+        val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.LongRunningApiWorker>()
+            .setInputData(inputData)
+            .addTag("LONG_RUNNING_API")
+            .build()
+        val context = NasApplication.instance.applicationContext
+        androidx.work.WorkManager.getInstance(context).enqueue(workRequest)
+    }
     fun dismissDuplicatesView() { isShowingDuplicates = false }
     fun resetShouldAutoOpenDuplicates() { shouldAutoOpenDuplicates = false }
-    fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile, index: Int) { /* TODO Phase 2b */ }
-    fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) { /* TODO Phase 2b */ }
+    fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val isInTrash = file.path.contains(".trash")
+                if (isInTrash) {
+                    WebDavManager.deleteFile(file.path, file.isDirectory)
+                } else {
+                    val trashFolderUrl = WebDavManager.currentBaseUrl.trimEnd('/') + "/.trash/"
+                    try { WebDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                    val safeName = file.name.replace('/', '_').take(200)
+                    val trashTargetUrl = trashFolderUrl + safeName
+                    WebDavManager.renameFile(file.path, trashTargetUrl)
+                }
+                withContext(Dispatchers.Main) {
+                    duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
+                    selectedDuplicates.remove(file)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SmartToolsVM", "deleteDuplicateFile: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) {
+        files.forEach { deleteDuplicateFile(it) }
+    }
     fun togglePauseDuplicateScan() {
         scanDuplicatesIsPaused = !scanDuplicatesIsPaused
         DuplicateProgressState.isPaused.value = scanDuplicatesIsPaused
@@ -195,6 +356,63 @@ class SmartToolsViewModel(
                 kotlinx.coroutines.delay(1500)
                 fetchThumbStatus()
             } catch (e: Exception) { withContext(Dispatchers.Main) { thumbPaused = action != "pause" } }
+        }
+    }
+
+    fun fetchThumbnailAudit() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (apiBase.isBlank()) return@launch
+                val apiUrl = "$apiBase/api/thumb/status"
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
+                val request = okhttp3.Request.Builder()
+                    .url(apiUrl)
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string() ?: "{}"
+                        val obj = org.json.JSONObject(body)
+                        val total = obj.optInt("total_media", 0)
+                        val generated = obj.optInt("generated", 0)
+                        _thumbnailAudit.value = ThumbnailAuditData(
+                            total = total,
+                            thumbnailed = generated,
+                            missing = if (total > generated) total - generated else 0,
+                            running = obj.optBoolean("running", false),
+                            paused = obj.optBoolean("paused", false),
+                            errors = obj.optInt("errors", 0)
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SmartToolsVM", "fetchThumbnailAudit failed", e)
+            }
+        }
+    }
+
+    fun triggerThumbnailScan() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (apiBase.isBlank()) return@launch
+                val apiUrl = "$apiBase/api/thumb/control"
+                val user = com.nas.naswebdav.SecurePrefsHelper.getUser(NasApplication.instance.applicationContext)
+                val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
+                val body = "{\"action\": \"resume\"}".toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url(apiUrl)
+                    .post(body)
+                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+                kotlinx.coroutines.delay(1000)
+                fetchThumbnailAudit()
+            } catch (e: Exception) {
+                android.util.Log.w("SmartToolsVM", "triggerThumbnailScan failed", e)
+            }
         }
     }
 

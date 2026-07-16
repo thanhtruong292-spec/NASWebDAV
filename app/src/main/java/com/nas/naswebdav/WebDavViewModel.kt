@@ -614,7 +614,6 @@ class WebDavViewModel(
         get() = deviceManagement.isUsbImportLoading
         set(value) { deviceManagement.isUsbImportLoading = value }
 
-    data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
     data class InsightFlowTask(
         val type: String = "",
         val label: String = "",
@@ -647,6 +646,8 @@ class WebDavViewModel(
         val usbHistoryCount: Int = 0,
         val updatedAt: Long = 0L,
     )
+    data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
+
     var nasInsights by mutableStateOf(NasInsights())
     var isFetchingNasInsights by mutableStateOf(false)
     private var lastNasInsightsFetchAt = 0L
@@ -3544,58 +3545,8 @@ class WebDavViewModel(
     }
 
     // ==========================================
-    // THUMBNAIL CACHING
+    // THUMBNAIL CACHING — moved to top-level downloadThumbnailFromNas (BrowserComponents compat)
     // ==========================================
-    suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth: String, isVideo: Boolean): Boolean {
-        return withContext(Dispatchers.IO) {
-            try {
-                val parsedUrl = java.net.URL(url)
-                val nasHost = parsedUrl.host
-                val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
-
-                // --- Attempt 1: /api/thumb (NAS generates thumbnail) ---
-                val apiThumbUrl = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
-                val result = executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)
-                if (result) return@withContext true
-
-                // --- Attempt 2 (video only): Append timestamp to force NAS cache regeneration ---
-                if (isVideo) {
-                    val forcedUrl = "${webDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}&_t=${System.currentTimeMillis()}"
-                    val retryResult = executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)
-                    if (retryResult) return@withContext true
-                }
-
-                return@withContext false
-            } catch (e: Exception) {
-                return@withContext false
-            }
-        }
-    }
-
-    /** Helper: execute a single thumbnail download attempt and write to thumbFile. */
-    private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: java.io.File, isVideo: Boolean): Boolean {
-        val apiRequest = okhttp3.Request.Builder()
-            .url(apiThumbUrl)
-            .header("Authorization", auth)
-            .build()
-        NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
-            val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
-
-            if (apiResponse.isSuccessful && apiResponse.body != null) {
-                // CHẶN BỘ LỌC RÁC: Nếu NAS trả về tệp < 2KB thì 99% đó là Icon Play báo lỗi, ta từ chối!
-                if (!isVideo && contentLength in 1L..2000L) {
-                    return false
-                }
-
-                apiResponse.body?.byteStream()?.use { input ->
-                    java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
-                } ?: return false
-                return thumbFile.length() > 0
-            } else {
-                return false
-            }
-        }
-    }
     // BO QUÉT RÁC khoi flow nay theo yeu cau user — Sync Anh chi nen chay AutoBackup
     // (upload anh moi). Quet trung lap la tac vu nang ca cho phone va NAS, chi chay
     // tu dong theo lich tuan tai 3h sang khi NAS ranh, hoac do user chu dong khoi.
@@ -4306,6 +4257,41 @@ class WebDavViewModel(
         }
     }
 } // end class WebDavViewModel
+
+
+// ═══ Top-level thumbnail download — used by WebDavCachedThumbnail (BrowserComponents) ═══
+private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: java.io.File, isVideo: Boolean): Boolean {
+    val apiRequest = okhttp3.Request.Builder()
+        .url(apiThumbUrl)
+        .header("Authorization", auth)
+        .build()
+    NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
+        val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
+        if (apiResponse.isSuccessful && apiResponse.body != null) {
+            if (!isVideo && contentLength in 1L..2000L) return false
+            apiResponse.body?.byteStream()?.use { input ->
+                java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
+            } ?: return false
+            return thumbFile.length() > 0
+        }
+        return false
+    }
+}
+
+suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth: String, isVideo: Boolean): Boolean = withContext(Dispatchers.IO) {
+    try {
+        val parsedUrl = java.net.URL(url)
+        val nasHost = parsedUrl.host
+        val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
+        val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+        if (executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)) return@withContext true
+        if (isVideo) {
+            val forcedUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}&_t=${System.currentTimeMillis()}"
+            if (executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)) return@withContext true
+        }
+        false
+    } catch (_: Exception) { false }
+}
 
 // LỚP PHỤ TRỢ: Bộ đếm Rate Limiter (2.C)
 // FIX: dung ArrayDeque thay vi MutableList. removeAll{} cu phai duyet toan

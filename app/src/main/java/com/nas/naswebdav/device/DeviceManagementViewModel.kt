@@ -5,6 +5,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nas.naswebdav.DockerContainer
+import com.nas.naswebdav.OmvDiskInfo
+import com.nas.naswebdav.OmvFilesystem
+import com.nas.naswebdav.OmvNetworkInfo
+import com.nas.naswebdav.OmvServiceInfo
 import com.nas.naswebdav.NasApplication
 import com.nas.naswebdav.OmvOverview
 import com.nas.naswebdav.SmartInfo
@@ -80,7 +84,12 @@ class DeviceManagementViewModel(
 
     var smartInfo by androidx.compose.runtime.mutableStateOf(SmartInfo("Đang tải...", "--", ""))
         internal set
+    var lastSmartRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    private var lastOmvOverviewFetchAt = 0L
     var showSmartDialog by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var showDockerDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
     var speedTestResult by androidx.compose.runtime.mutableStateOf(SpeedTestResult("--", "--"))
@@ -194,6 +203,164 @@ class DeviceManagementViewModel(
             }
         }
     }
+
+    fun checkDockerStatus() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/power")
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                        withContext(Dispatchers.Main) {
+                            isDockerRunning = json.optBoolean("running", false)
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun fetchSmbStatus() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/smb/status").build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (body != null) {
+                            val obj = org.json.JSONObject(body)
+                            val enabled = obj.optBoolean(
+                                "effective_enabled",
+                                obj.optBoolean("enabled", false) && obj.optBoolean("active", false)
+                            )
+                            withContext(Dispatchers.Main) { isSmbEnabled = enabled }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "fetchSmbStatus failed", e)
+            }
+        }
+    }
+
+    fun fetchSmartData(minIntervalMs: Long = 15_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastSmartRefreshAt < minIntervalMs) return
+        lastSmartRefreshAt = now
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/smart").build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = org.json.JSONObject(response.body?.string() ?: "")
+                        withContext(Dispatchers.Main) {
+                            smartInfo = SmartInfo(
+                                status = json.optString("status", "Không rõ"),
+                                temperature = run {
+                                    val rawTemp = json.optString("temperature", "--")
+                                    if (rawTemp != "--" && !rawTemp.contains("°")) "${rawTemp}°C" else rawTemp
+                                },
+                                rawLog = json.optString("raw_log", "")
+                            )
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            smartInfo = SmartInfo("Lỗi kết nối", "--", "Mã lỗi: ${response.code}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "")
+                }
+            }
+        }
+    }
+
+    fun fetchOmvOverview(minIntervalMs: Long = 15_000L) {
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - lastOmvOverviewFetchAt < minIntervalMs) return
+        if (isFetchingOmvOverview) return
+        lastOmvOverviewFetchAt = now
+        isFetchingOmvOverview = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/omv/overview").build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = org.json.JSONObject(response.body?.string() ?: "{}")
+                        val sys = json.optJSONObject("system")
+                        val svcArr = json.optJSONArray("services") ?: org.json.JSONArray()
+                        val netArr = json.optJSONArray("network") ?: org.json.JSONArray()
+                        val fsArr = json.optJSONArray("filesystems") ?: org.json.JSONArray()
+                        val diskArr = json.optJSONArray("disks") ?: org.json.JSONArray()
+                        val pwr = json.optJSONObject("power")
+
+                        val services = (0 until svcArr.length()).map { i ->
+                            val s = svcArr.getJSONObject(i)
+                            val enabled = s.optBoolean("enabled")
+                            val running = s.optBoolean("running")
+                            OmvServiceInfo(
+                                s.optString("name"),
+                                s.optString("title"),
+                                enabled,
+                                running,
+                                s.optBoolean("effective_enabled", enabled && running)
+                            )
+                        }
+                        val network = parseOmvNetwork(netArr)
+                        val filesystems = (0 until fsArr.length()).map { i ->
+                            val f = fsArr.getJSONObject(i)
+                            OmvFilesystem(f.optString("device"), f.optString("label"), f.optString("mountpoint"), f.optString("used"), f.optLong("size_bytes"), f.optInt("percentage"), f.optString("description"))
+                        }
+                        val disks = (0 until diskArr.length()).map { i ->
+                            val d = diskArr.getJSONObject(i)
+                            OmvDiskInfo(
+                                d.optString("name"),
+                                d.optString("model"),
+                                d.optString("serial"),
+                                d.optString("size"),
+                                d.optBoolean("is_root"),
+                                d.optString("device"),
+                                d.optBoolean("is_target_hdd"),
+                                d.optBoolean("is_usb_import")
+                            )
+                        }
+                        withContext(Dispatchers.Main) {
+                            omvOverview = OmvOverview(
+                                hostname = sys?.optString("hostname", "") ?: "",
+                                omvVersion = sys?.optString("omv_version", "") ?: "",
+                                kernel = sys?.optString("kernel", "") ?: "",
+                                services = services, network = network,
+                                filesystems = filesystems, disks = disks,
+                                powerBtnAction = pwr?.optString("powerbtn", "") ?: ""
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) { }
+            finally { withContext(Dispatchers.Main) { isFetchingOmvOverview = false } }
+        }
+    }
+
+    private fun parseOmvNetwork(netArr: org.json.JSONArray): List<OmvNetworkInfo> =
+        (0 until netArr.length()).map { i ->
+            val n = netArr.getJSONObject(i)
+            OmvNetworkInfo(
+                n.optString("name"),
+                n.optString("address"),
+                n.optString("mac"),
+                n.optInt("speed", -1),
+                n.optString("state"),
+                n.optString("gateway"),
+                n.optBoolean("wol")
+            )
+        }
 
     /** Load LAN whitelist — Phase 2b wired */
     fun loadLanWhitelist() {
@@ -474,7 +641,91 @@ class DeviceManagementViewModel(
         }
     }
 
+    // ═══ TRASH CLEAN (Phase 7d.6 — moved from WebDavViewModel facade) ═══
+
+    fun cleanTrashOnDemand(context: android.content.Context, maxAgeDays: Int = 30) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = org.json.JSONObject().put("max_age_days", maxAgeDays)
+                val body = json.toString().toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/cron/trash/clean")
+                    .post(body)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    val res = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    val msg = res.optString("message", "Hoàn tất dọn Thùng rác!")
+                    repository.addSystemLog("INFO", "File Ops", "Người dùng đã thực hiện XÓA THÙNG RÁC: $msg")
+                    withContext(Dispatchers.Main) {
+                        globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, msg)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Lỗi dọn rác: ${e.message}")
+                }
+            }
+        }
+    }
+
     // ═══ OMV / TORRENT (Phase 7d.6 — moved from WebDavViewModel facade) ═══
+
+    /** Run disk speed test (write + read) — moved from WebDavViewModel.runSpeedTest */
+    fun runSpeedTest() {
+        if (isTestingSpeed) return
+        isTestingSpeed = true
+        speedTestResult = SpeedTestResult("Đang đo...", "Đang đo...")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val request = okhttp3.Request.Builder()
+                    .url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                val speedTestClient = NasApplication.instance.fastApiClient.newBuilder()
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+                speedTestClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val json = org.json.JSONObject(response.body?.string() ?: "")
+                        withContext(Dispatchers.Main) {
+                            speedTestResult = SpeedTestResult(
+                                json.optString("write_speed", "Lỗi"),
+                                json.optString("read_speed", "Lỗi")
+                            )
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            speedTestResult = SpeedTestResult("Thất bại", "Thất bại")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    speedTestResult = SpeedTestResult("Lỗi", "Lỗi")
+                }
+                repository.addSystemLog("ERROR", "SpeedTest", "Đo tốc độ thất bại: ${e.message?.take(80)}")
+            } finally {
+                withContext(Dispatchers.Main) { isTestingSpeed = false }
+            }
+        }
+    }
+
+    /** Control a single Docker container (start/stop/restart) */
+    fun controlDockerContainer(action: String, containerName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+                val json = org.json.JSONObject().apply {
+                    put("action", action)
+                    put("container", containerName)
+                }
+                val body = json.toString().toRequestBody(jsonMediaType)
+                val req = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/container/control")
+                    .post(body).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                loadDockerContainers()
+            } catch (_: Exception) { }
+        }
+    }
 
     fun toggleOmvService(serviceName: String, enable: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {

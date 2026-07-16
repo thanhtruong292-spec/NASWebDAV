@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.browser.FileBrowserViewModel
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import kotlinx.coroutines.*
@@ -99,7 +100,7 @@ import androidx.compose.foundation.lazy.items
 @Composable
 fun FileItemGridCell(
     file: NasFile,
-    viewModel: WebDavViewModel,
+    fileBrowserVM: FileBrowserViewModel,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
     viewedRefreshTick: Int = 0,
@@ -109,12 +110,11 @@ fun FileItemGridCell(
 ) {
     // Phase 7c.3: fileList + thumbnail state owned by FileBrowserVM (Phase 7a delegation).
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+    val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val authSnapshot = viewModel.webDavManager.currentAuthState()
-    val auth = Credentials.basic(authSnapshot.user, authSnapshot.pass)
-
+    val auth = okhttp3.Credentials.basic(com.nas.naswebdav.WebDavManager.currentUser, com.nas.naswebdav.WebDavManager.currentPass)
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
@@ -134,7 +134,7 @@ fun FileItemGridCell(
         mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
     }
 
-    val isTrash = viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác"
+    val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
 
     // STATE CHO DIALOG THÔNG BÁO TẠI ĐÂY (THAY THẾ TOAST)
     var commonDialogMessage by remember { mutableStateOf("") }
@@ -162,7 +162,7 @@ fun FileItemGridCell(
             message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn '${file.name}' không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa '${file.name}' vào Thùng rác?",
             onConfirm = {
                 showDeleteDialog = false
-                viewModel.deleteFile(context, file)
+                fileBrowserVM.deleteFile(context, file)
             },
             onDismiss = { showDeleteDialog = false }
         )
@@ -179,8 +179,8 @@ fun FileItemGridCell(
                 showTransferPickerDialog = false
                 val filesToProcess = listOf(file)
                 when (pendingTransferOperation) {
-                    "COPY" -> viewModel.batchCopyFiles(context, filesToProcess, destUrl)
-                    "MOVE" -> viewModel.batchMoveFiles(context, filesToProcess, destUrl)
+                    "COPY" -> fileBrowserVM.batchCopyFiles(context, filesToProcess, destUrl)
+                    "MOVE" -> fileBrowserVM.batchMoveFiles(context, filesToProcess, destUrl)
                 }
                 pendingTransferOperation = ""
             }
@@ -201,7 +201,7 @@ fun FileItemGridCell(
             confirmButton = {
                 TextButton(onClick = {
                     showRenameDialog = false
-                    if (newFileName.isNotBlank() && newFileName != file.name) viewModel.renameFile(context, file, newFileName)
+                    if (newFileName.isNotBlank() && newFileName != file.name) fileBrowserVM.renameFile(context, file, newFileName)
                 }) { Text("Lưu") }
             },
             dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Hủy") } }
@@ -272,12 +272,12 @@ fun FileItemGridCell(
                 pendingTransferOperation = "MOVE"
                 showTransferPickerDialog = true
             })
-            if (viewModel.isSpecialMode && viewModel.specialTitle == "Thùng rác") {
+            if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác") {
                 DropdownMenuItem(
                     text = { Text("Khôi phục") },
                     onClick = {
                         showMenu = false
-                        viewModel.restoreFile(context, file)
+                        fileBrowserVM.restoreFile(context, file)
                     },)
             }
 
@@ -287,7 +287,7 @@ fun FileItemGridCell(
                     text = { Text("Giải nén tại NAS", color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
-                        viewModel.unzipFile(file.path)
+                        smartToolsVM.unzipFile(file.path)
                     }
                 )
             }
@@ -298,7 +298,7 @@ fun FileItemGridCell(
                     text = { Text("Mở bằng ứng dụng ngoài", color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
-                        val authSnapshot = viewModel.webDavManager.currentAuthState()
+                        val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
                         openExternalVideoPlayer(
                             context = context,
                             url = file.path,
@@ -339,7 +339,7 @@ fun FileItemGridCell(
                 var thumbState by remember { mutableStateOf<ThumbState?>(null) }
                 WebDavCachedThumbnail(
                     url = file.path, auth = auth, isVideo = isVideo,
-                    modifier = Modifier.fillMaxSize(), viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize(),
                     onStateChange = { thumbState = it }
                 )
 
@@ -529,7 +529,6 @@ fun WebDavCachedThumbnail(
     auth: String,
     isVideo: Boolean,
     modifier: Modifier,
-    viewModel: WebDavViewModel,
     onStateChange: (ThumbState) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -568,7 +567,7 @@ fun WebDavCachedThumbnail(
                     }
 
                     // ── Strategy 2: NAS backend /api/thumb (server-side) ──
-                    val downloaded = viewModel.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
+                    val downloaded = com.nas.naswebdav.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
                     if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
                         localThumbPath = thumbFile.absolutePath
                         runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }

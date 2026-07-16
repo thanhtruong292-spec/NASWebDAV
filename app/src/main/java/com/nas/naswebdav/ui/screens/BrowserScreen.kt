@@ -137,7 +137,6 @@ private enum class BrowserViewMode { ICON, LIST, DETAIL }
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun BrowserScreen(
-    viewModel: WebDavViewModel,
     onVideo: (String) -> Unit,
     onImage: (String) -> Unit,
     onLogout: () -> Unit,
@@ -225,7 +224,7 @@ fun BrowserScreen(
         } else {
             // Trong mọi chế độ (Bình thường hay isSpecialMode), thử lùi cấu trúc cây thư mục trước
             // Nếu urlStack cạn (nghĩa là đã về gốc của chế độ đó), thì mới thoát ra Menu Chính
-            if (!viewModel.goBack()) {
+            if (!fileBrowserVM.goBack()) {
                 onBackToMenu()
             }
         }
@@ -374,7 +373,7 @@ fun BrowserScreen(
                         }
                         Switch(
                             checked = smartToolsVM.autoCleanEnabled,
-                            onCheckedChange = { viewModel.toggleAutoClean(context, it) },
+                            onCheckedChange = { smartToolsVM.toggleAutoClean(context, it) },
                             colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF4FC3F7), checkedTrackColor = Color(0xFF4FC3F7).copy(alpha = 0.5f))
                         )
                     }
@@ -384,7 +383,7 @@ fun BrowserScreen(
                 Button(
                     onClick = {
                         showDuplicateConfigDialog = false
-                        viewModel.startBackgroundDuplicateScan(context, forceRestart = isForceRestartDuplicate, lightningMode = isLightningMode)
+                        smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = isForceRestartDuplicate, lightningMode = isLightningMode)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                 ) {
@@ -404,7 +403,7 @@ fun BrowserScreen(
     LaunchedEffect(smartToolsVM.shouldAutoOpenDuplicates) {
         if (smartToolsVM.shouldAutoOpenDuplicates) {
             smartToolsVM.resetShouldAutoOpenDuplicates()
-            viewModel.loadDuplicateResultsFromCache(context)
+            smartToolsVM.loadDuplicateResultsFromCache(context)
         }
     }
 
@@ -472,7 +471,7 @@ fun BrowserScreen(
                                                     val json = org.json.JSONObject(body)
                                                     val count = json.optInt("moved_count", 0)
                                                     organizeResult = "Hoàn tất! Đã gom $count video."
-                                                    viewModel.refresh()
+                                                    fileBrowserVM.refresh()
                                                 } catch (e: Exception) {
                                                     organizeResult = "Lỗi phản hồi: ${e.message}"
                                                 }
@@ -762,7 +761,7 @@ fun BrowserScreen(
             TopAppBar(
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (!viewModel.goBack()) onBackToMenu()
+                        if (!fileBrowserVM.goBack()) onBackToMenu()
                     }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại")
                     }
@@ -855,7 +854,7 @@ fun BrowserScreen(
                         DropdownMenuItem(
                             text = { Text("Làm mới") },
                             leadingIcon = { Icon(Icons.Default.Refresh, null) },
-                            onClick = { showMoreMenu = false; viewModel.refresh() }
+                            onClick = { showMoreMenu = false; fileBrowserVM.refresh() }
                         )
                         DropdownMenuItem(
                             text = { Text("Ảnh ngẫu nhiên") },
@@ -908,7 +907,7 @@ fun BrowserScreen(
                     ) {
                         Text("NAS", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { viewModel.resetToRoot() })
+                            modifier = Modifier.clickable { fileBrowserVM.navigateToUrl("/") })
                         
                         segments.forEachIndexed { index, segment ->
                             Text(" / ", fontSize = 12.sp, color = Color.Gray)
@@ -927,7 +926,7 @@ fun BrowserScreen(
                                         if (i == 0) fileBrowserVM.urlStack.push(baseUrl)
                                         else fileBrowserVM.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
                                     }
-                                    viewModel.navigateToUrl(targetUrl)
+                                    fileBrowserVM.navigateToUrl(targetUrl)
                                 } else Modifier
                             )
                         }
@@ -1076,7 +1075,7 @@ fun BrowserScreen(
                 LaunchedEffect(true) {
                     // TÍNH NĂNG 3.F: Thiết lập Haptic Feedback phản hồi vật lý
                     view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    viewModel.refresh()
+                    fileBrowserVM.refresh()
                 }
             }
 
@@ -1195,7 +1194,6 @@ fun BrowserScreen(
                                 ) { file ->
                                     BrowserScreenFileItemGridCell(
                                         file = file,
-                                        viewModel = viewModel,
                                         fileBrowserVM = fileBrowserVM,
                                         selectionMode = selectionMode,
                                         viewedRefreshTick = viewedRefreshTick,
@@ -1279,8 +1277,7 @@ fun BrowserScreen(
                                                     url = file.path,
                                                     auth = auth,
                                                     isVideo = isVideo,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    viewModel = viewModel
+                                                    modifier = Modifier.fillMaxSize()
                                                 )
                                                 if (isVideo) {
                                                     Icon(
@@ -1445,8 +1442,7 @@ fun BrowserScreen(
                                                         url = file.path,
                                                         auth = auth,
                                                         isVideo = isVideo,
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        viewModel = viewModel
+                                                        modifier = Modifier.fillMaxSize()
                                                     )
                                                     if (isVideo) {
                                                         Icon(
@@ -1516,7 +1512,7 @@ fun BrowserScreen(
                     )
                 }
                 // Hiển thị lỗi kết nối rõ ràng ở giữa màn hình
-                val currentError = viewModel.errorMessage
+                val currentError = fileBrowserVM.errorMessage
                 if (!currentError.isNullOrEmpty() && !fileBrowserVM.isLoading) {
                     Column(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -1528,7 +1524,7 @@ fun BrowserScreen(
                         Spacer(Modifier.height(4.dp))
                         Text(currentError, color = Color.Gray, fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = { viewModel.refresh() }) { Text("Thử lại") }
+                        Button(onClick = { fileBrowserVM.refresh() }) { Text("Thử lại") }
                     }
                 } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
                     Column(
@@ -1560,7 +1556,6 @@ fun BrowserScreen(
 @Composable
 fun BrowserScreenFileItemGridCell(
     file: NasFile,
-    viewModel: WebDavViewModel,
     fileBrowserVM: FileBrowserViewModel,
     selectionMode: Boolean = false,
     isSelected: Boolean = false,
@@ -1571,6 +1566,7 @@ fun BrowserScreenFileItemGridCell(
     onDelete: (() -> Unit)? = null
 ) {
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
+    val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
@@ -1720,7 +1716,7 @@ fun BrowserScreenFileItemGridCell(
                     text = { Text("Giải nén tại NAS", color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
-                        viewModel.unzipFile(file.path)
+                        smartToolsVM.unzipFile(file.path)
                     }
                 )
             }
@@ -1771,7 +1767,7 @@ fun BrowserScreenFileItemGridCell(
                 var thumbState by remember { mutableStateOf<ThumbState?>(value = null) }
                 WebDavCachedThumbnail(
                     url = file.path, auth = auth, isVideo = isVideo,
-                    modifier = Modifier.fillMaxSize(), viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize(),
                     onStateChange = { thumbState = it }
                 )
 
@@ -1943,40 +1939,6 @@ private val mediaThumbClient by lazy {
         .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 20; maxRequestsPerHost = 4 })
         .build()
 }
-
-@Composable
-fun WebDavCachedThumbnail(url: String, auth: String, isVideo: Boolean, modifier: Modifier) {
-    // CLIENT-ONLY: Coil handles memory+disk cache + VideoFrameDecoder for video
-    // NO NAS /api/thumb — NAS only serves raw bytes, zero CPU on server
-    var loadState by remember { mutableStateOf(ThumbState.LOADING) }
-    val imageRequest = coil.request.ImageRequest.Builder(LocalContext.current)
-        .data(url)
-        .addHeader("Authorization", auth)
-        .crossfade(true)
-        .size(coil.size.Size(300, 300))
-        .allowHardware(true)
-        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-        .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-        .build()
-
-    if (loadState != ThumbState.ERROR) {
-        AsyncImage(
-            model = imageRequest,
-            contentDescription = null,
-            modifier = modifier,
-            contentScale = ContentScale.Crop,
-            onSuccess = { loadState = ThumbState.SUCCESS },
-            onError = { loadState = ThumbState.ERROR }
-        )
-    }
-    if (loadState == ThumbState.ERROR) {
-        Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(28.dp))
-        }
-    }
-}
-
-// ThumbState defined in BrowserComponents.kt — no duplicate here
 
 // LỚP PHỤ TRỢ: Bộ nhớ Lịch sử Tìm Kiếm (TÍNH NĂNG 3.E)
 data class SearchHistory(val query: String, val timestamp: Long)

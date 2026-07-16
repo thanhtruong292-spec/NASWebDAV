@@ -447,13 +447,11 @@ fun SmbBottomSheet(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun DuplicateScanGlobalUI(
-    viewModel: com.nas.naswebdav.WebDavViewModel,
     context: android.content.Context
 ) {
-    // Phase 7c.3: Duplicate scan state lives in WebDavViewModel (not yet in SmartToolsVM).
-    // Only SmartToolsVM-backed calls use LocalSmartToolsVM.current below.
+    val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
-    if (viewModel.isScanningDuplicates) {
+    if (smartToolsVM.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         androidx.compose.material3.ModalBottomSheet(
             // Onclick scrim KHÔNG đóng sheet — user phải bấm nút "Thu nhỏ" / "Huỷ" explicit.
@@ -461,7 +459,7 @@ fun DuplicateScanGlobalUI(
             // isScanningDuplicates = false nếu user thu nhỏ thủ công.
             // Với behavior "không đóng khi click ngoài", dismissRequest của sheet phải
             // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
-            onDismissRequest = { viewModel.isScanningDuplicates = false },
+            onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
             containerColor = Color(0xFF0F0F0F),
             scrimColor = Color.Black.copy(alpha = 0.6f),
@@ -495,7 +493,7 @@ fun DuplicateScanGlobalUI(
                 }
                 Column(Modifier.fillMaxWidth()) {
                     // ═══ GIAI ĐOẠN HIỆN TẠI ═══
-                    val stage = viewModel.scanDuplicatesStage
+                    val stage = smartToolsVM.scanDuplicatesStage
                     val stageColor = when {
                         stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> Color(0xFF1E88E5) // Xanh dương
                         stage.contains("Phân tích") -> Color(0xFFF57C00) // Cam
@@ -531,7 +529,7 @@ fun DuplicateScanGlobalUI(
                         Text("Thư mục:", fontSize = 11.sp, color = Color.Gray)
                     }
                     Text(
-                        text = viewModel.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
+                        text = smartToolsVM.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
                         color = Color(0xFF5C6BC0), fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
@@ -546,7 +544,7 @@ fun DuplicateScanGlobalUI(
                         Text("Đang xử lý:", fontSize = 11.sp, color = Color.Gray)
                     }
                     Text(
-                        text = viewModel.scanDuplicatesCurrentItemName.ifEmpty { "..." },
+                        text = smartToolsVM.scanDuplicatesCurrentItemName.ifEmpty { "..." },
                         color = Color(0xFFEF6C00), fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
@@ -556,12 +554,12 @@ fun DuplicateScanGlobalUI(
 
                     // ═══ PROGRESS BAR CHÍNH XÁC (2 THANH) ═══
                     val progressValue by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = viewModel.scanDuplicatesPercent,
+                        targetValue = smartToolsVM.scanDuplicatesPercent,
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 600),
                         label = "totalProgress"
                     )
                     val stageProgressValue by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = viewModel.scanDuplicatesCurrentStagePercent,
+                        targetValue = smartToolsVM.scanDuplicatesCurrentStagePercent,
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 600),
                         label = "stageProgress"
                     )
@@ -615,7 +613,7 @@ fun DuplicateScanGlobalUI(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Bước ${viewModel.scanDuplicatesStageNumber}/${viewModel.scanDuplicatesTotalStages}",
+                            "Bước ${smartToolsVM.scanDuplicatesStageNumber}/${smartToolsVM.scanDuplicatesTotalStages}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = stageColor
@@ -626,9 +624,9 @@ fun DuplicateScanGlobalUI(
                             color = Color.Gray
                         )
                     }
-                    if (viewModel.scanDuplicatesStageDescription.isNotEmpty()) {
+                    if (smartToolsVM.scanDuplicatesStageDescription.isNotEmpty()) {
                         Text(
-                            viewModel.scanDuplicatesStageDescription,
+                            smartToolsVM.scanDuplicatesStageDescription,
                             fontSize = 10.sp,
                             color = Color.Gray.copy(alpha = 0.8f),
                             maxLines = 2,
@@ -644,8 +642,8 @@ fun DuplicateScanGlobalUI(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val elapsed = viewModel.scanDuplicatesElapsedTime
-                        val etr = viewModel.scanDuplicatesEstimatedTimeRemaining
+                        val elapsed = smartToolsVM.scanDuplicatesElapsedTime
+                        val etr = smartToolsVM.scanDuplicatesEstimatedTimeRemaining
 
                         Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
                         Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
@@ -654,39 +652,39 @@ fun DuplicateScanGlobalUI(
                     // ═══ THỐNG KÊ RÕ RÀNG ═══
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${viewModel.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
+                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
                             Text("Tổng tệp", fontSize = 10.sp, color = Color.Gray)
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${viewModel.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
+                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
                             Text("Trùng lặp", fontSize = 10.sp, color = Color.Gray)
                         }
                     }
                 }
                 // ── ACTION ROW: Tạm dừng / Huỷ / Thu nhỏ ──
                 Spacer(Modifier.height(12.dp))
-                if (viewModel.isWorkerRunning && !viewModel.scanDuplicatesStage.contains("Hoàn tất", ignoreCase = true)) {
+                if (smartToolsVM.isWorkerRunning && !smartToolsVM.scanDuplicatesStage.contains("Hoàn tất", ignoreCase = true)) {
                     val isPaused by com.nas.naswebdav.DuplicateProgressState.isPaused.collectAsState()
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
-                            onClick = { viewModel.cancelDuplicateScan(context) },
+                            onClick = { smartToolsVM.cancelDuplicateScan(context) },
                             modifier = Modifier.weight(1f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE57373))
                         ) { Text("Huỷ", color = Color(0xFFE57373), fontWeight = FontWeight.SemiBold) }
                         OutlinedButton(
-                            onClick = { viewModel.togglePauseDuplicateScan() },
+                            onClick = { smartToolsVM.togglePauseDuplicateScan() },
                             modifier = Modifier.weight(1f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6))
                         ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontWeight = FontWeight.SemiBold) }
                         Button(
-                            onClick = { viewModel.isScanningDuplicates = false },
+                            onClick = { smartToolsVM.isScanningDuplicates = false },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
                         ) { Text("Thu nhỏ", color = Color.White, fontWeight = FontWeight.Bold) }
                     }
                 } else {
                     Button(
-                        onClick = { viewModel.isScanningDuplicates = false },
+                        onClick = { smartToolsVM.isScanningDuplicates = false },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
                     ) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold) }
@@ -699,10 +697,10 @@ fun DuplicateScanGlobalUI(
 
 
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
-    if (viewModel.isShowingDuplicates) {
+    if (smartToolsVM.isShowingDuplicates) {
         val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         androidx.compose.material3.ModalBottomSheet(
-            onDismissRequest = { viewModel.isShowingDuplicates = false },
+            onDismissRequest = { smartToolsVM.isShowingDuplicates = false },
             sheetState = sheetState,
             containerColor = DarkSurface,
             scrimColor = Color.Black.copy(alpha = 0.6f),
@@ -718,34 +716,34 @@ fun DuplicateScanGlobalUI(
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
                         Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
-                        if (viewModel.duplicateFilesList.isNotEmpty()) {
+                        if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                             Text(
-                                text = "Phát hiện ${viewModel.duplicateFilesList.size} tệp trùng lặp",
+                                text = "Phát hiện ${smartToolsVM.duplicateFilesList.size} tệp trùng lặp",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
-                    if (viewModel.duplicateFilesList.isEmpty()) {
-                        TextButton(onClick = { viewModel.isShowingDuplicates = false; viewModel.selectedDuplicates.clear() }) { 
+                    if (smartToolsVM.duplicateFilesList.isEmpty()) {
+                        TextButton(onClick = { smartToolsVM.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) { 
                             Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) 
                         }
                     } else {
-                        if (viewModel.selectedDuplicates.isNotEmpty()) {
-                            TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
-                                Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                        if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
+                            TextButton(onClick = { smartToolsVM.deleteSelectedDuplicates(smartToolsVM.selectedDuplicates.toList()) }) {
+                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
-                if (viewModel.duplicateFilesList.isEmpty()) {
+                if (smartToolsVM.duplicateFilesList.isEmpty()) {
                     Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
                 } else {
                     // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                     // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
-                    val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                        viewModel.duplicateFilesList.groupBy { it.partialHash ?: "${it.contentLength}_${it.name}" }.values.filter { it.size >= 2 }.toList()
+                    val groupedDuplicates = remember(smartToolsVM.duplicateFilesList) {
+                        smartToolsVM.duplicateFilesList.groupBy { it.partialHash ?: "${it.contentLength}_${it.name}" }.values.filter { it.size >= 2 }.toList()
                     }
 
                     // ═══ BỘ LỌC NHANH ═══
@@ -792,12 +790,12 @@ fun DuplicateScanGlobalUI(
                         // Nút Tự động chọn thông minh (Giữ lại 1 bản, tick chọn xóa các bản copy)
                         TextButton(
                             onClick = {
-                                viewModel.selectedDuplicates.clear()
+                                smartToolsVM.selectedDuplicates.clear()
                                 groupedDuplicates.forEach { group ->
                                     // BÍ QUYẾT: File gốc thường nằm ở thư mục ngoài cùng (đường dẫn ngắn), file copy thường bị ném vào thư mục con sâu hơn.
                                     // Nên ta sắp xếp độ dài path, giữ lại phần tử đầu tiên và tick chọn xóa các phần tử phía sau.
                                     val filesToDelete = group.sortedBy { it.path.length }.drop(1)
-                                    viewModel.selectedDuplicates.addAll(filesToDelete)
+                                    smartToolsVM.selectedDuplicates.addAll(filesToDelete)
                                 }
                             },
                             modifier = Modifier.align(Alignment.End)
@@ -827,10 +825,10 @@ fun DuplicateScanGlobalUI(
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             items(items = group, key = { it.path }) { dupFile ->
-                                                val isSelected = viewModel.selectedDuplicates.contains(dupFile)
+                                                val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                                val authSnapshot = viewModel.webDavManager.currentAuthState()
+                                                val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
                                                 val auth = okhttp3.Credentials.basic(authSnapshot.user, authSnapshot.pass)
 
                                                 Box(
@@ -839,14 +837,14 @@ fun DuplicateScanGlobalUI(
                                                         .clip(RoundedCornerShape(8.dp))
                                                         .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
                                                         .clickable {
-                                                            if (isSelected) viewModel.selectedDuplicates.remove(dupFile)
-                                                            else viewModel.selectedDuplicates.add(dupFile)
+                                                            if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
+                                                            else smartToolsVM.selectedDuplicates.add(dupFile)
                                                         }
                                                 ) {
                                                     // 1. Lớp Ảnh Nền (TỐI ƯU HÓA DB CACHE MỚI CHO TẤT CẢ MEDIA)
                                                     if (isImage || isVideo) {
                                                         Box(modifier = Modifier.fillMaxSize()) {
-                                                            WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize(), viewModel = viewModel)
+                                                            WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                         }
                                                     } else {
                                                         Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
@@ -861,8 +859,8 @@ fun DuplicateScanGlobalUI(
                                                     Checkbox(
                                                         checked = isSelected,
                                                         onCheckedChange = {
-                                                            if (it) viewModel.selectedDuplicates.add(dupFile)
-                                                            else viewModel.selectedDuplicates.remove(dupFile)
+                                                            if (it) smartToolsVM.selectedDuplicates.add(dupFile)
+                                                            else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                         },
                                                         modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
                                                         colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)

@@ -108,6 +108,133 @@ suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String
     }
 }
 
+// ─── Send Power Command to NAS ─────────────────────────────────────────────────
+
+fun sendPowerCommandToNas(
+    scope: CoroutineScope,
+    endpoint: String,
+    onResult: ((Boolean, String) -> Unit)? = null
+) {
+    scope.launch(Dispatchers.IO) {
+        try {
+            val isSleepCommand = endpoint.contains("shutdown") || endpoint.contains("suspend")
+            val cmdName = when {
+                endpoint.contains("reboot") -> "Khởi động lại"
+                isSleepCommand -> "Ngủ"
+                else -> endpoint
+            }
+            val host = try { java.net.URI(WebDavManager.currentBaseUrl).host } catch (_: Exception) { "?" }
+            Log.w("Power", "Gửi lệnh $cmdName đến $host/api/$endpoint")
+            val request = okhttp3.Request.Builder()
+                .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint")
+                .post(ByteArray(0).toRequestBody(null, 0, 0))
+                .build()
+            NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                val ok = response.isSuccessful
+                withContext(Dispatchers.Main) {
+                    onResult?.invoke(ok, if (ok) "Đã gửi lệnh $cmdName NAS." else "NAS từ chối lệnh $cmdName (HTTP ${response.code}).")
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult?.invoke(false, "Không gửi được lệnh nguồn: ${e.message ?: "lỗi mạng"}")
+            }
+        }
+    }
+}
+
+// ─── Send Download Link to qBittorrent ────────────────────────────────────────
+
+fun sendDownloadLinkToQbittorrent(
+    scope: CoroutineScope,
+    url: String,
+    onResult: ((Boolean, String) -> Unit)? = null
+) {
+    scope.launch(Dispatchers.IO) {
+        try {
+            val jsonBody = org.json.JSONObject().apply { put("url", url) }.toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+            val request = okhttp3.Request.Builder()
+                .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/download")
+                .post(jsonBody)
+                .build()
+            val text = NasApplication.instance.fastApiClient.newCall(request).execute().use { it.body?.string() ?: "" }
+            val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+            withContext(Dispatchers.Main) {
+                val ok = o.optString("result") == "ok"
+                onResult?.invoke(ok, if (ok) "✅ Đã gửi link cho qBittorrent." else "❌ Lỗi: ${o.optString("error", "không phản hồi")}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult?.invoke(false, "❌ Lỗi mạng: ${e.message?.take(120)}")
+            }
+        }
+    }
+}
+
+// ─── Upload Torrent File to NAS/qBittorrent ────────────────────────────────────
+
+fun uploadTorrentFileToNas(
+    scope: CoroutineScope,
+    context: android.content.Context,
+    uri: android.net.Uri,
+    onResult: ((Boolean, String) -> Unit)? = null
+) {
+    scope.launch(Dispatchers.IO) {
+        try {
+            val contentResolver = context.contentResolver
+            var fileName = "uploaded.torrent"
+            contentResolver.query(uri, null, null, null, null)?.use { cur ->
+                val idx = cur.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cur.moveToFirst() && idx >= 0) {
+                    val n = cur.getString(idx)
+                    if (!n.isNullOrBlank()) fileName = n
+                }
+            }
+            val safeName = fileName.replace('/', '_').replace('\\', '_').take(200)
+                .let { if (it.lowercase().endsWith(".torrent")) it else "$it.torrent" }
+
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalArgumentException("Không đọc được nội dung file")
+            if (bytes.size < 64) throw IllegalArgumentException("File .torrent quá nhỏ")
+            if (bytes[0].toInt().toChar() != 'd') throw IllegalArgumentException("File không phải định dạng torrent hợp lệ")
+
+            val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
+            val filePart = okhttp3.MultipartBody.Builder()
+                .setType(okhttp3.MultipartBody.FORM)
+                .addFormDataPart("file", safeName, bytes.toRequestBody(mediaType, 0, bytes.size))
+                .build()
+
+            val req = okhttp3.Request.Builder()
+                .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/add_file")
+                .post(filePart)
+                .build()
+            val client = NasApplication.instance.fastApiClient.newBuilder()
+                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+            val text = client.newCall(req).execute().use { it.body?.string() ?: "" }
+            val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+            withContext(Dispatchers.Main) {
+                val ok = o.optString("result") == "ok"
+                onResult?.invoke(ok, if (ok) "✅ Đã gửi $safeName cho qBittorrent (${o.optInt("size")} bytes)" else "❌ Lỗi: ${o.optString("error", "không phản hồi")}")
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onResult?.invoke(false, "❌ Lỗi: ${e.message?.take(120)}")
+            }
+        }
+    }
+}
+
+// ─── Send WOL ──────────────────────────────────────────────────────────────────
+
+fun sendWakeOnLanFromMenu(
+    scope: CoroutineScope,
+    macStr: String,
+    onResult: ((WolUtil.WolResult) -> Unit)? = null
+) {
+    sendWakeOnLan(scope, macStr, null, onResult)
+}
+
 fun sendWakeOnLan(
     scope: CoroutineScope,
     macStr: String,

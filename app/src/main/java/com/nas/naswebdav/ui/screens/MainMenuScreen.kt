@@ -240,7 +240,6 @@ object ExclusivePanelState {
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MainMenuScreen(
-    viewModel: WebDavViewModel,
     onOpenFiles: () -> Unit,
     onOpenFolder: (webdavPath: String) -> Unit,
     onGlobalSearch: (String) -> Unit,
@@ -256,10 +255,11 @@ fun MainMenuScreen(
     onStartScreenRecord: () -> Unit = {}
 ) {
     val mContext = LocalContext.current
+    val menuScope = rememberCoroutineScope()
     // ═══ PHASE 7c.3 — Group 3: ALL Domain VMs hooked here ═══
     // MainMenuScreen is the root of the entire dashboard — it needs every VM.
     // Reads via facade delegation → SSoT preserved. Direct hooks are available
-    // for Group 3 migration pass (7c.3) but body still uses `viewModel.xxx` for
+    // for Group 3 migration pass (7c.3). PHASE 7d.6: All viewModel calls migrated.
     // blast-radius control during this additive migration phase.
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM     = LocalDeviceManagementVM.current
@@ -355,13 +355,13 @@ fun MainMenuScreen(
     }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     LaunchedEffect(Unit) {
-        viewModel.checkSmartNetwork(mContext)
-        viewModel.fetchStorageUsage(minIntervalMs = 0L)
-        viewModel.fetchSmartData(minIntervalMs = 0L)
-        viewModel.fetchOmvOverview(minIntervalMs = 0L)
-        viewModel.fetchNasInsights(minIntervalMs = 0L)
-        viewModel.syncLivestreamStateWithServer(mContext)
-        viewModel.startDashboardMonitoring(resetStatusPoll = false)
+        authVM.checkSmartNetwork(mContext)
+        deviceVM.fetchStorageUsage(minIntervalMs = 0L)
+        deviceVM.fetchSmartData(minIntervalMs = 0L)
+        deviceVM.fetchOmvOverview(minIntervalMs = 0L)
+        sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
+        livestreamVM.syncLivestreamStateWithServer(mContext)
+        sysMonitorVM.startDashboardMonitoring(resetStatusPoll = false)
     }
 
     // FIX D10: Collect tất cả AutoBackupState values cùng lúc ở top-level Composable.
@@ -398,7 +398,7 @@ fun MainMenuScreen(
     if (showRebootConfirm) {
         RebootConfirmDialog(
             onConfirm = {
-                viewModel.sendCommandToNas("power/reboot") { ok, message ->
+                sendPowerCommandToNas(menuScope, "power/reboot") { ok, message ->
                     commonDialogType = if (ok) DialogType.WARNING else DialogType.ERROR
                     commonDialogMessage = message
                     showCommonDialog = true
@@ -411,7 +411,7 @@ fun MainMenuScreen(
     if (showShutdownConfirm) {
         ShutdownConfirmDialog(
             onConfirm = {
-                viewModel.sendCommandToNas("power/suspend") { ok, message ->
+                sendPowerCommandToNas(menuScope, "power/suspend") { ok, message ->
                     commonDialogType = if (ok) DialogType.WARNING else DialogType.ERROR
                     commonDialogMessage = message
                     showCommonDialog = true
@@ -426,7 +426,7 @@ fun MainMenuScreen(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         if (uri != null) {
-            viewModel.uploadTorrentFile(mContext, uri)
+            uploadTorrentFileToNas(menuScope, mContext, uri)
             showDownloadDialog = false
             downloadLink = ""
         }
@@ -437,7 +437,7 @@ fun MainMenuScreen(
             onLinkChange = { downloadLink = it },
             onConfirm = {
                 if (downloadLink.isNotBlank()) {
-                    viewModel.sendDownloadLink(downloadLink)
+                    sendDownloadLinkToQbittorrent(menuScope, downloadLink)
                     showDownloadDialog = false
                     downloadLink = ""
                 }
@@ -514,7 +514,7 @@ fun MainMenuScreen(
                     TextButton(
                         onClick = {
                             showDuplicateScanDialog = false
-                            viewModel.loadDuplicateResultsFromCache(mContext)
+                            smartToolsVM.loadDuplicateResultsFromCache(mContext)
                         },
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                     ) {
@@ -528,8 +528,8 @@ fun MainMenuScreen(
                 Button(
                     onClick = {
                         showDuplicateScanDialog = false
-                        viewModel.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
-                        viewModel.isScanningDuplicates = true
+                        smartToolsVM.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
+                        smartToolsVM.isScanningDuplicates = true
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29B6F6))
                 ) {
@@ -560,7 +560,7 @@ fun MainMenuScreen(
                 if (wolMac.isNotBlank()) {
                     sharedPrefs.edit().putString("mac_address", wolMac).apply()
                     showWolDialog = false
-                    viewModel.sendWakeOnLan(wolMac) { result ->
+                    sendWakeOnLanFromMenu(menuScope, wolMac) { result ->
                         commonDialogType = if (result.success) DialogType.SUCCESS else DialogType.ERROR
                         commonDialogMessage = result.message
                         showCommonDialog = true
@@ -570,8 +570,8 @@ fun MainMenuScreen(
             onDismiss = { showWolDialog = false }
         )
     }
-    if (viewModel.showSmartDialog) {
-        SmartDiskDialog(viewModel, onDismiss = { viewModel.showSmartDialog = false })
+    if (deviceVM.showSmartDialog) {
+        SmartDiskDialog(onDismiss = { deviceVM.showSmartDialog = false })
     }
     if (showAutoBackupDialog) {
         AutoBackupDialog(
@@ -608,17 +608,17 @@ fun MainMenuScreen(
                 showAutoBackupDialog = false
             },
             onTriggerManualSync = {
-                viewModel.triggerManualBackup(mContext)
+                autoBackupVM.triggerManualBackup(mContext)
                 showAutoBackupDialog = false
             },
             onDismiss = { showAutoBackupDialog = false }
         )
     }
-    if (viewModel.showLogDialog) {
-        SystemLogDialog(onDismiss = { viewModel.showLogDialog = false })
+    if (deviceVM.showLogDialog) {
+        SystemLogDialog(onDismiss = { deviceVM.showLogDialog = false })
     }
-    if (viewModel.showDockerDialog) {
-        DockerDialog(viewModel, onDismiss = { viewModel.showDockerDialog = false })
+    if (deviceVM.showDockerDialog) {
+        DockerDialog(onDismiss = { deviceVM.showDockerDialog = false })
     }
     if (showLanWhitelistDialog) {
         LanWhitelistDialog(
@@ -669,7 +669,7 @@ fun MainMenuScreen(
                 if (lbl.contains("livestream") || lbl.contains("stream")) {
                     showLivestreamDialog = true
                 } else if (lbl.contains("usb")) {
-                    viewModel.fetchUsbImportStatus()
+                    deviceVM.fetchUsbImportStatus()
                     showUsbImportDialog = true
                 } else {
                     ExclusivePanelState.current.value = "tasks"
@@ -699,9 +699,9 @@ fun MainMenuScreen(
             "trash" -> onOpenTrash()
             "organizer" -> onOpenOrganizer()
             "guest" -> onOpenGuestPass()
-            "log" -> { viewModel.loadSystemLogs(minIntervalMs = 0L); viewModel.showLogDialog = true }
-            "nasbackup" -> { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true }
-            "smb" -> { viewModel.fetchSmbStatus(); showSmbDialog = true }
+            "log" -> { deviceVM.loadSystemLogs(minIntervalMs = 0L); deviceVM.showLogDialog = true }
+            "nasbackup" -> { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true }
+            "smb" -> { deviceVM.fetchSmbStatus(); showSmbDialog = true }
             "duplicate" -> showDuplicateScanDialog = true
             "screen_record" -> onStartScreenRecord()
         }
@@ -709,12 +709,12 @@ fun MainMenuScreen(
 
     if (pullRefreshState.isRefreshing) {
         LaunchedEffect(true) {
-            viewModel.checkSmartNetwork(mContext)
-            viewModel.fetchStorageUsage(minIntervalMs = 0L)
-            viewModel.fetchNasInsights(minIntervalMs = 0L)
-            viewModel.fetchOmvOverview(minIntervalMs = 0L)
-            viewModel.fetchSmartData(minIntervalMs = 0L)
-            viewModel.startDashboardMonitoring(resetStatusPoll = true) // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
+            authVM.checkSmartNetwork(mContext)
+            deviceVM.fetchStorageUsage(minIntervalMs = 0L)
+            sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
+            deviceVM.fetchOmvOverview(minIntervalMs = 0L)
+            deviceVM.fetchSmartData(minIntervalMs = 0L)
+            sysMonitorVM.startDashboardMonitoring(resetStatusPoll = true) // KHÔI PHỤC KẾT NỐI VÀ RESET DELAY NGAY LẬP TỨC
             kotlinx.coroutines.delay(1000)
             pullRefreshState.endRefresh()
         }
@@ -731,7 +731,6 @@ fun MainMenuScreen(
         Spacer(Modifier.height(24.dp))
 
         MainMenuDashboardHeader(
-            viewModel = viewModel,
             realtimeNow = realtimeNow,
             showPowerMenu = showPowerMenu,
             onPowerMenuChange = { showPowerMenu = it },
@@ -743,7 +742,6 @@ fun MainMenuScreen(
             Spacer(Modifier.height(8.dp))
 
         MainMenuDashboardSystemOverviewCard(
-            viewModel = viewModel,
             realtimeNow = realtimeNow,
             onShowProcessList = { sortType ->
                 processSortType = sortType
@@ -772,13 +770,13 @@ fun MainMenuScreen(
             onOpenAutoBackup = { showAutoBackupDialog = true },
             onOpenLivestream = { showLivestreamDialog = true },
             onOpenUsbImport = {
-                viewModel.fetchUsbImportStatus()
+                deviceVM.fetchUsbImportStatus()
                 showUsbImportDialog = true
             },
             onOpenDuplicateScan = {
                 when {
-                    viewModel.isWorkerRunning || viewModel.isScanningDuplicates -> viewModel.isScanningDuplicates = true
-                    smartToolsVM.duplicateFilesList.isNotEmpty() -> viewModel.isShowingDuplicates = true
+                    smartToolsVM.isWorkerRunning || smartToolsVM.isScanningDuplicates -> smartToolsVM.isScanningDuplicates = true
+                    smartToolsVM.duplicateFilesList.isNotEmpty() -> smartToolsVM.isShowingDuplicates = true
                     else -> showDuplicateScanDialog = true
                 }
             }
@@ -786,7 +784,6 @@ fun MainMenuScreen(
         MainMenuSectionSystemLogsSummaryCard()
 
         MainMenuDashboardTorrentActivityCard(
-            viewModel = viewModel,
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
         )
@@ -843,7 +840,6 @@ fun MainMenuScreen(
     // Đã HỘP CÔNG CỤ TOOLBOX Đã
     if (showToolboxDialog) {
         MainMenuToolboxDialog(
-            viewModel = viewModel,
             sharedPrefs = sharedPrefs,
             context = mContext,
             onDismiss = { showToolboxDialog = false },
@@ -853,23 +849,22 @@ fun MainMenuScreen(
             showAutoBackupDialog = { showAutoBackupDialog = true },
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
-            showNasBackupDialog = { viewModel.fetchNasConfigBackups(); showNasBackupDialog = true },
+            showNasBackupDialog = { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true },
             showDiskHealthDialog = { showDiskHealthDialog = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
-            showUsbImportDialog = { viewModel.fetchUsbImportStatus(); showUsbImportDialog = true },
+            showUsbImportDialog = { deviceVM.fetchUsbImportStatus(); showUsbImportDialog = true },
             showDownloadDialog = { showDownloadDialog = true },
-            showSmbDialog = { viewModel.fetchSmbStatus(); showSmbDialog = true },
+            showSmbDialog = { deviceVM.fetchSmbStatus(); showSmbDialog = true },
             showDuplicateScanDialog = { showDuplicateScanDialog = true }
         )
     }
-    MainMenuBottomSheetDuplicateScanGlobalUI(viewModel, mContext)
+    MainMenuBottomSheetDuplicateScanGlobalUI(mContext)
 }
 
 
 @Composable
 private fun MainMenuDashboardHeader(
-    viewModel: WebDavViewModel,
     realtimeNow: Long,
     showPowerMenu: Boolean,
     onPowerMenuChange: (Boolean) -> Unit,
@@ -879,6 +874,7 @@ private fun MainMenuDashboardHeader(
 ) {
     // Phase 7d.2: systemStatus/apiLatency/isOnLan/lastRefresh → SystemMonitorVM
     val sysMonitorVM = LocalSystemMonitorVM.current
+    val deviceVM = LocalDeviceManagementVM.current
         // ═══ HEADER ═══
         Row(
             Modifier.fillMaxWidth(),
@@ -948,21 +944,21 @@ private fun MainMenuDashboardHeader(
                     Row(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (viewModel.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
+                            .background(if (deviceVM.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (viewModel.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
+                            if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
                             contentDescription = null,
-                            tint = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
+                            tint = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            if (viewModel.isOnLan) "LAN" else "Tailscale",
+                            if (deviceVM.isOnLan) "LAN" else "Tailscale",
                             fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                            color = if (viewModel.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
+                            color = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
                         )
                     }
                     val ut = sysMonitorVM.systemStatus.uptime
@@ -1011,7 +1007,6 @@ private fun MainMenuDashboardHeader(
 
 @Composable
 private fun MainMenuDashboardSystemOverviewCard(
-    viewModel: WebDavViewModel,
     realtimeNow: Long,
     onShowProcessList: (String) -> Unit,
     onOpenNewDiskProfile: () -> Unit,
@@ -1095,7 +1090,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                     MainMenuDashboardGaugeCard(
                         title = "S.M.A.R.T",
                         value = smartStatusText,
-                        subValue = viewModel.smartInfo.temperature.replace("°C", "°").replace("--", ""),
+                        subValue = deviceVM.smartInfo.temperature.replace("°C", "°").replace("--", ""),
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
                         modifier = Modifier.weight(1f),
@@ -1377,12 +1372,12 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
 
 @Composable
 private fun MainMenuDashboardTorrentActivityCard(
-    viewModel: WebDavViewModel,
     onOpenFolder: (webdavPath: String) -> Unit,
     onGlobalSearch: (String) -> Unit,
 ) {
     // Phase 7d.2: systemStatus.torrents → SystemMonitorVM
     val sysMonitorVM = LocalSystemMonitorVM.current
+    val deviceVM = LocalDeviceManagementVM.current
         // Đã TORRENT ĐANG TẢI & HOÀN THÀNH Đã
         val downloadingTorrents = sysMonitorVM.systemStatus.torrents.filter { t ->
             val s = t.state
@@ -1438,7 +1433,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                                     }
                                     Box(
                                         modifier = Modifier.size(26.dp).clip(CircleShape).background(DarkSurface).clickable {
-                                            if (isPaused) viewModel.controlTorrent("resume", torrent.hash) else viewModel.controlTorrent("pause", torrent.hash)
+                                            if (isPaused) deviceVM.controlTorrent("resume", torrent.hash) else deviceVM.controlTorrent("pause", torrent.hash)
                                         },
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -1446,9 +1441,9 @@ private fun MainMenuDashboardTorrentActivityCard(
                                     }
                                 }
                                 DropdownMenu(expanded = showTorrentMenu, onDismissRequest = { showTorrentMenu = false }) {
-                                    DropdownMenuItem(text = { Text("Tạm dừng") }, leadingIcon = { Icon(Icons.Default.Pause, null, tint = AccentOrange) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("pause", torrent.hash) })
-                                    DropdownMenuItem(text = { Text("Tiếp tục") }, leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = AccentGreen) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("resume", torrent.hash) })
-                                    DropdownMenuItem(text = { Text("Xóa", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showTorrentMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Tạm dừng") }, leadingIcon = { Icon(Icons.Default.Pause, null, tint = AccentOrange) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("pause", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Tiếp tục") }, leadingIcon = { Icon(Icons.Default.PlayArrow, null, tint = AccentGreen) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("resume", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Xóa", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showTorrentMenu = false; deviceVM.controlTorrent("delete", torrent.hash) })
                                 }
                             }
                         }
@@ -1470,7 +1465,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                             var showCompletedMenu by remember { mutableStateOf(false) }
                             androidx.compose.runtime.key(torrent.hash) {
                             com.nas.naswebdav.ui.components.SwipeDeleteRow(
-                                onDelete = { viewModel.controlTorrent("delete", torrent.hash) },
+                                onDelete = { deviceVM.controlTorrent("delete", torrent.hash) },
                                 shape = RoundedCornerShape(6.dp),
                                 backgroundPaddingHorizontal = 8.dp,
                                 iconSize = 18.dp
@@ -1482,7 +1477,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                                             onTap = {
                                                 if (torrent.savePath.isNotEmpty()) {
                                                     // /downloads/* on NAS is symlinked as Downloads/ in WebDAV root
-                                                    val base = viewModel.webDavManager.currentBaseUrl
+                                                    val base = WebDavManager.currentBaseUrl
                                                     val linuxPath = torrent.savePath.trimEnd('/')
                                                     // Replace /downloads prefix with WebDAV symlink folder name "Downloads"
                                                     val webdavRel = if (linuxPath.startsWith("/downloads", ignoreCase = true)) {
@@ -1506,7 +1501,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                                     Text(torrent.name, fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                 }
                                 DropdownMenu(expanded = showCompletedMenu, onDismissRequest = { showCompletedMenu = false }) {
-                                    DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; viewModel.controlTorrent("delete", torrent.hash) })
+                                    DropdownMenuItem(text = { Text("Xóa khỏi danh sách", color = AccentRed) }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = AccentRed) }, onClick = { showCompletedMenu = false; deviceVM.controlTorrent("delete", torrent.hash) })
                                 }
                             }
                             } // SwipeDeleteRow content
@@ -2178,7 +2173,6 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuToolboxDialog(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     context: android.content.Context,
     onDismiss: () -> Unit,
@@ -2197,6 +2191,9 @@ fun MainMenuToolboxDialog(
     showSmbDialog: () -> Unit = {},
     showDuplicateScanDialog: () -> Unit = {}
 ) {
+    val deviceVM = LocalDeviceManagementVM.current
+    val smartToolsVM = LocalSmartToolsVM.current
+    val livestreamVM = LocalLivestreamVM.current
     var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
     var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
@@ -2250,7 +2247,6 @@ fun MainMenuToolboxDialog(
             Spacer(Modifier.height(8.dp))
             if (showBiometricSettings) {
                 com.nas.naswebdav.ui.dialogs.BiometricSettingsDialogCompat(
-                    viewModel = viewModel,
                     sharedPrefs = sharedPrefs,
                     onDismiss = {
                         showBiometricSettings = false
@@ -2286,7 +2282,7 @@ fun MainMenuToolboxDialog(
                     icon = Icons.Default.Usb,
                     color = Color(0xFF26A69A),
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.usbImportState.settings.enabled,
+                    checked = deviceVM.usbImportState.settings.enabled,
                     onClick = { onDismiss(); showUsbImportDialog() }
                 )
                 MainMenuSettingsMenuCard(
@@ -2319,15 +2315,14 @@ fun MainMenuToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.checkDockerStatus() }
+                androidx.compose.runtime.LaunchedEffect(Unit) { deviceVM.loadDockerContainers() }
                 MainMenuSettingsMenuCard(
                     title = "Docker / qBittorrent",
-                    subtitle = if (viewModel.isTogglingDocker) "Đang xử lý..." else if (viewModel.isDockerRunning) "Đang thực thi" else "Đã ngắt",
+                    subtitle = if (deviceVM.isTogglingDocker) "Đang xử lý..." else if (deviceVM.isDockerRunning) "Đang thực thi" else "Đã ngắt",
                     icon = Icons.Default.ViewInAr,
                     color = Color(0xFF1E88E5),
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.isDockerRunning,
-                    onClick = { viewModel.toggleDockerPower(!viewModel.isDockerRunning) }
+                    onClick = { deviceVM.toggleDockerPower(if (deviceVM.isDockerRunning) "stop" else "start") }
                 )
                 MainMenuSettingsMenuCard(
                     title = "Tải BitTorrent",
@@ -2347,9 +2342,9 @@ fun MainMenuToolboxDialog(
                     color = AccentCyan,
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        viewModel.loadSystemLogs()
+                        deviceVM.loadSystemLogs()
                         onDismiss()
-                        viewModel.showLogDialog = true
+                        deviceVM.showLogDialog = true
                     }
                 )
                 MainMenuSettingsMenuCard(
@@ -2373,7 +2368,7 @@ fun MainMenuToolboxDialog(
                 )
                 MainMenuSettingsMenuCard(
                     title = "Ghi Livestream",
-                    subtitle = if (viewModel.activeLivestreams.isNotEmpty()) "Đang ghi ${viewModel.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
+                    subtitle = if (livestreamVM.activeLivestreams.isNotEmpty()) "Đang ghi ${livestreamVM.activeLivestreams.size} kênh" else "TikTok / Facebook / YouTube",
                     icon = Icons.Default.Videocam,
                     color = Color(0xFFEE1D52),
                     modifier = Modifier.weight(1f),
@@ -2388,22 +2383,22 @@ fun MainMenuToolboxDialog(
                     icon = Icons.Default.DeleteSweep,
                     color = Color(0xFFEF5350),
                     modifier = Modifier.weight(1f),
-                    onClick = { onDismiss(); viewModel.cleanTrashOnDemand(context, maxAgeDays = 30) }
+                    onClick = { onDismiss(); deviceVM.cleanTrashOnDemand(context, maxAgeDays = 30) }
                 )
                 MainMenuSettingsMenuCard(
                     title = "Ổ đĩa LAN (SMB)",
-                    subtitle = if (viewModel.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
+                    subtitle = if (deviceVM.isSmbEnabled) "Đang bật — NAS_Data" else "Tắt — bấm để cấu hình",
                     icon = Icons.Default.Dns,
                     color = Color(0xFFFF9800),
                     modifier = Modifier.weight(1f),
-                    checked = viewModel.isSmbEnabled,
+                    checked = deviceVM.isSmbEnabled,
                     onClick = { onDismiss(); showSmbDialog() }
                 )
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.fetchThumbnailAudit() }
-                val thumbAudit by viewModel.thumbnailAudit.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(Unit) { smartToolsVM.fetchThumbnailAudit() }
+                val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
                 MainMenuSettingsMenuCard(
                     title = "Kiểm tra Thumbnail",
                     subtitle = thumbAudit?.let { audit ->
@@ -2415,10 +2410,10 @@ fun MainMenuToolboxDialog(
                     onClick = {
                         val canStart = thumbAudit?.let { !it.running && it.missing > 0 } ?: true
                         if (canStart) {
-                            viewModel.triggerThumbnailScan()
+                            smartToolsVM.triggerThumbnailScan()
                             android.widget.Toast.makeText(context, "Đã gửi lệnh quét Thumbnail vào hệ thống ngầm!", android.widget.Toast.LENGTH_SHORT).show()
                         } else {
-                            viewModel.fetchThumbnailAudit()
+                            smartToolsVM.fetchThumbnailAudit()
                         }
                     }
                 )
@@ -2968,433 +2963,6 @@ private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } ca
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainMenuLoginScreen(viewModel: WebDavViewModel, onLoginSuccess: () -> Unit) {
-    val context = LocalContext.current
-    val globalUiVM = LocalGlobalUiVM.current
-    val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
-    var historyIps by remember { mutableStateOf(rawHistory.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }) }
-    var ipInput by remember { mutableStateOf(historyIps.firstOrNull() ?: "") }
-    var user by remember { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "admin" }) }
-    var pass by remember { mutableStateOf(SecurePrefsHelper.getPass(context)) }
-    var expanded by remember { mutableStateOf(false) }
-
-    // State cho 2 nút khẩn cấp (WoL + Restart) hiện trên login screen — dùng khi
-    // NAS bị lỗi không đăng nhập được.
-    val sharedPrefs = remember { context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
-    var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
-    var showWolDialog by remember { mutableStateOf(false) }
-    var showRebootConfirm by remember { mutableStateOf(false) }
-    var emergencyMsg by remember { mutableStateOf("") }
-    var emergencyIsError by remember { mutableStateOf(false) }
-
-    // Trạng thái ping real-time cho các IP: URL → RTT (ms), -1 = unreachable
-    var ipPingStatus by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
-    var isCheckingPings by remember { mutableStateOf(false) }
-
-    // Khởi động vòng lặp ping thực tế khi LoginScreen hiển thị
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            isCheckingPings = true
-            try {
-                val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
-                if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                    val results = viewModel.pingUrlsForDisplay(fullUrls, user, pass)
-                    ipPingStatus = results
-                }
-            } catch (_: Exception) {}
-            isCheckingPings = false
-            kotlinx.coroutines.delay(2000)
-        }
-    }
-
-    LaunchedEffect(ipPingStatus) {
-        val bestUrl = ipPingStatus
-            .filterValues { it > 0L }
-            .minByOrNull { it.value }
-            ?.key
-        if (!bestUrl.isNullOrBlank()) {
-            ipInput = fullUrlToIp(bestUrl)
-        }
-    }
-
-    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Storage, contentDescription = "NAS", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(16.dp))
-        Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(32.dp))
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            OutlinedTextField(value = ipInput, onValueChange = { ipInput = it }, label = { Text("Địa chỉ IP / DDNS của NAS") }, modifier = Modifier.fillMaxWidth().menuAnchor(), singleLine = true, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
-            if (historyIps.isNotEmpty()) {
-                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    historyIps.forEach { ipOption ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                    // Hiển thị chỉ báo ping: ● xanh = OK, ● đỏ = fail, ● xám = checking
-                                    val fullUrl = ipToFullUrl(ipOption)
-                                    val rtt = ipPingStatus[fullUrl] ?: -2L
-                                    val indicatorColor = when {
-                                        rtt > 0 -> Color(0xFF00E676)      // Xanh: kết nối được
-                                        rtt == -1L -> Color(0xFFE53935)   // Đỏ: không kết nối được
-                                        else -> if (isCheckingPings) Color(0xFF8892B0) else Color(0xFF8892B0)  // Xám: checking hoặc chưa check
-                                    }
-                                    Box(
-                                        Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(indicatorColor)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(ipOption, modifier = Modifier.weight(1f))
-                                    // Hiển thị ping time (nếu có)
-                                    if (rtt > 0) {
-                                        Text("${rtt}ms", fontSize = 11.sp, color = Color(0xFF8892B0))
-                                        Spacer(Modifier.width(4.dp))
-                                    }
-                                }
-                            },
-                            onClick = { ipInput = ipOption; expanded = false },
-                            trailingIcon = {
-                                IconButton(onClick = {
-                                    historyIps = historyIps.filter { it != ipOption }
-                                    com.nas.naswebdav.SecurePrefsHelper.saveCredentialsAsync(context, historyIps.map { ipToFullUrl(it) }, user, pass)
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Xóa", modifier = Modifier.size(20.dp))
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-        Spacer(Modifier.height(24.dp))
-        val interactionSource = remember { MutableInteractionSource() }
-        Button(onClick = {
-            if (viewModel.isLoading) {
-                viewModel.cancelLogin()
-            } else {
-                val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
-                val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
-                val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
-                val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
-                historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
-                viewModel.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
-                    viewModel.scheduleIdleDuplicateScan(context); viewModel.scheduleIdleSpeedTest(context); viewModel.scheduleFingerprintWorker(context); onLoginSuccess()
-                }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
-            }
-        }, enabled = viewModel.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-            modifier = Modifier.fillMaxWidth().height(50.dp).background(brush = Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), shape = RoundedCornerShape(24.dp))
-        ) {
-            if (viewModel.isLoading) { Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Dừng đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-            else Text("Kết nối NAS", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-
-        // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
-        val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
-        val hasSavedCreds = remember {
-            SecurePrefsHelper.getUser(context).isNotEmpty() &&
-                SecurePrefsHelper.getPass(context).isNotEmpty() &&
-                SecurePrefsHelper.getUrlList(context).isNotEmpty()
-        }
-        val biometricAvailable = remember {
-            try {
-                val bm = androidx.biometric.BiometricManager.from(context)
-                val auth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                bm.canAuthenticate(auth) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
-            } catch (_: Exception) { false }
-        }
-        if (biometricEnabled && hasSavedCreds && biometricAvailable) {
-            Spacer(Modifier.height(12.dp))
-            val activity = context as? androidx.fragment.app.FragmentActivity
-            var autoTriggered by remember { mutableStateOf(false) }
-            val triggerBiometric: () -> Unit = {
-                if (activity != null) {
-                    val executor = androidx.core.content.ContextCompat.getMainExecutor(activity)
-                    val prompt = androidx.biometric.BiometricPrompt(activity, executor,
-                        object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
-                                super.onAuthenticationSucceeded(result)
-                                val urlList = SecurePrefsHelper.getUrlList(context)
-                                val u = SecurePrefsHelper.getUser(context)
-                                val p = SecurePrefsHelper.getPass(context)
-                                viewModel.connect(urlList, u, p, onSuccess = {
-                                    viewModel.scheduleIdleDuplicateScan(context)
-                                    viewModel.scheduleIdleSpeedTest(context)
-                                    viewModel.scheduleFingerprintWorker(context)
-                                    onLoginSuccess()
-                                }, onError = { msg ->
-                                    globalUiVM.show(DialogType.ERROR, msg)
-                                })
-                            }
-                        })
-                    val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                        .setTitle("Đăng nhập NAS")
-                        .setSubtitle("Dùng vân tay/khuôn mặt để đăng nhập nhanh")
-                        .setAllowedAuthenticators(
-                            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                        ).build()
-                    prompt.authenticate(info)
-                }
-            }
-            // Auto-trigger 1 lan khi screen vua compose (chi khi user chua login va da co credentials)
-            LaunchedEffect(Unit) {
-                if (!autoTriggered && !viewModel.isLoading) {
-                    autoTriggered = true
-                    kotlinx.coroutines.delay(300)  // cho UI settle
-                    triggerBiometric()
-                }
-            }
-            OutlinedButton(
-                onClick = triggerBiometric,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(24.dp),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF9C27B0)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
-            ) {
-                Icon(Icons.Default.Fingerprint, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Đăng nhập bằng vân tay", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        // ── KHU VUC NUT KHAN CAP: Bat nguon (WoL) + Khoi dong lai NAS ────────────
-        // Cho phep dieu khien NAS khi khong dang nhap duoc (vd NAS treo, mat ket noi).
-        Spacer(Modifier.height(20.dp))
-        Text(
-            "Điều khiển từ xa (không cần đăng nhập)",
-            fontSize = 11.sp,
-            color = Color(0xFF8892B0),
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            // NUT 1: WoL — bat nguon NAS qua magic packet, chi can MAC address
-            OutlinedButton(
-                onClick = {
-                    macAddress = sharedPrefs.getString("mac_address", macAddress) ?: macAddress
-                    showWolDialog = true
-                },
-                modifier = Modifier.weight(1f).height(46.dp),
-                shape = RoundedCornerShape(22.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26A69A))
-            ) {
-                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFF26A69A), modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Bật nguồn", color = Color(0xFF26A69A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-            // NUT 2: Restart NAS — POST /api/power/reboot truc tiep voi IP + auth tu form
-            OutlinedButton(
-                onClick = { showRebootConfirm = true },
-                modifier = Modifier.weight(1f).height(46.dp),
-                shape = RoundedCornerShape(22.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFB8C00))
-            ) {
-                Icon(Icons.Default.RestartAlt, null, tint = Color(0xFFFB8C00), modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Khởi động lại", color = Color(0xFFFB8C00), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        if (emergencyMsg.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                emergencyMsg,
-                fontSize = 12.sp,
-                color = if (emergencyIsError) Color(0xFFE53935) else Color(0xFF00E676),
-                fontWeight = FontWeight.Medium
-            )
-        }
-    }
-
-    // ── DIALOGS cho khu vuc khan cap ────────────────────────────────────────
-    if (showWolDialog) {
-        com.nas.naswebdav.ui.dialogs.WolDialog(
-            macAddress = macAddress,
-            onMacChange = { macAddress = it },
-            onConfirm = {
-                val wolMac = macAddress.trim()
-                if (wolMac.isNotBlank()) {
-                    sharedPrefs.edit().putString("mac_address", wolMac).apply()
-                    showWolDialog = false
-                    emergencyIsError = false
-                    emergencyMsg = "Đang gửi Wake-on-LAN..."
-                    viewModel.sendWakeOnLan(wolMac, ipInput) { result ->
-                        emergencyIsError = !result.success
-                        emergencyMsg = result.message
-                    }
-                }
-            },
-            onDismiss = { showWolDialog = false }
-        )
-    }
-    if (showRebootConfirm) {
-        com.nas.naswebdav.ui.dialogs.RebootConfirmDialog(
-            onConfirm = {
-                showRebootConfirm = false
-                viewModel.sendPowerCommandFromLogin(
-                    ipInput = ipInput,
-                    user = user.trim(),
-                    pass = pass.trim(),
-                    endpoint = "power/reboot",
-                    onResult = { ok, msg ->
-                        emergencyIsError = !ok
-                        emergencyMsg = msg
-                    }
-                )
-            },
-            onDismiss = { showRebootConfirm = false }
-        )
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// GuestPassScreen (từ GuestPassScreen.kt)
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-private val GpDarkSurface   = Color.Black
-private val GpDarkCard      = Color(0xFF0F0F0F)
-private val GpAccentGreen   = Color(0xFF00E676)
-private val GpAccentOrange  = Color(0xFFFF9100)
-private val GpAccentRed     = Color(0xFFFF1744)
-private val GpAccentCyan    = Color(0xFF00D2FF)
-private val GpAccentPurple  = Color(0xFFBB86FC)
-private val GpTextPrimary   = Color(0xFFE8E8E8)
-private val GpTextSecondary = Color(0xFF8892B0)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainMenuGuestPassScreen(viewModel: WebDavViewModel, onBack: () -> Unit) {
-    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-    var durationMinutes by remember { mutableIntStateOf(AppConfig.GUEST_PASS_DEFAULT_MINUTES) }
-    var copiedField by remember { mutableStateOf("") }
-    Scaffold(topBar = {
-        TopAppBar(title = { Column { Text("Local Guest Pass", fontWeight = FontWeight.Bold, color = GpTextPrimary); Text("Cấp vé FTP tạm thời cho khách", fontSize = 11.sp, color = GpTextSecondary) } },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = GpTextPrimary) } },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = GpDarkSurface))
-    }, containerColor = GpDarkSurface) { pad ->
-        Column(modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(12.dp))
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentPurple.copy(alpha = 0.08f)), shape = RoundedCornerShape(14.dp)) {
-                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Default.Info, null, tint = GpAccentPurple, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
-                    Text("NAS sẽ tự động tạo một tài khoản FTP tạm thời với quyền Chỉ đọc (Read-Only). Khách dùng FTP client (FileZilla, ES File Explorer...) để kết nối vào kho phim. Tài khoản tự xóa sau thời hạn.", fontSize = 12.sp, color = GpTextSecondary, lineHeight = 18.sp)
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Thời hạn Guest Pass", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = GpTextPrimary); Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(30 to "30 phút", 60 to "1 giờ", 180 to "3 giờ", 1440 to "1 ngày").forEach { (min, label) ->
-                            FilterChip(selected = durationMinutes == min, onClick = { durationMinutes = min }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f),
-                                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = GpAccentCyan.copy(alpha = 0.2f), selectedLabelColor = GpAccentCyan, containerColor = GpDarkSurface, labelColor = GpTextSecondary))
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp)); Text("Thời hạn đã chọn: $durationMinutes phút (${durationMinutes / 60} giờ ${durationMinutes % 60} phút)", fontSize = 12.sp, color = GpAccentCyan)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            val pass = viewModel.activeGuestPass
-            AnimatedVisibility(visible = pass != null) {
-                pass?.let { gp ->
-                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, GpAccentGreen.copy(alpha = 0.4f))) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = GpAccentGreen, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Guest Pass đang hoạt động", fontWeight = FontWeight.Bold, color = GpAccentGreen) }
-                            Spacer(Modifier.height(14.dp))
-                            MainMenuGuestInfoRow("Host", gp.host, clipboardManager, copiedField, "host") { copiedField = "host" }; Spacer(Modifier.height(8.dp))
-                            MainMenuGuestInfoRow("Port FTP", gp.ftpPort.toString(), clipboardManager, copiedField, "port") { copiedField = "port" }; Spacer(Modifier.height(8.dp))
-                            MainMenuGuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
-                            MainMenuGuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass") { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
-                            val expiresMs = gp.expiresAt - System.currentTimeMillis(); val expiresMin = (expiresMs / 60000).coerceAtLeast(0)
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, null, tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️ Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
-                            Spacer(Modifier.height(14.dp))
-                            Button(onClick = { viewModel.revokeGuestPass() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), enabled = !viewModel.isGuestPassLoading, colors = ButtonDefaults.buttonColors(containerColor = GpAccentRed.copy(alpha = 0.8f))) { Icon(Icons.Default.PersonRemove, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Thu hồi ngay", fontWeight = FontWeight.Bold) }
-                        }
-                    }
-                }
-            }
-            viewModel.guestPassError?.let { err -> Spacer(Modifier.height(10.dp)); Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentRed.copy(alpha = 0.1f)), shape = RoundedCornerShape(12.dp)) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Error, null, tint = GpAccentRed, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(err, color = GpAccentRed, fontSize = 12.sp) } } }
-            Spacer(Modifier.height(14.dp))
-            if (pass == null) {
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (!viewModel.isGuestPassLoading) Brush.horizontalGradient(listOf(GpAccentPurple, Color(0xFF6200EA))) else Brush.horizontalGradient(listOf(GpTextSecondary.copy(alpha=0.2f), GpTextSecondary.copy(alpha=0.2f)))).clickable(
-                    enabled = !viewModel.isGuestPassLoading,
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { viewModel.createGuestPass(durationMinutes) }.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
-                    if (viewModel.isGuestPassLoading) { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(color = GpTextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Đang tạo tài khoản...", color = GpTextPrimary, fontWeight = FontWeight.Bold) } }
-                    else { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PersonAdd, null, tint = Color.White, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Cấp Guest Pass ($durationMinutes phút)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
-private fun MainMenuGuestInfoRow(label: String, value: String, clipboardManager: androidx.compose.ui.platform.ClipboardManager, copiedField: String, fieldKey: String, onCopied: () -> Unit) {
-    val isCopied = copiedField == fieldKey
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0F3460).copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold); Text(value, fontSize = 14.sp, color = Color(0xFFE8E8E8), fontWeight = FontWeight.SemiBold) }
-        IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(32.dp)) {
-            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, null, tint = if (isCopied) Color(0xFF00E676) else Color(0xFF8892B0), modifier = Modifier.size(16.dp))
-        }
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-// PerformanceScreen (từ PerformanceScreen.kt)
-// ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainMenuPerformanceScreen(onBack: () -> Unit) {
-    val mContext = LocalContext.current
-    val metrics by PerformanceMonitor.metricsFlow.collectAsState()
-    LaunchedEffect(Unit) { PerformanceMonitor.startMonitoring(mContext) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Màn Giám Sát Kỹ Thuật (DevOps Monitor)", fontSize = 18.sp, fontWeight = FontWeight.Bold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Trở lại") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) }) { padding ->
-        Column(modifier = Modifier.fillMaxSize().background(Color.Black).padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            MainMenuMetricCard("Động Cơ JVM (App RAM)", Icons.Default.Memory, "${metrics.usedJvmMemoryMb} MB / ${metrics.maxJvmMemoryMb} MB", if (metrics.maxJvmMemoryMb > 0) metrics.usedJvmMemoryMb.toFloat() / metrics.maxJvmMemoryMb else 0f, if (metrics.usedJvmMemoryMb > metrics.maxJvmMemoryMb * 0.8) Color.Red else Color.Green)
-            MainMenuMetricCard("Bộ Nhớ Hệ Thống (Màng RAM)", Icons.Default.Adb, "Trống: ${metrics.freeRamMb} MB (Tổng: ${metrics.totalRamMb} MB)", metrics.ramUsagePercent / 100f, if (metrics.ramUsagePercent > 85) Color.Red else Color(0xFF03A9F4))
-            MainMenuMetricCard("Trái Tim Chip Bán Dẫn (CPU Thread)", Icons.Default.Speed, "Hoạt động: ${metrics.cpuUsagePercent}% (Dao động ảo)", metrics.cpuUsagePercent / 100f, if (metrics.cpuUsagePercent > 70) Color(0xFFFF9800) else Color.Cyan)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MainMenuNetworkBadge(Modifier.weight(1f), "Tải Xuống", "${metrics.rxSpeedKbps} KB/s", Icons.Default.ArrowDownward, Color.Green)
-                MainMenuNetworkBadge(Modifier.weight(1f), "Đẩy Lên", "${metrics.txSpeedKbps} KB/s", Icons.Default.ArrowUpward, Color(0xFFFF5722))
-            }
-            MainMenuMetricCard("Kho Gạch Ngói Hình Ảnh (Coil Disk Cache)", Icons.Default.Storage, "${metrics.diskCacheSizeMb} MB đang ngốn rác", (metrics.diskCacheSizeMb / 800f).coerceIn(0f, 1f), Color(0xFF9C27B0))
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { coil.Coil.imageLoader(mContext).memoryCache?.clear(); System.gc() }, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))) { Icon(Icons.Default.DeleteForever, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("BĂM NÚT BỘ ĐỆM RAM (Tránh Đơ Máy)", fontWeight = FontWeight.Bold) }
-        }
-    }
-}
-
-@Composable
-fun MainMenuMetricCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, value: String, progress: Float, progressColor: Color) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, color = Color.Gray, fontSize = 14.sp) }
-            Spacer(Modifier.height(8.dp)); Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold); Spacer(Modifier.height(12.dp))
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)), color = progressColor, trackColor = Color(0xFF424242))
-        }
-    }
-}
-
-@Composable
-fun MainMenuNetworkBadge(modifier: Modifier, title: String, speed: String, icon: androidx.compose.ui.graphics.vector.ImageVector, color: Color) {
-    Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)), shape = RoundedCornerShape(12.dp)) {
-        Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp)); Spacer(Modifier.height(4.dp)); Text(title, color = Color.Gray, fontSize = 12.sp); Text(speed, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable
 fun MainMenuSectionQuickActionSelectorDialog(
     currentSlots: Set<String>,
     onDismiss: () -> Unit,
@@ -3926,11 +3494,11 @@ fun MainMenuBottomSheetSmbBottomSheet(
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDavViewModel, context: android.content.Context) {
+fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
     // Phase 7d.2: duplicateFilesList/selectedDuplicates → SmartToolsVM
     val smartToolsVM = LocalSmartToolsVM.current
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
-    if (viewModel.isScanningDuplicates) {
+    if (smartToolsVM.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         androidx.compose.material3.ModalBottomSheet(
             // Onclick scrim KHÔNG đóng sheet — user phải bấm nút "Thu nhỏ" / "Huỷ" explicit.
@@ -3938,7 +3506,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
             // isScanningDuplicates = false nếu user thu nhỏ thủ công.
             // Với behavior "không đóng khi click ngoài", dismissRequest của sheet phải
             // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
-            onDismissRequest = { viewModel.isScanningDuplicates = false },
+            onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
             containerColor = Color(0xFF0F0F0F),
             scrimColor = Color.Black.copy(alpha = 0.6f),
@@ -3972,7 +3540,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                 }
                 Column(Modifier.fillMaxWidth()) {
                     // ═══ GIAI ĐOẠN HIỆN TẠI ═══
-                    val stage = viewModel.scanDuplicatesStage
+                    val stage = smartToolsVM.scanDuplicatesStage
                     val stageColor = when {
                         stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> Color(0xFF1E88E5) // Xanh dương
                         stage.contains("Phân tích") -> Color(0xFFF57C00) // Cam
@@ -4008,7 +3576,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         Text("Thư mục:", fontSize = 11.sp, color = Color.Gray)
                     }
                     Text(
-                        text = viewModel.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
+                        text = smartToolsVM.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
                         color = Color(0xFF5C6BC0), fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
@@ -4023,7 +3591,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         Text("Đang xử lý:", fontSize = 11.sp, color = Color.Gray)
                     }
                     Text(
-                        text = viewModel.scanDuplicatesCurrentItemName.ifEmpty { "..." },
+                        text = smartToolsVM.scanDuplicatesCurrentItemName.ifEmpty { "..." },
                         color = Color(0xFFEF6C00), fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
@@ -4033,12 +3601,12 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
 
                     // ═══ PROGRESS BAR CHÍNH XÁC (2 THANH) ═══
                     val progressValue by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = viewModel.scanDuplicatesPercent,
+                        targetValue = smartToolsVM.scanDuplicatesPercent,
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 600),
                         label = "totalProgress"
                     )
                     val stageProgressValue by androidx.compose.animation.core.animateFloatAsState(
-                        targetValue = viewModel.scanDuplicatesCurrentStagePercent,
+                        targetValue = smartToolsVM.scanDuplicatesCurrentStagePercent,
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 600),
                         label = "stageProgress"
                     )
@@ -4092,7 +3660,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Bước ${viewModel.scanDuplicatesStageNumber}/${viewModel.scanDuplicatesTotalStages}",
+                            "Bước ${smartToolsVM.scanDuplicatesStageNumber}/${smartToolsVM.scanDuplicatesTotalStages}",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = stageColor
@@ -4103,9 +3671,9 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                             color = Color.Gray
                         )
                     }
-                    if (viewModel.scanDuplicatesStageDescription.isNotEmpty()) {
+                    if (smartToolsVM.scanDuplicatesStageDescription.isNotEmpty()) {
                         Text(
-                            viewModel.scanDuplicatesStageDescription,
+                            smartToolsVM.scanDuplicatesStageDescription,
                             fontSize = 10.sp,
                             color = Color.Gray.copy(alpha = 0.8f),
                             maxLines = 2,
@@ -4121,8 +3689,8 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val elapsed = viewModel.scanDuplicatesElapsedTime
-                        val etr = viewModel.scanDuplicatesEstimatedTimeRemaining
+                        val elapsed = smartToolsVM.scanDuplicatesElapsedTime
+                        val etr = smartToolsVM.scanDuplicatesEstimatedTimeRemaining
 
                         Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
                         Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
@@ -4131,39 +3699,39 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                     // ═══ THỐNG KÊ RÕ RÀNG ═══
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${viewModel.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
+                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
                             Text("Tổng tệp", fontSize = 10.sp, color = Color.Gray)
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${viewModel.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
+                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
                             Text("Trùng lặp", fontSize = 10.sp, color = Color.Gray)
                         }
                     }
                 }
                 // ── ACTION ROW: Tạm dừng / Huỷ / Thu nhỏ ──
                 Spacer(Modifier.height(12.dp))
-                if (viewModel.isWorkerRunning && !viewModel.scanDuplicatesStage.contains("Hoàn tất", ignoreCase = true)) {
+                if (smartToolsVM.isWorkerRunning && !smartToolsVM.scanDuplicatesStage.contains("Hoàn tất", ignoreCase = true)) {
                     val isPaused by com.nas.naswebdav.DuplicateProgressState.isPaused.collectAsState()
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
-                            onClick = { viewModel.cancelDuplicateScan(context) },
+                            onClick = { smartToolsVM.cancelDuplicateScan(context) },
                             modifier = Modifier.weight(1f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE57373))
                         ) { Text("Huỷ", color = Color(0xFFE57373), fontWeight = FontWeight.SemiBold) }
                         OutlinedButton(
-                            onClick = { viewModel.togglePauseDuplicateScan() },
+                            onClick = { smartToolsVM.togglePauseDuplicateScan() },
                             modifier = Modifier.weight(1f),
                             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6))
                         ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontWeight = FontWeight.SemiBold) }
                         Button(
-                            onClick = { viewModel.isScanningDuplicates = false },
+                            onClick = { smartToolsVM.isScanningDuplicates = false },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
                         ) { Text("Thu nhỏ", color = Color.White, fontWeight = FontWeight.Bold) }
                     }
                 } else {
                     Button(
-                        onClick = { viewModel.isScanningDuplicates = false },
+                        onClick = { smartToolsVM.isScanningDuplicates = false },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
                     ) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold) }
@@ -4176,10 +3744,10 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
 
 
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
-    if (viewModel.isShowingDuplicates) {
+    if (smartToolsVM.isShowingDuplicates) {
         val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
         androidx.compose.material3.ModalBottomSheet(
-            onDismissRequest = { viewModel.isShowingDuplicates = false },
+            onDismissRequest = { smartToolsVM.isShowingDuplicates = false },
             sheetState = sheetState,
             containerColor = DarkSurface,
             scrimColor = Color.Black.copy(alpha = 0.6f),
@@ -4205,12 +3773,12 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                         }
                     }
                     if (smartToolsVM.duplicateFilesList.isEmpty()) {
-                        TextButton(onClick = { viewModel.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) { 
+                        TextButton(onClick = { smartToolsVM.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) { 
                             Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) 
                         }
                     } else {
                         if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
-                            TextButton(onClick = { viewModel.deleteSelectedDuplicates() }) {
+                            TextButton(onClick = { smartToolsVM.deleteSelectedDuplicates(smartToolsVM.duplicateFilesList) }) {
                                 Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -4307,7 +3875,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(viewModel: com.nas.naswebdav.WebDav
                                                 val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                                val auth = okhttp3.Credentials.basic(viewModel.webDavManager.currentUser, viewModel.webDavManager.currentPass)
+                                                val auth = okhttp3.Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
 
                                                 Box(
                                                     modifier = Modifier

@@ -40,6 +40,7 @@ class FileBrowserViewModel(
 
     var currentUrl by androidx.compose.runtime.mutableStateOf("")
     internal val urlStack: Stack<String> = Stack()
+    var errorMessage by androidx.compose.runtime.mutableStateOf<String?>(null)
     var isSpecialMode by androidx.compose.runtime.mutableStateOf(false)
     var specialTitle by androidx.compose.runtime.mutableStateOf("")
         internal set

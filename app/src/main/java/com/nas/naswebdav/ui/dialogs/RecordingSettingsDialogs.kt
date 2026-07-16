@@ -62,11 +62,11 @@ import androidx.compose.ui.window.Dialog
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BiometricSettingsDialogCompat(
-    viewModel: WebDavViewModel,
     sharedPrefs: android.content.SharedPreferences,
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
+    val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
     var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
     var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
@@ -240,7 +240,7 @@ fun BiometricSettingsDialogCompat(
                             .putInt("biometric_lock_delay_sec", delaySec)
                             .apply()
                         deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
-                        viewModel.lockNowRequested = true
+                        autoBackupVM.lockNowRequested = true
                         onDismiss()
                     },
                     enabled = bioStatus == "available",
