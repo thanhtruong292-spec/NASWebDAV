@@ -29,17 +29,17 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * DeviceManagementViewModel — Phase 2 của VM Split.
+ * DeviceManagementViewModel — Primary owner of device-management state.
  *
  * Quản lý: SMB server toggle, LAN whitelist, Docker, OMV, SMART info, Speedtest,
- *          Fan mode, Storage usage, System logs.
+ *          Fan mode, Storage usage, System logs, USB import, Telegram config,
+ *          Rules config, Device approval.
  *
  * Constructor: (repository) — WebDavManager là singleton, dùng trực tiếp.
  * State: giữ mutableStateOf (Compose snapshot) cho UI read trực tiếp.
  *
- * Phase 2 chỉ tạo skeleton — sẽ migrate function bodies từ facade trong các
- * commits tiếp theo. Trước mắt, facade WebDavViewModel forward calls sang
- * WebDavManager/repository trực tiếp để không break UI.
+ * Phase 2: initial skeleton. Phase 7d.x: migrated from WebDavViewModel facade.
+ * UI now reads state directly from this VM.
  */
 class DeviceManagementViewModel(
     private val repository: WebDavRepository,
@@ -50,7 +50,7 @@ class DeviceManagementViewModel(
     }
     private val globalUi get() = _globalUi
 
-    // ═══ STATE — mirror của WebDavViewModel để UI không break ═══
+    // ═══ STATE — owned by DeviceManagementViewModel ═══
 
     var isSmbEnabled by androidx.compose.runtime.mutableStateOf(false)
         internal set

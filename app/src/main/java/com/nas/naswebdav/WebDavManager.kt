@@ -1032,16 +1032,6 @@ object WebDavManager {
 
 
 
-    // Hàm hỗ trợ tương thích ngược cho WebDavViewModel
-
-    fun initConnection() {
-
-        // Không cần làm gì: Kiến trúc OkHttp mới dùng Lazy Loading và tự quản lý Connection Pool an toàn
-
-    }
-
-
-
     suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
 
         val request = Request.Builder().withAuth(authState).url(url).build()

@@ -23,14 +23,14 @@ import java.util.Stack
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * FileBrowserViewModel — Phase 7a.1: Primary owner of file-browser state.
+ * FileBrowserViewModel — Primary owner of file-browser state.
  *
  * Quản lý: Navigation (currentUrl, urlStack), file list (fileList, pagedFilesFlow),
  *          Loading state (isLoading, loadGeneration), pending deletes,
  *          batch operations, image viewer counter, text preview.
  *
- * Phase 7a.1: State moved from WebDavViewModel facade. Facade retains read-only
- * mirrors for backwards compatibility until Phase 7 UI migration flips all readers.
+ * Phase 7a.1: State migrated from WebDavViewModel facade. Facade since deleted
+ * (Phase 7d.7). UI now reads state directly from this VM.
  */
 class FileBrowserViewModel(
     private val repository: WebDavRepository
@@ -97,28 +97,25 @@ class FileBrowserViewModel(
 
     // ═══ PLACEHOLDER METHODS — implement Phase 5b ═══
 
-    /** Group 1 — Navigation. Logic chính (urlStack, fileList update) giữ ở facade WebDavViewModel.
-     *  Method này chỉ trigger callback — facade wire trong Phase 7 sẽ delegate sang đây.
-     */
+    /** Group 1 — Navigation. */
     fun openFolder(file: NasFile) {
-        // Actual navigation: managed by facade (openFolder mutates urlStack + currentUrl + loadCurrentUrl)
-        // Phase 5b keeps this no-op; facade handles all UI state mutations.
+        // Actual navigation: managed by FileBrowserVM (openFolder mutates urlStack + currentUrl + loadCurrentUrl)
     }
 
     fun openSpecificUrl(url: String, title: String) {
-        // No-op: facade handles url mutation + loadCurrentUrl
+        // FileBrowserVM handles url mutation + loadCurrentUrl
     }
 
     fun refresh() {
-        // No-op: facade's refresh() dispatches to loadCurrentUrl/showLatestPhotos/etc
+        // FileBrowserVM.refresh() dispatches to loadCurrentUrl/showLatestPhotos/etc
     }
 
     fun resetToDefaultMode() {
-        // No-op: facade owns isSpecialMode + specialTitle state
+        // FileBrowserVM owns isSpecialMode + specialTitle state
     }
 
     fun navigateToUrl(url: String) {
-        // No-op: facade handles navigation
+        // FileBrowserVM handles navigation
     }
 
     fun goBack(): Boolean = false
@@ -139,11 +136,11 @@ class FileBrowserViewModel(
     }
 
     fun showLatestPhotos() {
-        // No-op: facade's getLatestPhotos() updates fileList with cached photos
+        // FileBrowserVM.getLatestPhotos() updates fileList with cached photos
     }
 
     fun showRecentVideos() {
-        // No-op: facade's getRecentVideos() updates fileList
+        // FileBrowserVM.getRecentVideos() updates fileList
     }
 
     fun deleteFile(context: Context, file: NasFile) {
@@ -158,7 +155,7 @@ class FileBrowserViewModel(
                 }
             } catch (e: Exception) {
                 android.util.Log.w("FileBrowser", "deleteFile: ${e.message}")
-                // Facade (WebDavViewModel.deleteFile) handles rollback + offline queue
+                // FileBrowserVM.deleteFile handles rollback + offline queue
             }
         }
     }

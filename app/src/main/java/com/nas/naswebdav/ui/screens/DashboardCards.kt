@@ -393,7 +393,7 @@ internal fun OmvServicesHardwarePanel() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // toggleOmvService lives in WebDavViewModel (not yet in DeviceMgmtVM)
+                        // toggleOmvService — migrated to DeviceMgmtVM
                         deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
                         pendingServiceName = ""
                     }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }

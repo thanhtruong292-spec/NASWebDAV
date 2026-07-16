@@ -222,18 +222,18 @@ class AuthSessionViewModel(
                 }
             }
 
-            // Gọi refresh() từ facade WebDavViewModel — không gọi trực ti���p ở đây
-            // vì refresh() thuộc FileBrowser domain (Phase 5)
+            // AuthSessionVM không gọi refresh() — FileBrowserVM owns that.
+            // Fire a signal so the orchestrator can trigger a refresh.
             if (result2) {
-                // Signal cho facade biết cần refresh — facade sẽ gọi refresh() sau
                 _authSuccessSignal.value = true
             }
             loginJob = null
         }
     }
 
-    // ─── SIGNAL cho facade ───────────────────────────────────────────────────
-    // AuthSessionVM không gọi refresh() trực tiếp — facade WebDavViewModel sẽ observe signal này
+    // ─── AUTH SUCCESS SIGNAL ───────────────────────────────────────────────
+    // After a successful login, the orchestrator observes this signal
+    // and calls FileBrowserVM.refresh() / showLatestPhotos() etc.
 
     private val _authSuccessSignal = MutableStateFlow(false)
     val authSuccessSignal: StateFlow<Boolean> = _authSuccessSignal.asStateFlow()
@@ -271,7 +271,6 @@ class AuthSessionViewModel(
                     withContext(Dispatchers.IO) {
                         try {
                             WebDavManager.connect(safeActive, user, pass)
-                            WebDavManager.initConnection()
 
                             val host = safeUrlHost(safeActive)
                             if (host.isNotEmpty()) {

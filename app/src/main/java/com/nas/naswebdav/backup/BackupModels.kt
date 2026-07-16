@@ -1,7 +1,7 @@
 package com.nas.naswebdav.backup
 
 // Re-export data classes — Phase 7d.7: data classes now live top-level in
-// com.nas.naswebdav.NasModels.kt (extracted from WebDavViewModel).
+// com.nas.naswebdav.NasModels.kt (extracted from WebDavViewModel facade).
 //
 // We keep these local aliases so callers in this package can keep using the
 // short names (`BackupSchedule`, `SleepSchedule`, `UsbImportState`, etc.) when

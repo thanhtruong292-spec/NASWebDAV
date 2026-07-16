@@ -419,8 +419,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 /// --- NAVIGATION ---
 
 /**
- * Phase 7d.7: refreshNasStateOnForeground — replaces WebDavViewModel's method.
- * Orchestrates refresh of all domain VMs on app foreground.
+ * Phase 7d.7: refreshNasStateOnForeground — replaces the deprecated
+ * WebDavViewModel facade method. Orchestrates refresh of all domain VMs on
+ * app foreground (e.g. via OnLifecycleEvent callback).
  */
 private fun refreshNasStateOnForeground(
     domainProvider: DomainViewModelProvider,

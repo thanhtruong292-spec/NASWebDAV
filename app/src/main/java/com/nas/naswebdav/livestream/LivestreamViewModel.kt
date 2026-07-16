@@ -396,7 +396,7 @@ class LivestreamViewModel(
     }
 
     fun dedupeLivestreamJobsForDisplay(jobs: List<LivestreamJob>): List<LivestreamJob> {
-        // SP3 fix already applied in WebDavViewModel facade — keep behavior identical
+        // SP3 fix: originally applied in WebDavViewModel facade — no-op now
         return jobs
     }
 }
