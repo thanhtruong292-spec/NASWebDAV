@@ -139,7 +139,7 @@ class SystemMonitorViewModel(
     private suspend fun fetchStatusNow(): Boolean {
         return try {
             val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-            val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().build()
+            val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().let(WebDavManager::tagCurrentAuth).build()
             NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: "{}"
@@ -188,7 +188,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
@@ -220,7 +220,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/process_state").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/process_state").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -250,7 +250,7 @@ class SystemMonitorViewModel(
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val dateParam = if (date.isNotBlank()) "?date=$date" else ""
-                val req = okhttp3.Request.Builder().url("$apiBase/api/report/daily$dateParam").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/report/daily$dateParam").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -285,7 +285,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/health").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/health").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -325,7 +325,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/history?days=$days").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/smart/history?days=$days").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
@@ -362,7 +362,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backups").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backups").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
@@ -412,7 +412,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("filename", filename).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup").delete(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup").delete(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 fetchNasConfigBackups()
             } catch (e: Exception) {
@@ -428,7 +428,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("filename", filename).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/restore").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/restore").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) {
                         nasConfigBackupMessage = if (resp.isSuccessful) "Đã restore" else "Lỗi restore"
@@ -448,7 +448,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/system/insights").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/insights").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -511,7 +511,7 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"

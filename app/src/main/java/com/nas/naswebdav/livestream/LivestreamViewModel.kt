@@ -177,7 +177,7 @@ class LivestreamViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -222,7 +222,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("username", username).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "addTikTokLiveWatchUser: ${e.message}")
@@ -238,7 +238,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("username", username).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "removeTikTokLiveWatchUser: ${e.message}")
@@ -260,7 +260,7 @@ class LivestreamViewModel(
                 val body = org.json.JSONObject()
                     .put("enabled", enabled).put("start", start).put("end", end).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "updateTikTokLiveWatchSettings: ${e.message}")
@@ -284,7 +284,7 @@ class LivestreamViewModel(
                     if (tiktokUsername.isNotBlank()) put("watch_username", tiktokUsername)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 withContext(Dispatchers.Main) { livestreamMessage = "✅ Đã gửi lệnh ghi" }
             } catch (e: Exception) {
@@ -301,7 +301,7 @@ class LivestreamViewModel(
                 val body = org.json.JSONObject().put("job_id", jobId).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/stop").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/stop").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
@@ -317,7 +317,7 @@ class LivestreamViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/status").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/status").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -347,7 +347,7 @@ class LivestreamViewModel(
                 val body = org.json.JSONObject().put("url", sourceUrl).put("filename", fileName).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/stream/pipe").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/stream/pipe").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 streamPipeStatus = "Lỗi: ${e.message}"
@@ -377,7 +377,7 @@ class LivestreamViewModel(
                 val body = org.json.JSONObject().put("url", url).put("folder", saveFolder).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/social/download").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/social/download").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     val respBody = resp.body?.string() ?: ""
                     withContext(Dispatchers.Main) {

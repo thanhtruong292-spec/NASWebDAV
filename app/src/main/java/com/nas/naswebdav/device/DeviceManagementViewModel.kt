@@ -369,7 +369,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -396,7 +396,7 @@ class DeviceManagementViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("action", action).put("kind", kind).put("value", value).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadLanWhitelist()
             } catch (e: Exception) {
@@ -422,7 +422,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/omv/overview").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/omv/overview").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -449,7 +449,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/smart").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/smart").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -532,7 +532,7 @@ class DeviceManagementViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/storage/usage").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/storage/usage").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"

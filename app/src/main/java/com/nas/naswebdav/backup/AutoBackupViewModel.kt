@@ -122,7 +122,7 @@ class AutoBackupViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/schedule").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/schedule").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -156,7 +156,7 @@ class AutoBackupViewModel(
                     put("rclone_remote", newSchedule.rcloneRemote)
                     put("rclone_path", newSchedule.rclonePath)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/schedule").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/schedule").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) {
                         backupScheduleMessage = if (resp.isSuccessful) "Đã lưu lịch backup" else "Lỗi lưu"
@@ -174,7 +174,7 @@ class AutoBackupViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/status").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/status").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -205,7 +205,7 @@ class AutoBackupViewModel(
                     put("resume_enabled", settings.resumeEnabled)
                     put("verify_checksum", settings.verifyChecksum)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/settings").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "saveUsbImportSettings: ${e.message}")
@@ -252,7 +252,7 @@ class AutoBackupViewModel(
                 }
                 val body = org.json.JSONObject().put("conflicts", arr).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/resolve").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/resolve").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "resolveUsbImportConflicts: ${e.message}")
@@ -264,7 +264,7 @@ class AutoBackupViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").get().build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
@@ -296,7 +296,7 @@ class AutoBackupViewModel(
                     put("end_hour", newSchedule.endHour)
                     put("idle_only", newSchedule.idleOnly)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").post(body).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/sleep_schedule").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) {
                         sleepScheduleMessage = if (resp.isSuccessful) "Đã lưu lịch ngủ" else "Lỗi lưu"
