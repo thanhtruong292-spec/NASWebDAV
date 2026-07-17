@@ -574,11 +574,44 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // ── Strategy 3: Client-side fallback ─────────────────
-                    strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
+                    // ── Strategy 3: Client-side fallback via direct MediaMetadataRetriever ──
+                    if (isVideo) {
+                        val extracted = try {
+                            kotlinx.coroutines.withTimeout(5000L) {
+                                kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                                    val retriever = android.media.MediaMetadataRetriever()
+                                    val headers = java.util.HashMap<String, String>()
+                                    headers["Authorization"] = auth
+                                    
+                                    // URL encode spaces to prevent invalid HTTP requests in native retriever
+                                    val safeUrl = url.replace(" ", "%20")
+                                    retriever.setDataSource(safeUrl, headers)
+                                    
+                                    val bitmap = retriever.getFrameAtTime(1000000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                    retriever.release()
+                                    if (bitmap != null) {
+                                        val out = java.io.FileOutputStream(thumbFile)
+                                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+                                        out.close()
+                                        true
+                                    } else false
+                                }
+                            }
+                        } catch (e: Exception) { false }
+                        
+                        if (extracted) {
+                            localThumbPath = thumbFile.absolutePath
+                            runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
+                            strategy = ThumbStrategy.LOCAL
+                        } else {
+                            strategy = ThumbStrategy.ERROR
+                        }
+                    } else {
+                        strategy = ThumbStrategy.CLIENT_IMAGE
+                    }
                 }
             } catch (e: Exception) {
-                strategy = if (isVideo) ThumbStrategy.CLIENT_VIDEO else ThumbStrategy.CLIENT_IMAGE
+                strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
             }
         }
     }
@@ -612,18 +645,7 @@ fun WebDavCachedThumbnail(
             )
         }
         ThumbStrategy.CLIENT_VIDEO -> {
-            // Coil VideoFrameDecoder: trích frame video trực tiếp trên Android
-            // Dùng ImageLoader đã được config với VideoFrameDecoder
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(url)
-                    .addHeader("Authorization", auth)
-                    .crossfade(true)
-                    .size(coil.size.Size(300, 300))
-                    .build(),
-                imageLoader = LocalContext.current.imageLoader,
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
-            )
+            // Replaced by direct MediaMetadataRetriever fallback
         }
         ThumbStrategy.CLIENT_IMAGE -> {
             AsyncImage(

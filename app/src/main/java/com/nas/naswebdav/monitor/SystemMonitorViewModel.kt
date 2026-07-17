@@ -130,8 +130,8 @@ class SystemMonitorViewModel(
             var consecutiveFails = 0
             while (true) {
                 val ok = fetchStatusNow()
-                if (ok) { consecutiveFails = 0; delay(15_000L) }
-                else { consecutiveFails++; delay((15_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
+                if (ok) { consecutiveFails = 0; delay(60_000L) }
+                else { consecutiveFails++; delay((60_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
             }
         }
     }
@@ -139,24 +139,93 @@ class SystemMonitorViewModel(
     private suspend fun fetchStatusNow(): Boolean {
         return try {
             val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-            val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().let(WebDavManager::tagCurrentAuth).build()
+            // Dùng /api/status thay vì /api/status/realtime vì cần full data (disk, uptime, string formats)
+            val req = okhttp3.Request.Builder().url("$apiBase/api/status").get().let(WebDavManager::tagCurrentAuth).build()
             NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    
+                    val diskPartsArr = json.optJSONArray("disk_parts")
+                    val diskPartList = mutableListOf<com.nas.naswebdav.DiskPart>()
+                    if (diskPartsArr != null) {
+                        for (i in 0 until diskPartsArr.length()) {
+                            val dObj = diskPartsArr.getJSONObject(i)
+                            diskPartList.add(com.nas.naswebdav.DiskPart(
+                                mount = dObj.optString("mount", "/"),
+                                percent = dObj.optDouble("percent", 0.0).toFloat(),
+                                total = dObj.optString("total", "0GB"),
+                                used = dObj.optString("used", "0GB")
+                            ))
+                        }
+                    }
+
+                    val torrentsArr = json.optJSONArray("torrents")
+                    val torrentList = mutableListOf<com.nas.naswebdav.TorrentInfo>()
+                    if (torrentsArr != null) {
+                        for (i in 0 until torrentsArr.length()) {
+                            val tObj = torrentsArr.getJSONObject(i)
+                            torrentList.add(com.nas.naswebdav.TorrentInfo(
+                                name = tObj.optString("name", "Đang tải..."),
+                                progress = tObj.optDouble("progress", 0.0).toFloat(),
+                                speed = tObj.optString("speed", "0 B/s"),
+                                hash = tObj.optString("hash", ""),
+                                state = tObj.optString("state", ""),
+                                savePath = tObj.optString("save_path", "")
+                            ))
+                        }
+                    }
+
+                    val topProcsArr = json.optJSONArray("top_processes")
+                    val topProcs = mutableListOf<Pair<String, Float>>()
+                    if (topProcsArr != null) {
+                        for (i in 0 until topProcsArr.length()) {
+                            val pObj = topProcsArr.getJSONObject(i)
+                            topProcs.add(Pair(pObj.optString("name", "?"), pObj.optDouble("cpu", 0.0).toFloat()))
+                        }
+                    }
+
+                    val rawDisk = json.optString("disk", "--%|")
+                    val diskPartsStrArr = rawDisk.split("|")
+                    val diskStr = diskPartsStrArr[0]
+                    val diskCapacity = diskPartsStrArr.getOrNull(1) ?: ""
+                    
+                    val fanRpmRaw = json.opt("fan_rpm")
+                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
+
                     withContext(Dispatchers.Main) {
                         systemStatus = NasSystemStatus(
-                            temp = json.optString("temp", "--°C"),
+                            temp = json.optString("temperature", "--°C"),
                             cpu = json.optString("cpu", "--%"),
                             cpuTemp = json.optString("cpu_temp", "--°C"),
-                            ram = json.optString("mem", "--"),
-                            disk = json.optString("disk", "--%"),
-                            fanMode = json.optString("fan_mode", "auto"),
-                            fanStatus = json.optString("fan_status", "--"),
+                            ram = json.optString("ram", "--"),
+                            disk = diskStr,
+                            diskCapacity = diskCapacity,
+                            netRx = json.optString("net_rx", "0 B/s"),
+                            netTx = json.optString("net_tx", "0 B/s"),
                             uptime = json.optString("uptime", "--"),
                             status = "Đã kết nối",
-                            ramPercent = json.optString("mem_percent", "0")
+                            ramPercent = json.optString("ram_percent", "0"),
+                            torrents = torrentList,
+                            diskParts = diskPartList,
+                            fanStatus = json.optString("fan_status", "--"),
+                            fanMode = json.optString("fan_mode", "auto"),
+                            fanOnTemp = json.optDouble("fan_on_temp", 50.0).toFloat(),
+                            fanOffTemp = json.optDouble("fan_off_temp", 40.0).toFloat(),
+                            fanRpm = fanRpm,
+                            topProcesses = topProcs
                         )
+                        lastStatusRefreshAt = System.currentTimeMillis()
+
+                        val tempRaw = systemStatus.temp
+                        val cpuTemp = systemStatus.cpuTemp
+                        val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                        val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                        
+                        if (hddVal > 0f || cpuVal > 0f) {
+                            temperatureHistory.add(Pair(cpuVal, hddVal))
+                            while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
+                        }
                     }
                     true
                 } else false
@@ -176,8 +245,8 @@ class SystemMonitorViewModel(
                 fetchRealtimeMetricPoint()
                 val changed = metricsHistory.size > lastSize
                 lastSize = metricsHistory.size
-                if (changed) { consecutiveFails = 0; delay(5_000L) }
-                else { consecutiveFails++; delay((5_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
+                if (changed) { consecutiveFails = 0; delay(30_000L) }
+                else { consecutiveFails++; delay((30_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
             }
         }
     }
@@ -199,6 +268,7 @@ class SystemMonitorViewModel(
                     val cpuArr     = json.optJSONArray("cpu_percent")
                     val ramArr     = json.optJSONArray("ram_percent")
                     val cpuTempArr = json.optJSONArray("cpu_temp")
+                    val hddTempArr = json.optJSONArray("hdd_temp")
                     val netRxArr   = json.optJSONArray("net_rx_kbps")
                     val netTxArr   = json.optJSONArray("net_tx_kbps")
                     val count = timestamps?.length() ?: 0
@@ -211,10 +281,12 @@ class SystemMonitorViewModel(
                                 cpuTemp   = cpuTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
                                 cpuPercent = cpuArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
                                 ramPercent = ramArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                                hddTemp    = hddTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
                                 netRxKbps  = netRxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
                                 netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
                             ))
                         }
+                        lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                 }
             } catch (e: Exception) {
@@ -242,6 +314,7 @@ class SystemMonitorViewModel(
                             cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
                             cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
                             ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
+                            hddTemp    = json.optDouble("hdd_temp", 0.0).toFloat(),
                             netRxKbps  = json.optDouble("net_rx_kbps", 0.0).toFloat(),
                             netTxKbps  = json.optDouble("net_tx_kbps", 0.0).toFloat()
                         )
@@ -249,6 +322,7 @@ class SystemMonitorViewModel(
                         if (metricsHistory.size > 1000) {
                             metricsHistory.removeRange(0, 200)
                         }
+                        lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                 }
             } catch (_: Exception) { /* silent for realtime */ }
@@ -350,14 +424,14 @@ class SystemMonitorViewModel(
                                 smartStatus = it.optString("smart_status", "unknown"),
                                 tempC = it.optInt("temp_c", 0).takeIf { v -> v > 0 },
                                 powerOnHours = it.optInt("power_on_hours", 0).takeIf { v -> v > 0 },
-                                reallocatedSectors = null,
-                                pendingSectors = null,
-                                offlineUncorrectable = null,
-                                udmaCrcErr = null,
-                                commandTimeout = null,
-                                ext4ErrorsRecent = 0,
-                                sataResetsRecent = 0,
-                                ioErrorsRecent = 0,
+                                reallocatedSectors = it.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                                pendingSectors = it.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                                offlineUncorrectable = it.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                                udmaCrcErr = it.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                                commandTimeout = it.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                                ext4ErrorsRecent = it.optInt("ext4_errors_recent", 0),
+                                sataResetsRecent = it.optInt("sata_resets_recent", 0),
+                                ioErrorsRecent = it.optInt("io_errors_recent", 0),
                                 warnings = emptyList()
                             )
                         }

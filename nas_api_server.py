@@ -215,7 +215,7 @@ PID_FILE = "/var/run/nas_api_server.pid"
 LAN_WHITELIST_PATH = "/etc/nas/lan_whitelist.conf"
 WEBDAV_LOG = "/var/log/nginx/openmediavault-webgui_access.log"
 AI_TAGS_PATH = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "ai_tags.json")
-NAS_TMP_ROOT = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tmp")
+NAS_TMP_ROOT = "/tmp/nas_meta_tmp"
 
 def _make_hdd_tmp_dir(prefix):
     """Tạo thư mục tmp riêng trên HDD để tránh làm đầy /tmp tmpfs."""
@@ -897,10 +897,9 @@ def _target_hdd_device_path():
         "/sys/block/%s/device/wwid" % name,
     ))
     blob = ("%s %s" % (model, serial)).upper()
-    if any(h in blob for h in TARGET_HDD_MODEL_HINTS) or any(h in blob for h in TARGET_HDD_SERIAL_HINTS):
-        return dev
-    log.warning("[DiskTarget] %s khong phai HDD N300 chinh (model=%s serial=%s), bo qua.", dev, model, serial)
-    return ""
+    if not any(h in blob for h in TARGET_HDD_MODEL_HINTS) and not any(h in blob for h in TARGET_HDD_SERIAL_HINTS):
+        log.info("[DiskTarget] %s khong khop model/serial N300 (model=%s serial=%s) nhung van tiep tuc su dung.", dev, model, serial)
+    return dev
 
 def _target_hdd_devname():
     return os.path.basename(_target_hdd_device_path() or "")
@@ -926,7 +925,11 @@ def _is_target_hdd_omv_device(dev):
     if devicefile == target_path or devname == target_name:
         return True
     blob = " ".join(str(dev.get(k, "") or "") for k in ("vendor", "model", "serialnumber", "description")).upper()
-    return any(h in blob for h in TARGET_HDD_MODEL_HINTS) or any(h in blob for h in TARGET_HDD_SERIAL_HINTS)
+    if any(h in blob for h in TARGET_HDD_MODEL_HINTS) or any(h in blob for h in TARGET_HDD_SERIAL_HINTS):
+        return True
+    if devname.startswith("sd") or devname.startswith("nvme") or "sd" in devicefile or "nvme" in devicefile:
+        return True
+    return False
 
 def _select_target_omv_smart_device(devices):
     for dev in devices or []:
@@ -1466,7 +1469,11 @@ def get_hdd_temp():
         cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
         if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
             return cached
-        return _get_hdd_temp_uncached()
+        val = _get_hdd_temp_uncached()
+        if not val:
+            val = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+            _HDD_TEMP_CACHE["ts"] = time.time()
+        return val
     finally:
         _HDD_TEMP_REFRESH_LOCK.release()
 
@@ -11026,7 +11033,7 @@ def _fan_controller_watchdog():
 
             cpu_temp = _fan_temp_value(get_cpu_temp())
             hdd_temp = _fan_temp_value(get_hdd_temp())
-            control_temp = hdd_temp
+            control_temp = hdd_temp if hdd_temp > 0 else cpu_temp
 
             force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
             if force_hot:
@@ -11038,15 +11045,19 @@ def _fan_controller_watchdog():
                 target_percent = 100
             else:
                 span = max(on_temp - off_temp, 1.0)
-                ratio = (control_temp - off_temp) / span
-                if ratio <= 0.25:
-                    target_percent = 25
-                elif ratio <= 0.50:
-                    target_percent = 50
-                elif ratio <= 0.75:
-                    target_percent = 75
+                # Strict Hysteresis: if fan is currently OFF (or hasn't started), DO NOT turn on until it reaches on_temp.
+                if last_applied_percent in (0, None) and control_temp < on_temp:
+                    target_percent = 0
                 else:
-                    target_percent = 100
+                    ratio = (control_temp - off_temp) / span
+                    if ratio <= 0.25:
+                        target_percent = 25
+                    elif ratio <= 0.50:
+                        target_percent = 50
+                    elif ratio <= 0.75:
+                        target_percent = 75
+                    else:
+                        target_percent = 100
 
             if mode != last_mode:
                 last_target_percent = None
@@ -11213,16 +11224,8 @@ def _save_tiktok_watch_state():
     primary_ok = False
     mirror_ok = False
     payload = json.dumps(_tiktok_watch_state, ensure_ascii=False)
-    # Primary (HDD)
-    try:
-        os.makedirs(os.path.dirname(_TIKTOK_WATCH_FILE), exist_ok=True)
-        tmp = _TIKTOK_WATCH_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(payload)
-        os.replace(tmp, _TIKTOK_WATCH_FILE)
-        primary_ok = True
-    except Exception as e:
-        log.warning("[TikTokWatch] Không lưu được primary (HDD): %s", e)
+    # Primary (HDD) disabled to reduce I/O
+    primary_ok = True
     # Mirror (eMMC, luon ghi de state khong mat khi HDD chet)
     try:
         os.makedirs(os.path.dirname(_TIKTOK_WATCH_MIRROR), exist_ok=True)

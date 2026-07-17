@@ -1259,37 +1259,11 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                                     
                                     var displayPercent = realPercent
                                     var displayStatusStr = fanStatusStr
-                                    
-                                    if (sysMonitorVM.systemStatus.fanMode == "custom") {
-                                        val hddVal = sysMonitorVM.systemStatus.temp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                                        val fanTempVal = hddVal
-                                        val onT = sysMonitorVM.systemStatus.fanOnTemp
-                                        val offT = sysMonitorVM.systemStatus.fanOffTemp
-                                        val rawPercent = if (fanTempVal <= offT) {
-                                            0
-                                        } else if (fanTempVal >= onT) {
-                                            100
-                                        } else if (onT > offT) {
-                                            (((fanTempVal - offT) / (onT - offT)) * 100).toInt()
-                                        } else {
-                                            realPercent
-                                        }
-                                        displayPercent = when {
-                                            rawPercent <= 10 -> 0
-                                            rawPercent <= 25 -> 25
-                                            rawPercent <= 50 -> 50
-                                            rawPercent <= 75 -> 75
-                                            else -> 100
-                                        }
-                                        if (displayPercent > 0) {
-                                            val rpm = (4300f * displayPercent / 100f).toInt()
-                                            displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
-                                        } else {
-                                            displayStatusStr = "Dừng"
-                                        }
-                                    } else if (isFanRunning) {
+                                    if (isFanRunning) {
                                         val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
                                         displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
+                                    } else {
+                                        displayStatusStr = "Dừng"
                                     }
                                     
                                     val isFanDisplayRunning = displayPercent > 0

@@ -94,16 +94,53 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     // Lưu ViewModel cấp độ Activity để nhận Intent khi sống nền
 
-    /** Single source for all 7 Domain VMs — Phase 7b manual DI. */
-    private val domainProvider by lazy(LazyThreadSafetyMode.NONE) {
-        DomainViewModelProvider(WebDavRepository(WebDavManager, NasApplication.instance.database))
+    /** Repository */
+    private val repository by lazy(LazyThreadSafetyMode.NONE) {
+        WebDavRepository(WebDavManager, NasApplication.instance.database)
     }
 
+    /** GlobalUiVM is shared */
+    private val globalUiVM by lazy(LazyThreadSafetyMode.NONE) { com.nas.naswebdav.GlobalUiViewModel() }
+
     private val viewModelFactory by lazy(LazyThreadSafetyMode.NONE) {
-        object : ViewModelProvider.Factory {
+        object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = domainProvider as T
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T = when {
+                modelClass.isAssignableFrom(com.nas.naswebdav.auth.AuthSessionViewModel::class.java) -> com.nas.naswebdav.auth.AuthSessionViewModel(repository) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.browser.FileBrowserViewModel::class.java) -> com.nas.naswebdav.browser.FileBrowserViewModel(repository) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.monitor.SystemMonitorViewModel::class.java) -> com.nas.naswebdav.monitor.SystemMonitorViewModel(repository) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.GlobalUiViewModel::class.java) -> globalUiVM as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.device.DeviceManagementViewModel::class.java) -> com.nas.naswebdav.device.DeviceManagementViewModel(repository, globalUiVM) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.smarttools.SmartToolsViewModel::class.java) -> com.nas.naswebdav.smarttools.SmartToolsViewModel(repository) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.livestream.LivestreamViewModel::class.java) -> com.nas.naswebdav.livestream.LivestreamViewModel(repository) as T
+                modelClass.isAssignableFrom(com.nas.naswebdav.backup.AutoBackupViewModel::class.java) -> com.nas.naswebdav.backup.AutoBackupViewModel(repository) as T
+                else -> throw IllegalArgumentException("Unknown VM class")
+            }
         }
+    }
+
+    private val authSessionVM: com.nas.naswebdav.auth.AuthSessionViewModel by viewModels { viewModelFactory }
+    private val fileBrowserVM: com.nas.naswebdav.browser.FileBrowserViewModel by viewModels { viewModelFactory }
+    private val systemMonitorVM: com.nas.naswebdav.monitor.SystemMonitorViewModel by viewModels { viewModelFactory }
+    private val deviceManagementVM: com.nas.naswebdav.device.DeviceManagementViewModel by viewModels { viewModelFactory }
+    private val smartToolsVM: com.nas.naswebdav.smarttools.SmartToolsViewModel by viewModels { viewModelFactory }
+    private val livestreamVM: com.nas.naswebdav.livestream.LivestreamViewModel by viewModels { viewModelFactory }
+    private val autoBackupVM: com.nas.naswebdav.backup.AutoBackupViewModel by viewModels { viewModelFactory }
+    private val globalUiViewModel: com.nas.naswebdav.GlobalUiViewModel by viewModels { viewModelFactory }
+
+    /** Single source for all 7 Domain VMs — Phase 7b manual DI now properly managed by ViewModelStore */
+    private val domainProvider by lazy(LazyThreadSafetyMode.NONE) {
+        DomainViewModelProvider(
+            authSession = authSessionVM,
+            fileBrowser = fileBrowserVM,
+            systemMonitor = systemMonitorVM,
+            globalUi = globalUiViewModel,
+            deviceManagement = deviceManagementVM,
+            smartTools = smartToolsVM,
+            livestream = livestreamVM,
+            autoBackup = autoBackupVM,
+            repository = repository
+        )
     }
     private lateinit var screenCaptureLauncher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>
     private lateinit var notificationPermissionLauncher: androidx.activity.result.ActivityResultLauncher<String>
