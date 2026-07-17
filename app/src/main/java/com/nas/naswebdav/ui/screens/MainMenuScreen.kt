@@ -3164,10 +3164,30 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                         else -> "?"
                     }
 
+                    var showKillConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                    if (showKillConfirm) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { showKillConfirm = false },
+                            title = { Text("Tắt tiến trình", color = Color.White) },
+                            text = { Text("Bạn có chắc muốn tắt tiến trình ${proc.name} (PID: ${proc.pid}) không?", color = TextSecondary) },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = {
+                                    showKillConfirm = false
+                                    systemMonitorVM.killSystemProcess(context, proc.pid)
+                                }) { Text("Đồng ý", color = Color(0xFFEF5350)) }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(onClick = { showKillConfirm = false }) { Text("Hủy", color = TextSecondary) }
+                            },
+                            containerColor = Color(0xFF1E1E1E)
+                        )
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .clickable(onClick = { showKillConfirm = true })
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -3185,6 +3205,13 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                         }
                         val displayValue = if (sortBy == "cpu") "${proc.cpu}%" else "${proc.mem}%"
                         Text(displayValue, color = AccentCyan, fontSize = 12.sp, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(8.dp))
+                        androidx.compose.material3.Icon(
+                            androidx.compose.material.icons.Icons.Default.Close,
+                            contentDescription = "Kill",
+                            tint = Color(0xFFEF5350).copy(alpha = 0.7f),
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }

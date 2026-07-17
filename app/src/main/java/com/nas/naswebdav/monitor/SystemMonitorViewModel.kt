@@ -599,8 +599,9 @@ class SystemMonitorViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
-                    val body = resp.body?.string() ?: "[]"
-                    val arr = org.json.JSONArray(body)
+                    val body = resp.body?.string() ?: "{}"
+                    val obj = org.json.JSONObject(body)
+                    val arr = obj.optJSONArray("data") ?: org.json.JSONArray()
                     withContext(Dispatchers.Main) {
                         systemProcesses = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             SystemProcess(
@@ -618,6 +619,36 @@ class SystemMonitorViewModel(
                 android.util.Log.w("SysMonitor", "fetchSystemProcesses: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isLoadingProcesses = false }
+            }
+        }
+    }
+
+    fun killSystemProcess(context: Context, pid: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val json = org.json.JSONObject().put("pid", pid).toString()
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/processes/kill")
+                    .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), json))
+                    .let(WebDavManager::tagCurrentAuth)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: ""
+                    withContext(Dispatchers.Main) {
+                        if (resp.isSuccessful) {
+                            android.widget.Toast.makeText(context, "Đã kill tiến trình PID $pid", android.widget.Toast.LENGTH_SHORT).show()
+                            fetchSystemProcesses(context)
+                        } else {
+                            val err = org.json.JSONObject(body).optString("error", "Lỗi kill tiến trình")
+                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Lỗi kết nối: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

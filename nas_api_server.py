@@ -3473,7 +3473,30 @@ def api_processes():
         log.error("Lỗi API danh sách tiến trình: %s", e)
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/processes/kill", methods=["POST"])
+@requires_auth
+def api_process_kill():
+    """Kill process by PID"""
+    try:
+        data = request.get_json(silent=True) or {}
+        pid = data.get("pid")
+        if not pid:
+            return jsonify({"error": "Missing pid"}), 400
+        
+        # Security: Do not allow killing self or system critical PIDs (e.g., 1)
+        if int(pid) <= 1 or int(pid) == os.getpid():
+            return jsonify({"error": "Tiến trình hệ thống không thể kill"}), 403
 
+        import signal
+        os.kill(int(pid), signal.SIGKILL)
+        return jsonify({"status": "success", "message": "Đã kill tiến trình %s" % pid})
+    except ProcessLookupError:
+        return jsonify({"error": "Tiến trình không tồn tại"}), 404
+    except PermissionError:
+        return jsonify({"error": "Không có quyền kill tiến trình này"}), 403
+    except Exception as e:
+        log.error("Lỗi API kill tiến trình: %s", e)
+        return jsonify({"error": str(e)}), 500
 @app.route("/api/smb/status", methods=["GET"])
 @requires_auth
 def api_smb_status():
