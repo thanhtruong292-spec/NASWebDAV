@@ -351,62 +351,38 @@ internal fun DiskProfileBottomSheet(
     }
 
     if (showTrackingConfirm) {
-        AlertDialog(
-            onDismissRequest = { showTrackingConfirm = false },
-            containerColor = Color(0xFF15161D),
-            title = { Text("Xác nhận theo dõi ổ mới", color = TextPrimary, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Chỉ đặt mốc theo dõi sau khi đã xác nhận ổ dữ liệu hiện tại là ổ cần theo dõi. Mốc này gắn với model/serial ổ để tính checklist 24 giờ, 7 ngày và 30 ngày.",
-                    color = TextSecondary,
-                    fontSize = 13.sp
-                )
+        AppStatusDialog(
+            type = DialogType.CONFIRM,
+            message = "Chỉ đặt mốc theo dõi sau khi đã xác nhận ổ dữ liệu hiện tại là ổ cần theo dõi. Mốc này gắn với model/serial ổ để tính checklist 24 giờ, 7 ngày và 30 ngày.",
+            onConfirm = {
+                val now = System.currentTimeMillis()
+                prefs.edit()
+                    .putLong("${activeDiskKey}_installed_at", now)
+                    .putString("${activeDiskKey}_model", diskModel)
+                    .putString("${activeDiskKey}_serial", diskSerial)
+                    .apply()
+                deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
+                installedAt = now
+                showTrackingConfirm = false
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val now = System.currentTimeMillis()
-                    prefs.edit()
-                        .putLong("${activeDiskKey}_installed_at", now)
-                        .putString("${activeDiskKey}_model", diskModel)
-                        .putString("${activeDiskKey}_serial", diskSerial)
-                        .apply()
-                    deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
-                    installedAt = now
-                    showTrackingConfirm = false
-                }) { Text("Bắt đầu theo dõi", color = AccentGreen, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTrackingConfirm = false }) { Text("Hủy", color = TextSecondary) }
-            }
+            onDismiss = { showTrackingConfirm = false }
         )
     }
     if (showResetTrackingConfirm) {
-        AlertDialog(
-            onDismissRequest = { showResetTrackingConfirm = false },
-            containerColor = Color(0xFF15161D),
-            title = { Text("Đặt lại mốc theo dõi", color = TextPrimary, fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "Thao tác này đưa hồ sơ ổ mới về trạng thái chưa theo dõi và các số liệu sẽ trở lại 0 cho đến khi đặt mốc mới.",
-                    color = TextSecondary,
-                    fontSize = 13.sp
-                )
+        AppStatusDialog(
+            type = DialogType.WARNING,
+            message = "Thao tác này đưa hồ sơ ổ mới về trạng thái chưa theo dõi và các số liệu sẽ trở lại 0 cho đến khi đặt mốc mới.",
+            onConfirm = {
+                prefs.edit()
+                    .remove("${activeDiskKey}_installed_at")
+                    .remove("${activeDiskKey}_model")
+                    .remove("${activeDiskKey}_serial")
+                    .apply()
+                deviceVM.logUserAction("DiskProfile", "Đặt lại mốc theo dõi hồ sơ ổ đĩa.")
+                installedAt = 0L
+                showResetTrackingConfirm = false
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    prefs.edit()
-                        .remove("${activeDiskKey}_installed_at")
-                        .remove("${activeDiskKey}_model")
-                        .remove("${activeDiskKey}_serial")
-                        .apply()
-                    deviceVM.logUserAction("DiskProfile", "Tái thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).", "WARNING")
-                    installedAt = 0L
-                    showResetTrackingConfirm = false
-                }) { Text("Đặt lại", color = AccentOrange, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetTrackingConfirm = false }) { Text("Hủy", color = TextSecondary) }
-            }
+            onDismiss = { showResetTrackingConfirm = false }
         )
     }
 

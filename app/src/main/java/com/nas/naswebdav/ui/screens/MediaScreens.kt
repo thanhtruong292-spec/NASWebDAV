@@ -1202,30 +1202,17 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                 val fileName = url.substringAfterLast("/").let {
                     try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
                 }
-                AlertDialog(
-                    onDismissRequest = { showDeleteDialog = false },
-                    icon = { Icon(Icons.Default.DeleteForever, null, tint = Color(0xFFEF5350)) },
-                    title = { Text("Xóa video?", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
-                    text = { Text("Bạn có chắc muốn xóa\n\"$fileName\"?\n\nVideo sẽ được chuyển vào Thùng rác.") },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                showDeleteDialog = false
-                                exoPlayer.pause()
-                                val fileToDelete = NasFile(fileName, url, false, "video/*", 0, 0)
-                                fileBrowserVM.deleteFile(context, fileToDelete)
-                                onBack()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))
-                        ) {
-                            Text("Xóa")
-                        }
+                AppStatusDialog(
+                    type = DialogType.WARNING,
+                    message = "Bạn có chắc muốn xóa\n\"$fileName\"?\n\nVideo sẽ được chuyển vào Thùng rác.",
+                    onConfirm = {
+                        showDeleteDialog = false
+                        exoPlayer.pause()
+                        val fileToDelete = NasFile(fileName, url, false, "video/*", 0, 0)
+                        fileBrowserVM.deleteFile(context, fileToDelete)
+                        onBack()
                     },
-                    dismissButton = {
-                        TextButton(onClick = { showDeleteDialog = false }) {
-                            Text("Hủy")
-                        }
-                    }
+                    onDismiss = { showDeleteDialog = false }
                 )
             }
             } // Close Box (AnimatedVisibility content)

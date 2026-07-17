@@ -307,45 +307,26 @@ fun NasConfigBackupDialog(
     // Confirm dialogs
     if (pendingDeleteFilename != null) {
         val target = pendingDeleteFilename!!
-        AlertDialog(
-            onDismissRequest = { pendingDeleteFilename = null },
-            containerColor = Color(0xFF161616),
-            title = { Text("Xoá backup?", color = Color.White) },
-            text = { Text("Sẽ xoá vĩnh viễn:\n$target", color = Color(0xFFE8E8E8), fontSize = 13.sp) },
-            confirmButton = {
-                TextButton(onClick = {
-                    sysMonitorVM.deleteNasConfigBackup(target)
-                    pendingDeleteFilename = null
-                }) { Text("XOÁ", color = Color(0xFFEF5350), fontWeight = FontWeight.Bold) }
+        AppStatusDialog(
+            type = DialogType.WARNING,
+            message = "Sẽ xoá vĩnh viễn:\n$target",
+            onConfirm = {
+                sysMonitorVM.deleteNasConfigBackup(target)
+                pendingDeleteFilename = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteFilename = null }) { Text("Huỷ", color = Color(0xFF8892B0)) }
-            }
+            onDismiss = { pendingDeleteFilename = null }
         )
     }
     if (pendingRestoreFilename != null) {
         val target = pendingRestoreFilename!!
-        AlertDialog(
-            onDismissRequest = { pendingRestoreFilename = null },
-            containerColor = Color(0xFF161616),
-            title = { Text("Khôi phục cấu hình?", color = Color.White) },
-            text = {
-                Text(
-                    "Sẽ ghi đè các file cấu hình hiện tại của NAS bằng nội dung trong:\n\n$target\n\n" +
-                        "Các file gốc được giữ lại với đuôi .pre-restore. Sau khi xong, " +
-                        "service nas_api/nginx sẽ tự restart.\n\nTiếp tục?",
-                    color = Color(0xFFE8E8E8), fontSize = 13.sp
-                )
+        AppStatusDialog(
+            type = DialogType.WARNING,
+            message = "Sẽ ghi đè các file cấu hình hiện tại của NAS bằng nội dung trong:\n\n$target\n\nCác file gốc được giữ lại với đuôi .pre-restore. Sau khi xong, service nas_api/nginx sẽ tự restart.\n\nTiếp tục?",
+            onConfirm = {
+                sysMonitorVM.restoreNasConfigBackup(target)
+                pendingRestoreFilename = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    sysMonitorVM.restoreNasConfigBackup(target)
-                    pendingRestoreFilename = null
-                }) { Text("KHÔI PHỤC", color = Color(0xFFFFA726), fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingRestoreFilename = null }) { Text("Huỷ", color = Color(0xFF8892B0)) }
-            }
+            onDismiss = { pendingRestoreFilename = null }
         )
     }
 

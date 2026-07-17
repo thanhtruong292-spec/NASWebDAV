@@ -380,27 +380,14 @@ internal fun OmvServicesHardwarePanel() {
         var pendingServiceTitle by remember { mutableStateOf("") }
         var pendingServiceEnable by remember { mutableStateOf(false) }
         if (pendingServiceName.isNotBlank()) {
-            AlertDialog(
-                onDismissRequest = { pendingServiceName = "" },
-                containerColor = DarkElevated,
-                title = { Text("Xác nhận dịch vụ", color = TextPrimary, fontWeight = FontWeight.Bold) },
-                text = {
-                    Text(
-                        "${if (pendingServiceEnable) "Bật" else "Tắt"} dịch vụ $pendingServiceTitle?",
-                        color = TextSecondary,
-                        style = AppTypography.BodyLarge.copy(color = TextSecondary)
-                    )
+            AppStatusDialog(
+                type = DialogType.CONFIRM,
+                message = "${if (pendingServiceEnable) "Bật" else "Tắt"} dịch vụ $pendingServiceTitle?",
+                onConfirm = {
+                    deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
+                    pendingServiceName = ""
                 },
-                confirmButton = {
-                    TextButton(onClick = {
-                        // toggleOmvService — migrated to DeviceMgmtVM
-                        deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
-                        pendingServiceName = ""
-                    }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pendingServiceName = "" }) { Text("Hủy", color = TextSecondary) }
-                }
+                onDismiss = { pendingServiceName = "" }
             )
         }
         if (deviceVM.omvOverview.services.isNotEmpty() || deviceVM.omvOverview.disks.isNotEmpty()) {

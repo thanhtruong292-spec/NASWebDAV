@@ -1109,26 +1109,14 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
         var pendingServiceTitle by remember { mutableStateOf("") }
         var pendingServiceEnable by remember { mutableStateOf(false) }
         if (pendingServiceName.isNotBlank()) {
-            AlertDialog(
-                onDismissRequest = { pendingServiceName = "" },
-                containerColor = Color(0xFF15161D),
-                title = { Text("Xác nhận dịch vụ", color = TextPrimary, fontWeight = FontWeight.Bold) },
-                text = {
-                    Text(
-                        "${if (pendingServiceEnable) "Bật" else "Tắt"} dịch vụ $pendingServiceTitle?",
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
+            AppStatusDialog(
+                type = DialogType.CONFIRM,
+                message = "${if (pendingServiceEnable) "Bật" else "Tắt"} dịch vụ $pendingServiceTitle?",
+                onConfirm = {
+                    deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
+                    pendingServiceName = ""
                 },
-                confirmButton = {
-                    TextButton(onClick = {
-                        deviceVM.toggleOmvService(pendingServiceName, pendingServiceEnable)
-                        pendingServiceName = ""
-                    }) { Text(if (pendingServiceEnable) "Bật" else "Tắt", color = if (pendingServiceEnable) AccentGreen else AccentRed, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pendingServiceName = "" }) { Text("Hủy", color = TextSecondary) }
-                }
+                onDismiss = { pendingServiceName = "" }
             )
         }
         if (deviceVM.omvOverview.services.isNotEmpty() || deviceVM.omvOverview.disks.isNotEmpty()) {

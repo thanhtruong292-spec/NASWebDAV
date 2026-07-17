@@ -77,37 +77,11 @@ fun RebootConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.RestartAlt, null, tint = Color(0xFFFB8C00), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Khởi động lại NAS", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = { Text("Bạn có chắc chắn muốn khởi động lại NAS Chainedbox? Mọi tiến trình đang chạy sẽ bị dừng lại.", fontSize = 14.sp) },
-        confirmButton = {
-            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-            Button(
-                onClick = onConfirm,
-                interactionSource = interactionSource,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                contentPadding = PaddingValues(),
-                modifier = Modifier.background(
-                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                        colors = listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
-                    ),
-                    shape = RoundedCornerShape(24.dp)
-                )
-            ) {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Khởi động lại", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF00897B)) } },
-        shape = RoundedCornerShape(16.dp)
+    AppStatusDialog(
+        type = DialogType.WARNING,
+        message = "Bạn có chắc chắn muốn khởi động lại NAS Chainedbox? Mọi tiến trình đang chạy sẽ bị dừng lại.",
+        onConfirm = { onDismiss(); onConfirm() },
+        onDismiss = onDismiss
     )
 }
 
@@ -119,37 +93,11 @@ fun ShutdownConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFF26A69A), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Ngủ NAS", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = { Text("Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.", fontSize = 14.sp) },
-        confirmButton = {
-            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-            Button(
-                onClick = onConfirm,
-                interactionSource = interactionSource,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                contentPadding = PaddingValues(),
-                modifier = Modifier.background(
-                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                        colors = listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
-                    ),
-                    shape = RoundedCornerShape(24.dp)
-                )
-            ) {
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    Text("Ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF00897B)) } },
-        shape = RoundedCornerShape(16.dp)
+    AppStatusDialog(
+        type = DialogType.WARNING,
+        message = "Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.",
+        onConfirm = { onDismiss(); onConfirm() },
+        onDismiss = onDismiss
     )
 }
 
