@@ -3166,20 +3166,14 @@ fun MainMenuBottomSheetProcessListBottomSheet(
 
                     var showKillConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
                     if (showKillConfirm) {
-                        androidx.compose.material3.AlertDialog(
-                            onDismissRequest = { showKillConfirm = false },
-                            title = { Text("Tắt tiến trình", color = Color.White) },
-                            text = { Text("Bạn có chắc muốn tắt tiến trình ${proc.name} (PID: ${proc.pid}) không?", color = TextSecondary) },
-                            confirmButton = {
-                                androidx.compose.material3.TextButton(onClick = {
-                                    showKillConfirm = false
-                                    systemMonitorVM.killSystemProcess(context, proc.pid)
-                                }) { Text("Đồng ý", color = Color(0xFFEF5350)) }
+                        AppStatusDialog(
+                            type = DialogType.CONFIRM,
+                            message = "Bạn có chắc muốn tắt tiến trình ${proc.name} (PID: ${proc.pid}) không?",
+                            onConfirm = {
+                                showKillConfirm = false
+                                systemMonitorVM.killSystemProcess(context, proc.pid)
                             },
-                            dismissButton = {
-                                androidx.compose.material3.TextButton(onClick = { showKillConfirm = false }) { Text("Hủy", color = TextSecondary) }
-                            },
-                            containerColor = Color(0xFF1E1E1E)
+                            onDismiss = { showKillConfirm = false }
                         )
                     }
 

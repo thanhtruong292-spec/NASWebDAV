@@ -3439,15 +3439,23 @@ def api_processes():
             time.sleep(0.1)
             
             procs = []
+            nas_pid = os.getpid()
             for p in active_procs:
                 try:
                     info = p.info
+                    pid = info.get('pid', 0)
+                    name = info.get('name', 'unknown').lower()
+                    
+                    # Hide system processes, kernel threads, and the NAS API server itself
+                    if pid == nas_pid or pid <= 100 or name.startswith('kworker') or name.startswith('systemd') or name.startswith('rcu') or name.startswith('migration') or name.startswith('ksoftirqd'):
+                        continue
+                        
                     cpu = p.cpu_percent() / num_cores
                     # Handle status string
                     st = str(info.get('status', ''))
                     
                     procs.append({
-                        "pid": info.get('pid', 0),
+                        "pid": pid,
                         "name": info.get('name', 'unknown'),
                         "user": info.get('username', 'root') or "root",
                         "status": st,
