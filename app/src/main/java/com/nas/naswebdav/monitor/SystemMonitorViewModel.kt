@@ -630,7 +630,7 @@ class SystemMonitorViewModel(
                 val json = org.json.JSONObject().put("pid", pid).toString()
                 val req = okhttp3.Request.Builder()
                     .url("$apiBase/api/processes/kill")
-                    .post(okhttp3.RequestBody.create(okhttp3.MediaType.parse("application/json"), json))
+                    .post(json.toRequestBody("application/json".toMediaTypeOrNull()))
                     .let(WebDavManager::tagCurrentAuth)
                     .build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
