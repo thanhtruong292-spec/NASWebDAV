@@ -193,6 +193,216 @@ except ImportError:
 
 app = Flask(__name__)
 
+# -- Social Extractor Logic BEGIN ----------------------------------------------
+# Keep this pure-stdlib block in the single production artifact. Tests load this
+# marked block without importing the full Flask/Tornado daemon.
+import copy as _social_copy
+import ipaddress as _social_ipaddress
+import socket as _social_socket
+try:
+    from urllib.parse import urlparse as _social_urlparse
+except ImportError:
+    from urlparse import urlparse as _social_urlparse
+
+SOCIAL_MAX_CONCURRENT = 2
+SOCIAL_MAX_FILESIZE = "2G"
+SOCIAL_YTDLP_TIMEOUT = 300
+SOCIAL_DEFAULT_FOLDER = "Downloads/social/"
+_SOCIAL_TMP_ROOT = "/var/tmp/social_downloads"
+_social_download_jobs = {}
+_social_download_lock = threading.Lock()
+
+
+def _social_is_public_ip(address):
+    try:
+        ip_obj = _social_ipaddress.ip_address(str(address).split("%", 1)[0])
+    except ValueError:
+        return False
+    return not (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_reserved
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+    )
+
+
+def _social_host_matches(host, base_domain):
+    return host == base_domain or host.endswith("." + base_domain)
+
+
+def _social_is_supported_content_url(parsed, host):
+    """Restrict yt-dlp entry points to content URLs on trusted platforms."""
+    path = parsed.path or "/"
+    path_lower = path.lower()
+    query_lower = (parsed.query or "").lower()
+
+    if host == "youtu.be":
+        return bool(path.strip("/")) and "/" not in path.strip("/")
+    if _social_host_matches(host, "youtube.com"):
+        return (
+            path_lower == "/watch" and "v=" in query_lower
+        ) or path_lower.startswith(("/shorts/", "/live/", "/embed/"))
+
+    if _social_host_matches(host, "tiktok.com"):
+        if host in ("vm.tiktok.com", "vt.tiktok.com"):
+            return bool(path.strip("/"))
+        return path_lower.startswith("/@") and "/video/" in path_lower
+
+    if _social_host_matches(host, "instagram.com"):
+        return path_lower.startswith(("/reel/", "/p/", "/tv/", "/stories/"))
+
+    if host == "fb.watch":
+        return bool(path.strip("/"))
+    if _social_host_matches(host, "facebook.com"):
+        return (
+            "/videos/" in path_lower
+            or path_lower.startswith(("/reel/", "/stories/", "/s/"))
+            or (path_lower == "/watch/" and "v=" in query_lower)
+            or (path_lower == "/photo.php" and "v=" in query_lower)
+        )
+
+    return False
+
+
+def _social_validate_url(url):
+    """Accept supported public content URLs whose A/AAAA results are public."""
+    if not url or not isinstance(url, str):
+        return False
+    url = url.strip()
+    try:
+        parsed = _social_urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc:
+            return False
+        host = (parsed.hostname or "").rstrip(".")
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except Exception:
+        return False
+    if not host:
+        return False
+    try:
+        host.encode("ascii")
+    except UnicodeError:
+        return False
+    host = host.lower()
+    if not _social_is_supported_content_url(parsed, host):
+        return False
+    try:
+        resolved = _social_socket.getaddrinfo(host, port, 0, _social_socket.SOCK_STREAM)
+    except (TypeError, ValueError, OSError, _social_socket.gaierror):
+        return False
+    return bool(resolved) and all(
+        entry[4] and _social_is_public_ip(entry[4][0]) for entry in resolved
+    )
+
+
+def _social_sanitize_folder(folder):
+    """Return a safe relative destination with at most two path levels."""
+    if not folder or not isinstance(folder, str):
+        return SOCIAL_DEFAULT_FOLDER
+    folder = folder.strip().replace("\\", "/")
+    if not folder or folder.startswith("/") or (len(folder) >= 2 and folder[1] == ":"):
+        return SOCIAL_DEFAULT_FOLDER
+    folder = folder.strip("/")
+    parts = folder.split("/")
+    if (
+        not parts
+        or len(parts) > 2
+        or any(not part or part in (".", "..") for part in parts)
+        or not _re_module.match(r"^[a-zA-Z0-9/_\- ]+$", folder)
+    ):
+        return SOCIAL_DEFAULT_FOLDER
+    return "/".join(parts)
+
+
+def _social_destination_dir(folder):
+    """Resolve a WebDAV folder and reject symlink/path escapes from the root."""
+    try:
+        root = os.path.realpath(WEBDAV_FILE_ROOT)
+        candidate = os.path.realpath(os.path.join(root, folder))
+        if os.path.commonpath([root, candidate]) != root:
+            return None
+        return candidate
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _social_destination_path(destination_dir, filename, job_id):
+    """Allocate a collision-proof filename for one download job."""
+    filename = os.path.basename(filename)
+    base, extension = os.path.splitext(filename)
+    safe_job_id = _re_module.sub(r"[^a-zA-Z0-9_-]", "", str(job_id))
+    return os.path.join(destination_dir, "%s_%s%s" % (
+        base or "download", safe_job_id, extension))
+
+
+def _social_remove_expired_jobs(max_age_sec=3600):
+    now = time.time()
+    with _social_download_lock:
+        expired = []
+        for job_id, job in _social_download_jobs.items():
+            timestamp = job.get("finished_at") or job.get("started_at", 0)
+            if timestamp and now - timestamp > max_age_sec:
+                expired.append(job_id)
+        for job_id in expired:
+            del _social_download_jobs[job_id]
+    return len(expired)
+
+
+def _social_create_job(url, folder):
+    if not _social_validate_url(url):
+        return None, "URL khong hop le hoac la private/internal."
+    safe_folder = _social_sanitize_folder(folder)
+    _social_remove_expired_jobs(max_age_sec=3600)
+    with _social_download_lock:
+        active_count = sum(
+            1 for job in _social_download_jobs.values()
+            if job.get("status") in ("queued", "downloading")
+        )
+        if active_count >= SOCIAL_MAX_CONCURRENT:
+            return None, "Max concurrent downloads reached (%d). Vui long thu lai sau." % SOCIAL_MAX_CONCURRENT
+        job_id = str(uuid.uuid4())
+        _social_download_jobs[job_id] = {
+            "job_id": job_id,
+            "url": url,
+            "folder": safe_folder,
+            "status": "queued",
+            "progress": 0,
+            "filename": None,
+            "size": 0,
+            "platform": "other",
+            "error_reason": None,
+            "started_at": time.time(),
+            "finished_at": None,
+        }
+    return job_id, None
+
+
+def _social_get_job(job_id):
+    with _social_download_lock:
+        job = _social_download_jobs.get(job_id)
+        return _social_copy.deepcopy(job) if job is not None else None
+
+
+def _social_update_job(job_id, **changes):
+    with _social_download_lock:
+        job = _social_download_jobs.get(job_id)
+        if job is None:
+            return False
+        job.update(changes)
+        return True
+
+
+def _social_mkdirp(path):
+    try:
+        os.makedirs(path, exist_ok=True)
+        return True
+    except OSError:
+        return False
+# -- Social Extractor Logic END ------------------------------------------------
+
 def _get_webdav_root():
     """Đọc WebDAV root từ config OMV (/var/www/webdav/config/config.php)"""
     config_file = "/var/www/webdav/config/config.php"
@@ -2477,6 +2687,7 @@ def _cron_worker():
         try:
             now_ts = time.time()
             now_dt = datetime.datetime.now()
+            _social_remove_expired_jobs(max_age_sec=3600)
 
             # --- 1. Kiểm tra torrent hoan thảnh (mới 60 gi?y) ---
             completed = _check_torrent_completion()
@@ -7676,6 +7887,297 @@ def api_download():
         return jsonify({"error": str(e)}), 500
 
 
+
+def _social_worker(job_id, url, folder):
+    """
+    Download one public URL via yt-dlp and move the result into WebDAV.
+    """
+    import subprocess
+    import time as _time
+    import queue as _queue
+    import re as _social_re
+    import signal as _signal
+    from collections import deque as _deque
+
+    proc = None
+
+    def _terminate_and_reap(child):
+        """End a managed process group and always collect the child status."""
+        if child is None:
+            return
+        try:
+            running = child.poll() is None
+        except Exception:
+            running = True
+        if running:
+            try:
+                os.killpg(child.pid, _signal.SIGTERM)
+            except Exception:
+                try:
+                    child.terminate()
+                except Exception:
+                    pass
+            try:
+                child.wait(timeout=5)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception:
+                pass
+            try:
+                os.killpg(child.pid, _signal.SIGKILL)
+            except Exception:
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+        try:
+            child.wait()
+        except Exception:
+            pass
+
+    def _set_error(msg):
+        _social_update_job(
+            job_id,
+            status='error',
+            error_reason=msg[:200],
+            finished_at=_time.time(),
+        )
+
+    tmp_dir = None
+    try:
+        if not _social_validate_url(url):
+            _set_error('URL khong con tro toi dia chi public hop le.')
+            return
+
+        tmp_dir = os.path.join(_SOCIAL_TMP_ROOT, job_id)
+        _social_mkdirp(tmp_dir)
+
+        ytdlp_bin = _find_ytdlp_bin()
+        if not ytdlp_bin:
+            _set_error('yt-dlp khong tim thay tren NAS.')
+            return
+
+        platform = _detect_platform(url)
+        _social_update_job(job_id, platform=platform)
+
+        output_template = os.path.join(tmp_dir, '%(title)s.%(ext)s')
+        cmd = [
+            ytdlp_bin, url,
+            '-o', output_template,
+            '--no-playlist',
+            '--newline',
+            '--socket-timeout', '60',
+            '--retries', '3',
+            '--max-filesize', SOCIAL_MAX_FILESIZE,
+        ]
+
+        _social_update_job(job_id, status='downloading')
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=True,
+        )
+        stdout_lines = _deque(maxlen=200)
+        output_queue = _queue.Queue()
+
+        def _record_output(output_line):
+            stdout_lines.append(output_line)
+            try:
+                decoded = output_line.decode('utf-8', errors='replace')
+                match = _social_re.search(r'\[download\]\s+(\d+(?:\.\d+)?)%', decoded)
+                if match:
+                    progress = max(0, min(99, int(float(match.group(1)))))
+                    _social_update_job(job_id, progress=progress)
+            except Exception:
+                pass
+
+        def _read_output():
+            try:
+                for output_line in iter(proc.stdout.readline, b''):
+                    output_queue.put(output_line)
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=_read_output, name='social_out_%s' % job_id)
+        reader.daemon = True
+        reader.start()
+
+        started_at = _time.monotonic()
+        timed_out = False
+        while proc.poll() is None:
+            while True:
+                try:
+                    _record_output(output_queue.get_nowait())
+                except _queue.Empty:
+                    break
+            if _time.monotonic() - started_at >= SOCIAL_YTDLP_TIMEOUT:
+                timed_out = True
+                _terminate_and_reap(proc)
+                break
+            _time.sleep(0.05)
+
+        reader.join(timeout=1)
+        while True:
+            try:
+                _record_output(output_queue.get_nowait())
+            except _queue.Empty:
+                break
+
+        if timed_out:
+            _set_error('yt-dlp timeout sau %d giay.' % SOCIAL_YTDLP_TIMEOUT)
+            return
+
+        proc.wait()
+        yt_exit = proc.returncode
+
+        if yt_exit != 0:
+            output_all = b''.join(stdout_lines).decode('utf-8', errors='replace')
+            _set_error('yt-dlp exit %d: %s' % (yt_exit, output_all[-300:]))
+            log.warning('[Social] yt-dlp failed job=%s exit=%d', job_id, yt_exit)
+            return
+
+        downloaded_files = []
+        try:
+            for fname in os.listdir(tmp_dir):
+                fpath = os.path.join(tmp_dir, fname)
+                if os.path.isfile(fpath):
+                    downloaded_files.append((fname, os.path.getsize(fpath)))
+        except OSError:
+            pass
+
+        if not downloaded_files:
+            _set_error('yt-dlp chay thanh cong nhung khong tim thay file.')
+            return
+
+        webdav_dest_base = _social_destination_dir(folder)
+        if webdav_dest_base is None:
+            _set_error('Thu muc dich nam ngoai WebDAV root.')
+            return
+        if not _social_mkdirp(webdav_dest_base):
+            _set_error('Khong tao duoc thu muc dich trong WebDAV.')
+            return
+        webdav_dest_base = _social_destination_dir(folder)
+        if webdav_dest_base is None:
+            _set_error('Thu muc dich khong con nam trong WebDAV root.')
+            return
+
+        saved_files = []
+        total_size = 0
+        move_errors = []
+        for fname, fsize in downloaded_files:
+            src_path = os.path.join(tmp_dir, fname)
+            dst_path = _social_destination_path(webdav_dest_base, fname, job_id)
+            try:
+                shutil.move(src_path, dst_path)
+                saved_files.append(os.path.basename(dst_path))
+                total_size += fsize
+                log.info('[Social] Saved %s (%d bytes)', dst_path, fsize)
+            except OSError as mv_err:
+                log.warning('[Social] Move failed: %s', mv_err)
+                move_errors.append('%s: %s' % (fname, str(mv_err)))
+
+        if move_errors:
+            _set_error('Khong luu duoc tep vao WebDAV: %s' % '; '.join(move_errors))
+            return
+
+        _social_update_job(
+            job_id,
+            status='completed',
+            filename=', '.join(saved_files),
+            size=total_size,
+            progress=100,
+            finished_at=_time.time(),
+        )
+        log.info('[Social] Job=%s completed: %s', job_id, saved_files)
+
+    except Exception as e:
+        log.error('[Social] Worker exception job=%s: %s', job_id, e)
+        _set_error('Worker exception: %s' % str(e)[:200])
+    finally:
+        _terminate_and_reap(proc)
+        if tmp_dir:
+            try:
+                shutil.rmtree(tmp_dir)
+            except OSError:
+                pass
+
+
+@app.route("/api/social/download", methods=["POST"])
+@requires_auth
+def api_social_download():
+    """
+    Nhan URL, tao async job, tra ve job_id ngay.
+    Android poll /api/social/status/<job_id> de theo doi tien trinh.
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        url = (data.get('url') or '').strip()
+        folder = (data.get('folder') or '').strip()
+
+        if not url:
+            return jsonify({'error': 'Thieu URL.'}), 400
+
+        job_id, err = _social_create_job(url, folder)
+        if err:
+            if 'Max concurrent' in err:
+                return jsonify({'error': err}), 429
+            return jsonify({'error': err}), 400
+
+        safe_folder = _social_get_job(job_id)['folder']
+
+        t = threading.Thread(
+            target=_social_worker,
+            args=(job_id, url, safe_folder),
+            name='social_dl_%s' % job_id,
+            daemon=True,
+        )
+        try:
+            t.start()
+        except Exception as start_err:
+            _social_update_job(
+                job_id,
+                status='error',
+                error_reason='Khong khoi dong duoc worker: %s' % str(start_err)[:160],
+                finished_at=time.time(),
+            )
+            raise
+
+        return jsonify({
+            'result': 'ok',
+            'job_id': job_id,
+            'status': 'queued',
+            'url': url,
+        }), 202
+
+    except Exception as e:
+        log.error('[Social] download endpoint error: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/social/status/<job_id>", methods=["GET"])
+@requires_auth
+def api_social_status(job_id):
+    """Tra ve trang thai job theo job_id."""
+    job = _social_get_job(job_id)
+    if job is None:
+        return jsonify({'error': 'Job not found.'}), 404
+
+    return jsonify({
+        'job_id': job['job_id'],
+        'status': job['status'],
+        'progress': job.get('progress', 0),
+        'filename': job.get('filename'),
+        'size': job.get('size', 0),
+        'platform': job.get('platform', 'other'),
+        'error_reason': job.get('error_reason'),
+        'started_at': job.get('started_at'),
+        'finished_at': job.get('finished_at'),
+    }), 200
+
 @app.route("/api/torrent/add_file", methods=["POST"])
 @requires_auth
 def api_torrent_add_file():
@@ -10492,6 +10994,8 @@ _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
 
 def _detect_platform(url):
     """Nhan dien nen tang tu URL."""
+    if not url:
+        return "other"
     url_lower = url.lower()
     if "tiktok.com" in url_lower:
         return "tiktok"
@@ -10499,6 +11003,14 @@ def _detect_platform(url):
         return "facebook"
     elif "youtube.com" in url_lower or "youtu.be" in url_lower:
         return "youtube"
+    elif "instagram.com" in url_lower:
+        return "instagram"
+    elif "douyin.com" in url_lower:
+        return "douyin"
+    elif "twitter.com" in url_lower or "x.com" in url_lower:
+        return "twitter"
+    elif "reddit.com" in url_lower:
+        return "reddit"
     elif "shopee" in url_lower:
         return "shopee"
     return "other"
