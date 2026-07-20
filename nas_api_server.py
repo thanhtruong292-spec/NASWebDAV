@@ -7972,6 +7972,16 @@ def _social_worker(job_id, url, folder):
             '--socket-timeout', '60',
             '--retries', '3',
             '--max-filesize', SOCIAL_MAX_FILESIZE,
+            # Prefer pre-merged single-file formats so we do not require ffmpeg.
+            # `b` = best single file with audio+video already muxed; we steer
+            # toward mp4/webm containers that ship as one file. If only split
+            # streams exist, yt-dlp falls back to bv* which may require ffmpeg
+            # to merge — on NAS without ffmpeg the merge step fails. The spec
+            # §3.3 explicitly accepts video-only results, so this fallback is
+            # acceptable.
+            '-f', 'b[ext=mp4]/b[ext=webm]/b/bv*',
+            '--ignore-errors',
+            '--no-warnings',
         ]
 
         _social_update_job(job_id, status='downloading')
