@@ -42,17 +42,15 @@ class BatchOperationWorker(
         private const val TAG = "BatchOp"
 
         fun createChannel(context: Context) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID, "Tác vụ hàng loạt",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Hi�?n th�? tiến trình Copy/Move/Delete file trên NAS"
-                    setShowBadge(false)
-                }
-                (context.getSystemService(NotificationManager::class.java))
-                    ?.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID, "Tác vụ hàng loạt",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Hiện thị tiến trình Copy/Move/Delete file trên NAS"
+                setShowBadge(false)
             }
+            (context.getSystemService(NotificationManager::class.java))
+                ?.createNotificationChannel(channel)
         }
     }
 

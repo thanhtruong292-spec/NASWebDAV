@@ -43,17 +43,15 @@ class StreamPipeWorker(
         private const val TAG = "StreamPipe"
 
         fun createChannel(context: Context) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID, "Truyền video về NAS",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Truyền video từ Internet về NAS"
-                    setShowBadge(false)
-                }
-                (context.getSystemService(NotificationManager::class.java))
-                    ?.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID, "Truyền video về NAS",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Truyền video từ Internet về NAS"
+                setShowBadge(false)
             }
+            (context.getSystemService(NotificationManager::class.java))
+                ?.createNotificationChannel(channel)
         }
     }
 

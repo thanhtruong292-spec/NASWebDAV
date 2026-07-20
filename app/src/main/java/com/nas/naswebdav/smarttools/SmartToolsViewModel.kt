@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import androidx.core.content.edit
 
 /**
  * SmartToolsViewModel — Primary owner of smart-tools state.
@@ -124,7 +125,7 @@ class SmartToolsViewModel(
     fun toggleAutoClean(context: Context, enabled: Boolean) {
         autoCleanEnabled = enabled
         context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-            .edit().putBoolean("auto_clean_enabled", enabled).apply()
+            .edit { putBoolean("auto_clean_enabled", enabled) }
         val workManager = androidx.work.WorkManager.getInstance(context)
         if (enabled) {
             val constraints = androidx.work.Constraints.Builder()

@@ -61,6 +61,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.getValue
+import androidx.core.content.edit
+import androidx.core.graphics.toColorInt
 
 // ============ REALTIME FRESHNESS ============
 internal fun realtimeFreshnessLabel(lastRefreshAt: Long, now: Long): String {
@@ -309,10 +311,10 @@ fun MainMenuScreen(
     LaunchedEffect(Unit) {
         if (!sharedPrefs.getBoolean("screen_record_quick_added", false)) {
             slot4Id = "screen_record"
-            sharedPrefs.edit()
-                .putString("qa_slot4", "screen_record")
-                .putBoolean("screen_record_quick_added", true)
-                .apply()
+            sharedPrefs.edit {
+                putString("qa_slot4", "screen_record")
+                putBoolean("screen_record_quick_added", true)
+            }
         }
     }
     var editingSlot by remember { mutableStateOf<Int?>(null) }
@@ -558,7 +560,7 @@ fun MainMenuScreen(
             onConfirm = {
                 val wolMac = macAddress.trim()
                 if (wolMac.isNotBlank()) {
-                    sharedPrefs.edit().putString("mac_address", wolMac).apply()
+                    sharedPrefs.edit { putString("mac_address", wolMac) }
                     showWolDialog = false
                     sendWakeOnLanFromMenu(menuScope, wolMac) { result ->
                         commonDialogType = if (result.success) DialogType.SUCCESS else DialogType.ERROR
@@ -581,10 +583,10 @@ fun MainMenuScreen(
             deleteAfterBackup = deleteAfterBackup,
             onDeleteAfterBackupChange = { deleteAfterBackup = it },
             onSaveAndSchedule = {
-                sharedPrefs.edit()
-                    .putBoolean("auto_backup", isAutoBackupEnabled)
-                    .putBoolean("delete_after_backup", deleteAfterBackup)
-                    .apply()
+                sharedPrefs.edit {
+                    putBoolean("auto_backup", isAutoBackupEnabled)
+                    putBoolean("delete_after_backup", deleteAfterBackup)
+                }
                 if (isAutoBackupEnabled) {
                     val constraints = androidx.work.Constraints.Builder()
                         .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
@@ -691,7 +693,7 @@ fun MainMenuScreen(
     // ============ GIAO DIỆN DASHBOARD CHUYÊN NGHIỆP ============
     @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
     val pullRefreshState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-    
+
     val handleQuickAction = { id: String ->
         when (id) {
             "sync" -> showAutoBackupDialog = true
@@ -874,134 +876,134 @@ private fun MainMenuDashboardHeader(
 ) {
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
-        // ═══ HEADER ═══
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Đèn tín hiệu trạng thái (Pulse animation)
-            val currentStatus = sysMonitorVM.systemStatus.status
-            val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
-            val statusColor = when {
-                currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
-                currentStatus.contains("Chờ", true) -> AccentOrange
-                else -> AccentRed
-            }
-            Column {
+    // ═══ HEADER ═══
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Đèn tín hiệu trạng thái (Pulse animation)
+        val currentStatus = sysMonitorVM.systemStatus.status
+        val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
+        val statusColor = when {
+            currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
+            currentStatus.contains("Chờ", true) -> AccentOrange
+            else -> AccentRed
+        }
+        Column {
+            Text(
+                "NAS Dashboard",
+                style = AppTypography.HeadlineLarge.copy(color = TextPrimary)
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "NAS Dashboard",
-                    style = AppTypography.HeadlineLarge.copy(color = TextPrimary)
+                    "Chainedbox L1 Pro",
+                    style = AppTypography.BodyMedium.copy(color = TextSecondary)
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("  \u2022  ", style = AppTypography.BodyMedium.copy(color = TextSecondary))
+                Box(
+                    modifier = Modifier
+                        .clip(AppShapes.Badge)
+                        .background(if (isOnlineStatus) AccentGreen else AccentRed)
+                        .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)
+                ) {
                     Text(
-                        "Chainedbox L1 Pro",
-                        style = AppTypography.BodyMedium.copy(color = TextSecondary)
-                    )
-                    Text("  \u2022  ", style = AppTypography.BodyMedium.copy(color = TextSecondary))
-                    Box(
-                        modifier = Modifier
-                            .clip(AppShapes.Badge)
-                            .background(if (isOnlineStatus) AccentGreen else AccentRed)
-                            .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)
-                    ) {
-                        Text(
-                            if (isOnlineStatus) "Online" else "Offline",
-                            style = AppTypography.LabelMedium.copy(
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(Modifier.width(AppSpacing.SM))
-                    val isRealtimeStale = sysMonitorVM.lastStatusRefreshAt <= 0L || realtimeNow - sysMonitorVM.lastStatusRefreshAt > 10_000L
-                    val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
-                    Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
-                    Spacer(Modifier.width(AppSpacing.XS))
-                    Text(
-                        realtimeFreshnessLabel(sysMonitorVM.lastStatusRefreshAt, realtimeNow),
+                        if (isOnlineStatus) "Online" else "Offline",
                         style = AppTypography.LabelMedium.copy(
-                            color = realtimeColor,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    sysMonitorVM.apiLatencyMs?.let { latency ->
-                        Spacer(Modifier.width(AppSpacing.SM))
-                        Text("API ${latency}ms", style = AppTypography.LabelMedium.copy(color = TextSecondary))
-                    }
-                    if (sysMonitorVM.apiFailureCount > 0) {
-                        Spacer(Modifier.width(AppSpacing.SM))
-                        Text("${sysMonitorVM.apiFailureCount} lỗi", style = AppTypography.LabelMedium.copy(color = AccentRed, fontWeight = FontWeight.Bold))
-                    }
                 }
-                
-                // ── SMART SWITCH BADGE ──
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (deviceVM.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
-                            contentDescription = null,
-                            tint = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            if (deviceVM.isOnLan) "LAN" else "Tailscale",
-                            fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                            color = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
-                        )
-                    }
-                    val ut = sysMonitorVM.systemStatus.uptime
-                    if (ut.isNotBlank() && ut != "--") {
-                        val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text(cleanUt, fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
-                    }
+                Spacer(Modifier.width(AppSpacing.SM))
+                val isRealtimeStale = sysMonitorVM.lastStatusRefreshAt <= 0L || realtimeNow - sysMonitorVM.lastStatusRefreshAt > 10_000L
+                val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
+                Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
+                Spacer(Modifier.width(AppSpacing.XS))
+                Text(
+                    realtimeFreshnessLabel(sysMonitorVM.lastStatusRefreshAt, realtimeNow),
+                    style = AppTypography.LabelMedium.copy(
+                        color = realtimeColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                )
+                sysMonitorVM.apiLatencyMs?.let { latency ->
+                    Spacer(Modifier.width(AppSpacing.SM))
+                    Text("API ${latency}ms", style = AppTypography.LabelMedium.copy(color = TextSecondary))
+                }
+                if (sysMonitorVM.apiFailureCount > 0) {
+                    Spacer(Modifier.width(AppSpacing.SM))
+                    Text("${sysMonitorVM.apiFailureCount} lỗi", style = AppTypography.LabelMedium.copy(color = AccentRed, fontWeight = FontWeight.Bold))
                 }
             }
             
+            // ── SMART SWITCH BADGE ──
+            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (deviceVM.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
-                    
-                    DropdownMenu(
-                        expanded = showPowerMenu,
-                        onDismissRequest = { onPowerMenuChange(false) },
-                        modifier = Modifier.background(DarkCard)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Đăng xuất", color = AccentOrange) },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
-                            onClick = { onPowerMenuChange(false); onLogout() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Khởi động lại NAS", color = AccentGreen) },
-                            leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
-                            onClick = { onPowerMenuChange(false); onReboot() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Ngủ NAS", color = AccentCyan) },
-                            leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
-                            onClick = { onPowerMenuChange(false); onShutdown() }
-                        )
-                    }
+                    Icon(
+                        if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
+                        contentDescription = null,
+                        tint = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (deviceVM.isOnLan) "LAN" else "Tailscale",
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        color = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
+                    )
+                }
+                val ut = sysMonitorVM.systemStatus.uptime
+                if (ut.isNotBlank() && ut != "--") {
+                    val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text(cleanUt, fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
+        
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
+                
+                DropdownMenu(
+                    expanded = showPowerMenu,
+                    onDismissRequest = { onPowerMenuChange(false) },
+                    modifier = Modifier.background(DarkCard)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Đăng xuất", color = AccentOrange) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
+                        onClick = { onPowerMenuChange(false); onLogout() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Khởi động lại NAS", color = AccentGreen) },
+                        leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
+                        onClick = { onPowerMenuChange(false); onReboot() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Ngủ NAS", color = AccentCyan) },
+                        leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
+                        onClick = { onPowerMenuChange(false); onShutdown() }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1013,91 +1015,179 @@ private fun MainMenuDashboardSystemOverviewCard(
 ) {
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
-            // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
-                        letterSpacing = PanelTitleLetterSpacing)
-                    Spacer(Modifier.weight(1f))
-                    PanelFreshnessTag(sysMonitorVM.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
-                }
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MainMenuDashboardGaugeCard(
-                        title = "CPU", value = sysMonitorVM.systemStatus.cpu,
-                        subValue = sysMonitorVM.systemStatus.cpuTemp,
-                        icon = Icons.Default.Memory,
-                        gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            onShowProcessList("cpu")
-                        }
-                    )
-                    MainMenuDashboardGaugeCard(
-                        title = "RAM", value = sysMonitorVM.systemStatus.ram, subValue = "${sysMonitorVM.systemStatus.ramPercent}%",
-                        icon = Icons.Default.DeveloperBoard,
-                        gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
-                        modifier = Modifier.weight(1f),
-                        overridePercent = sysMonitorVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
-                        onClick = {
-                            onShowProcessList("mem")
-                        }
-                    )
-                    
-                    val hddDisk = sysMonitorVM.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
-                        ?: sysMonitorVM.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
-                    if (hddDisk != null) {
-                        val fmtTotal = hddDisk.total.let {
-                            val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                            if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
-                        }
-                        MainMenuDashboardGaugeCard(
-                            title = "HDD", value = "${hddDisk.used} / $fmtTotal",
-                            subValue = "${hddDisk.percent}%",
-                            icon = Icons.Default.Storage,
-                            gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
-                            modifier = Modifier.weight(1f),
-                            overridePercent = hddDisk.percent,
-                            onClick = onOpenNewDiskProfile
-                        )
-                    } else Spacer(Modifier.weight(1f))
-                    
-                    val smartStatusText = deviceVM.smartInfo.status.uppercase().trim()
-                    
-                    val isSmartOk = smartStatusText.contains("PASSED") || smartStatusText == "OK"
-                    val isSmartFailed = smartStatusText.contains("FAILED")
-                    val isSmartEmmc = smartStatusText.contains("EMMC")
-                    
-                    val smartColors = when {
-                        isSmartOk -> listOf(Color(0xFF00E676), Color(0xFF1DE9B6))
-                        isSmartEmmc -> listOf(Color(0xFF42A5F5), Color(0xFF1E88E5)) // Nhận diện eMMC màu Xanh Dương
-                        isSmartFailed -> listOf(Color(0xFFFF1744), Color(0xFFFF5252)) // FAILED hiển thị màu Đỏ
-                        else -> listOf(Color(0xFF9E9E9E), Color(0xFFBDBDBD)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
-                    }
-                    val smartPercent = when {
-                        isSmartOk -> 100f
-                        isSmartEmmc -> 100f
-                        isSmartFailed -> 0f
-                        else -> 50f
-                    }
-                    MainMenuDashboardGaugeCard(
-                        title = "S.M.A.R.T",
-                        value = smartStatusText,
-                        subValue = deviceVM.smartInfo.temperature.replace("°C", "°").replace("--", ""),
-                        icon = Icons.Default.HealthAndSafety,
-                        gradientColors = smartColors,
-                        modifier = Modifier.weight(1f),
-                        overridePercent = smartPercent,
-                        onClick = onOpenSmartDetails
-                    )
-                }
+        // Đã THẾ HỆ THỐNG: CPU + RAM + Stats Đã
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("HỆ THỐNG", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
+                    letterSpacing = PanelTitleLetterSpacing)
+                Spacer(Modifier.weight(1f))
+                PanelFreshnessTag(sysMonitorVM.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
             }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MainMenuDashboardGaugeCard(
+                    title = "CPU", value = sysMonitorVM.systemStatus.cpu,
+                    subValue = sysMonitorVM.systemStatus.cpuTemp,
+                    icon = Icons.Default.Memory,
+                    gradientColors = listOf(Color(0xFF667EEA), Color(0xFF764BA2)),
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        onShowProcessList("cpu")
+                    }
+                )
+                MainMenuDashboardGaugeCard(
+                    title = "RAM", value = sysMonitorVM.systemStatus.ram, subValue = "${sysMonitorVM.systemStatus.ramPercent}%",
+                    icon = Icons.Default.DeveloperBoard,
+                    gradientColors = listOf(Color(0xFF11998E), Color(0xFF38EF7D)),
+                    modifier = Modifier.weight(1f),
+                    overridePercent = sysMonitorVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
+                    onClick = {
+                        onShowProcessList("mem")
+                    }
+                )
+                
+                val hddDisk = sysMonitorVM.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
+                    ?: sysMonitorVM.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
+                if (hddDisk != null) {
+                    val fmtTotal = hddDisk.total.let {
+                        val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                        if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
+                    }
+                    MainMenuDashboardGaugeCard(
+                        title = "HDD", value = "${hddDisk.used} / $fmtTotal",
+                        subValue = "${hddDisk.percent}%",
+                        icon = Icons.Default.Storage,
+                        gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
+                        modifier = Modifier.weight(1f),
+                        overridePercent = hddDisk.percent,
+                        onClick = onOpenNewDiskProfile
+                    )
+                } else Spacer(Modifier.weight(1f))
+                
+                val smartStatusText = deviceVM.smartInfo.status.uppercase().trim()
+                
+                val isSmartOk = smartStatusText.contains("PASSED") || smartStatusText == "OK"
+                val isSmartFailed = smartStatusText.contains("FAILED")
+                val isSmartEmmc = smartStatusText.contains("EMMC")
+                
+                val smartColors = when {
+                    isSmartOk -> listOf(Color(0xFF00E676), Color(0xFF1DE9B6))
+                    isSmartEmmc -> listOf(Color(0xFF42A5F5), Color(0xFF1E88E5)) // Nhận diện eMMC màu Xanh Dương
+                    isSmartFailed -> listOf(Color(0xFFFF1744), Color(0xFFFF5252)) // FAILED hiển thị màu Đỏ
+                    else -> listOf(Color(0xFF9E9E9E), Color(0xFFBDBDBD)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
+                }
+                val smartPercent = when {
+                    isSmartOk -> 100f
+                    isSmartEmmc -> 100f
+                    isSmartFailed -> 0f
+                    else -> 50f
+                }
+                MainMenuDashboardGaugeCard(
+                    title = "S.M.A.R.T",
+                    value = smartStatusText,
+                    subValue = deviceVM.smartInfo.temperature.replace("°C", "°").replace("--", ""),
+                    icon = Icons.Default.HealthAndSafety,
+                    gradientColors = smartColors,
+                    modifier = Modifier.weight(1f),
+                    overridePercent = smartPercent,
+                    onClick = onOpenSmartDetails
+                )
+            }
+                        // Fan Control
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val fanStatusStr = sysMonitorVM.systemStatus.fanStatus
+                                val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                val rpmFromApi = sysMonitorVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
+                                val realPercent = statusPercent ?: percentFromRpm ?: 0
+                                val isFanRunning = realPercent > 0
+                                
+                                var displayPercent = realPercent
+                                var displayStatusStr = fanStatusStr
+                                if (isFanRunning) {
+                                    val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
+                                    displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
+                                } else {
+                                    displayStatusStr = "Dừng"
+                                }
+                                
+                                val isFanDisplayRunning = displayPercent > 0
+                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
+                                }
+                            }
+                            // Mute / Auto / Max Toggle
+                            var showFanSettings by remember { mutableStateOf(false) }
+                            Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
+                                val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
+                                val currentMode = sysMonitorVM.systemStatus.fanMode
+                                val isFanControlLocked = deviceVM.isFanModeUpdating
+                                modes.forEach { (m, label) ->
+                                    val active = m == currentMode
+                                    Box(
+                                        Modifier.clickable(
+                                            enabled = !isFanControlLocked,
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            if (m == "custom") showFanSettings = true else {
+                                                deviceVM.setFanMode(m)
+                                            }
+                                        }
+                                            .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
+                                            .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
+                                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            
+                            if (showFanSettings) {
+                                var onTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
+                                var offTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
+                                androidx.compose.material3.AlertDialog(
+                                    onDismissRequest = { showFanSettings = false },
+                                    title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
+                                    text = { 
+                                        Column {
+                                            Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
+                                            Spacer(Modifier.height(12.dp))
+                                            OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                            Spacer(Modifier.height(8.dp))
+                                            OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                                        }
+                                    },
+                                    confirmButton = {
+                                        val isFanControlLocked = deviceVM.isFanModeUpdating
+                                        Button(
+                                            enabled = !isFanControlLocked,
+                                            onClick = { 
+                                                deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
+                                                showFanSettings = false 
+                                            }
+                                        ) { Text("Lưu & Áp dụng") }
+                                    },
+                                    dismissButton = {
+                                        androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
+                                    },
+                                    containerColor = Color(0xFF1E1E1E),
+                                    textContentColor = Color.White
+                                )
+                            }
+                        }
         }
+    }
 }
 
 @Composable
@@ -1234,94 +1324,6 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                                 }
                             }
                             
-                            // Fan Control
-                            Spacer(Modifier.height(6.dp))
-                            Row(Modifier.fillMaxWidth().background(Color(0xFF191919), RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val fanStatusStr = sysMonitorVM.systemStatus.fanStatus
-                                    val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val rpmFromApi = sysMonitorVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
-                                    val realPercent = statusPercent ?: percentFromRpm ?: 0
-                                    val isFanRunning = realPercent > 0
-                                    
-                                    var displayPercent = realPercent
-                                    var displayStatusStr = fanStatusStr
-                                    if (isFanRunning) {
-                                        val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
-                                        displayStatusStr = "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
-                                    } else {
-                                        displayStatusStr = "Dừng"
-                                    }
-                                    
-                                    val isFanDisplayRunning = displayPercent > 0
-                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                        Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
-                                    }
-                                }
-                                // Mute / Auto / Max Toggle
-                                var showFanSettings by remember { mutableStateOf(false) }
-                                Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                                    val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
-                                    val currentMode = sysMonitorVM.systemStatus.fanMode
-                                    val isFanControlLocked = deviceVM.isFanModeUpdating
-                                    modes.forEach { (m, label) ->
-                                        val active = m == currentMode
-                                        Box(
-                                            Modifier.clickable(
-                                                enabled = !isFanControlLocked,
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
-                                            ) {
-                                                if (m == "custom") showFanSettings = true else {
-                                                    deviceVM.setFanMode(m)
-                                                }
-                                            }
-                                                .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
-                                                .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
-                                                .padding(horizontal = 6.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                                
-                                if (showFanSettings) {
-                                    var onTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
-                                    var offTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
-                                    androidx.compose.material3.AlertDialog(
-                                        onDismissRequest = { showFanSettings = false },
-                                        title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
-                                        text = { 
-                                            Column {
-                                                Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
-                                                Spacer(Modifier.height(12.dp))
-                                                OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                                Spacer(Modifier.height(8.dp))
-                                                OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                            }
-                                        },
-                                        confirmButton = {
-                                            val isFanControlLocked = deviceVM.isFanModeUpdating
-                                            Button(
-                                                enabled = !isFanControlLocked,
-                                                onClick = { 
-                                                    deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
-                                                    showFanSettings = false 
-                                                }
-                                            ) { Text("Lưu & Áp dụng") }
-                                        },
-                                        dismissButton = {
-                                            androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
-                                        },
-                                        containerColor = Color(0xFF1E1E1E),
-                                        textContentColor = Color.White
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -1536,11 +1538,11 @@ private fun MainMenuDashboardQuickAccessSection(
                             nextSlot4 = newId
                         }
                     }
-                    sharedPrefs.edit()
-                        .putString("qa_slot2", nextSlot2)
-                        .putString("qa_slot3", nextSlot3)
-                        .putString("qa_slot4", nextSlot4)
-                        .apply()
+                    sharedPrefs.edit {
+                        putString("qa_slot2", nextSlot2)
+                        putString("qa_slot3", nextSlot3)
+                        putString("qa_slot4", nextSlot4)
+                    }
                     onSlot2Change(nextSlot2)
                     onSlot3Change(nextSlot3)
                     onSlot4Change(nextSlot4)
@@ -2110,14 +2112,14 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                     textAlign = android.graphics.Paint.Align.RIGHT
                 }
                 drawContext.canvas.nativeCanvas.drawText(
-                    "${String.format("%.1f", lastPoint.first)}°C", 
+                    "${String.format(java.util.Locale.US, "%.1f", lastPoint.first)}°C",
                     lastX - 15f, 
                     lastCpuY - 15f, 
                     paint
                 )
-                paint.color = android.graphics.Color.parseColor("#03A9F4")
+                paint.color = "#03A9F4".toColorInt()
                 drawContext.canvas.nativeCanvas.drawText(
-                    "${String.format("%.1f", lastPoint.second)}°C", 
+                    "${String.format(java.util.Locale.US, "%.1f", lastPoint.second)}°C",
                     lastX - 15f, 
                     lastHddY + 30f, 
                     paint
@@ -2860,7 +2862,7 @@ fun MainMenuSystemStatusCards(
                                             if (job.startedTs <= 0L) localSeconds++
                                         }
                                     }
-                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
 
                                     Column(
                                         Modifier

@@ -4,8 +4,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" android:maxSdkVersion="32" tools:ignore="SelectedPhotoAccess" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" android:maxSdkVersion="32" tools:ignore="SelectedPhotoAccess" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -35,10 +36,24 @@
             android:foregroundServiceType="mediaProjection|dataSync"
             android:exported="false" />
         <activity
+            android:name=".SocialShareActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="@string/social_share_target_label"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.NASWebDAV.ShareReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:supportsPictureInPicture="true"
-            android:screenOrientation="portrait"
+            android:screenOrientation="unspecified" tools:ignore="LockedOrientationActivity,DiscouragedApi"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|fontScale|locale|keyboard|keyboardHidden|density|navigation"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.NASWebDAV">
@@ -51,7 +66,7 @@
             android:name=".VideoPlayerActivity"
             android:exported="false"
             android:supportsPictureInPicture="true"
-            android:screenOrientation="portrait"
+            android:screenOrientation="unspecified" tools:ignore="LockedOrientationActivity,DiscouragedApi"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode|fontScale|locale|keyboard|keyboardHidden|density|navigation"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
         <service

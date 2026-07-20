@@ -43,6 +43,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.core.graphics.toColorInt
 
 // ============ Dashboard reusable widgets (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
@@ -583,16 +584,16 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                     textAlign = android.graphics.Paint.Align.RIGHT
                 }
                 drawContext.canvas.nativeCanvas.drawText(
-                    "${String.format("%.1f", lastPoint.first)}°C", 
-                    lastX - 15f, 
-                    lastCpuY - 15f, 
+                    "${String.format(java.util.Locale.US, "%.1f", lastPoint.first)}°C",
+                    lastX - 15f,
+                    lastCpuY - 15f,
                     paint
                 )
-                paint.color = android.graphics.Color.parseColor("#03A9F4")
+                paint.color = "#03A9F4".toColorInt()
                 drawContext.canvas.nativeCanvas.drawText(
-                    "${String.format("%.1f", lastPoint.second)}°C", 
-                    lastX - 15f, 
-                    lastHddY + 30f, 
+                    "${String.format(java.util.Locale.US, "%.1f", lastPoint.second)}°C",
+                    lastX - 15f,
+                    lastHddY + 30f,
                     paint
                 )
             }

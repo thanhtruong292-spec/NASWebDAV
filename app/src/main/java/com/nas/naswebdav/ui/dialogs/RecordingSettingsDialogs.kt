@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.edit
 
 // ============ Livestream recording + settings dialogs (biometric/bandwidth/sleep)
 //              (tách cơ học từ Dialogs.kt — không đổi logic) ============
@@ -221,10 +222,10 @@ fun BiometricSettingsDialogCompat(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = {
-                        sharedPrefs.edit()
-                            .putBoolean("biometric_enabled", enabled)
-                            .putInt("biometric_lock_delay_sec", delaySec)
-                            .apply()
+                        sharedPrefs.edit {
+                            putBoolean("biometric_enabled", enabled)
+                            putInt("biometric_lock_delay_sec", delaySec)
+                        }
                         deviceVM.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
@@ -235,10 +236,10 @@ fun BiometricSettingsDialogCompat(
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
-                        sharedPrefs.edit()
-                            .putBoolean("biometric_enabled", true)
-                            .putInt("biometric_lock_delay_sec", delaySec)
-                            .apply()
+                        sharedPrefs.edit {
+                            putBoolean("biometric_enabled", true)
+                            putInt("biometric_lock_delay_sec", delaySec)
+                        }
                         deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
                         autoBackupVM.lockNowRequested = true
                         onDismiss()
@@ -348,7 +349,7 @@ fun BandwidthThrottleDialog(
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
-                    sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
+                    sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")

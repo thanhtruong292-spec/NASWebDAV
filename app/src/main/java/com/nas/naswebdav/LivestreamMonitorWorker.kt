@@ -56,19 +56,17 @@ class LivestreamMonitorWorker(
         const val OUT_WATCH_USER  = "watch_username"
 
         fun createChannel(context: Context) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID,
-                    "Ghi hình Livestream",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Thông báo tiến trình ghi livestream về NAS"
-                    setShowBadge(true)
-                    setSound(null, null)
-                }
-                context.getSystemService(NotificationManager::class.java)
-                    ?.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Ghi hình Livestream",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Thông báo tiến trình ghi livestream về NAS"
+                setShowBadge(true)
+                setSound(null, null)
             }
+            context.getSystemService(NotificationManager::class.java)
+                ?.createNotificationChannel(channel)
         }
 
         private fun notificationIdForJob(jobId: String): Int {

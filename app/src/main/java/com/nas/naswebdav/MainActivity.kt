@@ -77,6 +77,7 @@ import com.nas.naswebdav.livestream.LivestreamViewModel
 import com.nas.naswebdav.backup.AutoBackupViewModel
 import com.nas.naswebdav.monitor.SystemMonitorViewModel
 import com.nas.naswebdav.smarttools.SmartToolsViewModel
+import androidx.core.net.toUri
 
 
 
@@ -227,7 +228,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     intent.addCategory("android.intent.category.DEFAULT")
 
-                    intent.data = android.net.Uri.parse(String.format("package:%s", packageName))
+                    intent.data = String.format("package:%s", packageName).toUri()
 
                     startActivity(intent)
 
@@ -413,10 +414,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 android.Manifest.permission.READ_MEDIA_IMAGES,
                 android.Manifest.permission.READ_MEDIA_VIDEO
             )
-            android.os.Build.VERSION.SDK_INT >= 23 -> arrayOf(
+            else -> arrayOf(
                 android.Manifest.permission.READ_EXTERNAL_STORAGE
             )
-            else -> emptyArray()
         }
         val missing = permissions.filter {
             androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -434,7 +434,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 return
             }
         }
-        if (android.os.Build.VERSION.SDK_INT >= 23 && !android.provider.Settings.canDrawOverlays(this)) {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
             android.widget.Toast.makeText(
                 this,
                 "Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn hoạt động.",

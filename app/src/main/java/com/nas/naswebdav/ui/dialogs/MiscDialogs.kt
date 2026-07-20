@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.edit
 
 // ============ Misc dialogs: folder picker, status, biometric lock, notification, IP/LAN, create/delete (tách từ Dialogs.kt) ============
 
@@ -262,9 +263,16 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
 @Composable
 fun NotificationDialog(title: String, message: String, icon: ImageVector, iconColor: Color, onDismiss: () -> Unit) {
     LaunchedEffect(key1 = title, key2 = message) { kotlinx.coroutines.delay(3000); onDismiss() }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onClick = onDismiss) { Text("Đã hiểu", fontWeight = FontWeight.Bold) } },
-        title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, fontWeight = FontWeight.Bold) } },
-        text = { Text(message, fontSize = 14.sp) }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary, textContentColor = MaterialTheme.colorScheme.onSurface)
+    val type = when {
+        title.contains("Lỗi", true) || title.contains("Thất bại", true) -> DialogType.ERROR
+        title.contains("Cảnh báo", true) -> DialogType.WARNING
+        else -> DialogType.SUCCESS
+    }
+    AppStatusDialog(
+        type = type,
+        message = message,
+        onDismiss = onDismiss
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -622,11 +630,11 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
                     if (!busy) {
                         busy = true
                         val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                        p.edit()
-                            .putBoolean("telegram_enabled", enabled)
-                            .putString("telegram_bot_token", botToken)
-                            .putString("telegram_chat_id", chatId)
-                            .apply()
+                        p.edit {
+                            putBoolean("telegram_enabled", enabled)
+                            putString("telegram_bot_token", botToken)
+                            putString("telegram_chat_id", chatId)
+                        }
                         busy = false
                         onDismiss()
                     }
@@ -637,11 +645,11 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
                     onClick = {
                         busy = true; resultMsg = "Đang lưu + gửi thử..."
                         val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                        p.edit()
-                            .putBoolean("telegram_enabled", enabled)
-                            .putString("telegram_bot_token", botToken)
-                            .putString("telegram_chat_id", chatId)
-                            .apply()
+                        p.edit {
+                            putBoolean("telegram_enabled", enabled)
+                            putString("telegram_bot_token", botToken)
+                            putString("telegram_chat_id", chatId)
+                        }
                         coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val url = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
@@ -754,13 +762,13 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
                 Button(enabled = !loading && !busy, onClick = {
                     busy = true; msg = "Đang lưu..."
                     val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                    p.edit()
-                        .putBoolean("alert_enabled", enabled)
-                        .putBoolean("alert_pause_disk_low", pause)
-                        .putBoolean("alert_pause_heat", false)
-                        .putInt("alert_cpu_threshold", cpuTemp.toIntOrNull() ?: 90)
-                        .putInt("alert_ram_threshold", ram.toIntOrNull() ?: 85)
-                        .apply()
+                    p.edit {
+                        putBoolean("alert_enabled", enabled)
+                        putBoolean("alert_pause_disk_low", pause)
+                        putBoolean("alert_pause_heat", false)
+                        putInt("alert_cpu_threshold", cpuTemp.toIntOrNull() ?: 90)
+                        putInt("alert_ram_threshold", ram.toIntOrNull() ?: 85)
+                    }
                     busy = false; msg = "Đã lưu quy tắc cảnh báo ✓"
                     onDismiss()
                 }) { Text("Lưu") }

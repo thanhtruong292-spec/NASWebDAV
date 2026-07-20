@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.edit
 
 
 /**
@@ -429,45 +430,26 @@ private fun DialogsTikTokLiveWatchSection(
     val excludeExpanded = DialogsLivestreamPanelState.current.value == "exclude"
 
     pendingDeleteUser?.let { target ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteUser = null },
-            containerColor = Color(0xFF15151D),
-            title = {
-                Text("Xác nhận xoá người dùng", color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Text(
-                    "Bạn có chắc chắn muốn xoá @${target.username} khỏi danh sách theo dõi TikTok Live không?",
-                    color = Color(0xFF8892B0),
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val deletedUsername = target.username
-                    pendingDeleteUser = null
-                    if (expandedUserName == deletedUsername) expandedUserName = null
-                    livestreamVM.removeTikTokLiveWatchUser(context, deletedUsername)
-                    snackbarScope.launch {
-                        val result = snackbarHostState.showSnackbar(
-                            message = "Đã xoá @$deletedUsername khỏi danh sách theo dõi.",
-                            actionLabel = "Hoàn tác",
-                            duration = SnackbarDuration.Long
-                        )
-                        if (result == SnackbarResult.ActionPerformed) {
-                            livestreamVM.addTikTokLiveWatchUser(context, deletedUsername)
-                        }
+        DialogsAppStatusDialog(
+            type = DialogType.CONFIRM,
+            message = "Bạn có chắc chắn muốn xoá @${target.username} khỏi danh sách theo dõi TikTok Live không?",
+            onConfirm = {
+                val deletedUsername = target.username
+                pendingDeleteUser = null
+                if (expandedUserName == deletedUsername) expandedUserName = null
+                livestreamVM.removeTikTokLiveWatchUser(context, deletedUsername)
+                snackbarScope.launch {
+                    val result = snackbarHostState.showSnackbar(
+                        message = "Đã xoá @$deletedUsername khỏi danh sách theo dõi.",
+                        actionLabel = "Hoàn tác",
+                        duration = SnackbarDuration.Long
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        livestreamVM.addTikTokLiveWatchUser(context, deletedUsername)
                     }
-                }) {
-                    Text("Xoá", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold)
                 }
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteUser = null }) {
-                    Text("Huỷ", color = Color(0xFF8892B0), fontWeight = FontWeight.SemiBold)
-                }
-            }
+            onDismiss = { pendingDeleteUser = null }
         )
     }
 
@@ -1301,9 +1283,16 @@ fun DialogsBiometricLockScreen(activity: androidx.fragment.app.FragmentActivity,
 @Composable
 fun DialogsNotificationDialog(title: String, message: String, icon: ImageVector, iconColor: Color, onDismiss: () -> Unit) {
     LaunchedEffect(key1 = title, key2 = message) { kotlinx.coroutines.delay(3000); onDismiss() }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onClick = onDismiss) { Text("Đã hiểu", fontWeight = FontWeight.Bold) } },
-        title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(24.dp)); Spacer(Modifier.width(8.dp)); Text(title, fontWeight = FontWeight.Bold) } },
-        text = { Text(message, fontSize = 14.sp) }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary, textContentColor = MaterialTheme.colorScheme.onSurface)
+    val type = when {
+        title.contains("Lỗi", true) || title.contains("Thất bại", true) -> DialogType.ERROR
+        title.contains("Cảnh báo", true) -> DialogType.WARNING
+        else -> DialogType.SUCCESS
+    }
+    DialogsAppStatusDialog(
+        type = type,
+        message = message,
+        onDismiss = onDismiss
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2294,7 +2283,7 @@ fun DialogsLivestreamRecordDialog(
                                             }
                                         }
                                     }
-                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
                                     Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 2: Toc do (giua, ngang voi 2 cot kia)
@@ -2518,10 +2507,10 @@ fun DialogsBiometricSettingsDialog(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = {
-                        sharedPrefs.edit()
-                            .putBoolean("biometric_enabled", enabled)
-                            .putInt("biometric_lock_delay_sec", delaySec)
-                            .apply()
+                        sharedPrefs.edit {
+                            putBoolean("biometric_enabled", enabled)
+                            putInt("biometric_lock_delay_sec", delaySec)
+                        }
                         deviceVM.logUserAction("Security","cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
@@ -2532,10 +2521,10 @@ fun DialogsBiometricSettingsDialog(
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
-                        sharedPrefs.edit()
-                            .putBoolean("biometric_enabled", true)
-                            .putInt("biometric_lock_delay_sec", delaySec)
-                            .apply()
+                        sharedPrefs.edit {
+                            putBoolean("biometric_enabled", true)
+                            putInt("biometric_lock_delay_sec", delaySec)
+                        }
                         deviceVM.logUserAction("Security","Kích hoạt khoá sinh trắc học cục bộ.")
                         autoBackupVM.lockNowRequested = true
                         onDismiss()
@@ -2645,7 +2634,7 @@ fun DialogsBandwidthThrottleDialog(
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
-                    sharedPrefs.edit().putLong("upload_speed_limit_bps", selected).apply()
+                    sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
@@ -2921,45 +2910,26 @@ fun DialogsNasConfigBackupDialog(
     // Confirm dialogs
     if (pendingDeleteFilename != null) {
         val target = pendingDeleteFilename!!
-        AlertDialog(
-            onDismissRequest = { pendingDeleteFilename = null },
-            containerColor = Color(0xFF161616),
-            title = { Text("Xoá backup?", color = Color.White) },
-            text = { Text("Sẽ xoá vĩnh viễn:\n$target", color = Color(0xFFE8E8E8), fontSize = 13.sp) },
-            confirmButton = {
-                TextButton(onClick = {
-                    sysMonitorVM.deleteNasConfigBackup(target)
-                    pendingDeleteFilename = null
-                }) { Text("XOÁ", color = Color(0xFFEF5350), fontWeight = FontWeight.Bold) }
+        DialogsAppStatusDialog(
+            type = DialogType.CONFIRM,
+            message = "Sẽ xoá vĩnh viễn:\n$target",
+            onConfirm = {
+                sysMonitorVM.deleteNasConfigBackup(target)
+                pendingDeleteFilename = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteFilename = null }) { Text("Huỷ", color = Color(0xFF8892B0)) }
-            }
+            onDismiss = { pendingDeleteFilename = null }
         )
     }
     if (pendingRestoreFilename != null) {
         val target = pendingRestoreFilename!!
-        AlertDialog(
-            onDismissRequest = { pendingRestoreFilename = null },
-            containerColor = Color(0xFF161616),
-            title = { Text("Khôi phục cấu hình?", color = Color.White) },
-            text = {
-                Text(
-                    "Sẽ ghi đè các file cấu hình hiện tại của NAS bằng nội dung trong:\n\n$target\n\n" +
-                        "Các file gốc được giữ lại với đuôi .pre-restore. Sau khi xong, " +
-                        "service nas_api/nginx sẽ tự restart.\n\nTiếp tục?",
-                    color = Color(0xFFE8E8E8), fontSize = 13.sp
-                )
+        DialogsAppStatusDialog(
+            type = DialogType.CONFIRM,
+            message = "Sẽ ghi đè các file cấu hình hiện tại của NAS bằng nội dung trong:\n\n$target\n\nCác file gốc được giữ lại với đuôi .pre-restore. Sau khi xong, service nas_api/nginx sẽ tự restart.\n\nTiếp tục?",
+            onConfirm = {
+                sysMonitorVM.restoreNasConfigBackup(target)
+                pendingRestoreFilename = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    sysMonitorVM.restoreNasConfigBackup(target)
-                    pendingRestoreFilename = null
-                }) { Text("KHÔI PHỤC", color = Color(0xFFFFA726), fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingRestoreFilename = null }) { Text("Huỷ", color = Color(0xFF8892B0)) }
-            }
+            onDismiss = { pendingRestoreFilename = null }
         )
     }
 

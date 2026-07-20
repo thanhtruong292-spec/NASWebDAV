@@ -63,6 +63,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.core.content.edit
+import androidx.core.net.toUri
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -92,7 +94,7 @@ private fun shareImageUrl(
             putExtra(Intent.EXTRA_TEXT, url)
             putExtra(Intent.EXTRA_TITLE, fileName)
             // Một số app nhận EXTRA_STREAM — cố gắng lấy qua Uri.parse
-            putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse(url))
+            putExtra(Intent.EXTRA_STREAM, url.toUri())
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         val chooser = Intent.createChooser(sendIntent, "Chia sẻ ảnh")
@@ -163,7 +165,7 @@ fun ImageViewerScreen(
             val now = System.currentTimeMillis()
             if (now - lastClearTime > 7 * 24 * 60 * 60 * 1000L) {
                 imageLoader.diskCache?.clear()
-                prefs.edit().putLong("last_cache_clear", now).apply()
+                prefs.edit { putLong("last_cache_clear", now) }
             }
         }
     }
@@ -196,22 +198,11 @@ fun ImageViewerScreen(
     // ============ DELETE DIALOG ============
     if (showDeleteDialog && imageFiles.isNotEmpty()) {
         val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            icon = { Icon(Icons.Default.DeleteForever, null, tint = AccentRed) },
-            title = { Text("Xóa ảnh?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text("Bạn có chắc muốn xóa\n\"${currentFile.name}\"?\n\nẢnh sẽ được chuyển vào Thùng rác.")
-            },
-            confirmButton = {
-                Button(
-                    onClick = { handleConfirmDelete(currentFile) },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
-                ) { Text("Xóa") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) { Text("Hủy") }
-            }
+        AppStatusDialog(
+            type = DialogType.CONFIRM,
+            message = "Bạn có chắc muốn xóa\n\"${currentFile.name}\"?\n\nẢnh sẽ được chuyển vào Thùng rác.",
+            onConfirm = { handleConfirmDelete(currentFile) },
+            onDismiss = { showDeleteDialog = false }
         )
     }
 
@@ -239,7 +230,7 @@ fun ImageViewerScreen(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            beyondBoundsPageCount = 1,
+            beyondViewportPageCount = 1,
             key = { imageFiles[it].path },
             userScrollEnabled = true
         ) { page ->
@@ -721,7 +712,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         if (isLegacyFormat) {
             // Xây dựng URL transcode: http://host:5050/api/stream/transcode?path=/đường/dẫn/file
             // FIX: Dùng android.net.Uri thay vì java.net.URI để tránh crash URISyntaxException khi có khoảng trắng
-            val uri = android.net.Uri.parse(url)
+            val uri = url.toUri()
             val relativePath = uri.path?.substringAfter("/webdav") ?: ""
             val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
             val transcodeUrl = "${url.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
@@ -984,7 +975,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 val act = context as? android.app.Activity
-                val pip = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) act?.isInPictureInPictureMode ?: false else false
+                val pip = act?.isInPictureInPictureMode ?: false
                 if (!pip) {
                     exoPlayer.pause()
                 }

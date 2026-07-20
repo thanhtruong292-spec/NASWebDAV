@@ -464,7 +464,7 @@ fun LivestreamRecordDialog(
                                             }
                                         }
                                     }
-                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
                                     Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 2: Toc do (giua, ngang voi 2 cot kia)

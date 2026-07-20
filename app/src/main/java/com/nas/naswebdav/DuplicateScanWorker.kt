@@ -767,11 +767,9 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
     protected fun makeForegroundInfo(
         channelId: String, channelName: String, notificationId: Int, title: String
     ): ForegroundInfo {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
-            val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
+        val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(channel)
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setContentTitle(title).setSmallIcon(android.R.drawable.ic_popup_sync).setOngoing(true).build()
         // Tu Android 10 (Q) tro len, neu manifest da khai bao foregroundServiceType
@@ -840,10 +838,8 @@ object UploadNotificationHelper {
     private const val CHANNEL_ID = "upload_progress"
     private const val NOTIFICATION_ID = 9001
     fun createChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Tiến trình tải lên", NotificationManager.IMPORTANCE_LOW).apply { description = "Hiển thị tiến trình tải tệp lên NAS"; setShowBadge(false) }
-            (context.getSystemService(NotificationManager::class.java))?.createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(CHANNEL_ID, "Tiến trình tải lên", NotificationManager.IMPORTANCE_LOW).apply { description = "Hiển thị tiến trình tải tệp lên NAS"; setShowBadge(false) }
+        (context.getSystemService(NotificationManager::class.java))?.createNotificationChannel(channel)
     }
     fun showProgress(context: Context, fileName: String, completed: Int, total: Int, currentPercent: Int = -1) {
         createChannel(context)

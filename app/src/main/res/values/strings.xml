@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">NAS WebDAV</string>
+    <string name="recording_overlay_initial">REC 00:00</string>
+    <string name="recording_overlay_format">REC %1$02d:%2$02d</string>
+    <string name="social_share_target_label">Tải về NAS</string>
+    <string name="social_share_invalid">Không tìm thấy link Facebook, YouTube, TikTok hoặc Instagram hợp lệ.</string>
+    <string name="social_share_login_required">Hãy đăng nhập NASWebDAV một lần trước khi sử dụng Chia sẻ.</string>
+    <string name="social_share_queued">Đã gửi link tới NAS. Video sẽ được tải trong nền.</string>
 </resources>

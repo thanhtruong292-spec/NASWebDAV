@@ -85,6 +85,8 @@ import android.app.PictureInPictureParams
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.lazy.items
+import androidx.core.content.edit
+import androidx.core.net.toUri
 
 private const val VIEWED_FILES_LIMIT = 5000
 
@@ -119,10 +121,10 @@ internal fun markBrowserFilesViewed(
             viewed.removeAll(viewed.filter { it !in keep }.take(viewed.size - VIEWED_FILES_LIMIT).toSet())
         }
 
-        prefs.edit()
-            .putStringSet("viewed_files", viewed)
-            .putString("viewed_files_order", JSONArray(order).toString())
-            .apply()
+        prefs.edit {
+            putStringSet("viewed_files", viewed)
+            putString("viewed_files_order", JSONArray(order).toString())
+        }
     }
 }
 
@@ -969,7 +971,7 @@ fun BrowserScreen(
                                 IconButton(
                                     onClick = {
                                         viewMode = opt.mode
-                                        sortPrefs.edit().putString("view_mode", opt.mode.name).apply()
+                                        sortPrefs.edit { putString("view_mode", opt.mode.name) }
                                     },
                                     modifier = Modifier.size(36.dp)
                                 ) {
@@ -1035,7 +1037,7 @@ fun BrowserScreen(
                                         } else null,
                                         onClick = {
                                             sortMode = opt.key
-                                            sortPrefs.edit().putString("file_sort", opt.key).apply()
+                                            sortPrefs.edit { putString("file_sort", opt.key) }
                                             showSortMenu = false
                                         }
                                     )
@@ -1680,7 +1682,7 @@ fun BrowserScreenFileItemGridCell(
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(text = { Text("Tải về máy") }, onClick = {
                 showMenu = false
-                val request = android.app.DownloadManager.Request(android.net.Uri.parse(file.path))
+                val request = android.app.DownloadManager.Request(file.path.toUri())
                     .setTitle(file.name)
                     .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                     .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
@@ -1958,7 +1960,7 @@ class SearchHistoryManager(context: android.content.Context) {
             obj.put("timestamp", it.timestamp)
             array.put(obj)
         }
-        prefs.edit().putString("history", array.toString()).apply()
+        prefs.edit { putString("history", array.toString()) }
     }
     
     fun getHistory(): List<SearchHistory> {

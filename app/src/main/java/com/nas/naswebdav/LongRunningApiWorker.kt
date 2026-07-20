@@ -39,17 +39,15 @@ class LongRunningApiWorker(
         private const val TAG = "LongRunAPI"
 
         fun createChannel(context: Context) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID, "Tác vụ NAS nặng",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Hiển thị tiến trình giải nén/sắp xếp file trên NAS"
-                    setShowBadge(false)
-                }
-                (context.getSystemService(NotificationManager::class.java))
-                    ?.createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID, "Tác vụ NAS nặng",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Hiển thị tiến trình giải nén/sắp xếp file trên NAS"
+                setShowBadge(false)
             }
+            (context.getSystemService(NotificationManager::class.java))
+                ?.createNotificationChannel(channel)
         }
     }
 

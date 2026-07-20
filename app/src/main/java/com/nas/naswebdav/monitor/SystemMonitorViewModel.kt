@@ -14,6 +14,7 @@ import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.DiskHealthSample
 import com.nas.naswebdav.InsightAction
+import com.nas.naswebdav.InsightFlowTask
 import com.nas.naswebdav.NasConfigBackup
 import com.nas.naswebdav.NasInsights
 import com.nas.naswebdav.toApiBaseUrl
@@ -539,21 +540,58 @@ class SystemMonitorViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
+                        val health = json.optJSONObject("health_trend") ?: org.json.JSONObject()
+                        val workload = json.optJSONObject("workload") ?: org.json.JSONObject()
+                        val emmc = json.optJSONObject("emmc_guard") ?: org.json.JSONObject()
+                        val rootEmmc = emmc.optJSONObject("root") ?: org.json.JSONObject()
+                        val logEmmc = emmc.optJSONObject("log") ?: org.json.JSONObject()
+                        val flow = json.optJSONObject("data_flow") ?: org.json.JSONObject()
+                        
+                        val emmcWarningsList: List<String> = emmc.optJSONArray("warnings")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                        val emmcRecsList: List<String> = emmc.optJSONArray("recommendations")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                        val workloadReasonsList: List<String> = workload.optJSONArray("reasons")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+
+                        val maintenanceArr = json.optJSONArray("maintenance")
+                        val parsedActions: List<InsightAction> = maintenanceArr?.let { arr ->
+                            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                                InsightAction(
+                                    priority = it.optString("priority", ""),
+                                    title = it.optString("title", ""),
+                                    detail = it.optString("detail", "")
+                                )
+                            }
+                        } ?: emptyList()
+
+                        val tasksArr = flow.optJSONArray("tasks")
+                        val parsedTasks: List<InsightFlowTask> = tasksArr?.let { arr ->
+                            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                                InsightFlowTask(
+                                    label = it.optString("label", ""),
+                                    file = it.optString("file", "")
+                                )
+                            }
+                        } ?: emptyList()
+
                         nasInsights = NasInsights(
-                            hddScore = json.optInt("hdd_score", 0),
-                            hddStatusText = json.optString("hdd_status", ""),
-                            hddTempC = json.optInt("hdd_temp_c", 0),
-                            emmcRootPercent = json.optInt("emmc_root_percent", 0),
-                            emmcLogPercent = json.optInt("emmc_log_percent", 0),
-                            maintenanceActions = json.optJSONArray("recommendations")?.let { arr ->
-                                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                                    InsightAction(
-                                        priority = it.optString("priority", ""),
-                                        title = it.optString("title", ""),
-                                        detail = it.optString("detail", "")
-                                    )
-                                }
-                            } ?: emptyList(),
+                            hddScore = health.optInt("score", 0),
+                            hddStatusText = health.optString("status_text", health.optString("smart_status", "")),
+                            hddTempC = health.optInt("temp_c", 0),
+                            hddMinScore = health.optInt("min_score", 0),
+                            hddScoreDelta = health.optInt("score_delta", 0),
+                            workloadMode = workload.optString("mode", "normal"),
+                            workloadPressure = workload.optInt("pressure", 0),
+                            workloadRecommendation = workload.optString("recommendation", ""),
+                            workloadReasons = workloadReasonsList,
+                            emmcRootPercent = rootEmmc.optInt("percent", 0),
+                            emmcLogPercent = logEmmc.optInt("percent", 0),
+                            emmcWarnings = emmcWarningsList,
+                            emmcRecommendations = emmcRecsList,
+                            diskReadBps = flow.optLong("disk_read_bps", 0L),
+                            diskWriteBps = flow.optLong("disk_write_bps", 0L),
+                            netRxBps = flow.optLong("net_rx_bps", 0L),
+                            netTxBps = flow.optLong("net_tx_bps", 0L),
+                            flowTasks = parsedTasks,
+                            maintenanceActions = parsedActions,
                             updatedAt = System.currentTimeMillis()
                         )
                     }

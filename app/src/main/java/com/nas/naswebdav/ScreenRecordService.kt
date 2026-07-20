@@ -96,7 +96,7 @@ class ScreenRecordService : Service() {
     private fun startRecording(intent: Intent) {
         if (projection != null) return
         createChannel()
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+        if (!Settings.canDrawOverlays(this)) {
             logWarn("Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn tiếp tục")
         }
         isRecordingState.value = true
@@ -107,12 +107,17 @@ class ScreenRecordService : Service() {
         networkModeState.value = "..."
         showRecordingOverlay()
         logInfo("Bắt đầu khởi động quay màn hình")
+        val fgTypes = if (android.os.Build.VERSION.SDK_INT >= 29) {
+            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        } else {
+            0
+        }
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
             buildNotification("Đang khởi động quay màn hình"),
-            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            fgTypes
         )
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
@@ -575,7 +580,7 @@ class ScreenRecordService : Service() {
             return
         }
         if (overlayAdded) return
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+        if (!Settings.canDrawOverlays(this)) {
             logWarn("Chưa có quyền hiển thị trên cùng, không thể hiện chip REC toàn màn hình")
             return
         }
@@ -591,7 +596,7 @@ class ScreenRecordService : Service() {
                 setTextColor(Color.WHITE)
                 textSize = 13f
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
-                text = "REC 00:00"
+                text = getString(R.string.recording_overlay_initial)
             }
             val container = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -607,12 +612,7 @@ class ScreenRecordService : Service() {
                 })
                 addView(label)
             }
-            val type = if (Build.VERSION.SDK_INT >= 26) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
+            val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -646,7 +646,7 @@ class ScreenRecordService : Service() {
         val minutes = elapsedSeconds / 60L
         val seconds = elapsedSeconds % 60L
         label.post {
-            label.text = "REC %02d:%02d".format(minutes, seconds)
+            label.text = getString(R.string.recording_overlay_format, minutes, seconds)
         }
     }
 
@@ -706,10 +706,8 @@ class ScreenRecordService : Service() {
     }
 
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, "Quay màn hình NAS", NotificationManager.IMPORTANCE_LOW)
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(CHANNEL_ID, "Quay màn hình NAS", NotificationManager.IMPORTANCE_LOW)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun updateNotification(text: String) {

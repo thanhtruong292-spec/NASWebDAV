@@ -57,6 +57,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.core.net.toUri
 
 // ════════════════════════════════════════════════════════════════════════════
 // VideoPlayerScreen.kt
@@ -184,7 +185,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
 
     val effectiveUrl = remember(playbackUrl, isLegacyFormat) {
         if (isLegacyFormat) {
-            val uri = android.net.Uri.parse(playbackUrl)
+            val uri = playbackUrl.toUri()
             val relativePath = uri.path?.substringAfter("/webdav") ?: ""
             val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
             "${playbackUrl.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
@@ -451,7 +452,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
                 val act = context as? android.app.Activity
-                val pip = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) act?.isInPictureInPictureMode ?: false else false
+                val pip = act?.isInPictureInPictureMode ?: false
                 if (!pip) {
                     exoPlayer.pause()
                 }

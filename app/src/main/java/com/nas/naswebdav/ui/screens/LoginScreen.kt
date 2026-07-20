@@ -62,6 +62,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.getValue
+import androidx.core.content.edit
 
 // ============ LoginScreen (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
@@ -382,7 +383,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             onConfirm = {
                 val wolMac = macAddress.trim()
                 if (wolMac.isNotBlank()) {
-                    sharedPrefs.edit().putString("mac_address", wolMac).apply()
+                    sharedPrefs.edit { putString("mac_address", wolMac) }
                     showWolDialog = false
                     emergencyIsError = false
                     emergencyMsg = "Đang gửi Wake-on-LAN..."

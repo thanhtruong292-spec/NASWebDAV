@@ -602,7 +602,7 @@ fun DashboardSystemStatusCards(
                                             if (job.startedTs <= 0L) localSeconds++
                                         }
                                     }
-                                    val displayDur = "${localSeconds / 3600}h${String.format("%02d", (localSeconds % 3600) / 60)}m${String.format("%02d", localSeconds % 60)}s"
+                                    val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
 
                                     Column(
                                         Modifier

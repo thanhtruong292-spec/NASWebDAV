@@ -34,6 +34,7 @@ import java.io.File
 import java.net.URI
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import androidx.core.content.edit
 
 
 
@@ -57,7 +58,7 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                 if (response.isSuccessful) {
                     val json = JSONObject(response.body?.string() ?: "")
                     val prefs = applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                    prefs.edit().putString("last_speed_write", json.optString("write_speed", "Lỗi")).putString("last_speed_read", json.optString("read_speed", "Lỗi")).putString("last_speed_time", com.nas.naswebdav.utils.FormatUtils.formatDateTime(System.currentTimeMillis())).apply()
+                    prefs.edit { putString("last_speed_write", json.optString("write_speed", "Lỗi")); putString("last_speed_read", json.optString("read_speed", "Lỗi")); putString("last_speed_time", com.nas.naswebdav.utils.FormatUtils.formatDateTime(System.currentTimeMillis())) }
                     return@withContext Result.success()
                 }
             }

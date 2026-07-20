@@ -3,6 +3,7 @@ package com.nas.naswebdav.utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import android.net.Uri
 import android.net.wifi.WifiManager
 import com.nas.naswebdav.NasApplication
@@ -358,7 +359,7 @@ object ImageFingerprint {
 
     fun computeAHash(bitmap: Bitmap): String? {
         return try {
-            val small = Bitmap.createScaledBitmap(bitmap, HASH_SIZE, HASH_SIZE, true)
+            val small = bitmap.scale(HASH_SIZE, HASH_SIZE)
             try {
                 val pixels = IntArray(HASH_SIZE * HASH_SIZE)
                 small.getPixels(pixels, 0, HASH_SIZE, 0, 0, HASH_SIZE, HASH_SIZE)

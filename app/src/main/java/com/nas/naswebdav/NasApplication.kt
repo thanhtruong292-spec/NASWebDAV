@@ -31,6 +31,8 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import androidx.core.content.edit
+import androidx.core.net.toUri
 
 /**
  * Application class cung cấp singleton Database và OkHttpClient cho toàn bộ ứng dụng.
@@ -418,7 +420,7 @@ fun String.toFastMediaUrl(): String {
     if (apiBase.isEmpty()) return this
 
     val trimmed = trim()
-    val parsedPath = runCatching { android.net.Uri.parse(trimmed).path }.getOrNull()
+    val parsedPath = runCatching { trimmed.toUri().path }.getOrNull()
         ?: runCatching { java.net.URL(trimmed).path }.getOrNull()
         ?: return this
 
@@ -484,12 +486,16 @@ object SecurePrefsHelper {
         val oldPass = oldPrefs.getString(KEY_PASS, null)
         val newUrl = securePrefs.getString(KEY_URL, null)
         if (newUrl.isNullOrEmpty() && !oldUrl.isNullOrEmpty()) {
-            securePrefs.edit()
-                .putString(KEY_URL, oldUrl)
-                .putString(KEY_USER, oldUser ?: "")
-                .putString(KEY_PASS, oldPass ?: "")
-                .apply()
-            oldPrefs.edit().remove(KEY_URL).remove(KEY_USER).remove(KEY_PASS).apply()
+            securePrefs.edit {
+                putString(KEY_URL, oldUrl)
+                putString(KEY_USER, oldUser ?: "")
+                putString(KEY_PASS, oldPass ?: "")
+            }
+            oldPrefs.edit {
+                remove(KEY_URL)
+                remove(KEY_USER)
+                remove(KEY_PASS)
+            }
             android.util.Log.i("SecurePrefs", "Đã di dời thành công thiết lập mạng cũ sang bộ nhớ bảo mật AES-256.")
         }
     }
@@ -507,12 +513,12 @@ object SecurePrefsHelper {
         try {
             val jsonArray = org.json.JSONArray()
             urlList.forEach { jsonArray.put(it) }
-            getSecurePrefs(context).edit()
-                .putString(KEY_URL_LIST, jsonArray.toString())
-                .putString(KEY_URL, urlList.firstOrNull() ?: "")
-                .putString(KEY_USER, user)
-                .putString(KEY_PASS, pass)
-                .apply()
+            getSecurePrefs(context).edit {
+                putString(KEY_URL_LIST, jsonArray.toString())
+                putString(KEY_URL, urlList.firstOrNull() ?: "")
+                putString(KEY_USER, user)
+                putString(KEY_PASS, pass)
+            }
         } catch (e: Exception) {}
     }
 
@@ -525,12 +531,12 @@ object SecurePrefsHelper {
                 val prefs = getSecurePrefs(context)
                 val jsonArray = org.json.JSONArray()
                 urlList.forEach { jsonArray.put(it) }
-                prefs.edit()
-                    .putString(KEY_URL_LIST, jsonArray.toString())
-                    .putString(KEY_URL, urlList.firstOrNull() ?: "")
-                    .putString(KEY_USER, user)
-                    .putString(KEY_PASS, pass)
-                    .apply()
+                prefs.edit {
+                    putString(KEY_URL_LIST, jsonArray.toString())
+                    putString(KEY_URL, urlList.firstOrNull() ?: "")
+                    putString(KEY_USER, user)
+                    putString(KEY_PASS, pass)
+                }
             } catch (e: Exception) { android.util.Log.e("NasApp", "Lưu credentials thất bại", e) }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onComplete() }
         }

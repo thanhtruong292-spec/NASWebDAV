@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.withTransform
 import coil.compose.AsyncImage
 import com.nas.naswebdav.NasFile
+import androidx.core.content.edit
 
 // ============ Disk Profile bottom sheet (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
@@ -356,11 +357,11 @@ internal fun DiskProfileBottomSheet(
             message = "Chỉ đặt mốc theo dõi sau khi đã xác nhận ổ dữ liệu hiện tại là ổ cần theo dõi. Mốc này gắn với model/serial ổ để tính checklist 24 giờ, 7 ngày và 30 ngày.",
             onConfirm = {
                 val now = System.currentTimeMillis()
-                prefs.edit()
-                    .putLong("${activeDiskKey}_installed_at", now)
-                    .putString("${activeDiskKey}_model", diskModel)
-                    .putString("${activeDiskKey}_serial", diskSerial)
-                    .apply()
+                prefs.edit {
+                    putLong("${activeDiskKey}_installed_at", now)
+                    putString("${activeDiskKey}_model", diskModel)
+                    putString("${activeDiskKey}_serial", diskSerial)
+                }
                 deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
                 installedAt = now
                 showTrackingConfirm = false
@@ -373,11 +374,11 @@ internal fun DiskProfileBottomSheet(
             type = DialogType.WARNING,
             message = "Thao tác này đưa hồ sơ ổ mới về trạng thái chưa theo dõi và các số liệu sẽ trở lại 0 cho đến khi đặt mốc mới.",
             onConfirm = {
-                prefs.edit()
-                    .remove("${activeDiskKey}_installed_at")
-                    .remove("${activeDiskKey}_model")
-                    .remove("${activeDiskKey}_serial")
-                    .apply()
+                prefs.edit {
+                    remove("${activeDiskKey}_installed_at")
+                    remove("${activeDiskKey}_model")
+                    remove("${activeDiskKey}_serial")
+                }
                 deviceVM.logUserAction("DiskProfile", "Đặt lại mốc theo dõi hồ sơ ổ đĩa.")
                 installedAt = 0L
                 showResetTrackingConfirm = false
@@ -728,7 +729,7 @@ private fun OperationModeChip(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
-                prefs.edit().putString("operation_mode", mode).apply()
+                prefs.edit { putString("operation_mode", mode) }
                 onSelect(mode)
             }
             .padding(horizontal = 10.dp, vertical = 6.dp)

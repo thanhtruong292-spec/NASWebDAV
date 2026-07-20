@@ -2,6 +2,7 @@ package com.nas.naswebdav
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.core.content.edit
 
 /**
  * NasUtils.kt — Top-level utility functions extracted from WebDavViewModel
@@ -181,7 +182,7 @@ internal fun persistDetectedWakeOnLanMac(network: List<OmvNetworkInfo>): String?
     val prefs = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
     val currentMac = normalizeWakeOnLanMac(prefs.getString("mac_address", "") ?: "")
     if (currentMac != detectedMac) {
-        prefs.edit().putString("mac_address", detectedMac).apply()
+        prefs.edit { putString("mac_address", detectedMac) }
     }
     return detectedMac
 }

@@ -258,8 +258,10 @@ def _social_is_supported_content_url(parsed, host):
     if _social_host_matches(host, "facebook.com"):
         return (
             "/videos/" in path_lower
-            or path_lower.startswith(("/reel/", "/stories/", "/s/"))
-            or (path_lower == "/watch/" and "v=" in query_lower)
+            or path_lower.startswith((
+                "/reel/", "/stories/", "/s/", "/share/r/", "/share/v/"
+            ))
+            or (path_lower in ("/watch", "/watch/") and "v=" in query_lower)
             or (path_lower == "/photo.php" and "v=" in query_lower)
         )
 

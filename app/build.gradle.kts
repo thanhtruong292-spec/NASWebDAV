@@ -39,14 +39,14 @@ gradle.taskGraph.whenReady {
 
 android {
     namespace = "com.nas.naswebdav"
-    compileSdk = 35 // D�ng 35 d? ?n d?nh nh?t v?i Room hi?n t?i
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 342
-        versionName = "1.0.342"
+        targetSdk = 36
+        versionCode = 343
+        versionName = "1.0.343"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
@@ -95,74 +95,71 @@ android {
 
 dependencies {
     // Jetpack Paging 3
-    implementation("androidx.paging:paging-runtime-ktx:3.3.0")
-    implementation("androidx.paging:paging-compose:3.3.0")
+    implementation(libs.androidx.paging.runtime.ktx)
+    implementation(libs.androidx.paging.compose)
 
     // SMB/Samba client — upload/download files to NAS via native SMB3 protocol
-    implementation("com.hierynomus:smbj:0.13.0")
+    implementation(libs.smbj)
 
     // Sinh trắc học & Fragment hỗ trợ
-    implementation("androidx.biometric:biometric:1.1.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation(libs.androidx.biometric)
+    implementation(libs.androidx.appcompat)
 
     // ExoPlayer (Jetpack Media3) — khai báo duy nhất 1 lần
-    val media3Version = "1.2.1"
-    implementation("androidx.media3:media3-exoplayer:$media3Version")
-    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
-    implementation("androidx.media3:media3-ui:$media3Version")
-    implementation("androidx.media3:media3-common:$media3Version")
-    implementation("androidx.media3:media3-session:$media3Version")
-    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.datasource.okhttp)
 
     // Duyệt cây thư mục an toàn cho tính năng Đồng bộ
-    implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("com.github.thegrizzlylabs:sardine-android:0.8")
+    implementation(libs.androidx.documentfile)
+    implementation(libs.sardine.android)
 
     // Coil - Tải ảnh & video thumbnail
-    implementation("io.coil-kt:coil-compose:2.6.0")
-    implementation("io.coil-kt:coil-video:2.6.0")
+    implementation(libs.coil.compose)
+    implementation(libs.coil.video)
 
     // Navigation Compose
-    implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation(libs.androidx.navigation.compose)
 
     // Jetpack Compose UI
-    implementation("androidx.compose.material:material-icons-extended:1.6.2")
-    implementation("androidx.compose.material3:material3:1.2.0")
-    implementation("androidx.compose.ui:ui:1.6.2")
+    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.ui)
 
     // Room Database
-    val room_version = "2.6.1"
-    implementation("androidx.room:room-runtime:$room_version")
-    implementation("androidx.room:room-ktx:$room_version")
-    implementation("androidx.room:room-paging:$room_version")
-    ksp("androidx.room:room-compiler:$room_version")
-    androidTestImplementation("androidx.room:room-testing:$room_version")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.room.paging)
+    ksp(libs.androidx.room.compiler)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    // AndroidX Core
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("io.mockk:mockk:1.13.8")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.22")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
-    testImplementation("org.robolectric:robolectric:4.11.1")
+    // Test dependencies
+    testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
 
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
     implementation(libs.material)
 
     // Bảo mật & mã hóa SharedPreferences
-    implementation("androidx.security:security-crypto:1.0.0")
+    implementation(libs.androidx.security.crypto)
 
     // WorkManager để chạy ngầm
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Timber for better logging
-    implementation("com.jakewharton.timber:timber:5.0.1")
+    implementation(libs.timber)
 
     // Chucker for in-app network inspection
-    debugImplementation("com.github.chuckerteam.chucker:library:4.0.0")
-    releaseImplementation("com.github.chuckerteam.chucker:library-no-op:4.0.0")
+    debugImplementation(libs.chucker)
+    releaseImplementation(libs.chucker.no.op)
 }
 
 ksp {

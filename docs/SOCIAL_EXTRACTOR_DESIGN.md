@@ -1,7 +1,7 @@
 ﻿# Social Extractor Integration — Design Doc
 
 **Date:** 2026-07-19
-**Status:** Backend implemented and deployed
+**Status:** Backend and Android quick-share target implemented
 **Author:** Claude (auto-generated, needs human review)
 
 ---
@@ -26,6 +26,9 @@ does **not** implement this endpoint. The Android UI is ready; the backend is mi
 | LivestreamViewModel.requestSocialDownload | `livestream/LivestreamViewModel.kt:372` | DONE — calls `/api/social/download` |
 | StreamPipeWorker | `StreamPipeWorker.kt:170` | DONE — handles `Downloads/social/` folder |
 | AppConfig.SOCIAL_DOWNLOAD_FOLDER | `NasApplication.kt:403` | DONE — `"Downloads/social/"` |
+| SocialShareActivity | `SocialShareActivity.kt` | DONE — receives Android `ACTION_SEND` without opening the main screen |
+| SocialDownloadWorker | `SocialDownloadWorker.kt` | DONE — queues the NAS request in the background with network retry |
+| SocialShareParser | `SocialShareParser.kt` | DONE — extracts and validates supported URLs from shared captions |
 
 **Request contract** (what Android sends):
 ```json
@@ -78,14 +81,29 @@ Flow:
 
 Why: Direct HDD write can stall on ARM with concurrent I/O. Temp → sync is safer.
 
-### 3.3 Quality: Default `best` (DECIDED)
+### 3.3 Quality: Best available video (DECIDED)
 
-No quality parameter in v1. Always download best available format.
-- Simplifies Android UI (no format selector)
-- yt-dlp auto-merges best video + best audio
-- Future: can add `quality` param without breaking changes
+No quality parameter in v1. yt-dlp downloads the best format it can obtain.
+- A video without audio is an acceptable successful result; audio is not required.
+- Simplifies Android UI (no format selector).
+- Future versions can add a `quality` parameter without breaking the request contract.
 
-### 3.4 POST `/api/social/download`
+### 3.4 Android quick share
+
+After installing version `1.0.343` or newer and logging in once:
+
+1. Open a public Facebook, YouTube, TikTok, or Instagram video/story/reel.
+2. Tap **Share** in that app.
+3. Select **Tải về NAS** in the Android share sheet.
+4. NASWebDAV validates the URL, queues a `WorkManager` job, shows a short confirmation,
+   and closes its transparent receiver immediately. The main NASWebDAV screen is not opened.
+5. The NAS stores the result under `Downloads/social/`.
+
+Only the URL is placed in WorkManager input data. NAS credentials remain in encrypted
+preferences and are read by the worker at execution time. Re-sharing the same URL while
+its job is still queued does not create a second Android job.
+
+### 3.5 POST `/api/social/download`
 
 **Request:**
 ```json
@@ -111,7 +129,7 @@ No quality parameter in v1. Always download best available format.
 { "error": "<message>" }
 ```
 
-### 3.5 GET `/api/social/status/{job_id}`
+### 3.6 GET `/api/social/status/{job_id}`
 
 Poll download progress.
 
@@ -229,8 +247,10 @@ Returns job state from `_social_download_jobs`. 404 if missing.
 
 ### Manual Verification
 1. From Android app: paste public YouTube link → verify file appears on NAS
-2. Check yt-dlp process runs and exits cleanly
-3. Verify file saved in correct WebDAV folder
+2. From Facebook: Share a public reel/story/video → choose **Tải về NAS** → verify the
+   main app stays closed and the file appears under `Downloads/social/`
+3. Check yt-dlp process runs and exits cleanly
+4. Verify file saved in correct WebDAV folder
 
 ---
 

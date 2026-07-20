@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import androidx.core.content.edit
 
 /**
  * DeviceManagementViewModel — Primary owner of device-management state.
@@ -1077,11 +1078,11 @@ class DeviceManagementViewModel(
         onResult: (Boolean, String) -> Unit,
     ) {
         val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        p.edit()
-            .putBoolean("telegram_enabled", enabled)
-            .putString("telegram_bot_token", botToken)
-            .putString("telegram_chat_id", chatId)
-            .apply()
+        p.edit {
+            putBoolean("telegram_enabled", enabled)
+            putString("telegram_bot_token", botToken)
+            putString("telegram_chat_id", chatId)
+        }
         if (test) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
@@ -1131,13 +1132,13 @@ class DeviceManagementViewModel(
         onResult: (Boolean, String) -> Unit,
     ) {
         val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        p.edit()
-            .putBoolean("alert_enabled", enabled)
-            .putBoolean("alert_pause_disk_low", pauseOnDiskLow)
-            .putBoolean("alert_pause_heat", pauseOnHeat)
-            .putInt("alert_cpu_threshold", cpuThreshold)
-            .putInt("alert_ram_threshold", ramThreshold)
-            .apply()
+        p.edit {
+            putBoolean("alert_enabled", enabled)
+            putBoolean("alert_pause_disk_low", pauseOnDiskLow)
+            putBoolean("alert_pause_heat", pauseOnHeat)
+            putInt("alert_cpu_threshold", cpuThreshold)
+            putInt("alert_ram_threshold", ramThreshold)
+        }
         onResult(true, "Đã lưu quy tắc cảnh báo")
     }
 

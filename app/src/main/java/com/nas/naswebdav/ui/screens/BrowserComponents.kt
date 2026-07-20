@@ -87,6 +87,7 @@ import android.app.PictureInPictureParams
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.lazy.items
+import androidx.core.net.toUri
 
 // ============ Browser components: grid cell, cached thumbnail, external player (tách từ BrowserScreen.kt) ============
 // FIX 2026-07-13: ThumbState giờ exposed ra ngoài để FileItemGridCell đồng bộ icon:
@@ -240,7 +241,7 @@ fun FileItemGridCell(
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(text = { Text("Tải về máy") }, onClick = {
                 showMenu = false
-                val request = android.app.DownloadManager.Request(android.net.Uri.parse(file.path))
+                val request = android.app.DownloadManager.Request(file.path.toUri())
                     .setTitle(file.name)
                     .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                     .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
@@ -714,7 +715,7 @@ fun openExternalVideoPlayer(
         }
 
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(android.net.Uri.parse(videoUrl), "video/*")
+            setDataAndType(videoUrl.toUri(), "video/*")
             setPackage("org.videolan.vlc")
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -724,7 +725,7 @@ fun openExternalVideoPlayer(
         } catch (e: Exception) {
             val chooser = android.content.Intent.createChooser(
                 android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                    setDataAndType(android.net.Uri.parse(videoUrl), "video/*")
+                    setDataAndType(videoUrl.toUri(), "video/*")
                     addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
                 "Chọn trình phát video"

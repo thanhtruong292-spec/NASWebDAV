@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import coil.compose.AsyncImage
 import com.nas.naswebdav.NasFile
 import com.nas.naswebdav.WebDavManager
+import androidx.core.content.edit
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
@@ -71,122 +72,122 @@ internal fun MainDashboardHeader(
     // so facade mirror reads and direct LocalXxxVM reads observe identical Compose State.
     val systemVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
-        // ═══ HEADER ═══
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Đèn tín hiệu trạng thái (Pulse animation)
-            val currentStatus = systemVM.systemStatus.status
-            val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
-            val statusColor = when {
-                currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
-                currentStatus.contains("Chờ", true) -> AccentOrange
-                else -> AccentRed
-            }
-            Column {
-                Text("NAS Dashboard", style = AppTypography.HeadlineLarge.copy(color = TextPrimary))
-                // Nhãn phiên bản auto theo build — nhìn là biết bản nào, tránh nhầm
-                Text("v${com.nas.naswebdav.BuildConfig.VERSION_NAME}", style = AppTypography.LabelMedium.copy(color = TextSecondary.copy(alpha = 0.7f)))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Chainedbox L1 Pro", style = AppTypography.BodyLarge.copy(color = TextSecondary))
-                    Text("  \u2022  ", style = AppTypography.BodyLarge.copy(color = TextSecondary))
-                    Box(
-                        modifier = Modifier
-                            .clip(AppShapes.Badge)
-                            .background(if (isOnlineStatus) AccentGreen else AccentRed)
-                            .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)
-                    ) {
-                        Text(
-                            if (isOnlineStatus) "Online" else "Offline",
-                            style = AppTypography.BodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(Modifier.width(AppSpacing.SM))
-                    val isRealtimeStale = systemVM.lastStatusRefreshAt <= 0L || realtimeNow - systemVM.lastStatusRefreshAt > 10_000L
-                    val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
-                    Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
-                    Spacer(Modifier.width(AppSpacing.XS))
+    // ═══ HEADER ═══
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Đèn tín hiệu trạng thái (Pulse animation)
+        val currentStatus = systemVM.systemStatus.status
+        val isOnlineStatus = currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true)
+        val statusColor = when {
+            currentStatus.contains("Online", true) || currentStatus.contains("Đã kết nối", true) -> AccentGreen
+            currentStatus.contains("Chờ", true) -> AccentOrange
+            else -> AccentRed
+        }
+        Column {
+            Text("NAS Dashboard", style = AppTypography.HeadlineLarge.copy(color = TextPrimary))
+            // Nhãn phiên bản auto theo build — nhìn là biết bản nào, tránh nhầm
+            Text("v${com.nas.naswebdav.BuildConfig.VERSION_NAME}", style = AppTypography.LabelMedium.copy(color = TextSecondary.copy(alpha = 0.7f)))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Chainedbox L1 Pro", style = AppTypography.BodyLarge.copy(color = TextSecondary))
+                Text("  \u2022  ", style = AppTypography.BodyLarge.copy(color = TextSecondary))
+                Box(
+                    modifier = Modifier
+                        .clip(AppShapes.Badge)
+                        .background(if (isOnlineStatus) AccentGreen else AccentRed)
+                        .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XXS)
+                ) {
                     Text(
-                        realtimeFreshnessLabel(systemVM.lastStatusRefreshAt, realtimeNow),
-                        style = AppTypography.BodySmall.copy(color = realtimeColor, fontWeight = FontWeight.SemiBold)
+                        if (isOnlineStatus) "Online" else "Offline",
+                        style = AppTypography.BodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    systemVM.apiLatencyMs?.let { latency ->
-                        Spacer(Modifier.width(AppSpacing.SM))
-                        Text("API ${latency}ms", style = AppTypography.BodySmall.copy(color = TextSecondary))
-                    }
-                    if (systemVM.apiFailureCount > 0) {
-                        Spacer(Modifier.width(AppSpacing.SM))
-                        Text("${systemVM.apiFailureCount} lỗi", style = AppTypography.BodySmall.copy(color = AccentRed, fontWeight = FontWeight.Bold))
-                    }
                 }
-                
-                // ── SMART SWITCH BADGE ──
-                Spacer(Modifier.height(AppSpacing.XS))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        modifier = Modifier
-                            .clip(AppShapes.Badge)
-                            .background(if (deviceVM.isOnLan) AccentGreen.copy(alpha = 0.15f) else AccentCyan.copy(alpha = 0.15f))
-                            .padding(horizontal = AppSpacing.SM - AppSpacing.XS, vertical = AppSpacing.XXS),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
-                            contentDescription = null,
-                            tint = if (deviceVM.isOnLan) AccentGreen else AccentCyan,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(Modifier.width(AppSpacing.XS))
-                        Text(
-                            if (deviceVM.isOnLan) "LAN" else "Tailscale",
-                            style = AppTypography.BodySmall.copy(fontWeight = FontWeight.Bold, color = if (deviceVM.isOnLan) AccentGreen else AccentCyan)
-                        )
-                    }
-                    val ut = systemVM.systemStatus.uptime
-                    if (ut.isNotBlank() && ut != "--") {
-                        val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
-                        Spacer(Modifier.width(AppSpacing.SM))
-                        Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
-                        Spacer(Modifier.width(AppSpacing.XXS + AppSpacing.XS))
-                        Text(cleanUt, style = AppTypography.BodyMedium.copy(color = AccentCyan, fontWeight = FontWeight.SemiBold))
-                    }
+                Spacer(Modifier.width(AppSpacing.SM))
+                val isRealtimeStale = systemVM.lastStatusRefreshAt <= 0L || realtimeNow - systemVM.lastStatusRefreshAt > 10_000L
+                val realtimeColor = if (isRealtimeStale) AccentOrange else AccentGreen
+                Icon(Icons.Default.Sync, null, tint = realtimeColor, modifier = Modifier.size(11.dp))
+                Spacer(Modifier.width(AppSpacing.XS))
+                Text(
+                    realtimeFreshnessLabel(systemVM.lastStatusRefreshAt, realtimeNow),
+                    style = AppTypography.BodySmall.copy(color = realtimeColor, fontWeight = FontWeight.SemiBold)
+                )
+                systemVM.apiLatencyMs?.let { latency ->
+                    Spacer(Modifier.width(AppSpacing.SM))
+                    Text("API ${latency}ms", style = AppTypography.BodySmall.copy(color = TextSecondary))
+                }
+                if (systemVM.apiFailureCount > 0) {
+                    Spacer(Modifier.width(AppSpacing.SM))
+                    Text("${systemVM.apiFailureCount} lỗi", style = AppTypography.BodySmall.copy(color = AccentRed, fontWeight = FontWeight.Bold))
                 }
             }
             
+            // ── SMART SWITCH BADGE ──
+            Spacer(Modifier.height(AppSpacing.XS))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier
+                        .clip(AppShapes.Badge)
+                        .background(if (deviceVM.isOnLan) AccentGreen.copy(alpha = 0.15f) else AccentCyan.copy(alpha = 0.15f))
+                        .padding(horizontal = AppSpacing.SM - AppSpacing.XS, vertical = AppSpacing.XXS),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
-                    
-                    DropdownMenu(
-                        expanded = showPowerMenu,
-                        onDismissRequest = { onPowerMenuChange(false) },
-                        modifier = Modifier.background(DarkCard)
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Đăng xuất", color = AccentOrange) },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
-                            onClick = { onPowerMenuChange(false); onLogout() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Khởi động lại NAS", color = AccentGreen) },
-                            leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
-                            onClick = { onPowerMenuChange(false); onReboot() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Ngủ NAS", color = AccentCyan) },
-                            leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
-                            onClick = { onPowerMenuChange(false); onShutdown() }
-                        )
-                    }
+                    Icon(
+                        if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
+                        contentDescription = null,
+                        tint = if (deviceVM.isOnLan) AccentGreen else AccentCyan,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(Modifier.width(AppSpacing.XS))
+                    Text(
+                        if (deviceVM.isOnLan) "LAN" else "Tailscale",
+                        style = AppTypography.BodySmall.copy(fontWeight = FontWeight.Bold, color = if (deviceVM.isOnLan) AccentGreen else AccentCyan)
+                    )
+                }
+                val ut = systemVM.systemStatus.uptime
+                if (ut.isNotBlank() && ut != "--") {
+                    val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
+                    Spacer(Modifier.width(AppSpacing.SM))
+                    Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
+                    Spacer(Modifier.width(AppSpacing.XXS + AppSpacing.XS))
+                    Text(cleanUt, style = AppTypography.BodyMedium.copy(color = AccentCyan, fontWeight = FontWeight.SemiBold))
                 }
             }
+        }
+        
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
+                
+                DropdownMenu(
+                    expanded = showPowerMenu,
+                    onDismissRequest = { onPowerMenuChange(false) },
+                    modifier = Modifier.background(DarkCard)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Đăng xuất", color = AccentOrange) },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = AccentOrange) },
+                        onClick = { onPowerMenuChange(false); onLogout() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Khởi động lại NAS", color = AccentGreen) },
+                        leadingIcon = { Icon(Icons.Default.RestartAlt, null, tint = AccentGreen) },
+                        onClick = { onPowerMenuChange(false); onReboot() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Ngủ NAS", color = AccentCyan) },
+                        leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan) },
+                        onClick = { onPowerMenuChange(false); onShutdown() }
+                    )
+                }
+            }
+        }
         }
 }
 
@@ -723,11 +724,11 @@ internal fun QuickAccessSection(
                             nextSlot4 = newId
                         }
                     }
-                    sharedPrefs.edit()
-                        .putString("qa_slot2", nextSlot2)
-                        .putString("qa_slot3", nextSlot3)
-                        .putString("qa_slot4", nextSlot4)
-                        .apply()
+                    sharedPrefs.edit {
+                        putString("qa_slot2", nextSlot2)
+                        putString("qa_slot3", nextSlot3)
+                        putString("qa_slot4", nextSlot4)
+                    }
                     onSlot2Change(nextSlot2)
                     onSlot3Change(nextSlot3)
                     onSlot4Change(nextSlot4)

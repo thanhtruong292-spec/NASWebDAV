@@ -149,6 +149,18 @@ class TestValidateUrl(unittest.TestCase):
     def test_accept_facebook_watch(self):
         self.assertTrue(_social_validate_url("https://www.facebook.com/watch/?v=123456789"))
 
+    def test_accept_facebook_watch_no_trailing_slash(self):
+        # Client (Android SocialShareParser) accepts both /watch and /watch/;
+        # backend must match so a shared facebook.com/watch?v=... URL that passes
+        # the client is not silently rejected by the server.
+        self.assertTrue(_social_validate_url("https://www.facebook.com/watch?v=123456789"))
+
+    def test_accept_facebook_shared_reel(self):
+        self.assertTrue(_social_validate_url("https://www.facebook.com/share/r/AbCdEf123/"))
+
+    def test_accept_facebook_shared_video(self):
+        self.assertTrue(_social_validate_url("https://www.facebook.com/share/v/AbCdEf123/"))
+
 
 class TestSanitizeFolder(unittest.TestCase):
     """H4: reject path traversal | H5: reject absolute | H6: accept safe"""
