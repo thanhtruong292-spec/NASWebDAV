@@ -2,6 +2,7 @@ package com.nas.naswebdav
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 
@@ -16,8 +17,37 @@ class SocialShareActivity : Activity() {
             return
         }
 
-        val sharedText = intent?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
-        val socialUrl = SocialShareParser.extractSupportedUrl(sharedText)
+        // Facebook and other apps may place the URL in different extras depending
+        // on share mode: EXTRA_TEXT (plain caption), EXTRA_STREAM (media URI), or
+        // EXTRA_HTML_TEXT (rich text with <a href>). We scan all three and take
+        // the first supported URL we find.
+        val candidates = mutableListOf<String>()
+        intent?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let { candidates += it }
+        intent?.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT)?.toString()?.let { candidates += it }
+        // EXTRA_STREAM: some apps (Facebook) put a content:// URI here that
+        // may redirect to the actual share URL. Try to read its first line as
+        // text; if it contains a supported URL, we can extract it. If it is an
+        // https link itself, the parser will handle it.
+        @Suppress("DEPRECATION")
+        intent?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let { streamUri ->
+            // Direct string conversion (works if URI is https itself)
+            streamUri.toString()?.let { if (it.isNotBlank()) candidates += it }
+            // Try content resolver — Facebook content:// URIs sometimes redirect
+            // to the share URL; read as text line and scan for a URL.
+            runCatching {
+                contentResolver.openInputStream(streamUri)?.bufferedReader()?.use { reader ->
+                    reader.lineSequence().take(5).forEach { line ->
+                        SocialShareParser.extractSupportedUrl(line)?.let { found ->
+                            candidates += found
+                        }
+                    }
+                }
+            }
+        }
+
+        val socialUrl = candidates.firstNotNullOfOrNull { text ->
+            SocialShareParser.extractSupportedUrl(text)
+        }
         if (socialUrl == null) {
             showToast(getString(R.string.social_share_invalid))
             finishAndRemoveTask()
