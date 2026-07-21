@@ -332,84 +332,92 @@ fun ImageViewerScreen(
             }
         }
 
-        // ============ BOTTOM INFO BAR (auto-hide) ============
-        AnimatedVisibility(
-            visible = showControls && imageFiles.isNotEmpty(),
-            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-            exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
-            modifier = Modifier.align(Alignment.BottomCenter)
+        // ============ BOTTOM PANEL (INFO BAR + THUMBNAIL STRIP) ============
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
         ) {
-            val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
-            val fileSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentFile.contentLength)
-            val total = imageFiles.size
-            val current = (pagerState.currentPage + 1).coerceAtMost(total)
-
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f))
-                        )
-                    )
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .navigationBarsPadding()
+            // 1. File Info Bar (auto-hide with showControls)
+            AnimatedVisibility(
+                visible = showControls && imageFiles.isNotEmpty(),
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
             ) {
-                Text(
-                    text = currentFile.name,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                val currentFile = imageFiles[pagerState.currentPage.coerceIn(0, imageFiles.lastIndex)]
+                val fileSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentFile.contentLength)
+                val total = imageFiles.size
+                val current = (pagerState.currentPage + 1).coerceAtMost(total)
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                            )
+                        )
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = fileSize,
-                        color = TextSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1
+                        text = currentFile.name,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Box(
-                        Modifier
-                            .height(12.dp)
-                            .width(1.dp)
-                            .background(TextSecondary.copy(alpha = 0.5f))
-                            .align(Alignment.CenterVertically)
-                    )
-                    Text(
-                        text = "$current / $total",
-                        color = TextSecondary,
-                        fontSize = 11.sp,
-                        maxLines = 1
-                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = fileSize,
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                        Box(
+                            Modifier
+                                .height(12.dp)
+                                .width(1.dp)
+                                .background(TextSecondary.copy(alpha = 0.5f))
+                        )
+                        Text(
+                            text = "$current / $total",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
-        }
 
-        // ============ THUMBNAIL STRIP (always visible at bottom) ============
-        if (imageFiles.isNotEmpty()) {
-            ThumbnailStrip(
-                imageFiles = imageFiles,
-                currentPage = pagerState.currentPage,
-                user = user,
-                pass = pass,
-                onThumbClick = { idx ->
-                    coroutineScope.launch {
-                        pagerState.scrollToPage(idx)
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-                    .navigationBarsPadding()
-            )
+            // 2. Thumbnail Strip (auto-hide with showControls)
+            AnimatedVisibility(
+                visible = showControls && imageFiles.isNotEmpty(),
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
+            ) {
+                ThumbnailStrip(
+                    imageFiles = imageFiles,
+                    currentPage = pagerState.currentPage,
+                    user = user,
+                    pass = pass,
+                    onThumbClick = { idx ->
+                        coroutineScope.launch {
+                            pagerState.scrollToPage(idx)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp)
+                )
+            }
         }
     }
 }
