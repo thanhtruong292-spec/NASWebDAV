@@ -420,9 +420,25 @@ def _get_webdav_root():
         pass
     return "/srv/dev-disk-by-label-data"  # Fallback mặc định
 
-WEBDAV_FILE_ROOT = _get_webdav_root()
+SYSTEM_DB_DIR = "/var/lib/nas_api"
+try:
+    os.makedirs(SYSTEM_DB_DIR, exist_ok=True)
+except Exception:
+    SYSTEM_DB_DIR = "/tmp/nas_api"
+    os.makedirs(SYSTEM_DB_DIR, exist_ok=True)
 
-DB_PATH = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_index.db")
+DB_PATH = os.path.join(SYSTEM_DB_DIR, "nas_index.db")
+
+# Tự động migrate cơ sở dữ liệu cũ từ HDD sang bộ nhớ hệ thống OS partition (nếu có)
+try:
+    _old_db_path = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_index.db")
+    if os.path.exists(_old_db_path) and not os.path.exists(DB_PATH):
+        import shutil
+        shutil.copy2(_old_db_path, DB_PATH)
+        log.info("[DB] Đã di chuyển nas_index.db từ HDD sang bộ nhớ hệ thống OS: %s", DB_PATH)
+except Exception as _mig_err:
+    log.warning("[DB] Lỗi khi copy DB cũ: %s", _mig_err)
+
 PID_FILE = "/var/run/nas_api_server.pid"
 LAN_WHITELIST_PATH = "/etc/nas/lan_whitelist.conf"
 WEBDAV_LOG = "/var/log/nginx/openmediavault-webgui_access.log"
