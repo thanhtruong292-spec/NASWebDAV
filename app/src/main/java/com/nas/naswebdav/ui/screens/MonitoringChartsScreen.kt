@@ -372,9 +372,12 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val range = (maxVal - minVal).coerceAtLeast(0.1f)
 
     var touchedIndex by remember { mutableIntStateOf(-1) }
-    val pad = 12f
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     val textPx = 10f * density
+    val topPad = 10f * density
+    val bottomPad = 22f * density
+    val leftPad = 45f * density
+    val rightPad = 12f * density
 
     Column {
         // Chú thích màu & kiểu nét kẻ — Legend gộp chung thông số số liệu
@@ -401,17 +404,16 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             androidx.compose.foundation.Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(150.dp)
+                    .height(160.dp)
                     .pointerInput(history.size, tabIndex) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                                 val pos = event.changes.firstOrNull()?.position
                                 if (pos != null && history.size >= 2) {
-                                    val leftPadLocal = 45f * density
-                                    val usableW = size.width - leftPadLocal - pad
+                                    val usableW = size.width - leftPad - rightPad
                                     val step = usableW / (history.size - 1).toFloat()
-                                    val idx = ((pos.x - leftPadLocal) / step).toInt().coerceIn(0, history.size - 1)
+                                    val idx = ((pos.x - leftPad) / step).toInt().coerceIn(0, history.size - 1)
                                     
                                     when (event.type) {
                                         androidx.compose.ui.input.pointer.PointerEventType.Press,
@@ -431,7 +433,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             ) {
                 val w = size.width
                 val h = size.height
-                val leftPad = 45f * density
+                val usableW = w - leftPad - rightPad
+                val usableH = h - topPad - bottomPad
 
                 // Nhãn trục Y
                 val yPaint = android.graphics.Paint().apply {
@@ -442,11 +445,20 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                 }
 
+                // Paint nhãn thời gian cho trục X tại mốc dọc
+                val xTimePaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(180, 136, 146, 176) // #8892B0 70% alpha
+                    textSize = textPx * 0.9f
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                }
+
                 // Grid 4 đường kẻ ngang siêu mảnh (0.6dp)
                 val gridCount = 4
                 for (i in 0 until gridCount) {
                     val fraction = i / (gridCount - 1).toFloat()
-                    val y = pad + fraction * (h - pad * 2)
+                    val y = topPad + fraction * usableH
                     val gridVal = maxVal - fraction * (maxVal - minVal)
 
                     drawLine(
@@ -464,11 +476,10 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     drawContext.canvas.nativeCanvas.drawText(fmt, 0f, y + textPx / 3f, yPaint)
                 }
 
-                // Grid các đường kẻ dọc mờ (0.5dp) tại các điểm mốc cập nhật thời gian
+                // Grid các đường kẻ dọc mờ (0.5dp) + Nhãn thời gian tự động tại mốc
                 val sampleSize = history.size
                 if (sampleSize >= 2) {
-                    val usableW = w - leftPad - pad
-                    val vGridCount = 6.coerceAtMost(sampleSize)
+                    val vGridCount = 5.coerceAtMost(sampleSize)
                     val vStep = (sampleSize - 1) / (vGridCount - 1).toFloat()
                     
                     for (gi in 0 until vGridCount) {
@@ -477,27 +488,37 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         
                         drawLine(
                             color = Color(0x1CFFFFFF),
-                            start = Offset(vx, pad),
-                            end = Offset(vx, h - pad),
+                            start = Offset(vx, topPad),
+                            end = Offset(vx, topPad + usableH),
                             strokeWidth = 0.5f * density,
                             pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f * density, 4f * density))
                         )
+
+                        // Nhãn thời gian động (HH:mm) dưới chân đường kẻ dọc
+                        val rawTs = history[pIdx].timestamp
+                        val timeLabel = when {
+                            rawTs.length >= 19 -> rawTs.substring(11, 16) // Lấy HH:mm từ "YYYY-MM-DD HH:mm:ss"
+                            rawTs.length >= 5 -> rawTs.substring(0, 5)
+                            else -> rawTs
+                        }
+                        if (timeLabel.isNotBlank()) {
+                            drawContext.canvas.nativeCanvas.drawText(timeLabel, vx, h - 3f * density, xTimePaint)
+                        }
                     }
                 }
 
-                // Vẽ các series đường kẻ mảnh (1.0dp) bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt rõ ràng
+                // Vẽ các series đường kẻ mảnh bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt
                 series.forEach { s ->
                     val pts = s.values
                     if (pts.size < 2) return@forEach
-                    val step = (w - leftPad - pad) / (pts.size - 1).toFloat()
-                    fun xOf(i: Int) = leftPad + i * step
-                    fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
+                    fun xOf(i: Int) = leftPad + (i.toFloat() / (pts.size - 1)) * usableW
+                    fun yOf(v: Float) = (topPad + usableH) - ((v.coerceIn(minVal, maxVal) - minVal) / range) * usableH
 
                     // Fill vùng mờ nhẹ (0.04f alpha)
                     val fillPath = androidx.compose.ui.graphics.Path().apply {
-                        moveTo(xOf(0), h - pad)
+                        moveTo(xOf(0), topPad + usableH)
                         pts.forEachIndexed { i, v -> lineTo(xOf(i), yOf(v)) }
-                        lineTo(xOf(pts.lastIndex), h - pad)
+                        lineTo(xOf(pts.lastIndex), topPad + usableH)
                         close()
                     }
                     drawPath(fillPath, s.color.copy(alpha = 0.04f))
@@ -556,10 +577,9 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 if (touchedIndex in history.indices && series.isNotEmpty()) {
                     val pts0 = series[0].values
                     if (touchedIndex < pts0.size) {
-                        val step = (w - leftPad - pad) / (pts0.size - 1).toFloat()
-                        val cx = leftPad + touchedIndex * step
+                        val cx = leftPad + (touchedIndex.toFloat() / (pts0.size - 1)) * usableW
 
-                        drawLine(Color.White, Offset(cx, pad/2), Offset(cx, h), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
+                        drawLine(Color.White, Offset(cx, topPad), Offset(cx, topPad + usableH), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
 
                         val tsText = history[touchedIndex].timestamp
                         val timeStr = if (tsText.length >= 19) tsText.substring(11, 19) else tsText
@@ -576,10 +596,10 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         if (boxCx - tsW/2 - 10f < leftPad) boxCx = leftPad + tsW/2 + 10f
                         if (boxCx + tsW/2 + 10f > w) boxCx = w - tsW/2 - 10f
                         drawContext.canvas.nativeCanvas.drawRoundRect(
-                            android.graphics.RectF(boxCx - tsW/2 - 15f, h - textPx - 15f, boxCx + tsW/2 + 15f, h),
+                            android.graphics.RectF(boxCx - tsW/2 - 15f, (topPad + usableH) - textPx - 10f, boxCx + tsW/2 + 15f, topPad + usableH + 4f),
                             8f, 8f, tsBgPaint
                         )
-                        drawContext.canvas.nativeCanvas.drawText(timeStr, boxCx, h - 8f, tsPaint)
+                        drawContext.canvas.nativeCanvas.drawText(timeStr, boxCx, topPad + usableH - 2f, tsPaint)
 
                         val labelPaint = android.graphics.Paint().apply {
                             textSize = textPx * 1.15f
@@ -591,7 +611,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         series.forEach { s ->
                             if (touchedIndex >= s.values.size) return@forEach
                             val v = s.values[touchedIndex]
-                            val cy = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
+                            val cy = (topPad + usableH) - ((v.coerceIn(minVal, maxVal) - minVal) / range) * usableH
 
                             drawCircle(s.color.copy(alpha = 0.4f), 8f * density, Offset(cx, cy))
                             drawCircle(s.color, 5f * density, Offset(cx, cy))
