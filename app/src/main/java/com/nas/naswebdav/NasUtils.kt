@@ -115,8 +115,8 @@ private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long
 internal fun adaptiveTimeoutMs(url: String): Long {
     val host = safeUrlHost(url)
     val saved = knownLatencyMs[host]
-    if (saved != null) return (saved * 4).coerceIn(500, 15_000)
-    return if (isTailscaleUrl(url)) 6_000L else 3_000L
+    if (saved != null) return (saved * 3).coerceIn(400, 3_500)
+    return if (isTailscaleUrl(url)) 2_500L else 1_500L
 }
 
 internal fun recordLatency(url: String, ms: Long) {

@@ -1324,6 +1324,20 @@ def check_auth(username, password):
     import hmac
     return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) & hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
 
+def _async_persist_trusted_ip(ip):
+    def _worker():
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            try:
+                cur = conn.cursor()
+                cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
+
 def requires_auth(f):
     """Robust voi loi disk/DB. Whitelist va cache IP tin cay truoc, DB chi dung de persist IP moi."""
     @wraps(f)
@@ -1331,25 +1345,11 @@ def requires_auth(f):
         ip = _request_client_ip()
         auth = request.authorization
 
-        # FIX: Neu client CO gui header Authorization (nhu form Login), BAT BUOC kiem tra mat khau
-        # Khong cho phep bypass qua LAN whitelist de ngan chan dang nhap bang mat khau trong/sai.
         if auth is not None:
             if check_auth(auth.username, auth.password):
-                if ip:
+                if ip and ip not in _AUTHORIZED_IPS_CACHE.get("ips", set()):
                     _remember_authorized_ip(ip)
-                    try:
-                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
-                        try:
-                            cur = conn.cursor()
-                            cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
-                            conn.commit()
-                        finally:
-                            conn.close()
-                    except Exception as db_err:
-                        try:
-                            log.warning("[Auth] Khong persist duoc trusted IP: %s", db_err)
-                        except Exception:
-                            pass
+                    _async_persist_trusted_ip(ip)
                 return f(*args, **kwargs)
             else:
                 return jsonify({"detail": "Sai mat khau"}), 401
