@@ -222,11 +222,52 @@ class SystemMonitorViewModel(
                         val cpuTemp = systemStatus.cpuTemp
                         val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                         val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                        
+                        val cpuPct = systemStatus.cpu.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                        val ramPct = systemStatus.ramPercent.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+
+                        fun parseKbps(s: String): Float {
+                            val num = s.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+                            return when {
+                                s.contains("MB/s", ignoreCase = true) -> num * 1024f
+                                s.contains("GB/s", ignoreCase = true) -> num * 1024f * 1024f
+                                else -> num
+                            }
+                        }
+                        val rxKbps = parseKbps(systemStatus.netRx)
+                        val txKbps = parseKbps(systemStatus.netTx)
+
                         if (hddVal > 0f || cpuVal > 0f) {
                             temperatureHistory.add(Pair(cpuVal, hddVal))
                             while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
                         }
+
+                        // ĐỒNG BỘ 100% GIỮA VÒNG TRÒN VÀ BIỂU ĐỒ GIÁM SÁT:
+                        // Cùng 1 nguồn dữ liệu từ /api/status -> đồng thời đẩy điểm mới vào metricsHistory
+                        val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                        val livePoint = MetricsSnapshot(
+                            timestamp = timeStr,
+                            cpuTemp = cpuVal,
+                            cpuPercent = cpuPct,
+                            ramPercent = ramPct,
+                            hddTemp = hddVal,
+                            netRxKbps = rxKbps,
+                            netTxKbps = txKbps
+                        )
+
+                        if (metricsHistory.isNotEmpty()) {
+                            val lastPoint = metricsHistory.last()
+                            if (System.currentTimeMillis() - lastMetricsRefreshAt < 5000L) {
+                                metricsHistory[metricsHistory.size - 1] = livePoint
+                            } else {
+                                metricsHistory.add(livePoint)
+                            }
+                        } else {
+                            metricsHistory.add(livePoint)
+                        }
+                        if (metricsHistory.size > 1000) {
+                            metricsHistory.removeRange(0, 200)
+                        }
+                        lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                     true
                 } else false
