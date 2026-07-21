@@ -427,7 +427,7 @@ fun DashboardWidgetsGetStatusColor(title: String, value: String, rawPercent: Str
             }
             else -> Color.Gray
         }
-    } catch (e: Exception) { return Color.Gray }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return Color.Gray }
 }
 
 // Giữ lại MenuCard tương thích cho các file khác nếu cần

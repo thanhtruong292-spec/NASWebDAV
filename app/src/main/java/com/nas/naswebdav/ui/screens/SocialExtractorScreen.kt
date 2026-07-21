@@ -945,7 +945,7 @@ private fun extractHost(url: String): String? {
             host = java.net.URI("https://$raw").host
         }
         host?.lowercase()
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         null
     }
 }

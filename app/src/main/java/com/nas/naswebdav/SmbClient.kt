@@ -128,7 +128,7 @@ object SmbManager {
             outputStream.close()
             file.close()
             true
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB upload failed: ${e.message}")
             false
         }
@@ -153,7 +153,7 @@ object SmbManager {
             val result = uploadFile(host, user, pass, share, remotePath, inputStream, localFile.length(), onProgress)
             inputStream.close()
             result
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB local file upload failed: ${e.message}")
             false
         }
@@ -167,7 +167,7 @@ object SmbManager {
             val diskShare = connectAndOpenShare(host, user, pass, share)
             // Share tồn tại nếu kết nối thành công
             true
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB connection test failed: ${e.message}")
             false
         }
@@ -187,7 +187,7 @@ object SmbManager {
             currentPath += if (currentPath.isEmpty()) segment else "/$segment"
             try {
                 diskShare.mkdir(currentPath)
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                 // Thư mục có thể đã tồn tại — bỏ qua
             }
         }
@@ -200,7 +200,7 @@ object SmbManager {
         sessions.values.forEach { session ->
             try {
                 session.close()
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
         sessions.clear()
     }

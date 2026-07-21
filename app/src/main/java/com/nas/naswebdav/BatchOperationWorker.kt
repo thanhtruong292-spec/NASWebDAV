@@ -90,7 +90,7 @@ class BatchOperationWorker(
                         return paths.toTypedArray() to names.toTypedArray()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e(TAG, "Cannot read batch payload", e)
             }
         }
@@ -151,7 +151,7 @@ class BatchOperationWorker(
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
                 }
             )
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             // FIX CRITICAL: KhÃ´ng fallback sang NotificationManagerCompat.notify()
             // Android 14+ Worker sáº½ bá»‹ kill náº¿u khÃ´ng Ä‘Æ°á»£c setForeground Ä‘Ãºng cÃ¡ch.
             val isFatal = when {
@@ -233,7 +233,7 @@ class BatchOperationWorker(
                             } else if (!sourceUrl.contains(trashFolderName) && targetUrl.contains(trashFolderName)) {
                                 trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
                             }
-                        } catch (dbEx: Exception) {
+                        } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                             android.util.Log.w(TAG, "DB sync failed after MOVE $fileName (NAS OK)", dbEx)
                         }
                         successCount++
@@ -242,18 +242,18 @@ class BatchOperationWorker(
                         if (!isInTrash) {
                             val trashFolderUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, "", false)
                             val targetUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
-                            try { webDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                            try { webDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                             webDavManager.renameFile(sourceUrl, targetUrl)
                             try {
                                 trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
-                            } catch (dbEx: Exception) {
+                            } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                                 android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
                             }
                         } else {
                             webDavManager.deleteFile(sourceUrl, isDirectory)
                             try {
                                 trashMetaDao.deleteByTrashPath(sourceUrl)
-                            } catch (dbEx: Exception) {
+                            } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                                 android.util.Log.w(TAG, "DB sync failed after DELETE (permanent) $fileName", dbEx)
                             }
                         }
@@ -262,13 +262,13 @@ class BatchOperationWorker(
                     "RESTORE" -> {
                         val targetUrl = try {
                             trashMetaDao.findByTrashPath(sourceUrl)?.originalPath
-                        } catch (_: Exception) {
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                             null
                         } ?: buildWebDavRestoreTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                         webDavManager.renameFile(sourceUrl, targetUrl)
                         try {
                             trashMetaDao.deleteByTrashPath(sourceUrl)
-                        } catch (dbEx: Exception) {
+                        } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                             android.util.Log.w(TAG, "DB sync failed after RESTORE $fileName (NAS OK)", dbEx)
                         }
                         successCount++
@@ -278,7 +278,7 @@ class BatchOperationWorker(
                         // Only the 4 valid branches above (COPY/MOVE/DELETE/RESTORE) count as success.
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e(TAG, "Lï¿½?i $operation file: $fileName", e)
                 failCount++
             }
@@ -308,7 +308,7 @@ class BatchOperationWorker(
                 "$operationLabel: $successCount thÃ nh cÃ´ng, $failCount tháº¥t báº¡i."
             }
             db.logDao().insertLog(SystemLog(type = logType, module = "HÃ ng loáº¡t", message = logMsg))
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
         // Hiï¿½?n thï¿½? thÃ´ng bÃ¡o hoÃ n táº¥t (khÃ´ng cÃ²n ongoing)
         val resultText = if (failCount == 0) {
@@ -329,7 +329,7 @@ class BatchOperationWorker(
 
         try {
             inputData.getString("payloadFile")?.let { File(it).delete() }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
         // FIX: Náº¿u cÃ³ file tháº¥t báº¡i, return Result.failure(workData) Ä‘á»ƒ WorkManager biáº¿t
         // operation khÃ´ng hoÃ n táº¥t. UI sáº½ nháº­n Ä‘Æ°á»£c `failCount > 0` qua setProgress á»Ÿ trÃªn.

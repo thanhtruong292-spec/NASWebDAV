@@ -67,7 +67,7 @@ fun FolderPickerDialog(
         try {
             val items = WebDavManager.listFiles(currentUrl)
             folderList = items.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             folderList = emptyList()
         }
         isLoading = false
@@ -78,7 +78,7 @@ fun FolderPickerDialog(
         title = {
             Column {
                 Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (_: Exception) { currentUrl }
+                val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { currentUrl }
                 val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
                 Text(
                     text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
@@ -236,7 +236,7 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
                 })
             activePrompt = biometricPrompt
             biometricPrompt.authenticate(promptInfo)
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             clearActivePrompt()
             authError = "Lỗi: ${e.message ?: "Không mở được quét vân tay"}"
         }

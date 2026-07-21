@@ -92,7 +92,7 @@ interface FileDao {
     INNER JOIN duplicate_sizes ds ON f.contentLength = ds.contentLength
     WHERE f.isDirectory = 0
     ORDER BY f.contentLength DESC, f.name ASC
-    LIMIT 5000
+    LIMIT 1500
 """)
     fun getDuplicateFiles(): List<CachedFile>
 
@@ -128,8 +128,8 @@ interface FileDao {
     fun getFilesBySizes(sizes: List<Long>): List<CachedFile>
 
     // HASH STAGE 1: Tìm các file có cùng dung lượng byte (Cực nhanh)
-    // TỐI ƯU PHASE 8: Lọc bỏ file rác cỏn con < 4KB
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 50000")
+    // TỐI ƯU PHASE 8: Loại bỏ file rác cỏn con < 4KB
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 1500")
     fun getAllLargeFiles(): List<CachedFile>
 
     // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM 

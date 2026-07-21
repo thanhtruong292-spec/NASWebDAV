@@ -78,7 +78,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 val reason = idleJson.optString("reason", "không rõ")
                 SystemLogger.log("INFO", "AutoClean", "Hệ thống đang chịu tải (${reason}) — tạm hoãn 5 phút, tiến hành kiểm tra lại (lần thứ $attempts/5)")
                 kotlinx.coroutines.delay(5 * 60 * 1000L)
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 SystemLogger.log("WARNING", "AutoClean", "Lỗi kết nối /api/system/idle: ${e.message}")
                 break
             }
@@ -119,7 +119,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             SystemLogger.log("INFO", "AutoClean", "Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét")
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                 kotlinx.coroutines.delay(60 * 1000L)
             }
         }
@@ -178,7 +178,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}"
                         }
                     }
-                } catch (_: Exception) { for (file in group) hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}" }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { for (file in group) hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}" }
                 val hashGroups = mutableMapOf<String, MutableList<CachedFile>>()
                 for (file in group) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
@@ -193,7 +193,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất bảo trì: Phát hiện $totalDuplicatesFound tập tin trùng lặp, $movedCount đã được xử lý, ${com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes)} dung lượng được giải phóng, hoàn tất trong $durationMin phút.")
             throttleJob.cancel()
             Result.success()
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             throttleJob.cancel()
             SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}"); Result.retry()
         }
@@ -205,16 +205,16 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             val fileName = sourceUrl.substringAfterLast("/")
             val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
             val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
-            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (_: Exception) {}
+            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             val success = NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
             if (success) {
                 try {
                     NasApplication.instance.database.trashMetaDao().insert(
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
                     )
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             }
             success
-        } catch (_: Exception) { false }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
     }
 }

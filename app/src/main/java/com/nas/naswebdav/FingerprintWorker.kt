@@ -89,10 +89,10 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                         }
                     }
                     delay(200)
-                } catch (_: Exception) { failCount++; delay(1000) }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failCount++; delay(1000) }
             }
             SystemLogger.log("SUCCESS", "FingerprintWorker", "Hoàn tất quá trình cấp phát chữ ký số. Thành công: $successCount, Thất bại: $failCount")
             return@withContext Result.success()
-        } catch (e: Exception) { SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}"); return@withContext Result.failure() }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}"); return@withContext Result.failure() }
     }
 }

@@ -84,13 +84,13 @@ object HashUtils {
     fun md5(input: String): String = try {
         val digest = MessageDigest.getInstance("MD5").digest(input.toByteArray())
         digest.joinToString("") { "%02x".format(it) }
-    } catch (_: Exception) { input.hashCode().toString() }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { input.hashCode().toString() }
 
     fun md5Bytes(buffer: ByteArray, offset: Int = 0, length: Int = buffer.size): String = try {
         val md = MessageDigest.getInstance("MD5")
         md.update(buffer, offset, length)
         md.digest().joinToString("") { "%02x".format(it) }
-    } catch (_: Exception) { "error_hash" }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "error_hash" }
 
     /**
      * Compute SHA-256 hash from an InputStream on the phone CPU.
@@ -104,7 +104,7 @@ object HashUtils {
             digest.update(buffer, 0, bytesRead)
         }
         digest.digest().joinToString("") { "%02x".format(it) }
-    } catch (_: Exception) { "" }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
     /**
      * Compute SHA-256 from a limited number of bytes (for Range-based partial hashing).
@@ -122,7 +122,7 @@ object HashUtils {
             totalRead += bytesRead
         }
         digest.digest().joinToString("") { "%02x".format(it) }
-    } catch (_: Exception) { "" }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
     /**
      * Whether a MIME type should be gzip-compressed (text-like content).
@@ -156,7 +156,7 @@ object SystemLogger {
                 NasApplication.instance.database.logDao().insertLog(
                     SystemLog(type = type, module = module, message = message)
                 )
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("SystemLogger", "Lỗi ghi log: ${e.message}")
             }
         }
@@ -193,7 +193,7 @@ object WolUtil {
                                 try {
                                     socket.send(DatagramPacket(magicPacket, magicPacket.size, address, port))
                                     sentCount++
-                                } catch (e: Exception) {
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                     if (errors.size < 3) errors += "${address.hostAddress}:$port - ${e.message ?: e.javaClass.simpleName}"
                                 }
                             }
@@ -210,7 +210,7 @@ object WolUtil {
                 val detail = errors.firstOrNull()?.let { ": $it" } ?: "."
                 WolResult(false, "NONE", "Không thể gửi Wake-on-LAN qua mạng LAN$detail")
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             WolResult(false, "NONE", "Không thể gửi Wake-on-LAN: ${e.message ?: e.javaClass.simpleName}")
         }
     }
@@ -220,7 +220,7 @@ object WolUtil {
         if (cleanMac.length != 12) return null
         return try {
             ByteArray(6) { index -> cleanMac.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             null
         }
     }
@@ -261,7 +261,7 @@ object WolUtil {
                     }
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("WolUtil", "Không thể đọc broadcast LAN: ${e.message}")
         }
 
@@ -273,7 +273,7 @@ object WolUtil {
         val host = try {
             val normalized = if (raw.contains("://")) raw else "http://$raw"
             URI(normalized).host ?: raw
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             raw
         }
             .trim('[', ']')
@@ -336,7 +336,7 @@ object WolUtil {
                 setReferenceCounted(false)
                 acquire()
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("WolUtil", "Không thể giữ khóa multicast Wi-Fi: ${e.message}")
         }
 
@@ -345,7 +345,7 @@ object WolUtil {
         } finally {
             try {
                 if (lock?.isHeld == true) lock.release()
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             }
         }
     }
@@ -370,14 +370,14 @@ object ImageFingerprint {
                 for (i in hashBits.indices) hashValue = hashValue or (hashBits[i] shl (63 - i))
                 String.format("%016x", hashValue)
             } finally { if (small != bitmap) small.recycle() }
-        } catch (_: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     fun hammingDistance(hash1: String, hash2: String): Int {
         if (hash1.length != 16 || hash2.length != 16) return 64
         // FIX: Không dùng toLong() vì sẽ overflow âm thầm với hash ≥ 0x8000000000000000
         // BigInteger.xor().bitCount() đảm bảo đúng với toàn bộ không gian 64-bit
-        return try { java.math.BigInteger(hash1, 16).xor(java.math.BigInteger(hash2, 16)).bitCount() } catch (_: Exception) { 64 }
+        return try { java.math.BigInteger(hash1, 16).xor(java.math.BigInteger(hash2, 16)).bitCount() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { 64 }
     }
 
     fun isSimilar(hash1: String, hash2: String, threshold: Int = 5): Boolean = hammingDistance(hash1, hash2) <= threshold
@@ -392,7 +392,7 @@ object ImageFingerprint {
                     while (info.size.width / sampleSize > 300 || info.size.height / sampleSize > 300) sampleSize *= 2
                     val targetSize = android.util.Size(info.size.width / sampleSize, info.size.height / sampleSize)
                     decoder.setTargetSize(targetSize.width.coerceAtLeast(1), targetSize.height.coerceAtLeast(1))
-                    try { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_HARDWARE } catch (_: Exception) { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE }
+                    try { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_HARDWARE } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE }
                 }
             } else {
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -402,7 +402,7 @@ object ImageFingerprint {
                 context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 }) }
             }
             bitmap?.let { computeAHash(it) }
-        } catch (_: Exception) { null } finally { bitmap?.recycle() }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null } finally { bitmap?.recycle() }
     }
 
     fun computeFromFile(file: File): String? {
@@ -414,7 +414,7 @@ object ImageFingerprint {
             while (options.outWidth / sampleSize > 512 || options.outHeight / sampleSize > 512) sampleSize *= 2
             bitmap = BitmapFactory.decodeFile(file.absolutePath, BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = Bitmap.Config.RGB_565 })
             bitmap?.let { computeAHash(it) }
-        } catch (_: Exception) { null } finally { bitmap?.recycle() }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null } finally { bitmap?.recycle() }
     }
 
     fun computeFromBytes(data: ByteArray): String? {
@@ -422,6 +422,6 @@ object ImageFingerprint {
         return try {
             bitmap = BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = 4; inPreferredConfig = Bitmap.Config.RGB_565 })
             bitmap?.let { computeAHash(it) }
-        } catch (_: Exception) { null } finally { bitmap?.recycle() }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null } finally { bitmap?.recycle() }
     }
 }

@@ -143,7 +143,7 @@ class DeviceManagementViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     isLoadingSmb = false
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "toggleSmb failed: ${e.message}")
                 isSmbEnabled = !enabled // revert
                 isLoadingSmb = false
@@ -177,7 +177,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "loadDockerContainers: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingDocker = false }
@@ -197,7 +197,7 @@ class DeviceManagementViewModel(
                     .url("$apiBase/api/docker/power").post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadDockerContainers()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "toggleDockerPower: ${e.message}")
             } finally {
                 kotlinx.coroutines.withContext(Dispatchers.Main) { isTogglingDocker = false }
@@ -219,7 +219,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
     }
 
@@ -241,7 +241,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "fetchSmbStatus failed", e)
             }
         }
@@ -274,7 +274,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     smartInfo = SmartInfo("Không thể kết nối", "--", e.message ?: "")
                 }
@@ -344,7 +344,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (_: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
             finally { withContext(Dispatchers.Main) { isFetchingOmvOverview = false } }
         }
     }
@@ -383,7 +383,7 @@ class DeviceManagementViewModel(
                         lanWhitelistStatus = json.optString("status", "")
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { lanWhitelistError = e.message ?: "Lỗi" }
             } finally {
                 withContext(Dispatchers.Main) { lanWhitelistLoading = false }
@@ -400,7 +400,7 @@ class DeviceManagementViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/lan/whitelist").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadLanWhitelist()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "modifyWhitelist: ${e.message}")
             }
         }
@@ -428,16 +428,17 @@ class DeviceManagementViewModel(
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val sys = json.optJSONObject("system")
                     withContext(Dispatchers.Main) {
                         omvOverview = OmvOverview(
-                            hostname = json.optString("hostname", ""),
-                            omvVersion = json.optString("version", ""),
-                            kernel = json.optString("kernel", ""),
-                            powerBtnAction = json.optString("power_btn_action", "")
+                            hostname = sys?.optString("hostname", "") ?: "",
+                            omvVersion = sys?.optString("omv_version", "") ?: "",
+                            kernel = sys?.optString("kernel", "") ?: "",
+                            powerBtnAction = sys?.optString("powerbtn", "") ?: ""
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "loadOmvOverview: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingOmvOverview = false }
@@ -463,7 +464,7 @@ class DeviceManagementViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "runSmartInfo: ${e.message}")
             }
         }
@@ -491,7 +492,7 @@ class DeviceManagementViewModel(
                         lastAutoSpeedTime = System.currentTimeMillis()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "runNetworkSpeedTest: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isTestingSpeed = false }
@@ -518,7 +519,7 @@ class DeviceManagementViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "setFanMode: ${e.message}")
             } finally {
                 kotlinx.coroutines.withContext(Dispatchers.Main) { isFanModeUpdating = false }
@@ -551,7 +552,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "fetchStorageUsage: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingStorageUsage = false }
@@ -570,7 +571,7 @@ class DeviceManagementViewModel(
                     systemLogsList = logs
                     systemLogs = logs
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "fetchSystemLogs: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingLogs = false }
@@ -586,7 +587,7 @@ class DeviceManagementViewModel(
                     systemLogsList = emptyList()
                     systemLogs = emptyList()
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "clearSystemLogs: ${e.message}")
             }
         }
@@ -597,7 +598,7 @@ class DeviceManagementViewModel(
             try {
                 repository.addSystemLog(type, module, "Người dùng: $message")
                 loadSystemLogs()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("UserActionLog", "log failed: ${e.message}")
             }
         }
@@ -625,7 +626,7 @@ class DeviceManagementViewModel(
                                         for (i in 0 until logsArray.length()) {
                                             val obj = logsArray.getJSONObject(i)
                                             val ts = obj.optString("timestamp")
-                                            val timestamp = try { format.parse(ts)?.time ?: System.currentTimeMillis() } catch (_: Exception) { System.currentTimeMillis() }
+                                            val timestamp = try { format.parse(ts)?.time ?: System.currentTimeMillis() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { System.currentTimeMillis() }
                                             val remoteMessage = obj.optString("message")
                                             val remoteType = obj.optString("type")
                                             val remoteLog = SystemLog(id = -(obj.optInt("id")), type = remoteType, module = obj.optString("module"), message = remoteMessage, timestamp = timestamp)
@@ -637,7 +638,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) { android.util.Log.e("DevMgmt", "loadSystemLogs: ${e.message}") }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { android.util.Log.e("DevMgmt", "loadSystemLogs: ${e.message}") }
             allLogs.sortByDescending { it.timestamp }
             withContext(Dispatchers.Main) {
                 systemLogsList = allLogs.take(200)
@@ -666,7 +667,7 @@ class DeviceManagementViewModel(
                         globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, msg)
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Lỗi dọn rác: ${e.message}")
                 }
@@ -703,7 +704,7 @@ class DeviceManagementViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     speedTestResult = SpeedTestResult("Lỗi", "Lỗi")
                 }
@@ -729,7 +730,7 @@ class DeviceManagementViewModel(
                     .post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadDockerContainers()
-            } catch (_: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
         }
     }
 
@@ -755,7 +756,7 @@ class DeviceManagementViewModel(
                     }
                 }
                 loadOmvOverview()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     globalUi.show(
                         com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
@@ -780,7 +781,7 @@ class DeviceManagementViewModel(
                     .post(requestBody)
                     .build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
-            } catch (_: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
         }
     }
 
@@ -885,7 +886,7 @@ class DeviceManagementViewModel(
                     usbImportMessage = ""
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
         } finally {
             usbImportStatusInFlight.set(false)
@@ -923,7 +924,7 @@ class DeviceManagementViewModel(
                         withContext(Dispatchers.Main) { usbImportMessage = "Lỗi lưu USB Import: HTTP ${resp.code}" }
                         return@use
                     }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val o = try { org.json.JSONObject(raw) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { org.json.JSONObject() }
                     val ok = resp.isSuccessful && o.optBoolean("saved", false)
                     val stateJson = o.optJSONObject("state")
                     repository.addSystemLog(
@@ -937,7 +938,7 @@ class DeviceManagementViewModel(
                     }
                 }
                 fetchUsbImportStatus()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: lưu cấu hình USB Import thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             }
@@ -961,7 +962,7 @@ class DeviceManagementViewModel(
                         withContext(Dispatchers.Main) { usbImportMessage = "Lỗi bắt đầu USB Import: HTTP ${resp.code}" }
                         return@use
                     }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val o = try { org.json.JSONObject(raw) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { org.json.JSONObject() }
                     val stateJson = o.optJSONObject("state")
                     repository.addSystemLog(
                         if (resp.isSuccessful) "INFO" else "WARNING",
@@ -974,7 +975,7 @@ class DeviceManagementViewModel(
                     }
                 }
                 fetchUsbImportStatus()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: yêu cầu copy USB ngay thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             } finally {
@@ -1000,7 +1001,7 @@ class DeviceManagementViewModel(
                         withContext(Dispatchers.Main) { usbImportMessage = "Lỗi huỷ USB Import: HTTP ${resp.code}" }
                         return@use
                     }
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val o = try { org.json.JSONObject(raw) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { org.json.JSONObject() }
                     val stateJson = o.optJSONObject("state")
                     repository.addSystemLog(
                         if (resp.isSuccessful) "INFO" else "WARNING",
@@ -1013,7 +1014,7 @@ class DeviceManagementViewModel(
                     }
                 }
                 fetchUsbImportStatus()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: hủy USB Import thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             } finally {
@@ -1038,7 +1039,7 @@ class DeviceManagementViewModel(
                     .build()
                 usbImportApiClient.newCall(req).execute().use { resp ->
                     val raw = resp.body?.string() ?: "{}"
-                    val o = try { org.json.JSONObject(raw) } catch (e: Exception) { org.json.JSONObject() }
+                    val o = try { org.json.JSONObject(raw) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { org.json.JSONObject() }
                     val stateJson = o.optJSONObject("state")
                     repository.addSystemLog(
                         if (resp.isSuccessful) "INFO" else "WARNING",
@@ -1051,7 +1052,7 @@ class DeviceManagementViewModel(
                     }
                 }
                 fetchUsbImportStatus()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 repository.addSystemLog("WARNING", "USBImport", "Người dùng: xử lý file trùng USB Import thất bại: ${e.message?.take(120)}")
                 withContext(Dispatchers.Main) { usbImportMessage = "Lỗi: ${e.message}" }
             } finally {
@@ -1145,7 +1146,7 @@ class DeviceManagementViewModel(
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, "Đã cấp quyền truy cập cho IP: $ip")
                 }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
     }
 
@@ -1163,7 +1164,7 @@ class DeviceManagementViewModel(
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.WARNING, "Đã chặn quyền truy cập của IP: $ip")
                 }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
     }
 }

@@ -84,7 +84,7 @@ class VideoPlayerActivity : ComponentActivity() {
                     .setAspectRatio(videoAspectRatio)
                     .build()
                 enterPictureInPictureMode(params)
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("VideoPlayerActivity", "PiP không khả dụng: ${e.message}", e)
             }
         }

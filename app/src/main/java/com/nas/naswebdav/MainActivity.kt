@@ -232,7 +232,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
                     startActivity(intent)
 
-                } catch (e: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
 
                     val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
 
@@ -399,7 +399,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                         val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
                         WebDavManager.uploadFile(destUrl, temp, mimeType)
                     }
-                } catch (e: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
                 } finally {
                     tempFile?.delete()

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -86,7 +87,7 @@ internal fun PanelFreshnessTag(
     // ticker riêng (2s). Trước đây MainMenuScreen truyền realtimeNow từ root → mỗi
     // giây root + 4 child composable đều recompose (cascade). Giờ chỉ bản thân
     // PanelFreshnessTag (3 component nhỏ) recompose.
-    var localNow by androidx.compose.runtime.remember { mutableStateOf(System.currentTimeMillis()) }
+    var localNow by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         while (isActive) {
             kotlinx.coroutines.delay(2_000L)
@@ -274,7 +275,7 @@ fun MainMenuScreen(
     // FIX CPU #1: wrap getSharedPreferences trong remember() để tránh file I/O mỗi recomposition.
     // Trước đây gọi trực tiếp → disk I/O mỗi khung hình (120Hz = 120 lần/giây).
     val sharedPrefs = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
-    var realtimeNow by remember { mutableStateOf(System.currentTimeMillis()) }
+    var realtimeNow by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (isActive) {
             realtimeNow = System.currentTimeMillis()
@@ -283,31 +284,31 @@ fun MainMenuScreen(
     }
 
     // STATE CHO POPUP TẢI TỪ XA
-    var showDownloadDialog by remember { mutableStateOf(false) }
-    var downloadLink by remember { mutableStateOf("") }
+    var showDownloadDialog by rememberSaveable { mutableStateOf(false) }
+    var downloadLink by rememberSaveable { mutableStateOf("") }
     
     // STATE CHO DANH SÁCH TIẾN TRÌNH
-    var showProcessDialog by remember { mutableStateOf(false) }
-    var processSortType by remember { mutableStateOf("cpu") }
+    var showProcessDialog by rememberSaveable { mutableStateOf(false) }
+    var processSortType by rememberSaveable { mutableStateOf("cpu") }
 
     // STATE CHO QUÉT TRÙNG LẶP (từ màn hình chính)
-    var showDuplicateScanDialog by remember { mutableStateOf(false) }
-    var dupScanLightningMode by remember { mutableStateOf(true) }
-    var dupScanForceRestart by remember { mutableStateOf(false) }
-    var showSmartDialog by remember { mutableStateOf(false) }
+    var showDuplicateScanDialog by rememberSaveable { mutableStateOf(false) }
+    var dupScanLightningMode by rememberSaveable { mutableStateOf(true) }
+    var dupScanForceRestart by rememberSaveable { mutableStateOf(false) }
+    var showSmartDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO WAKE-ON-LAN
-    var showWolDialog by remember { mutableStateOf(false) }
-    var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
+    var showWolDialog by rememberSaveable { mutableStateOf(false) }
+    var macAddress by rememberSaveable { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
 
     // STATE CHO DIALOG THÔNG BÁO
-    var commonDialogMessage by remember { mutableStateOf("") }
-    var commonDialogType by remember { mutableStateOf(DialogType.SUCCESS) }
+    var commonDialogMessage by rememberSaveable { mutableStateOf("") }
+    var commonDialogType by rememberSaveable { mutableStateOf(DialogType.SUCCESS) }
 
     // STATE CHO DANH MỤC TRUY CẬP NHANH ĐỘNG
-    var slot2Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
-    var slot3Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
-    var slot4Id by remember { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
+    var slot2Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
+    var slot3Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
+    var slot4Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
     LaunchedEffect(Unit) {
         if (!sharedPrefs.getBoolean("screen_record_quick_added", false)) {
             slot4Id = "screen_record"
@@ -317,40 +318,39 @@ fun MainMenuScreen(
             }
         }
     }
-    var editingSlot by remember { mutableStateOf<Int?>(null) }
-    var showCommonDialog by remember { mutableStateOf(false) }
+    var editingSlot by rememberSaveable { mutableStateOf<Int?>(null) }
+    var showCommonDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO XÁC NHẬN NGUỒN VÀ TOOLBOX
-    var showPowerMenu by remember { mutableStateOf(false) }
-    var showRebootConfirm by remember { mutableStateOf(false) }
-    var showShutdownConfirm by remember { mutableStateOf(false) }
-    var showToolboxDialog by remember { mutableStateOf(false) }
+    var showPowerMenu by rememberSaveable { mutableStateOf(false) }
+    var showRebootConfirm by rememberSaveable { mutableStateOf(false) }
+    var showShutdownConfirm by rememberSaveable { mutableStateOf(false) }
+    var showToolboxDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO AUTO-BACKUP
-    var showAutoBackupDialog by remember { mutableStateOf(false) }
-    var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
-    var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    var showAutoBackupDialog by rememberSaveable { mutableStateOf(false) }
+    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
+    var deleteAfterBackup by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
 
     // STATE CHO LAN WHITELIST
-    var showLanWhitelistDialog by remember { mutableStateOf(false) }
+    var showLanWhitelistDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO LIVESTREAM RECORD
-    var showLivestreamDialog by remember { mutableStateOf(false) }
-    var showSmbDialog by remember { mutableStateOf(false) }
+    var showLivestreamDialog by rememberSaveable { mutableStateOf(false) }
+    var showSmbDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO NAS CONFIG BACKUP/RESTORE
-    var showNasBackupDialog by remember { mutableStateOf(false) }
+    var showNasBackupDialog by rememberSaveable { mutableStateOf(false) }
 
     // STATE CHO DISK HEALTH MONITOR
-    var showDiskHealthDialog by remember { mutableStateOf(false) }
-    var showNewDiskProfileSheet by remember { mutableStateOf(false) }
+    var showNewDiskProfileSheet by rememberSaveable { mutableStateOf(false) }
     // STATE CHO SLEEP SCHEDULE
-    var showSleepScheduleDialog by remember { mutableStateOf(false) }
+    var showSleepScheduleDialog by rememberSaveable { mutableStateOf(false) }
     // STATE CHO BANDWIDTH THROTTLE
-    var showBandwidthDialog by remember { mutableStateOf(false) }
+    var showBandwidthDialog by rememberSaveable { mutableStateOf(false) }
     // STATE CHO USB IMPORT
-    var showUsbImportDialog by remember { mutableStateOf(false) }
-    var showNasInsightsDialog by remember { mutableStateOf(false) }
+    var showUsbImportDialog by rememberSaveable { mutableStateOf(false) }
+    var showNasInsightsDialog by rememberSaveable { mutableStateOf(false) }
     // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
     LaunchedEffect(Unit) {
         val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
@@ -647,11 +647,6 @@ fun MainMenuScreen(
             onDismiss = { showNasBackupDialog = false }
         )
     }
-    if (showDiskHealthDialog) {
-        DialogsDiskHealthDialog(
-            onDismiss = { showDiskHealthDialog = false }
-        )
-    }
     if (showNewDiskProfileSheet) {
         DiskProfileBottomSheet(
             onDismiss = { showNewDiskProfileSheet = false }
@@ -856,7 +851,7 @@ fun MainMenuScreen(
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
             showNasBackupDialog = { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true },
-            showDiskHealthDialog = { showDiskHealthDialog = true },
+            showDiskHealthDialog = { showNewDiskProfileSheet = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
             showUsbImportDialog = { deviceVM.fetchUsbImportStatus(); showUsbImportDialog = true },
@@ -1131,7 +1126,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                                 }
                             }
                             // Mute / Auto / Max Toggle
-                            var showFanSettings by remember { mutableStateOf(false) }
+                            var showFanSettings by rememberSaveable { mutableStateOf(false) }
                             Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
                                 val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
                                 val currentMode = sysMonitorVM.systemStatus.fanMode
@@ -1158,8 +1153,8 @@ private fun MainMenuDashboardSystemOverviewCard(
                             }
                             
                             if (showFanSettings) {
-                                var onTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
-                                var offTemp by remember { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
+                                var onTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
+                                var offTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
                                 androidx.compose.material3.AlertDialog(
                                     onDismissRequest = { showFanSettings = false },
                                     title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
@@ -1199,9 +1194,9 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
     val sysMonitorVM = LocalSystemMonitorVM.current
     val deviceVM = LocalDeviceManagementVM.current
         // ═══ OMV SERVICES & HARDWARE (Expandable Panel) ═══
-        var pendingServiceName by remember { mutableStateOf("") }
-        var pendingServiceTitle by remember { mutableStateOf("") }
-        var pendingServiceEnable by remember { mutableStateOf(false) }
+        var pendingServiceName by rememberSaveable { mutableStateOf("") }
+        var pendingServiceTitle by rememberSaveable { mutableStateOf("") }
+        var pendingServiceEnable by rememberSaveable { mutableStateOf(false) }
         if (pendingServiceName.isNotBlank()) {
             AppStatusDialog(
                 type = DialogType.CONFIRM,
@@ -1369,7 +1364,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                         }
                         Spacer(Modifier.height(4.dp))
                         downloadingTorrents.take(5).forEach { torrent ->
-                            var showTorrentMenu by remember { mutableStateOf(false) }
+                            var showTorrentMenu by rememberSaveable { mutableStateOf(false) }
                             Box(Modifier.fillMaxWidth()) {
                                 Row(
                                     Modifier.fillMaxWidth()
@@ -1426,7 +1421,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                         }
                         Spacer(Modifier.height(4.dp))
                         completedTorrents.take(5).forEach { torrent ->
-                            var showCompletedMenu by remember { mutableStateOf(false) }
+                            var showCompletedMenu by rememberSaveable { mutableStateOf(false) }
                             androidx.compose.runtime.key(torrent.hash) {
                             com.nas.naswebdav.ui.components.SwipeDeleteRow(
                                 onDelete = { deviceVM.controlTorrent("delete", torrent.hash) },
@@ -1956,7 +1951,7 @@ fun MainMenuScreenGetStatusColor(title: String, value: String, rawPercent: Strin
             }
             else -> Color.Gray
         }
-    } catch (e: Exception) { return Color.Gray }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return Color.Gray }
 }
 
 // Giữ lại MenuCard tương thích cho các file khác nếu cần
@@ -2158,9 +2153,9 @@ fun MainMenuToolboxDialog(
     val deviceVM = LocalDeviceManagementVM.current
     val smartToolsVM = LocalSmartToolsVM.current
     val livestreamVM = LocalLivestreamVM.current
-    var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
-    var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
-    var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    var isBiometricEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
+    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
+    var deleteAfterBackup by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     androidx.compose.material3.ModalBottomSheet(
@@ -2180,7 +2175,7 @@ fun MainMenuToolboxDialog(
         ) {
             Text("CÔNG CỤ HỆ THỐNG", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 8.dp))
 
-            var showBiometricSettings by remember { mutableStateOf(false) }
+            var showBiometricSettings by rememberSaveable { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MainMenuSettingsMenuCard(
                     title = "Thùng Rác",
@@ -2922,7 +2917,7 @@ private fun ipToFullUrl(ip: String): String {
     return if (trimmed.contains(":")) "${URL_PREFIX}$trimmed/webdav/" else "${URL_PREFIX}$trimmed${URL_SUFFIX}"
 }
 
-private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (_: Exception) { url }
+private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { url }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3777,7 +3772,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                     }
 
                     // ═══ BỘ LỌC NHANH ═══
-                    var selectedFilter by remember { mutableStateOf("all") } // all, image, video, doc
+                    var selectedFilter by rememberSaveable { mutableStateOf("all") } // all, image, video, doc
                     val filteredGroups = remember(groupedDuplicates, selectedFilter) {
                         when (selectedFilter) {
                             "image" -> groupedDuplicates.filter { group ->

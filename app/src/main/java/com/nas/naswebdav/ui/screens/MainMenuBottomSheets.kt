@@ -69,7 +69,11 @@ fun ProcessListBottomSheet(
 
     androidx.compose.runtime.LaunchedEffect(sortBy) {
         while (isActive) {
-            systemMonitorVM.fetchSystemProcesses(context)
+            try {
+                systemMonitorVM.fetchSystemProcesses(context)
+            } catch (e: Exception) {
+                // Ignore to keep polling loop alive
+            }
             kotlinx.coroutines.delay(3000) // Tự động làm mới mỗi 3 giây
         }
     }

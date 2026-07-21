@@ -231,7 +231,7 @@ class SystemMonitorViewModel(
                     true
                 } else false
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SysMonitor", "fetchStatusNow: ${e.message}")
             false
         }
@@ -290,7 +290,7 @@ class SystemMonitorViewModel(
                         lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { metricsError = e.message }
             } finally {
                 withContext(Dispatchers.Main) { isLoadingMetrics = false }
@@ -326,7 +326,7 @@ class SystemMonitorViewModel(
                         lastMetricsRefreshAt = System.currentTimeMillis()
                     }
                 }
-            } catch (_: Exception) { /* silent for realtime */ }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* silent for realtime */ }
         }
     }
 
@@ -356,7 +356,7 @@ class SystemMonitorViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchDailyReport: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isDailyReportLoading = false }
@@ -399,7 +399,7 @@ class SystemMonitorViewModel(
                         lastDiskHealthRefreshAt = System.currentTimeMillis()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchDiskHealth: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingDiskHealth = false }
@@ -438,7 +438,7 @@ class SystemMonitorViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchDiskHealthHistory: ${e.message}")
             }
         }
@@ -448,12 +448,12 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backups").get().let(WebDavManager::tagCurrentAuth).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/list").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (resp.code == 404) {
                         withContext(Dispatchers.Main) {
                             nasConfigBackups = emptyList()
-                            nasConfigBackupMessage = "Server chưa hỗ trợ quản lý backup cấu hình NAS (thiếu endpoint /api/config/*)."
+                            nasConfigBackupMessage = "Server chưa hỗ trợ quản lý backup cấu hình NAS (thiếu endpoint /api/backup/*)."
                         }
                         return@use
                     }
@@ -472,7 +472,7 @@ class SystemMonitorViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchNasConfigBackups: ${e.message}")
             }
         }
@@ -484,20 +484,20 @@ class SystemMonitorViewModel(
             var was404 = false
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup")
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/create")
                     .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     was404 = resp.code == 404
                     withContext(Dispatchers.Main) {
                         nasConfigBackupMessage = when {
                             resp.isSuccessful -> "Đã tạo backup"
-                            resp.code == 404 -> "Server chưa hỗ trợ tạo backup cấu hình (thiếu endpoint /api/config/backup)."
+                            resp.code == 404 -> "Server chưa hỗ trợ tạo backup cấu hình (thiếu endpoint /api/backup/create)."
                             else -> "Lỗi tạo backup (HTTP ${resp.code})"
                         }
                     }
                 }
                 if (!was404) fetchNasConfigBackups()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
@@ -512,7 +512,7 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("filename", filename).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup").delete(body).let(WebDavManager::tagCurrentAuth).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/delete").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     was404 = resp.code == 404
                     withContext(Dispatchers.Main) {
@@ -520,7 +520,7 @@ class SystemMonitorViewModel(
                     }
                 }
                 if (!was404) fetchNasConfigBackups()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "deleteNasConfigBackup: ${e.message}")
             }
         }
@@ -533,17 +533,17 @@ class SystemMonitorViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("filename", filename).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/config/restore").post(body).let(WebDavManager::tagCurrentAuth).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/restore").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) {
                         nasConfigBackupMessage = when {
                             resp.isSuccessful -> "Đã restore"
-                            resp.code == 404 -> "Server chưa hỗ trợ restore cấu hình (thiếu endpoint /api/config/restore)."
+                            resp.code == 404 -> "Server chưa hỗ trợ restore cấu hình (thiếu endpoint /api/backup/restore)."
                             else -> "Lỗi restore (HTTP ${resp.code})"
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
@@ -619,7 +619,7 @@ class SystemMonitorViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchNasInsights: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingNasInsights = false }
@@ -645,7 +645,7 @@ class SystemMonitorViewModel(
                     out.outputStream().use { o -> src.copyTo(o) }
                     out
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "download err: ${e.message}")
                 null
             }
@@ -676,7 +676,7 @@ class SystemMonitorViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchSystemProcesses: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isLoadingProcesses = false }
@@ -706,7 +706,7 @@ class SystemMonitorViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(context, "Lỗi kết nối: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -728,7 +728,7 @@ class SystemMonitorViewModel(
                         apiFailureCount = if (resp.isSuccessful) 0 else (apiFailureCount + 1)
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     apiFailureCount++
                     networkPingMs = null

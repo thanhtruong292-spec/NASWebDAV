@@ -437,7 +437,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
         }
 
         onDispose {
-            try { context.unregisterReceiver(receiver) } catch (e: Exception) {
+            try { context.unregisterReceiver(receiver) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.d("VideoPlayer", "Receiver đã được gỡ hoặc không tồn tại: ${e.message}")
             }
             exoPlayer.release()
@@ -505,7 +505,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
             Box(Modifier.fillMaxSize()) {
                 // Tiêu đề Video & Nút Back
                 val fileName = url.substringAfterLast("/").let {
-                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { it }
                 }
                 
                 Row(
@@ -668,7 +668,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
             // Dialog xác nhận xóa video
             if (showDeleteDialog) {
                 val fileName = url.substringAfterLast("/").let {
-                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { it }
                 }
                 AppStatusDialog(
                     type = DialogType.WARNING,
@@ -755,7 +755,7 @@ private fun enterPipMode(activity: ComponentActivity, exoPlayer: androidx.media3
             .setActions(buildPipActions(activity, exoPlayer.isPlaying))
             .build()
         activity.enterPictureInPictureMode(params)
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         android.util.Log.e("VideoPlayer", "Thiết bị không hỗ trợ PiP: ${e.message}")
     }
 }
@@ -771,7 +771,7 @@ private fun updatePipActions(activity: ComponentActivity, exoPlayer: androidx.me
             .setActions(buildPipActions(activity, exoPlayer.isPlaying))
             .build()
         activity.setPictureInPictureParams(params)
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         // Ignored: PiP unsupported or disabled globally
     }
 }

@@ -21,7 +21,7 @@ private val WEB_DAV_HTTP_FAILURE_REGEX = Regex("""^([A-Z]+) failed: (\d{3})(?: -
 // Safe URL host extraction — avoids MalformedURLException when URL is empty/malformed
 internal fun safeUrlHost(url: String): String = try {
     java.net.URL(url).host ?: ""
-} catch (_: Exception) { "" }
+} catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
 // Convert technical errors into user-friendly messages
 internal fun friendlyError(e: Exception): String = when (e) {
@@ -107,7 +107,7 @@ fun isTailscaleUrl(url: String): Boolean {
             val b = parts[1].toIntOrNull() ?: return false
             a == 100 && b in 64..127
         } else false
-    } catch (_: Exception) { false }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
 }
 
 private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -219,7 +219,7 @@ suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth:
             if (executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)) return@withContext true
         }
         false
-    } catch (_: Exception) { false }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
 }
 
 // ─── Rate Limiter ────────────────────────────────────────────────────────

@@ -86,7 +86,7 @@ fun BiometricSettingsDialogCompat(
                 androidx.biometric.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "none_enrolled"
                 else -> "unknown"
             }
-        } catch (e: Exception) { "error: ${e.message}" }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { "error: ${e.message}" }
     }
 
     androidx.compose.material3.ModalBottomSheet(

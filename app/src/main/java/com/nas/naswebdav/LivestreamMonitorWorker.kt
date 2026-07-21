@@ -106,7 +106,7 @@ class LivestreamMonitorWorker(
             try {
                 androidx.core.app.NotificationManagerCompat.from(context).cancel(notifId)
                 androidx.core.app.NotificationManagerCompat.from(context).cancel(notifId + 1000)
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
 
         fun clearAllNotifications(context: Context) {
@@ -115,7 +115,7 @@ class LivestreamMonitorWorker(
                 try {
                     nm.cancel(notifId)
                     nm.cancel(notifId + 1000)
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             }
         }
     }
@@ -132,7 +132,7 @@ class LivestreamMonitorWorker(
     private fun notificationsEnabled(): Boolean {
         return try {
             androidx.core.app.NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             false
         }
     }
@@ -175,7 +175,7 @@ class LivestreamMonitorWorker(
                 title   = "$platformIcon Đang ghi livestream $platformLabel",
                 content = "Đang kết nối..."
             ))
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             return@withContext Result.failure()
         }
 
@@ -295,7 +295,7 @@ class LivestreamMonitorWorker(
                     break
                 }
 
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                 consecutiveErrors++
                 if (consecutiveErrors >= 10) break
             }
@@ -380,6 +380,6 @@ class LivestreamMonitorWorker(
                 applicationContext.getSystemService(NotificationManager::class.java)
                     ?.notify(baseNotifId + 1000, notification)
             }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
     }
 }

@@ -68,7 +68,7 @@ class StreamPipeWorker(
                     val json = JSONObject(file.readText())
                     return json.optString("sourceUrl", "") to json.optString("fileName", "")
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e(TAG, "Cannot read stream payload", e)
             }
         }
@@ -116,7 +116,7 @@ class StreamPipeWorker(
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
                 }
             )
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
         setProgress(workDataOf("status" to "connecting", "progress" to 0))
 
@@ -127,7 +127,7 @@ class StreamPipeWorker(
             val ua = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
 
             // FIX #21: Tự động trích xuất Referer từ sourceUrl thay vì hardcode tiktok.com
-            val refererUrl = try { java.net.URL(sourceUrl).let { "${it.protocol}://${it.host}/" } } catch (_: Exception) { "" }
+            val refererUrl = try { java.net.URL(sourceUrl).let { "${it.protocol}://${it.host}/" } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
             // ── 1. HEAD → kích thước file ──
             val headRequest = okhttp3.Request.Builder()
@@ -140,7 +140,7 @@ class StreamPipeWorker(
                 NasApplication.instance.fastApiClient.newCall(headRequest).execute().use { resp ->
                     resp.header("Content-Length")?.toLongOrNull() ?: -1L
                 }
-            } catch (_: Exception) { -1L }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { -1L }
 
             // ── 2. GET stream từ CDN ──
             val getRequest = okhttp3.Request.Builder()
@@ -168,7 +168,7 @@ class StreamPipeWorker(
                 val socialFolder = if (baseUrl.endsWith("/")) baseUrl + AppConfig.SOCIAL_DOWNLOAD_FOLDER
                                    else "$baseUrl/${AppConfig.SOCIAL_DOWNLOAD_FOLDER}"
 
-                try { WebDavManager.createFolder(socialFolder) } catch (e: Exception) {
+                try { WebDavManager.createFolder(socialFolder) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("StreamPipe", "Tạo thư mục NAS thất bại: $socialFolder", e)
                     throw e
                 }
@@ -265,7 +265,7 @@ class StreamPipeWorker(
                         type = "SUCCESS", module = "StreamPipe",
                         message = "Đã truyền ${com.nas.naswebdav.utils.FormatUtils.formatBytes(totalBytesRead)} về NAS: $safeFileName (${elapsed.toInt()} giây, trung bình ${com.nas.naswebdav.utils.FormatUtils.formatBytes(avgSpeed)}/s)"
                     ))
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
                 // Notification hoàn tất
                 val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
@@ -282,7 +282,7 @@ class StreamPipeWorker(
 
             return@withContext Result.success()
 
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.e(TAG, "Lỗi truyền stream", e)
             val errMsg = e.message?.take(100) ?: "Lỗi không xác định"
 
@@ -308,7 +308,7 @@ class StreamPipeWorker(
                     type = "ERROR", module = "StreamPipe",
                     message = "Lỗi: $errMsg"
                 ))
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
             // CRITICAL: xóa partial file trên NAS nếu PUT thất bại sau khi đã bắt đầu ghi
             if (destUrl.isNotEmpty()) {
@@ -319,14 +319,14 @@ class StreamPipeWorker(
                         .delete()
                         .build()
                     NasApplication.instance.fastApiClient.newCall(cleanupReq).execute().use { /* ignore response */ }
-                } catch (_: Exception) { /* best-effort */ }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* best-effort */ }
             }
 
             return@withContext Result.failure()
         } finally {
             try {
                 inputData.getString("payloadFile")?.let { File(it).delete() }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
     }
 

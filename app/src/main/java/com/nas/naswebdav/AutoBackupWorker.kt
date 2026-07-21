@@ -350,6 +350,21 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             }
 
                             val uploadVerified = try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
+                            if (uploadVerified) {
+                                try {
+                                    val tmpFile = java.io.File(applicationContext.cacheDir, "thumb_tmp_${System.currentTimeMillis()}.${java.io.File(filePath).extension}")
+                                    val inputSteam = applicationContext.contentResolver.openInputStream(mediaUri)
+                                    inputSteam?.use { input ->
+                                        java.io.FileOutputStream(tmpFile).use { out -> input.copyTo(out) }
+                                    }
+                                    if (tmpFile.exists()) {
+                                        com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(tmpFile, targetFileNasPath, pass)
+                                        tmpFile.delete()
+                                    }
+                                } catch (e: Exception) {
+                                    android.util.Log.e("AutoBackup", "Failed to generate thumbnail for $fileName", e)
+                                }
+                            }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++

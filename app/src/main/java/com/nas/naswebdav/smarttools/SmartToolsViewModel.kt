@@ -204,7 +204,7 @@ class SmartToolsViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 isWorkerRunning = false
             }
         }
@@ -220,7 +220,7 @@ class SmartToolsViewModel(
                     duplicateFilesList = duplicates
                     isShowingDuplicates = true
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
                         "Lỗi nạp danh sách từ DB: ${e.message}")
@@ -266,7 +266,7 @@ class SmartToolsViewModel(
                     WebDavManager.deleteFile(file.path, file.isDirectory)
                 } else {
                     val trashFolderUrl = WebDavManager.currentBaseUrl.trimEnd('/') + "/.trash/"
-                    try { WebDavManager.createFolder(trashFolderUrl) } catch (_: Exception) {}
+                    try { WebDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     val safeName = file.name.replace('/', '_').take(200)
                     val trashTargetUrl = trashFolderUrl + safeName
                     WebDavManager.renameFile(file.path, trashTargetUrl)
@@ -275,7 +275,7 @@ class SmartToolsViewModel(
                     duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
                     selectedDuplicates.remove(file)
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SmartToolsVM", "deleteDuplicateFile: ${e.message}")
             }
         }
@@ -326,7 +326,7 @@ class SmartToolsViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) { android.util.Log.w("SmartToolsVM", "fetchThumbStatus: ${e.message}") }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { android.util.Log.w("SmartToolsVM", "fetchThumbStatus: ${e.message}") }
         }
     }
 
@@ -339,7 +339,7 @@ class SmartToolsViewModel(
                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control")
                     .post(json).build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             thumbRunning = false
         }
     }
@@ -358,7 +358,7 @@ class SmartToolsViewModel(
                 }
                 kotlinx.coroutines.delay(1500)
                 fetchThumbStatus()
-            } catch (e: Exception) { withContext(Dispatchers.Main) { thumbPaused = action != "pause" } }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { withContext(Dispatchers.Main) { thumbPaused = action != "pause" } }
         }
     }
 
@@ -390,7 +390,7 @@ class SmartToolsViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SmartToolsVM", "fetchThumbnailAudit failed", e)
             }
         }
@@ -413,7 +413,7 @@ class SmartToolsViewModel(
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
                 kotlinx.coroutines.delay(1000)
                 fetchThumbnailAudit()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SmartToolsVM", "triggerThumbnailScan failed", e)
             }
         }
@@ -447,11 +447,11 @@ class SmartToolsViewModel(
                                     groups.add(com.nas.naswebdav.OrganizerGroup(label = g.optString("label", "?"), count = g.optInt("count", 0), size = g.optLong("size", 0L), sampleFiles = samples))
                                 }
                                 organizerScanResult = groups
-                            } catch (e: Exception) { organizerError = "Lỗi phân tích: ${e.message}" }
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { organizerError = "Lỗi phân tích: ${e.message}" }
                         } else { organizerError = "Lỗi NAS: ${response.code}" }
                     }
                 }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
             finally { withContext(Dispatchers.Main) { organizerScanning = false } }
         }
     }
@@ -491,7 +491,7 @@ class SmartToolsViewModel(
                         withContext(Dispatchers.Main) { organizerResult = "Hoàn tất — ${json.optInt("moved_count", 0)} tệp"; organizerScanResult = null }
                     } else { throw Exception("Lỗi NAS: ${response.code}") }
                 }
-            } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
             finally { withContext(Dispatchers.Main) { organizerExecuting = false } }
         }
     }
@@ -544,7 +544,7 @@ class SmartToolsViewModel(
                     }
                     withContext(Dispatchers.Main) { organizingLegacyResult = msg }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     organizingLegacyResult = "Lỗi: ${e.message}"
                 }

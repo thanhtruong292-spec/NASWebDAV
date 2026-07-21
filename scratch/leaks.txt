@@ -1,0 +1,99 @@
+Line 613: conn = sqlite3.connect(DB_PATH, timeout=20.0)
+  +         cur = conn.cursor()
+  +         try:
+  +             cur.execute("PRAGMA journal_mode=WAL")
+  +             cur.execute("PRAGMA synchronous=NORMAL")
+  +             cur.execute("PRAGMA busy_timeout=5000")
+  +         except Exception:
+  +             pass
+  +         cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
+  +         cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
+----------------------------------------
+Line 838: conn = sqlite3.connect(DB_PATH, timeout=20.0)
+  +         cur = conn.cursor()
+  +         safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
+  +         cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
+  +                    ("WARNING", "Firewall", safe_msg))
+  +         conn.commit()
+  +         conn.close()
+  +     except Exception as e:
+  +         log.error("[Firewall] Lỗi ghi log yêu cầu chặn IP %s: %s", ip, e)
+  + 
+----------------------------------------
+Line 2736: conn = sqlite3.connect(DB_PATH, timeout=10.0)
+  +                 cur = conn.cursor()
+  +                 cur.execute("INSERT INTO system_metrics_history (cpu_percent, ram_percent, cpu_temp, hdd_temp, net_rx_kbps, net_tx_kbps) VALUES (?,?,?,?,?,?)",
+  +                             (cpu_pct, ram_pct, cpu_t, hdd_t, rx_kbps, tx_kbps))
+  +                 # Tương thích Python 3.5: dùng date string thay vì f-string
+  +                 cur.execute("DELETE FROM system_metrics_history WHERE timestamp <= datetime('now', '-30 days')")
+  +                 # Giữ lại bảng nhiệt độ cũ để tương thích
+  +                 if cpu_t > 0 or hdd_t > 0:
+  +                     cur.execute("INSERT INTO system_temperature_history (cpu_temp, hdd_temp) VALUES (?, ?)", (cpu_t, hdd_t))
+  +                     cur.execute("DELETE FROM system_temperature_history WHERE timestamp <= datetime('now', '-30 days')")
+----------------------------------------
+Line 2897: conn = sqlite3.connect(DB_PATH, timeout=20.0)
+  +         cur = conn.cursor()
+  +         cur.execute(
+  +             "INSERT OR REPLACE INTO daily_reports (report_date, report_json) VALUES (?, ?)",
+  +             (report_date, json.dumps(report, ensure_ascii=False))
+  +         )
+  +         conn.commit()
+  +         conn.close()
+  + 
+  +         # Xây dựng message tóm tắt
+----------------------------------------
+Line 4405: conn = sqlite3.connect(tmp_db, timeout=60.0)
+  +             count = 0
+  +             with open(tmp_jsonl, "r", encoding="utf-8") as f:
+  +                 cur = conn.cursor()
+  +                 cur.execute("PRAGMA journal_mode=OFF")
+  +                 cur.execute("PRAGMA synchronous=OFF")
+  +                 cur.execute("CREATE TABLE photos(path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL)")
+  +                 batch = []
+  +                 for line in f:
+  +                     line = line.strip()
+----------------------------------------
+Line 4589: conn = sqlite3.connect(DB_PATH, timeout=5.0)
+  +         cur = conn.cursor()
+  +         cur.execute(
+  +             "INSERT OR REPLACE INTO %s (key, payload_json, updated_at) VALUES (?, ?, ?)" % table,
+  +             (key, json.dumps(payload, ensure_ascii=False), now)
+  +         )
+  +         conn.commit()
+  +         return True
+  +     except Exception as e:
+  +         log.warning("[SQLiteState] Không ghi được %s/%s: %s", table, key, e)
+----------------------------------------
+Line 4910: conn = sqlite3.connect(DB_PATH, timeout=10.0)
+  +         cur = conn.cursor()
+  +         cur.execute("DELETE FROM disk_health_history WHERE ts <= ?", (cutoff,))
+  +         conn.commit()
+  +         conn.close()
+  +     except Exception as e:
+  +         log.warning("[DiskHealth] Prune lỗi: %s", e)
+  + 
+  + 
+  + def _disk_health_watchdog():
+----------------------------------------
+Line 4951: conn = sqlite3.connect(DB_PATH, timeout=3.0)
+  +         cur = conn.cursor()
+  +         if timestamp is None:
+  +             cur.execute(
+  +                 "INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
+  +                 (level, module, message)
+  +             )
+  +         else:
+  +             if isinstance(timestamp, (int, float)):
+  +                 timestamp = datetime.datetime.utcfromtimestamp(float(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+----------------------------------------
+Line 8353: conn = sqlite3.connect(DB_PATH, timeout=20.0)
+  +             cur = conn.cursor()
+  +             if approved:
+  +                 _remember_authorized_ip(ip)
+  +                 cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
+  +                 cur.execute('DELETE FROM auth_attempts WHERE ip=?', (ip,))
+  +                 try:
+  +                     subprocess.run(['iptables', '-D', 'INPUT', '-s', ip, '-j', 'DROP'], stderr=subprocess.DEVNULL)
+  +                 except Exception:
+  +                     pass
+----------------------------------------

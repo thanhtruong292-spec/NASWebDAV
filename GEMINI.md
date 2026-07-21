@@ -101,3 +101,6 @@ Xem [CHANGELOG.md](./CHANGELOG.md) để biết chi tiết từng thay đổi.
 - Tất cả các thao tác file (xoá, chuyển vào thùng rác `.trash/`, copy, move) PHẢI nằm trên cùng một ổ đĩa cứng ngoài (HDD như `Box Data`, `N300`, `USB Import`).
 - **Cấm tuyệt đối** việc tạo `.trash/` ở thư mục gốc của WebDAV (ví dụ `/var/www/webdav/public/.trash/`) vì thư mục gốc nằm trên bộ nhớ trong eMMC/SD Card của NAS. Việc copy/move file dung lượng lớn (video) vào đó sẽ làm cháy/hỏng thẻ nhớ hoặc tràn bộ nhớ hệ thống.
 - Bất cứ tính năng nào liên quan đến Trash Bin hay thao tác file đều phải xử lý trên cùng một phân vùng ổ cứng (vd: `/Data N300/.trash/`).
+
+### 7. WAKE_LOCK & Manifest Merger (Xem chi tiết hardrules)
+- CẤM TUYỆT ĐỐI xóa 	ools:node=" replace\ ở thẻ WAKE_LOCK trong AndroidManifest.xml. Thư viện ngoài lén lút giới hạn maxSdkVersion=25 gây lỗi mất quyền ngầm trên tiến trình nền.

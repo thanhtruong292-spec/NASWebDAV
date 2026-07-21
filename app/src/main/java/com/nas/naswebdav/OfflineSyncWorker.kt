@@ -79,12 +79,13 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         else encodeWebDavSegment(segment)
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
+                                    com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(file, encodedDest, pass)
                                 }
                             }
                         }
                     }
                     db.syncActionDao().deleteById(action.id)
-                } catch (_: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                     allSuccess = false
                 }
             }

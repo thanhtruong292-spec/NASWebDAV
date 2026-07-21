@@ -144,7 +144,7 @@ class AuthSessionViewModel(
                                     channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
                                 }
                             }
-                        } catch (e: Exception) {
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                             android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
                             channel.send(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
                         }
@@ -183,7 +183,7 @@ class AuthSessionViewModel(
                     repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
 
                     // Gọi authorize API phụ
-                    val parsedUrl = try { java.net.URL(successUrl) } catch (_: Exception) { null }
+                    val parsedUrl = try { java.net.URL(successUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
                     val host = parsedUrl?.host
                     if (!host.isNullOrEmpty()) {
                         NasApplication.applicationScope.launch(Dispatchers.IO) {
@@ -199,7 +199,7 @@ class AuthSessionViewModel(
                                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                                     .build()
                                 cleanClient.newCall(request).execute().use { }
-                            } catch (e: Exception) {
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                 android.util.Log.w("NAS_AUTH", "API Phụ Warning: ${e.message}")
                             }
                         }
@@ -282,9 +282,9 @@ class AuthSessionViewModel(
                                     .build()
                                 try {
                                     NasApplication.instance.fastApiClient.newCall(authRequest).execute().use { }
-                                } catch (_: Exception) {}
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                             }
-                        } catch (_: Exception) {}
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     }
                     withContext(Dispatchers.Main) {
                         SharedStateHolder.updateCurrentUrl(safeActive)
@@ -298,7 +298,7 @@ class AuthSessionViewModel(
                         "Chuyển mạng: ${if (onLan) "LAN" else "Tailscale"} ($safeActive)"
                     )
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SmartSwitch", "Lỗi kiểm tra mạng thông minh: ${e.message}")
             }
         }
@@ -336,7 +336,7 @@ class AuthSessionViewModel(
                 withContext(Dispatchers.Main) {
                     SharedStateHolder.updateErrorMessage("Không có kết nối. Lệnh '$actionType' đã được đưa vào hàng đợi ngoại tuyến.")
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     SharedStateHolder.updateErrorMessage("Lỗi khi lưu hàng đợi ngoại tuyến: ${e.message}")
                 }
@@ -410,7 +410,7 @@ class AuthSessionViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     guestPassError = "Lỗi kết nối API: ${e.message}"
                 }
@@ -452,7 +452,7 @@ class AuthSessionViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     guestPassError = "Lỗi thu hồi: ${e.message}"
                     onWarning("Lỗi mạng khi thu hồi Guest Pass. Pass được giữ lại để thử lại.")

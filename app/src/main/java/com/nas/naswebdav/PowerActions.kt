@@ -24,7 +24,7 @@ import java.net.URL
  * CoroutineScope. Pass any active scope (e.g. rememberCoroutineScope()).
  */
 
-private fun extractHost(url: String): String? = try { URL(url).host } catch (_: Exception) { null }
+private fun extractHost(url: String): String? = try { URL(url).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
 
 fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val workManager = androidx.work.WorkManager.getInstance(context)
@@ -99,10 +99,10 @@ suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String
                             socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
                             socket.close()
                             best = minOf(best, SystemClock.elapsedRealtime() - start)
-                        } catch (_: Exception) {}
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     }
                     if (best == Long.MAX_VALUE) -1L else { recordLatency(url, best); best }
-                } catch (_: Exception) { -1L }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { -1L }
             }
         }.associate { it.await() }
     }
@@ -123,7 +123,7 @@ fun sendPowerCommandToNas(
                 isSleepCommand -> "Ngủ"
                 else -> endpoint
             }
-            val host = try { java.net.URI(WebDavManager.currentBaseUrl).host } catch (_: Exception) { "?" }
+            val host = try { java.net.URI(WebDavManager.currentBaseUrl).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "?" }
             Log.w("Power", "Gửi lệnh $cmdName đến $host/api/$endpoint")
             val request = okhttp3.Request.Builder()
                 .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/$endpoint")
@@ -135,7 +135,7 @@ fun sendPowerCommandToNas(
                     onResult?.invoke(ok, if (ok) "Đã gửi lệnh $cmdName NAS." else "NAS từ chối lệnh $cmdName (HTTP ${response.code}).")
                 }
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 onResult?.invoke(false, "Không gửi được lệnh nguồn: ${e.message ?: "lỗi mạng"}")
             }
@@ -159,12 +159,12 @@ fun sendDownloadLinkToQbittorrent(
                 .post(jsonBody)
                 .build()
             val text = NasApplication.instance.fastApiClient.newCall(request).execute().use { it.body?.string() ?: "" }
-            val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+            val o = try { org.json.JSONObject(text) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { org.json.JSONObject() }
             withContext(Dispatchers.Main) {
                 val ok = o.optString("result") == "ok"
                 onResult?.invoke(ok, if (ok) "✅ Đã gửi link cho qBittorrent." else "❌ Lỗi: ${o.optString("error", "không phản hồi")}")
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 onResult?.invoke(false, "❌ Lỗi mạng: ${e.message?.take(120)}")
             }
@@ -212,12 +212,12 @@ fun uploadTorrentFileToNas(
             val client = NasApplication.instance.fastApiClient.newBuilder()
                 .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
             val text = client.newCall(req).execute().use { it.body?.string() ?: "" }
-            val o = try { org.json.JSONObject(text) } catch (_: Exception) { org.json.JSONObject() }
+            val o = try { org.json.JSONObject(text) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { org.json.JSONObject() }
             withContext(Dispatchers.Main) {
                 val ok = o.optString("result") == "ok"
                 onResult?.invoke(ok, if (ok) "✅ Đã gửi $safeName cho qBittorrent (${o.optInt("size")} bytes)" else "❌ Lỗi: ${o.optString("error", "không phản hồi")}")
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 onResult?.invoke(false, "❌ Lỗi: ${e.message?.take(120)}")
             }
@@ -295,7 +295,7 @@ fun sendPowerCommandFromLogin(
                 }
                 Log.w("Power", "LoginScreen: gửi $cmdName NAS tại $host (HTTP $code)")
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             withContext(Dispatchers.Main) {
                 onResult(false, "Không kết nối được NAS: ${e.message?.take(80) ?: "lỗi mạng"}")
             }

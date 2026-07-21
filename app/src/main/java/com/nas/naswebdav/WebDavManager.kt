@@ -321,7 +321,7 @@ object WebDavManager {
 
             return@withContext if (best == Long.MAX_VALUE) -1L else best
 
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
 
             return@withContext -1L // Chết mạng hoặc bị chặn
 
@@ -357,7 +357,7 @@ object WebDavManager {
 
             }
 
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
 
             return@withContext null
 
@@ -398,202 +398,101 @@ object WebDavManager {
 
             
 
-        val xmlString = sardineClient.newCall(request).execute().use { response ->
-
-            if (!response.isSuccessful) {
-
-                val errorBody = response.body?.string()?.take(200) ?: ""
-
-                throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
-
-            }
-
-            response.body?.string() ?: throw Exception("NAS trả về dữ liệu rỗng")
-
-        }
-
-
-
         val result = mutableListOf<NasFile>()
 
-        
-
-        // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS
-
-        try {
-
-            val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
-
-            factory.isNamespaceAware = true
-
-            val parser = factory.newPullParser()
-
-            parser.setInput(java.io.StringReader(xmlString))
-
-
-
-            var eventType = parser.eventType
-
-            var currentHref = ""
-
-            var isDir = false
-
-            var currentType = ""
-
-            var currentLength = 0L
-
-            var currentModTime = 0L
-
-            
-
-            var insideResponse = false
-
-            var textBuffer = ""
-
-
-
-            while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-
-                when (eventType) {
-
-                    org.xmlpull.v1.XmlPullParser.START_TAG -> {
-
-                        val name = parser.name.lowercase()
-
-                        if (name == "response") {
-
-                            insideResponse = true
-
-                            currentHref = ""
-
-                            isDir = false
-
-                            currentType = ""
-
-                            currentLength = 0L
-
-                            currentModTime = 0L
-
-                        } else if (name == "collection") {
-
-                            isDir = true
-
-                        }
-
-                    }
-
-                    org.xmlpull.v1.XmlPullParser.TEXT -> {
-
-                        textBuffer = parser.text
-
-                    }
-
-                    org.xmlpull.v1.XmlPullParser.END_TAG -> {
-
-                        val name = parser.name.lowercase()
-
-                        if (insideResponse) {
-
-                            when (name) {
-
-                                "href" -> currentHref = textBuffer.trim()
-
-                                "getcontenttype" -> currentType = textBuffer.trim()
-
-                                "getcontentlength" -> currentLength = textBuffer.toLongOrNull() ?: 0L
-
-                                "getlastmodified" -> {
-
-                                    // Parse HTTP Date Format: Sun, 01 Jan 2023 12:00:00 GMT
-
-                                    try {
-
-                                        val format = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", java.util.Locale.US)
-
-                                        format.timeZone = java.util.TimeZone.getTimeZone("GMT")
-
-                                        currentModTime = format.parse(textBuffer.trim())?.time ?: 0L
-
-                                    } catch (e: Exception) { currentModTime = 0L }
-
-                                }
-
-                                "response" -> {
-
-                                    if (currentHref.isNotEmpty()) {
-
-                                        // Xử lý absolute mapping
-
-                                        val fullUri = if (currentHref.startsWith("http")) {
-
-                                            currentHref
-
-                                        } else {
-
-                                            val baseUri = java.net.URI(safeUrl)
-
-                                            val scheme = baseUri.scheme
-
-                                            val host = baseUri.host
-
-                                            val portStr = if (baseUri.port != -1) ":${baseUri.port}" else ""
-
-                                            val hrefClean = if (currentHref.startsWith("/")) currentHref else "/$currentHref"
-
-                                            "$scheme://$host$portStr$hrefClean"
-
-                                        }
-
-                                        
-
-                                        // Lọc bỏ gốc rễ
-
-                                        if (fullUri.trimEnd('/') != safeUrl.trimEnd('/')) {
-
-                                            var extractedName = ""
-
-                                            try {
-
-                                                val decoded = java.net.URLDecoder.decode(fullUri.trimEnd('/'), "UTF-8")
-
-                                                extractedName = decoded.substringAfterLast('/')
-
-                                            } catch (e: Exception) {
-
-                                                extractedName = fullUri.trimEnd('/').substringAfterLast('/')
-
-                                            }
-
-                                            
-
-                                            val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri; result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
-
-                                        }
-
-                                    }
-
-                                    insideResponse = false
-
-                                }
-
-                            }
-
-                        }
-
-                    }
-
-                }
-
-                eventType = parser.next()
-
+        sardineClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()?.take(200) ?: ""
+                throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
             }
 
-        } catch (e: Exception) {
+            val byteStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
 
-            android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
+            // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS (Sử dụng luồng trực tiếp để chống OOM)
+            try {
+                val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
+                factory.isNamespaceAware = true
+                val parser = factory.newPullParser()
+                parser.setInput(byteStream, "UTF-8")
 
-            throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
+                var eventType = parser.eventType
+                var currentHref = ""
+                var isDir = false
+                var currentType = ""
+                var currentLength = 0L
+                var currentModTime = 0L
+                var insideResponse = false
+                var textBuffer = ""
 
+                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    when (eventType) {
+                        org.xmlpull.v1.XmlPullParser.START_TAG -> {
+                            val name = parser.name.lowercase()
+                            if (name == "response") {
+                                insideResponse = true
+                                currentHref = ""
+                                isDir = false
+                                currentType = ""
+                                currentLength = 0L
+                                currentModTime = 0L
+                            } else if (name == "collection") {
+                                isDir = true
+                            }
+                        }
+                        org.xmlpull.v1.XmlPullParser.TEXT -> {
+                            textBuffer = parser.text
+                        }
+                        org.xmlpull.v1.XmlPullParser.END_TAG -> {
+                            val name = parser.name.lowercase()
+                            if (insideResponse) {
+                                when (name) {
+                                    "href" -> currentHref = textBuffer.trim()
+                                    "getcontenttype" -> currentType = textBuffer.trim()
+                                    "getcontentlength" -> currentLength = textBuffer.toLongOrNull() ?: 0L
+                                    "getlastmodified" -> {
+                                        try {
+                                            val format = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", java.util.Locale.US)
+                                            format.timeZone = java.util.TimeZone.getTimeZone("GMT")
+                                            currentModTime = format.parse(textBuffer.trim())?.time ?: 0L
+                                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { currentModTime = 0L }
+                                    }
+                                    "response" -> {
+                                        if (currentHref.isNotEmpty()) {
+                                            val fullUri = if (currentHref.startsWith("http")) {
+                                                currentHref
+                                            } else {
+                                                val baseUri = java.net.URI(safeUrl)
+                                                val scheme = baseUri.scheme
+                                                val host = baseUri.host
+                                                val portStr = if (baseUri.port != -1) ":${baseUri.port}" else ""
+                                                val hrefClean = if (currentHref.startsWith("/")) currentHref else "/$currentHref"
+                                                "$scheme://$host$portStr$hrefClean"
+                                            }
+                                            
+                                            if (fullUri.trimEnd('/') != safeUrl.trimEnd('/')) {
+                                                var extractedName = ""
+                                                try {
+                                                    val decoded = java.net.URLDecoder.decode(fullUri.trimEnd('/'), "UTF-8")
+                                                    extractedName = decoded.substringAfterLast('/')
+                                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                                                    extractedName = fullUri.trimEnd('/').substringAfterLast('/')
+                                                }
+                                                val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri
+                                                result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
+                                            }
+                                        }
+                                        insideResponse = false
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    eventType = parser.next()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
+                throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
+            }
         }
 
         
@@ -727,7 +626,7 @@ object WebDavManager {
                     // FIX C4: flush + close trong finally để gzip footer (CRC32+ISIZE)
                     // luôn được ghi — nếu source.read throw, server sẽ nhận truncated gzip
                     // mà không có footer → decompression fail thay vì silent corruption.
-                    try { bufferedGzip.close() } catch (_: Exception) {}
+                    try { bufferedGzip.close() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                 }
             }
 
@@ -864,13 +763,18 @@ object WebDavManager {
 
                 if (!response.isSuccessful && response.code != 206) return@withContext null
 
-                val buffer = response.body?.bytes() ?: return@withContext null
-
-                com.nas.naswebdav.utils.HashUtils.md5Bytes(buffer)
+                val byteStream = response.body?.byteStream() ?: return@withContext null
+                val md = java.security.MessageDigest.getInstance("MD5")
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (byteStream.read(buffer).also { bytesRead = it } != -1) {
+                    md.update(buffer, 0, bytesRead)
+                }
+                md.digest().joinToString("") { "%02x".format(it) }
 
             }
 
-        } catch (e: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
 
     }
 
@@ -890,7 +794,7 @@ object WebDavManager {
                 stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
                     .takeIf { it.isNotEmpty() }
             }
-        } catch (e: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
 
     /**
@@ -906,7 +810,7 @@ object WebDavManager {
                 stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(it) }
                     .takeIf { it.isNotEmpty() }
             }
-        } catch (e: Exception) { null }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
 
 
@@ -949,7 +853,7 @@ object WebDavManager {
 
             }
 
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
 
             return@withContext null
 

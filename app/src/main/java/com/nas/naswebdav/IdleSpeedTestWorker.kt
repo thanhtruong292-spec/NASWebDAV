@@ -62,7 +62,7 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                     return@withContext Result.success()
                 }
             }
-        } catch (e: Exception) { SystemLogger.log("WARNING", "SpeedTest", "Không thể thực thi tiến trình chẩn đoán tốc độ ổ đĩa nền: ${e.message}") }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "SpeedTest", "Không thể thực thi tiến trình chẩn đoán tốc độ ổ đĩa nền: ${e.message}") }
         return@withContext Result.failure()
     }
 }

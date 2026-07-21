@@ -100,7 +100,7 @@ private fun shareImageUrl(
         val chooser = Intent.createChooser(sendIntent, "Chia sẻ ảnh")
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(chooser)
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         Toast.makeText(context, "Không thể chia sẻ: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
@@ -190,7 +190,7 @@ fun ImageViewerScreen(
                 val newCurrentPage = (pagerState.currentPage - 1).coerceAtLeast(0)
                 try {
                     pagerState.scrollToPage(newCurrentPage)
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             }
         }
     }
@@ -584,7 +584,7 @@ private fun ThumbnailStrip(
             } else {
                 listState.scrollToItem(currentPage, scrollOffset = -40)
             }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
     }
 
     Box(
@@ -960,7 +960,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         }
 
         onDispose {
-            try { context.unregisterReceiver(receiver) } catch (e: Exception) {
+            try { context.unregisterReceiver(receiver) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.d("VideoPlayer", "Receiver đã được gỡ hoặc không tồn tại: ${e.message}")
             }
             exoPlayer.release()
@@ -1028,7 +1028,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
             Box(Modifier.fillMaxSize()) {
                 // Tiêu đề Video & Nút Back
                 val fileName = url.substringAfterLast("/").let {
-                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { it }
                 }
                 
                 Row(
@@ -1191,7 +1191,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
             // Dialog xác nhận xóa video
             if (showDeleteDialog) {
                 val fileName = url.substringAfterLast("/").let {
-                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it }
+                    try { java.net.URLDecoder.decode(it, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { it }
                 }
                 AppStatusDialog(
                     type = DialogType.WARNING,
@@ -1278,7 +1278,7 @@ private fun enterPipMode(activity: ComponentActivity, exoPlayer: androidx.media3
             .setActions(buildPipActions(activity, exoPlayer.isPlaying))
             .build()
         activity.enterPictureInPictureMode(params)
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         android.util.Log.e("VideoPlayer", "Thiết bị không hỗ trợ PiP: ${e.message}")
     }
 }
@@ -1294,7 +1294,7 @@ private fun updatePipActions(activity: ComponentActivity, exoPlayer: androidx.me
             .setActions(buildPipActions(activity, exoPlayer.isPlaying))
             .build()
         activity.setPictureInPictureParams(params)
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         // Ignored: PiP unsupported or disabled globally
     }
 }

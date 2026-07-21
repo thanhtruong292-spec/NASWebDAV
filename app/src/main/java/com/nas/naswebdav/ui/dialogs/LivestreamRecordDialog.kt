@@ -159,7 +159,7 @@ fun LivestreamRecordDialog(
                             }
                         }
                     }
-                } catch(e: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
                 finally {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                         isResolvingTikTokLink = false
@@ -189,7 +189,7 @@ fun LivestreamRecordDialog(
         if (expandedPanel != null) {
             // 1) Day sheet len max height (truong hop user mo dialog xong it phat
             //    moi bam panel, sheet co the dang o trang thai chua full)
-            try { sheetState.expand() } catch (_: Exception) {}
+            try { sheetState.expand() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             // 2) Cho animation expand cua panel ~200ms
             kotlinx.coroutines.delay(220)
             // 3) Scroll dialog content xuong day -> content panel vua mo lo ra het

@@ -79,7 +79,7 @@ fun FilePropertiesDialog(
             try {
                 java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault())
                     .format(java.util.Date(file.lastModified))
-            } catch (_: Exception) { "—" }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "—" }
         }
     }
 
@@ -100,7 +100,7 @@ fun FilePropertiesDialog(
                 db.fileDao().getFileByPath(file.path)
             }
             fingerprintHash = result?.fullHash ?: result?.partialHash ?: result?.imageFingerprint
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             fingerprintHash = null
         } finally {
             fingerprintLoading = false

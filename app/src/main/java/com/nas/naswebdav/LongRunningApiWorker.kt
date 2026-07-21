@@ -91,11 +91,11 @@ class LongRunningApiWorker(
                     ForegroundInfo(NOTIFICATION_ID, notificationBuilder.build())
                 }
             )
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             try {
                 androidx.core.app.NotificationManagerCompat.from(applicationContext)
                     .notify(NOTIFICATION_ID, notificationBuilder.build())
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
 
         // Báo trạng thái cho UI
@@ -137,7 +137,7 @@ class LongRunningApiWorker(
                         }
                         else -> if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
                     }
-                } catch (_: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                     if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
                 }
 
@@ -158,7 +158,7 @@ class LongRunningApiWorker(
                         module = "NAS API",
                         message = resultMessage
                     ))
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
                 // Notification hoàn tất
                 val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
@@ -176,7 +176,7 @@ class LongRunningApiWorker(
 
                 return@withContext if (isSuccess) Result.success() else Result.failure()
             }
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.e(TAG, "Lỗi API tác vụ dài: ${e.message}", e)
 
             setProgress(workDataOf(
@@ -203,7 +203,7 @@ class LongRunningApiWorker(
                     type = "ERROR", module = "NAS API",
                     message = "$taskLabel thất bại: ${e.message?.take(100)}"
                 ))
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
             return@withContext Result.failure()
         }

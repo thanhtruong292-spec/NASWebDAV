@@ -94,7 +94,7 @@ class NasDocumentProvider : DocumentsProvider() {
         row.add(
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             if (displayName.isEmpty()) "NAS Drive"
-            else try { java.net.URLDecoder.decode(displayName, "UTF-8") } catch (_: Exception) { displayName }
+            else try { java.net.URLDecoder.decode(displayName, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { displayName }
         )
 
         var flags = 0
@@ -164,7 +164,7 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryDocument timeout sau 10s")
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             }
         }
         return result
@@ -191,7 +191,7 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryChildDocuments timeout sau 10s — trả về cursor rỗng")
-            } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             }
         }
         return result
@@ -227,7 +227,7 @@ class NasDocumentProvider : DocumentsProvider() {
                                 .getMimeTypeFromExtension(fileExtension.lowercase())
                                 ?: "application/octet-stream"
                             webDavManager.uploadFile(url, tempFile, mime)
-                        } catch (e: Exception) {
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                             android.util.Log.e("NasDocProvider", "Upload thất bại: ${e.message}")
                         } finally {
                             tempFile.delete()
@@ -250,20 +250,20 @@ class NasDocumentProvider : DocumentsProvider() {
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {
-                            try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (_: Exception) {}
+                            try { writeFd.closeWithError("Lỗi kết nối NAS: ${response.code}") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                             return@launch
                         }
                         val body = response.body
                         if (body == null) {
-                            try { writeFd.closeWithError("Phản hồi từ NAS bị rỗng") } catch (_: Exception) {}
+                            try { writeFd.closeWithError("Phản hồi từ NAS bị rỗng") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                             return@launch
                         }
                         ParcelFileDescriptor.AutoCloseOutputStream(writeFd).use { fos ->
                             body.byteStream().copyTo(fos)
                         }
                     }
-                } catch (e: Exception) {
-                    try { writeFd.closeWithError(e.message ?: "Mất kết nối stream") } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    try { writeFd.closeWithError(e.message ?: "Mất kết nối stream") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                 }
             }
 
@@ -298,7 +298,7 @@ class NasDocumentProvider : DocumentsProvider() {
             return newId
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             throw FileNotFoundException("createDocument timed out")
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             throw FileNotFoundException("createDocument failed: ${e.message ?: "unknown error"}")
         }
     }
@@ -316,7 +316,7 @@ class NasDocumentProvider : DocumentsProvider() {
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             throw FileNotFoundException("deleteDocument timed out")
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             throw FileNotFoundException("deleteDocument failed: ${e.message ?: "unknown error"}")
         }
     }

@@ -108,7 +108,7 @@ class AutoBackupViewModel(
                             isAutoBackupRunning = false
                         }
                     }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "WorkManager observe error: ${e.message}")
             }
         }
@@ -125,13 +125,13 @@ class AutoBackupViewModel(
                         addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
-                } catch (e: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     try {
                         val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         context.startActivity(intent)
-                    } catch (e2: Exception) {
+                    } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 } catch (e2: Exception) {
                         android.util.Log.e("AutoBackup", "Failed to open settings", e2)
                     }
                 }
@@ -149,7 +149,7 @@ class AutoBackupViewModel(
                         addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     context.startActivity(intent)
-                } catch (e: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("AutoBackup", "Failed to open settings", e)
                 }
                 return
@@ -178,7 +178,7 @@ class AutoBackupViewModel(
                     .addTag("MANUAL_AUTO_BACKUP").build()
                 workManager.enqueueUniqueWork("ManualAutoBackupWork",
                     androidx.work.ExistingWorkPolicy.REPLACE, request)
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "trigger: ${e.message}")
             }
         }
@@ -189,7 +189,7 @@ class AutoBackupViewModel(
             try {
                 androidx.work.WorkManager.getInstance(context)
                     .cancelUniqueWork("ManualAutoBackupWork")
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "cancel: ${e.message}")
             }
         }
@@ -220,7 +220,7 @@ class AutoBackupViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
             }
         }
@@ -245,7 +245,7 @@ class AutoBackupViewModel(
                     }
                 }
                 fetchBackupSchedule()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { backupScheduleMessage = "Lỗi: ${e.message}" }
             }
         }
@@ -265,7 +265,7 @@ class AutoBackupViewModel(
                         usbImportMessage = json.optString("message", "")
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "fetchUsbImportStatus: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
@@ -289,7 +289,7 @@ class AutoBackupViewModel(
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "saveUsbImportSettings: ${e.message}")
             }
         }
@@ -302,7 +302,7 @@ class AutoBackupViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/start")
                     .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "startUsbImportNow: ${e.message}")
             }
         }
@@ -315,7 +315,7 @@ class AutoBackupViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/cancel")
                     .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "cancelUsbImport: ${e.message}")
             }
         }
@@ -336,7 +336,7 @@ class AutoBackupViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/resolve_conflicts").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "resolveUsbImportConflicts: ${e.message}")
             }
         }
@@ -361,7 +361,7 @@ class AutoBackupViewModel(
                         )
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "fetchSleepSchedule: ${e.message}")
             }
         }
@@ -384,7 +384,7 @@ class AutoBackupViewModel(
                         sleepScheduleMessage = if (resp.isSuccessful) "Đã lưu lịch ngủ" else "Lỗi lưu"
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { sleepScheduleMessage = "Lỗi: ${e.message}" }
             }
         }
@@ -399,7 +399,7 @@ class AutoBackupViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) { onDone?.invoke(resp.isSuccessful, if (resp.isSuccessful) "OK" else "HTTP ${resp.code}") }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "spindownHddNow: ${e.message}")
                 withContext(Dispatchers.Main) { onDone?.invoke(false, e.message ?: "Lỗi") }
             }

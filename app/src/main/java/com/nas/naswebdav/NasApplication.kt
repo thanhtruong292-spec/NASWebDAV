@@ -62,9 +62,9 @@ class NasApplication : Application(), ImageLoaderFactory {
                             database.logDao().insertLog(
                                 SystemLog(type = type, module = tag ?: "Timber", message = fullMsg)
                             )
-                        } catch (_: Exception) {}
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     }
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             }
         }
     }
@@ -305,11 +305,11 @@ class NasApplication : Application(), ImageLoaderFactory {
                             message = "${exception.javaClass.simpleName}: ${exception.message}"
                         ))
                         true
-                    } catch (e: Exception) { false }
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
                 }
                 // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
-                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: Exception) {}
-            } catch (e: Exception) {}
+                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
@@ -323,7 +323,7 @@ class NasApplication : Application(), ImageLoaderFactory {
                 coilCacheDir.listFiles()?.forEach { file ->
                     if (now - file.lastModified() > maxAge) file.delete()
                 }
-            } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
         }
 
         // Dang ky Discovery Worker dinh ky de bat cac job livestream do NAS tu
@@ -411,7 +411,7 @@ fun String.toApiBaseUrl(): String {
     val raw = trim().trimEnd('/')
     if (raw.isEmpty() || raw.startsWith("/")) return ""
     val normalized = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
-    val p = try { java.net.URL(normalized) } catch (e: Exception) { return "" }
+    val p = try { java.net.URL(normalized) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return "" }
     return "${p.protocol}://${p.host}:${AppConfig.API_PORT}"
 }
 
@@ -467,7 +467,7 @@ object SecurePrefsHelper {
                         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                     )
-                } catch (e: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("SecurePrefs", "EncryptedSharedPreferences init failed; refusing plaintext credential fallback", e)
                     isUsingFallbackPrefs = true
                     throw IllegalStateException("Secure credential storage is unavailable", e)
@@ -519,7 +519,7 @@ object SecurePrefsHelper {
                 putString(KEY_USER, user)
                 putString(KEY_PASS, pass)
             }
-        } catch (e: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
     }
 
     fun saveCredentialsAsync(context: Context, urlList: List<String>, user: String, pass: String, onComplete: () -> Unit = {}) {
@@ -537,7 +537,7 @@ object SecurePrefsHelper {
                     putString(KEY_USER, user)
                     putString(KEY_PASS, pass)
                 }
-            } catch (e: Exception) { android.util.Log.e("NasApp", "Lưu credentials thất bại", e) }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { android.util.Log.e("NasApp", "Lưu credentials thất bại", e) }
             kotlinx.coroutines.withContext(Dispatchers.Main) { onComplete() }
         }
     }
@@ -551,7 +551,7 @@ object SecurePrefsHelper {
                 val result = mutableListOf<String>()
                 for (i in 0 until array.length()) result.add(array.getString(i))
                 return result
-            } catch (e: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
         }
         val result = mutableListOf<String>()
         val lan = prefs.getString(KEY_URL, "") ?: ""
@@ -640,7 +640,7 @@ object SmartNetworkManager {
 
     suspend fun getActiveApiHost(context: Context): String =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try { java.net.URL(getActiveBaseUrl(context)).host } catch (_: Exception) { "" }
+            try { java.net.URL(getActiveBaseUrl(context)).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
         }
 
     // FIX D7: Cache hai OkHttpClient thay vì tạo mới cho mỗi lần ping.
@@ -675,7 +675,7 @@ object SmartNetworkManager {
                 .build()
 
             client.newCall(request).execute().use { it.isSuccessful }
-        } catch (_: Exception) { false }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
     }
 
     suspend fun forceCheckAndGetStatus(context: Context): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

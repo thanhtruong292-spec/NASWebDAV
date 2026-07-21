@@ -130,7 +130,7 @@ class LivestreamViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) { android.util.Log.w("Livestream", "fetchLivestreamStatusOnly: ${e.message}") }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { android.util.Log.w("Livestream", "fetchLivestreamStatusOnly: ${e.message}") }
         }
     }
 
@@ -174,7 +174,7 @@ class LivestreamViewModel(
                         } else emptyList()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "fetchTikTokLiveWatch: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isLoadingTikTokWatch = false }
@@ -192,7 +192,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "addTikTokLiveWatchUser: ${e.message}")
             }
         }
@@ -208,7 +208,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "removeTikTokLiveWatchUser: ${e.message}")
             }
         }
@@ -230,7 +230,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "updateTikTokLiveWatchSettings: ${e.message}")
             }
         }
@@ -255,7 +255,7 @@ class LivestreamViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 withContext(Dispatchers.Main) { livestreamMessage = "✅ Đã gửi lệnh ghi" }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isStartingLivestream = false }
@@ -275,7 +275,7 @@ class LivestreamViewModel(
                     activeLivestreams.removeAll { it.jobId == jobId }
                     livestreamMessage = "⏹ Đã dừng ghi hình"
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }
             }
         }
@@ -301,7 +301,7 @@ class LivestreamViewModel(
                         lastLivestreamServerRecordingIds = ids
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "syncState: ${e.message}")
             }
         }
@@ -327,7 +327,7 @@ class LivestreamViewModel(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { socialExtractStatus = "Lỗi: ${e.message}" }
             } finally {
                 withContext(Dispatchers.Main) { isSocialExtracting = false }

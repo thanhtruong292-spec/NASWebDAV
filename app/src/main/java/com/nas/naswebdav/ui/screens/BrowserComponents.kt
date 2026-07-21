@@ -598,7 +598,7 @@ fun WebDavCachedThumbnail(
                                     } else false
                                 }
                             }
-                        } catch (e: Exception) { false }
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
                         
                         if (extracted) {
                             localThumbPath = thumbFile.absolutePath
@@ -611,7 +611,7 @@ fun WebDavCachedThumbnail(
                         strategy = ThumbStrategy.CLIENT_IMAGE
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
             }
         }
@@ -722,7 +722,7 @@ fun openExternalVideoPlayer(
 
         try {
             context.startActivity(intent)
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             val chooser = android.content.Intent.createChooser(
                 android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
                     setDataAndType(videoUrl.toUri(), "video/*")
@@ -733,7 +733,7 @@ fun openExternalVideoPlayer(
             chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(chooser)
         }
-    } catch (e: Exception) {
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
         onError()
     }

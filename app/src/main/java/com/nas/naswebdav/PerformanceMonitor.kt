@@ -66,7 +66,7 @@ object PerformanceMonitor {
                         calculateCpuUsage(), rxSpeed, txSpeed,
                         lastDiskCacheSizeMb, maxJvm, usedJvm
                     )
-                } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                 delay(if (AppConfig.IS_APP_FOREGROUND) 1000L else 5000L)
             }
         } finally {
@@ -102,7 +102,7 @@ object PerformanceMonitor {
                 }
                 lastProcessCpuTime = processCpuTime; lastSystemUptime = systemUptime
             }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         return 0
     }
 }

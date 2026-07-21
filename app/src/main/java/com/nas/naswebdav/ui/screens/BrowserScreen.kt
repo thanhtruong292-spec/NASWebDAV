@@ -106,7 +106,7 @@ internal fun markBrowserFilesViewed(
                 val p = arr.optString(i, "")
                 if (p.isNotBlank() && p in viewed) order.add(p)
             }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
         val cleanSet = cleanPaths.toSet()
         order.removeAll(cleanSet)
@@ -474,7 +474,7 @@ fun BrowserScreen(
                                                     val count = json.optInt("moved_count", 0)
                                                     organizeResult = "Hoàn tất! Đã gom $count video."
                                                     fileBrowserVM.refresh()
-                                                } catch (e: Exception) {
+                                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                                     organizeResult = "Lỗi phản hồi: ${e.message}"
                                                 }
                                             } else {
@@ -482,7 +482,7 @@ fun BrowserScreen(
                                             }
                                         }
                                     }
-                                } catch (e: Exception) {
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         isOrganizing = false
                                         organizeResult = "Lỗi kết nối: ${e.message}"
@@ -667,7 +667,7 @@ fun BrowserScreen(
                                         // Bump tick de moi FileItemGridCell remember key bi
                                         // invalidated -> doc lai prefs -> red dot bien mat.
                                         viewedRefreshTick++
-                                    } catch (_: Exception) {}
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                                 } else {
                                     selectedFiles.clear()
                                     selectionMode = false
@@ -771,7 +771,7 @@ fun BrowserScreen(
                 title = {
                     val displayTitle = if (fileBrowserVM.isSpecialMode) fileBrowserVM.specialTitle
                     else {
-                        val decodedUrl = try { java.net.URLDecoder.decode(fileBrowserVM.currentUrl, "UTF-8") } catch (_: Exception) { fileBrowserVM.currentUrl }
+                        val decodedUrl = try { java.net.URLDecoder.decode(fileBrowserVM.currentUrl, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { fileBrowserVM.currentUrl }
                         val baseUrl = WebDavManager.currentBaseUrl
                         val relativePath = if (decodedUrl.startsWith(baseUrl)) decodedUrl.removePrefix(baseUrl) else ""
                         val segments = relativePath.trim('/').split("/").filter { it.isNotEmpty() }
@@ -887,7 +887,7 @@ fun BrowserScreen(
                 val baseUrl = WebDavManager.currentBaseUrl
                 val relativePath = if (fileBrowserVM.currentUrl.startsWith(baseUrl))
                     fileBrowserVM.currentUrl.removePrefix(baseUrl) else ""
-                val decodedPath = try { java.net.URLDecoder.decode(relativePath, "UTF-8") } catch (_: Exception) { relativePath }
+                val decodedPath = try { java.net.URLDecoder.decode(relativePath, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { relativePath }
                 val segments = decodedPath.trim('/').split("/").filter { it.isNotEmpty() }
                 
                 val scrollState = androidx.compose.foundation.rememberScrollState()
@@ -1973,7 +1973,7 @@ class SearchHistoryManager(context: android.content.Context) {
                 list.add(SearchHistory(obj.getString("query"), obj.getLong("timestamp")))
             }
             list
-        } catch(e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             // BUG FIX P1#9: Log lỗi thay vì silent fail → mất data
             android.util.Log.e("SearchHistory", "Không đọc được lịch sử tìm kiếm: ${e.message}")
             emptyList()

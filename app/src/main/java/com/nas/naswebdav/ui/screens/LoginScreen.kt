@@ -76,7 +76,7 @@ private fun ipToFullUrl(ip: String): String {
     return if (trimmed.contains(":")) "${URL_PREFIX}$trimmed/webdav/" else "${URL_PREFIX}$trimmed${URL_SUFFIX}"
 }
 
-private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (_: Exception) { url }
+private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { url }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,7 +124,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     val results = com.nas.naswebdav.pingUrlsForDisplay(fullUrls, user, pass)
                     ipPingStatus = results
                 }
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
             isCheckingPings = false
             kotlinx.coroutines.delay(2000)
         }
@@ -259,7 +259,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 val auth = androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
                     androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
                 bm.canAuthenticate(auth) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
-            } catch (_: Exception) { false }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
         }
         if (biometricEnabled && hasSavedCreds && biometricAvailable) {
             Spacer(Modifier.height(12.dp))

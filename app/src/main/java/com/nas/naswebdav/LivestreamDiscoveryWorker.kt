@@ -63,7 +63,7 @@ class LivestreamDiscoveryWorker(
                 LivestreamMonitorWorker.enqueue(applicationContext, jobId, host, platform)
             }
             Result.success()
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             // Không retry đám đám nếu network lỗi - cho tick sau (15p).
             Result.success()
         }

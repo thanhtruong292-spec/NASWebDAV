@@ -34,7 +34,6 @@ import base64
 import urllib.request
 import urllib.error
 import urllib.parse
-import concurrent.futures
 
 def sanitize_log_input(text):
     if not text: return str(text)
@@ -685,7 +684,6 @@ def init_db():
         log.error("[init_db] DB KHÔNG mở được — server chay che do DB-less: %s", e)
 
     # DỌN DẸP RÁC RAM (TMPFS) LỊCH SỬ KHI KHỞI ĐỘNG CỦA LỖI OOM
-    import shutil
     try:
         shutil.rmtree("/tmp/nas_transcode", ignore_errors=True)
     except Exception:
@@ -1330,8 +1328,32 @@ def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         ip = _request_client_ip()
+        auth = request.authorization
 
-        # LAN whitelist bypass
+        # FIX: Neu client CO gui header Authorization (nhu form Login), BAT BUOC kiem tra mat khau
+        # Khong cho phep bypass qua LAN whitelist de ngan chan dang nhap bang mat khau trong/sai.
+        if auth is not None:
+            if check_auth(auth.username, auth.password):
+                if ip:
+                    _remember_authorized_ip(ip)
+                    try:
+                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                        try:
+                            cur = conn.cursor()
+                            cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    except Exception as db_err:
+                        try:
+                            log.warning("[Auth] Khong persist duoc trusted IP: %s", db_err)
+                        except Exception:
+                            pass
+                return f(*args, **kwargs)
+            else:
+                return jsonify({"detail": "Sai mat khau"}), 401
+
+        # LAN whitelist bypass (chi danh cho request chua co header Auth)
         if _ip_in_whitelist(ip):
             return f(*args, **kwargs)
 
@@ -1339,29 +1361,7 @@ def requires_auth(f):
         if ip and ip in _refresh_authorized_ips_cache():
             return f(*args, **kwargs)
 
-        auth = request.authorization
-        if not auth:
-            return jsonify({"detail": "Chua xac thuc"}), 401
-
-        if check_auth(auth.username, auth.password):
-            if ip:
-                _remember_authorized_ip(ip)
-                try:
-                    conn = sqlite3.connect(DB_PATH, timeout=5.0)
-                    try:
-                        cur = conn.cursor()
-                        cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
-                        conn.commit()
-                    finally:
-                        conn.close()
-                except Exception as db_err:
-                    try:
-                        log.warning("[Auth] Khong persist duoc trusted IP: %s", db_err)
-                    except Exception:
-                        pass
-            return f(*args, **kwargs)
-
-        return jsonify({"detail": "Sai mat khau"}), 401
+        return jsonify({"detail": "Chua xac thuc"}), 401
 
     return decorated
 
@@ -2402,7 +2402,6 @@ def _clean_trash(webdav_root, max_age_days=30):
                     age = now - os.path.getmtime(fpath)
                     if age > max_age_sec:
                         if os.path.isdir(fpath):
-                            import shutil
                             shutil.rmtree(fpath, ignore_errors=True)
                         else:
                             os.remove(fpath)
@@ -8883,7 +8882,6 @@ def api_screen_record_segment():
 
 
 def _screen_record_remux_worker(session_dir, sid, final_ts):
-    import shutil
     import subprocess
     try:
         # Chờ hệ thống rảnh bớt nếu đang có livestream hoặc tác vụ nặng khác
@@ -9170,7 +9168,6 @@ def api_stream_transcode():
             for d in os.listdir(base):
                 dp = os.path.join(base, d)
                 if os.path.isdir(dp) and (time.time() - os.path.getmtime(dp)) > 7200:
-                    import shutil
                     shutil.rmtree(dp, ignore_errors=True)
     except Exception:
         pass
@@ -9318,7 +9315,6 @@ def api_organize_legacy_videos():
     """
     Quet toan bo WEBDAV_FILE_ROOT, di chuyen cac video không ph?i mp4 vao /Other Video/<ext>/
     """
-    import shutil
     
     # Danh sách giay phep (chi video, không ph?i mp4)
     target_exts = {".mpg", ".mpeg", ".avi", ".wmv", ".flv", ".mkv", ".mov", ".ts", ".m4v", ".3gp"}
@@ -9488,7 +9484,6 @@ def _smart_organize_job_update(job_id, **fields):
 
 
 def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
-    import shutil
 
     moved_count = 0
     errors = []
@@ -10143,326 +10138,15 @@ def _process_one_thumb(args):
     return False
 
 def _thumbnail_generator():
-    """Background daemon: XU LY AN TOAN - TUAN TU, kiểm tra CPU/RAM truoc moi file.
-    Trảnh lam sap NAS ARM yeu (rk3328, 1-2GB RAM)."""
+    """Background daemon: Da bi vo hieu hoa de Android tu tao thumbnail."""
     global _thumb_stats
     
-    time.sleep(30)  # Cho server va ổ cứng khoi dong on dinh
-    
-    while True:
-        try:
-            if not _background_heavy_work_allowed():
-                with _thumb_stats_lock:
-                    _thumb_stats["running"] = False
-                    _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
-                _add_system_log_once(
-                    "thumb_paused_heavy",
-                    "INFO",
-                    "Thumbnail",
-                    "Tạm dừng quét ảnh thu nhỏ vì NAS đang bận (CPU/RAM cao hoặc đang copy/livestream).",
-                    3600
-                )
-                time.sleep(60)
-                continue
-            if not _thumb_paused.is_set():
-                with _thumb_stats_lock:
-                    _thumb_stats["running"] = False
-                    _thumb_stats["paused"] = True
-                _thumb_paused.wait()
-            base_dir = get_webdav_root()
-            thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
-            os.makedirs(thumb_dir, exist_ok=True)
-            thumb_state = _get_process_state("thumbnail", {})
-            cursor_rel = str(thumb_state.get("cursor_rel", "") or "")
-            cursor_seen = False if cursor_rel else True
-            scan_last_rel = ""
-            
-            with _thumb_stats_lock:
-                _thumb_stats["running"] = True
-                _thumb_stats["errors"] = 0
-            
-            # PASS 1: Thu thap file can xu ly (gioi han 500 file moi lan quet)
-            pending = []
-            total = 0
-            already_done = 0
-            MAX_BATCH = 200
-            scan_deadline = time.time() + 20
-            scanned_entries = 0
-            
-            for root, dirs, files in os.walk(base_dir):
-                if scanned_entries >= 15000 or time.time() >= scan_deadline or not _background_heavy_work_allowed():
-                    break
-                dirs[:] = sorted([d for d in dirs if not d.startswith('.') and d != THUMB_DIR_NAME and d != '#recycle'])
-                for name in sorted(files):
-                    scanned_entries += 1
-                    if scanned_entries >= 15000 or time.time() >= scan_deadline:
-                        break
-                    if name.startswith('.'): continue
-                    ext = os.path.splitext(name)[1].lower()
-                    if ext not in MEDIA_ALL_EXTS: continue
-                    total += 1
-                    full_path = os.path.join(root, name)
-                    rel_file = os.path.relpath(full_path, base_dir).replace(os.sep, "/")
-                    if not cursor_seen:
-                        if rel_file <= cursor_rel:
-                            continue
-                        cursor_seen = True
-                    thumb_path = _get_thumb_path(base_dir, full_path)
-                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                        # REVERT: KHONG retry placeholder nua. Threshold 2200 truoc
-                        # day khien daemon kick ffmpeg cho 3400+ file moi vong quet
-                        # -> I/O burst lien tuc -> SATA timeout -> corrupt FS.
-                        # Logic seek thong minh trong _generate_video_thumb VAN giu
-                        # cho file MOI; nhung không dùng de spam retry file cu.
-                        # Khi nao disk on dinh thi user co the xoá .thumbs/ thu cong
-                        # de retry toan bo.
-                        already_done += 1
-                        continue
-                    if len(pending) < MAX_BATCH:
-                        pending.append((full_path, thumb_path, ext, rel_file))
-                        scan_last_rel = rel_file
-                    else:
-                        break
-                if len(pending) >= MAX_BATCH:
-                    break
-
-            if cursor_rel and not cursor_seen:
-                _update_process_state(
-                    "thumbnail",
-                    cursor_rel="",
-                    last_scan_note="cursor reached end; next pass starts from root",
-                    scanned_entries=scanned_entries,
-                    total_media_seen=total,
-                    already_done_seen=already_done,
-                )
-                time.sleep(10)
-                continue
-            if scan_last_rel:
-                _update_process_state(
-                    "thumbnail",
-                    cursor_rel=scan_last_rel,
-                    scanned_entries=scanned_entries,
-                    total_media_seen=total,
-                    already_done_seen=already_done,
-                    pending_found=len(pending),
-                    last_scan_at=int(time.time()),
-                )
-            
-            with _thumb_stats_lock:
-                _thumb_stats["total_media"] = total
-                _thumb_stats["generated"] = already_done
-                _thumb_stats["_base_done"] = already_done
-                _thumb_stats["start_time"] = time.time()
-                
-            # SMART SLEEP (Ngu dong): khi không có việc, không tự walk HDD mỗi
-            # phút chỉ vì CPU rảnh. Chỉ thức dậy theo khung 3:00 hoặc sau 6 giờ
-            # để tránh mài HDD bằng metadata scan liên tục.
-            if len(pending) == 0:
-                import datetime
-                idle_started = time.time()
-                _update_process_state(
-                    "thumbnail",
-                    cursor_rel="",
-                    scanned_entries=scanned_entries,
-                    total_media_seen=total,
-                    already_done_seen=already_done,
-                    pending_found=0,
-                    last_idle_at=int(time.time()),
-                    last_scan_note="no_pending",
-                )
-                with _thumb_stats_lock:
-                    _thumb_stats["running"] = False
-                    _thumb_stats["last_file"] = "Ngủ đông: Chờ 3:00 AM hoặc chu kỳ 6 giờ"
-                    
-                while True:
-                    time.sleep(300)
-                    if not _thumb_paused.is_set():
-                        _thumb_paused.wait()
-                    now = datetime.datetime.now()
-                    
-                    # 1. Hẹn giờ ban đêm: Bắt buộc quét toàn bộ rác định kỳ lúc 3:00 - 3:05 Sáng
-                    if now.hour == 3 and now.minute < 5:
-                        break
-                    if time.time() - idle_started >= 21600:
-                        break
-                            
-                continue # Pha vỡ Ngủ Đông, chạy Pass 1 lại từ đầu
-            
-            # PASS 2: ADAPTIVE TURBO — Toi uu toc do toi da cho Chainedbox L1 Pro (RK3328 quad-core, 2GB RAM)
-            # Chien luoc: Song song khi rảnh, tuan tu khi ban, dùng khi nguy hi?m
-            _counters = {"generated": already_done, "errors": 0, "batch": 0}
-            _counter_lock = threading.Lock()
-            abort_batch = False
-            
-            # Tach rieng ảnh (nh?, chay song song PIL) va video (n?ng, gioi han FFmpeg)
-            image_pending = [p for p in pending if p[2] in MEDIA_IMAGE_EXTS]
-            video_pending = [p for p in pending if p[2] in MEDIA_VIDEO_EXTS]
-            
-            def _adaptive_workers():
-                """Tinh so luồng worker toi uu dua tren tai nguyen thuc te."""
-                try:
-                    cpu = psutil.cpu_percent(interval=0.3)
-                    mem = psutil.virtual_memory().percent
-                except Exception:
-                    return 1
-                if mem > 82 or cpu > 85:
-                    return 1  # An toan: tuan tu
-                elif mem > 70 or cpu > 65:
-                    return 2  # Trung binh: 2 luồng
-                else:
-                    return 3  # Rảnh: 3 luồng (de lai 1 core cho OS + API server)
-            
-            def _check_resources_and_throttle():
-                """Kiểm tra tai nguyen, tr? v? True neu cần dùng khan cap."""
-                nonlocal abort_batch
-                try:
-                    mem = psutil.virtual_memory()
-                    if mem.percent > 88:
-                        with _thumb_stats_lock:
-                            _thumb_stats["last_file"] = "Dừng khẩn cấp: RAM %d%%" % int(mem.percent)
-                        abort_batch = True
-                        return True
-                    if mem.percent > 80:
-                        time.sleep(3)  # Giam toc de RAM giai phong
-                    elif mem.percent > 70:
-                        time.sleep(0.5)
-                    else:
-                        time.sleep(0.05)  # TOI UU I/O CAO CHO ST4000VX (Hoãn 50ms chống quá tải cơ học đĩa cứng)
-                except Exception:
-                    pass
-                return False
-            
-            def _process_with_pause_gate(item):
-                """Xu ly 1 file voi ho tro pause/resume. Thread-safe qua _counter_lock."""
-                nonlocal abort_batch
-                if abort_batch:
-                    return
-                # === PAUSE/RESUME GATE ===
-                if not _thumb_paused.is_set():
-                    with _thumb_stats_lock:
-                        _thumb_stats["paused"] = True
-                        _thumb_stats["running"] = False
-                        _thumb_stats["last_file"] = "Tạm dừng bởi người dùng"
-                    _thumb_paused.wait()
-                    with _thumb_stats_lock:
-                        _thumb_stats["paused"] = False
-                        _thumb_stats["running"] = True
-                        _thumb_stats["start_time"] = time.time() - (_counters["generated"] - already_done) * 0.5
-                
-                full_path, thumb_path, ext = item[:3]
-                rel_file = item[3] if len(item) > 3 else os.path.basename(full_path)
-                name = os.path.basename(full_path)
-                
-                with _thumb_stats_lock:
-                    _thumb_stats["last_file"] = name
-                
-                if not _background_heavy_work_allowed():
-                    abort_batch = True
-                    with _thumb_stats_lock:
-                        _thumb_stats["running"] = False
-                        _thumb_stats["last_file"] = "Tạm dừng: NAS đang bận"
-                    return
-                
-                try:
-                    success = _process_one_thumb(item)
-                    ok = bool(success)
-                except Exception:
-                    ok = False
-                
-                with _counter_lock:
-                    if ok:
-                        _counters["generated"] += 1
-                    else:
-                        _counters["errors"] += 1
-                    _counters["batch"] += 1
-                    bc = _counters["batch"]
-                
-                # Cap nhat stats THOI GIAN THUC moi file (lock contention nh? vi critical section nho)
-                with _thumb_stats_lock:
-                    _thumb_stats["generated"] = _counters["generated"]
-                    _thumb_stats["errors"] = _counters["errors"]
-                # Kiểm tra tai nguyen mới 20 file
-                if bc % 20 == 0:
-                    prev = _get_process_state("thumbnail", {})
-                    _update_process_state(
-                        "thumbnail",
-                        last_processed_rel=rel_file,
-                        cursor_rel=rel_file,
-                        batch_done=bc,
-                    )
-                    _check_resources_and_throttle()
-            
-            # === XU LY ANH: Song song voi ThreadPoolExecutor ===
-            if image_pending and not abort_batch:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                workers = _adaptive_workers()
-                with _thumb_stats_lock:
-                    _thumb_stats["last_file"] = "Ảnh: %d tệp, %d luồng" % (len(image_pending), workers)
-                
-                # Chia thảnh cac micro-batch (100 file) de re-evaluate workers giua chung
-                for chunk_start in range(0, len(image_pending), 100):
-                    if abort_batch:
-                        break
-                    chunk = image_pending[chunk_start:chunk_start + 100]
-                    workers = _adaptive_workers()  # Re-evaluate moi 100 file
-                    
-                    with ThreadPoolExecutor(max_workers=workers) as pool:
-                        futures = [pool.submit(_process_with_pause_gate, item) for item in chunk]
-                        for f in as_completed(futures):
-                            try:
-                                f.result()
-                            except Exception:
-                                pass
-                            if abort_batch:
-                                break
-            
-            # === XU LY VIDEO: Tuan tu (FFmpeg n?ng, da co _ffmpeg_semaphore gioi han 2) ===
-            if video_pending and not abort_batch:
-                with _thumb_stats_lock:
-                    _thumb_stats["last_file"] = "Video: %d tệp (tuần tự)" % len(video_pending)
-                for item in video_pending:
-                    if abort_batch:
-                        break
-                    _process_with_pause_gate(item)
-            
-            generated = _counters["generated"]
-            errors = _counters["errors"]
-            prev_thumb_state = _get_process_state("thumbnail", {})
-            new_generated = max(0, generated - already_done)
-            
-            with _thumb_stats_lock:
-                _thumb_stats["generated"] = generated
-                _thumb_stats["total_media"] = total
-                _thumb_stats["running"] = False
-                _thumb_stats["last_file"] = "Hoàn tất! %d/%d (lỗi: %d)" % (generated, total, errors)
-            _update_process_state(
-                "thumbnail",
-                cursor_rel=(pending[-1][3] if pending and not abort_batch else ""),
-                last_processed_rel=(pending[-1][3] if pending else prev_thumb_state.get("last_processed_rel", "")),
-                generated_lifetime=int(prev_thumb_state.get("generated_lifetime", 0) or 0) + new_generated,
-                error_lifetime=int(prev_thumb_state.get("error_lifetime", 0) or 0) + int(errors or 0),
-                last_batch_generated=new_generated,
-                last_batch_errors=int(errors or 0),
-                last_batch_total=len(pending),
-                last_scan_completed_at=int(time.time()),
-                last_scan_note=("aborted_busy" if abort_batch else "batch_complete"),
-            )
-            
-            try:
-                conn = sqlite3.connect(DB_PATH, timeout=20.0)
-                cur = conn.cursor()
-                cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
-                    ("INFO", "Thumbnail", "Đã tạo %d/%d ảnh thu nhỏ (lỗi: %d)." % (generated, total, errors)))
-                conn.commit()
-                conn.close()
-            except Exception as e: log.debug("[M4] Ignored exception: %s", e)
-            
-        except Exception as e:
-            with _thumb_stats_lock:
-                _thumb_stats["running"] = False
-                _thumb_stats["last_file"] = "Lỗi: %s" % str(e)
+    with _thumb_stats_lock:
+        _thumb_stats["running"] = False
+        _thumb_stats["paused"] = True
         
-        time.sleep(300)  # Quet nền nhẹ, không quét toàn bộ HDD liên tục
+    while True:
+        time.sleep(86400)
 
 
 @app.route("/api/thumb")
