@@ -636,13 +636,10 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
                             putString("telegram_bot_token", botToken)
                             putString("telegram_chat_id", chatId)
                         }
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            busy = false
-                            resultMsg = "Đã lưu cấu hình Telegram"
-                            botToken = ""
-                            val reloadedToken = p.getString("telegram_bot_token", "") ?: ""
-                            hasToken = reloadedToken.isNotBlank()
-                        }
+                        busy = false
+                        resultMsg = "Đã lưu cấu hình Telegram"
+                        botToken = ""
+                        hasToken = p.getString("telegram_bot_token", "")?.isNotBlank() == true
                     }
                 ) { Text("Lưu", color = Color(0xFF8892B0)) }
                 Spacer(Modifier.width(8.dp))

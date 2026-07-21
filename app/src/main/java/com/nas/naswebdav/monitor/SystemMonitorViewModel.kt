@@ -15,6 +15,7 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.DiskHealthSample
 import com.nas.naswebdav.InsightAction
 import com.nas.naswebdav.InsightFlowTask
+import com.nas.naswebdav.NasConfigBackup
 import com.nas.naswebdav.NasInsights
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
@@ -99,6 +100,16 @@ class SystemMonitorViewModel(
     var lastDiskHealthRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
         internal set
 
+    // ═══ NAS CONFIG BACKUPS ═══
+
+    var nasConfigBackups by androidx.compose.runtime.mutableStateOf<List<NasConfigBackup>>(emptyList())
+        internal set
+    var isCreatingNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var isRestoringNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var nasConfigBackupMessage by androidx.compose.runtime.mutableStateOf("")
+        internal set
 
     // ═══ NAS INSIGHTS ═══
 
@@ -421,6 +432,134 @@ class SystemMonitorViewModel(
                                 commandTimeout = it.optJSONObject("watch_fields")?.optInt("command_timeout"),
                                 ext4ErrorsRecent = it.optInt("ext4_errors_recent", 0),
                                 sataResetsRecent = it.optInt("sata_resets_recent", 0),
+                                ioErrorsRecent = it.optInt("io_errors_recent", 0),
+                                warnings = emptyList()
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchDiskHealthHistory: ${e.message}")
+            }
+        }
+    }
+
+    fun fetchNasConfigBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backups").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (resp.code == 404) {
+                        withContext(Dispatchers.Main) {
+                            nasConfigBackups = emptyList()
+                            nasConfigBackupMessage = "Server chưa hỗ trợ quản lý backup cấu hình NAS (thiếu endpoint /api/config/*)."
+                        }
+                        return@use
+                    }
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "[]"
+                    val arr = org.json.JSONArray(body)
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackups = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            NasConfigBackup(
+                                filename = it.optString("filename", ""),
+                                createdAt = it.optString("created_at", ""),
+                                sizeBytes = it.optLong("size_bytes", 0L),
+                                sizeHuman = it.optString("size_human", "--"),
+                                mtime = it.optDouble("mtime", 0.0)
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchNasConfigBackups: ${e.message}")
+            }
+        }
+    }
+
+    fun createNasConfigBackup() {
+        isCreatingNasConfigBackup = true
+        viewModelScope.launch(Dispatchers.IO) {
+            var was404 = false
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup")
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    was404 = resp.code == 404
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = when {
+                            resp.isSuccessful -> "Đã tạo backup"
+                            resp.code == 404 -> "Server chưa hỗ trợ tạo backup cấu hình (thiếu endpoint /api/config/backup)."
+                            else -> "Lỗi tạo backup (HTTP ${resp.code})"
+                        }
+                    }
+                }
+                if (!was404) fetchNasConfigBackups()
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
+            }
+        }
+    }
+
+    fun deleteNasConfigBackup(filename: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var was404 = false
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/backup").delete(body).let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    was404 = resp.code == 404
+                    withContext(Dispatchers.Main) {
+                        if (was404) nasConfigBackupMessage = "Server chưa hỗ trợ xoá backup cấu hình."
+                    }
+                }
+                if (!was404) fetchNasConfigBackups()
+            } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "deleteNasConfigBackup: ${e.message}")
+            }
+        }
+    }
+
+    fun restoreNasConfigBackup(filename: String) {
+        isRestoringNasConfigBackup = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder().url("$apiBase/api/config/restore").post(body).let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = when {
+                            resp.isSuccessful -> "Đã restore"
+                            resp.code == 404 -> "Server chưa hỗ trợ restore cấu hình (thiếu endpoint /api/config/restore)."
+                            else -> "Lỗi restore (HTTP ${resp.code})"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
+            }
+        }
+    }
+
+    fun fetchNasInsights(minIntervalMs: Long = 10_000L) {
+        if (isFetchingNasInsights) return
+        isFetchingNasInsights = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/insights").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
@@ -488,6 +627,30 @@ class SystemMonitorViewModel(
         }
     }
 
+    suspend fun downloadNasConfigBackup(context: Context, filename: String): java.io.File? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val encoded = java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
+                val url = "$base/api/backup/download?filename=$encoded"
+                val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
+                val client = NasApplication.instance.fastApiClient.newBuilder()
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val src = resp.body?.byteStream() ?: return@withContext null
+                    val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
+                    val safe = filename.replace("/", "_").replace("\\", "_")
+                    val out = java.io.File(outDir, safe)
+                    out.outputStream().use { o -> src.copyTo(o) }
+                    out
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "download err: ${e.message}")
+                null
+            }
+        }
+    }
 
     fun fetchSystemProcesses(context: Context) {
         isLoadingProcesses = true

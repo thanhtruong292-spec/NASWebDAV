@@ -157,11 +157,10 @@ fun SocialExtractorScreen(
             ModeExplainCard(usePipeMode)
             Spacer(Modifier.height(12.dp))
 
-            // ── Chuyển chế độ ────────────────────────────────────────────────
+            // ── Chuyển chế độ (chỉ để hiển thị, pipe mode đã tắt vĩnh viễn) ──
             ModeSwitchRow(
                 isPipeMode = usePipeMode,
                 onToggle = {
-                    usePipeMode = !usePipeMode
                     extractedVideoUrl = null
                     webViewStatus = ""
                 }

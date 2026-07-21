@@ -1,3 +1,5 @@
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Properties
 
 plugins {
@@ -37,6 +39,26 @@ gradle.taskGraph.whenReady {
     }
 }
 
+// ─── Auto-versioning: mỗi lần build tự đánh số theo git + thời gian ───
+// versionCode = số commit (tăng đều mỗi commit); versionName = 1.0.<count> (<sha> · ngày giờ build)
+// Nhờ vậy nhìn nhãn trong app là biết chính xác build nào, tránh nhầm lẫn.
+fun runGit(vararg args: String): String = try {
+    val p = ProcessBuilder(listOf("git", *args))
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    p.waitFor()
+    if (p.exitValue() == 0) out else ""
+} catch (e: Exception) { "" }
+
+val gitCommitCount: Int = runGit("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
+val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogit" }
+val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
+// Đánh dấu build từ code CHƯA COMMIT (bản test thủ công) để không nhầm với bản chính thức.
+val gitDirtySuffix: String = if (runGit("status", "--porcelain").isNotBlank()) "+test" else ""
+val baseVersionName = "1.0"
+
 android {
     namespace = "com.nas.naswebdav"
     compileSdk = 36
@@ -45,8 +67,8 @@ android {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
         targetSdk = 36
-        versionCode = 343
-        versionName = "1.0.343"
+        versionCode = gitCommitCount
+        versionName = "$baseVersionName.$gitCommitCount$gitDirtySuffix ($gitShortSha · $buildStamp)"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {
