@@ -447,21 +447,13 @@ fun LivestreamRecordDialog(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
-                                    LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
-                                        localSeconds = if (job.startedTs > 0L) {
-                                            ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
-                                        } else {
-                                            localSeconds.coerceAtLeast(job.durationSeconds)
-                                        }
+                                    LaunchedEffect(job.jobId, job.durationSeconds) {
+                                        localSeconds = job.durationSeconds
                                     }
                                     LaunchedEffect(job.jobId) {
-                                        while (true) {
+                                        while (isActive) {
                                             delay(1000)
-                                            localSeconds = if (job.startedTs > 0L) {
-                                                ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
-                                            } else {
-                                                localSeconds + 1
-                                            }
+                                            localSeconds++
                                         }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"

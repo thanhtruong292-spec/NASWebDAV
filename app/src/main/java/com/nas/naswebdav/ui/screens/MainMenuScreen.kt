@@ -2871,15 +2871,13 @@ fun MainMenuSystemStatusCards(
                                     val jobPlatformName = when (job.platform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
                                     
                                     var localSeconds by remember(job.jobId) { androidx.compose.runtime.mutableStateOf(job.durationSeconds) }
-                                    LaunchedEffect(job.jobId, job.startedTs, job.durationSeconds) {
-                                         while (isActive) {
-                                            localSeconds = if (job.startedTs > 0L) {
-                                                ((System.currentTimeMillis() / 1000L) - job.startedTs).coerceAtLeast(0L)
-                                            } else {
-                                                localSeconds.coerceAtLeast(job.durationSeconds)
-                                            }
+                                    LaunchedEffect(job.jobId, job.durationSeconds) {
+                                        localSeconds = job.durationSeconds
+                                    }
+                                    LaunchedEffect(job.jobId) {
+                                        while (isActive) {
                                             kotlinx.coroutines.delay(1000)
-                                            if (job.startedTs <= 0L) localSeconds++
+                                            localSeconds++
                                         }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
