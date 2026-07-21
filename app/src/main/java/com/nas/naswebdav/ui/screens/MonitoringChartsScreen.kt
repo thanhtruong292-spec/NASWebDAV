@@ -449,7 +449,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     drawContext.canvas.nativeCanvas.drawText(fmt, 0f, y + textPx / 3f, yPaint)
                 }
 
-                // Vẽ các series đường kẻ mảnh (1.2dp) với kiểu Solid/Dashed phân biệt rõ ràng
+                // Vẽ các series đường kẻ sắc nét bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt rõ ràng
                 series.forEach { s ->
                     val pts = s.values
                     if (pts.size < 2) return@forEach
@@ -457,27 +457,37 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     fun xOf(i: Int) = leftPad + i * step
                     fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
 
-                    // Fill vùng mờ rất nhẹ (0.05f alpha)
-                    val fillPath = androidx.compose.ui.graphics.Path()
-                    fillPath.moveTo(xOf(0), h - pad)
-                    pts.forEachIndexed { i, v -> fillPath.lineTo(xOf(i), yOf(v)) }
-                    fillPath.lineTo(xOf(pts.lastIndex), h - pad)
-                    fillPath.close()
+                    // Fill vùng mờ nhẹ (0.05f alpha)
+                    val fillPath = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(xOf(0), h - pad)
+                        pts.forEachIndexed { i, v -> lineTo(xOf(i), yOf(v)) }
+                        lineTo(xOf(pts.lastIndex), h - pad)
+                        close()
+                    }
                     drawPath(fillPath, s.color.copy(alpha = 0.05f))
 
-                    // Đường kẻ mảnh 1.2dp (Solid cho CPU, Dashed cho HDD/RAM/Upload)
-                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f * density, 6f * density)) else null
+                    // Tạo 1 Path liên tục vẽ toàn bộ đồ thị
+                    val linePath = androidx.compose.ui.graphics.Path().apply {
+                        moveTo(xOf(0), yOf(pts[0]))
+                        for (i in 1 until pts.size) {
+                            lineTo(xOf(i), yOf(pts[i]))
+                        }
+                    }
 
-                    for (i in 0 until pts.size - 1) {
-                        drawLine(
-                            color = s.color,
-                            start = Offset(xOf(i), yOf(pts[i])),
-                            end = Offset(xOf(i + 1), yOf(pts[i + 1])),
-                            strokeWidth = 1.2f * density,
+                    // Dash effect nét đứt to rõ ràng (16dp nhát đứt, 10dp khoảng trống)
+                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(16f * density, 10f * density)) else null
+
+                    // Vẽ đường kẻ 1.6dp chuẩn rõ nét trên 1 Path liên tục
+                    drawPath(
+                        path = linePath,
+                        color = s.color,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = 1.6f * density,
                             cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
                             pathEffect = dashEffect
                         )
-                    }
+                    )
 
                     // Điểm mốc cuối cùng nếu ko chạm
                     if (touchedIndex == -1) {
