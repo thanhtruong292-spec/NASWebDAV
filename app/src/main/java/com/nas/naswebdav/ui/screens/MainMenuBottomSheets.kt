@@ -113,8 +113,16 @@ fun ProcessListBottomSheet(
             }
             androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
+            val sysProcKeywords = listOf(
+                "kworker", "systemd", "rcu", "migration", "ksoftirqd", "init", "kthreadd",
+                "journald", "udevd", "dbus-daemon", "sshd", "getty", "cron", "syslog",
+                "rsyslog", "networkmanager", "avahi-daemon", "polkitd", "tailscaled",
+                "dockerd", "containerd", "php-fpm", "nginx", "nas_api_server"
+            )
+
             val displayProcesses = systemMonitorVM.systemProcesses.filter {
-                if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
+                val isSys = it.pid <= 300 || sysProcKeywords.any { sys -> it.name.lowercase().startsWith(sys) }
+                !isSys && (if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f)
             }
 
             if (displayProcesses.isEmpty() && !systemMonitorVM.isLoadingProcesses) {

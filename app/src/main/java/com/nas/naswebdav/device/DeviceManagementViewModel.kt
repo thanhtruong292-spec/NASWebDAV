@@ -100,8 +100,12 @@ class DeviceManagementViewModel(
     var lastAutoSpeedTime by androidx.compose.runtime.mutableLongStateOf(0L)
         internal set
 
-    var isOnLan by androidx.compose.runtime.mutableStateOf(true) // true = LAN, false = Tailscale
-        internal set
+    val isOnLan: Boolean
+        get() {
+            val currentUrl = com.nas.naswebdav.WebDavManager.currentBaseUrl
+            if (currentUrl.isNotBlank()) return !com.nas.naswebdav.isTailscaleUrl(currentUrl)
+            return com.nas.naswebdav.shared.SharedStateHolder.isOnLan.value
+        }
 
     var isFanModeUpdating by androidx.compose.runtime.mutableStateOf(false)
         internal set

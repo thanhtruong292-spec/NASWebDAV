@@ -103,6 +103,9 @@ class AutoBackupViewModel(
                             autoBackupProcessedCount = workInfo.progress.getInt("processedCount", 0)
                             autoBackupTotalCount = workInfo.progress.getInt("totalCount", 0)
                             autoBackupElapsedTime = workInfo.progress.getLong("elapsedTime", 0L)
+                            autoBackupFileBytesWritten = workInfo.progress.getLong("bytesWritten", 0L)
+                            autoBackupFileBytesTotal = workInfo.progress.getLong("bytesTotal", 0L)
+                            autoBackupUploadSpeedBps = workInfo.progress.getLong("uploadSpeedBps", 0L)
                             autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
                         } else {
                             isAutoBackupRunning = false
@@ -187,8 +190,10 @@ class AutoBackupViewModel(
     fun cancelAutoBackup(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                androidx.work.WorkManager.getInstance(context)
-                    .cancelUniqueWork("ManualAutoBackupWork")
+                val workManager = androidx.work.WorkManager.getInstance(context)
+                workManager.cancelUniqueWork("ManualAutoBackupWork")
+                workManager.cancelUniqueWork("AutoBackupWork")
+                workManager.cancelAllWorkByTag("com.nas.naswebdav.AutoBackupWorker")
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "cancel: ${e.message}")
             }

@@ -75,6 +75,42 @@ object FormatUtils {
             "%d:%02d".format(minutes, seconds)
         }
     }
+
+    /**
+     * Tự động chuẩn hóa tên tệp:
+     * 1. Chuyển tiếng Việt có dấu sang không dấu.
+     * 2. Loại bỏ ký tự đặc biệt nguy hiểm (: * ? " < > | \ / # % +).
+     * 3. Rút ngắn tên nếu vượt quá maxLen (mặc định 100 ký tự) nhưng giữ nguyên phần mở rộng (extension).
+     */
+    fun sanitizeFileName(fileName: String, maxLen: Int = 100): String {
+        if (fileName.isBlank()) return "file_${System.currentTimeMillis()}"
+        
+        // 1. Chuyển tiếng Việt sang không dấu
+        val nfdNormalized = java.text.Normalizer.normalize(fileName, java.text.Normalizer.Form.NFD)
+        val diacriticalRegex = Regex("\\p{InCombiningDiacriticalMarks}+")
+        var clean = diacriticalRegex.replace(nfdNormalized, "")
+            .replace('đ', 'd').replace('Đ', 'D')
+            
+        // 2. Loại bỏ các ký tự đặc biệt không hợp lệ trên WebDAV / File system
+        clean = clean.replace(Regex("[^a-zA-Z0-9._\\- ]"), "_").trim()
+        clean = clean.replace(Regex(" +"), " ")
+        
+        if (clean.isBlank()) return "file_${System.currentTimeMillis()}"
+        
+        // 3. Rút ngắn tên nếu vượt quá maxLen
+        if (clean.length > maxLen) {
+            val dotIndex = clean.lastIndexOf('.')
+            if (dotIndex > 0 && dotIndex < clean.length - 1 && (clean.length - dotIndex) <= 10) {
+                val ext = clean.substring(dotIndex)
+                val base = clean.substring(0, dotIndex)
+                val maxBaseLen = maxLen - ext.length
+                clean = if (maxBaseLen > 0) base.take(maxBaseLen).trim() + ext else clean.take(maxLen)
+            } else {
+                clean = clean.take(maxLen).trim()
+            }
+        }
+        return clean
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,8 +15,8 @@ import java.net.URLEncoder
 
 object ThumbnailGenerator {
     private const val TAG = "ThumbnailGenerator"
-    private const val THUMB_SIZE = NasApplication.THUMBNAIL_SIZE_PX
-    private const val THUMB_QUALITY = NasApplication.THUMBNAIL_QUALITY
+    private const val THUMB_SIZE = 320
+    private const val THUMB_QUALITY = 75
 
     suspend fun generateAndUploadThumbnail(localFile: File, remoteWebDavPath: String, auth: String) = withContext(Dispatchers.IO) {
         try {

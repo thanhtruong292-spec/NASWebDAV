@@ -18,6 +18,7 @@ os.environ["MALLOC_ARENA_MAX"] = "2"
 import json
 import gc
 import ctypes
+import concurrent.futures
 import mimetypes
 import time
 import uuid
@@ -2183,39 +2184,52 @@ def get_fan_info():
 
 
 
+_EXCLUDED_SYSTEM_PROCS = (
+    "kworker", "systemd", "rcu", "migration", "ksoftirqd", "init", "kthreadd",
+    "journald", "udevd", "dbus-daemon", "sshd", "getty", "cron", "syslog",
+    "rsyslog", "networkmanager", "avahi-daemon", "polkitd", "containeractions"
+)
+
 def get_top_processes(n=3):
-    """L?y top N tien trinh tieu hao CPU nhieu nhat (Python 3.5)."""
+    """Lấy top N tiến trình ứng dụng (không thuộc hệ thống OS) tiêu hao RAM/CPU nhiều nhất (Python 3.5)."""
     procs = []
     try:
         num_cores = psutil.cpu_count() or 1
         active_procs = []
 
-        # Pass 1: Tao baseline hieu n?ng cho tung tien trinh
         for proc in psutil.process_iter():
             try:
+                pid = proc.pid
+                if pid <= 100:
+                    continue
+                name = (proc.name() or "").lower()
+                if any(name.startswith(sys_name) for sys_name in _EXCLUDED_SYSTEM_PROCS):
+                    continue
                 proc.cpu_percent()
                 active_procs.append(proc)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-                
-        # Ngu 0.1 giay de psutil tinh toan delta giua 2 lan goi
+
         time.sleep(0.1)
 
-        # Pass 2: L?y so lieu % CPU chinh xac tuyet doi thuoc ve thoi gian thuc
         for proc in active_procs:
             try:
                 cpu = proc.cpu_percent() / num_cores
+                mem = proc.memory_percent()
                 name = proc.name()
-                procs.append({"name": name, "cpu": cpu})
+                # Chọn chỉ số cao nhất giữa CPU % và RAM % để hiển thị đúng thực tế tiêu hao tài nguyên hệ thống
+                resource_pct = round(max(cpu, mem), 1)
+                procs.append({"name": name, "cpu": resource_pct, "mem": round(mem, 1)})
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
+
         procs.sort(key=lambda x: x["cpu"], reverse=True)
-        # Gom nhom tien trinh cung ten
+        # Gom nhóm tiến trình cùng tên
         grouped = {}
         for p in procs:
             key = p["name"]
             if key in grouped:
-                grouped[key]["cpu"] = min(grouped[key]["cpu"] + p["cpu"], 100.0)
+                grouped[key]["cpu"] = min(round(grouped[key]["cpu"] + p["cpu"], 1), 100.0)
             else:
                 p["cpu"] = min(p["cpu"], 100.0)
                 grouped[key] = dict(p)
@@ -12306,6 +12320,9 @@ def api_tiktok_live_watch_get():
     except Exception:
         pass
     resp["daemon"] = daemon
+    resp["daemon_running"] = daemon.get("running", False)
+    resp["last_tick"] = daemon.get("last_tick", "")
+    resp["summary"] = daemon.get("summary", "")
     resp["poll_interval"] = _tiktok_watch_interval()
     return jsonify(resp)
 

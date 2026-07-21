@@ -96,3 +96,5 @@ graph TD
 - **Giao diện (UI):** Theme bắt buộc dùng `NasTheme {}`. Gọi `MaterialTheme {}` trực tiếp sẽ ghi đè và làm mất font hệ thống `SamsungOneFontFamily`.
 - **Background Workers:** Việc upload/download nền phải dùng `WorkManager` (Foreground Service) kết hợp Notification. Tại đây, `AutoBackupWorker` phải gọi `ThumbnailGenerator` để tự sinh thumbnail trước khi upload.
 - **State Flow:** Tất cả State phải được expose ra UI qua `StateFlow` hoặc `MutableState`. Hạn chế gọi trực tiếp `suspend` function từ UI mà không bọc trong `viewModelScope`.
+- **Chuẩn hóa tên tệp (Sanitize Filename):** Tất cả tác vụ sao lưu/upload nền (nhất là `AutoBackupWorker`) PHẢI đi qua `FormatUtils.sanitizeFileName` để tự động đổi tiếng Việt sang không dấu, xóa ký tự đặc biệt nguy hiểm, và cắt ngắn nếu vượt quá 100 ký tự (bảo vệ Nginx WebDAV không bị lỗi 500/400).
+

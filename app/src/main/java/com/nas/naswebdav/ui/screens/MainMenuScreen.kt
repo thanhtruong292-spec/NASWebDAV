@@ -580,6 +580,7 @@ fun MainMenuScreen(
         AutoBackupDialog(
             context = mContext,
             isAutoBackupEnabled = isAutoBackupEnabled,
+            isAutoBackupRunning = autoBackupVM.isAutoBackupRunning,
             onAutoBackupEnabledChange = { isAutoBackupEnabled = it },
             deleteAfterBackup = deleteAfterBackup,
             onDeleteAfterBackupChange = { deleteAfterBackup = it },
@@ -616,6 +617,10 @@ fun MainMenuScreen(
                     commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
                     showCommonDialog = true
                 }
+                showAutoBackupDialog = false
+            },
+            onCancelSync = {
+                autoBackupVM.cancelAutoBackup(mContext)
                 showAutoBackupDialog = false
             },
             onDismiss = { showAutoBackupDialog = false }
@@ -807,7 +812,7 @@ fun MainMenuScreen(
             onOpenRecentVideos = onOpenRecentVideos,
             onOpenToolbox = { showToolboxDialog = true }
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(16.dp))
 
         // THÔNG BÁO DIALOG
         if (showCommonDialog) {
@@ -968,6 +973,21 @@ private fun MainMenuDashboardHeader(
                     Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
                     Spacer(Modifier.width(3.dp))
                     Text(cleanUt, fontSize = 11.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFAB47BC).copy(alpha = 0.25f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "v${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
+                        fontSize = 10.sp,
+                        color = Color(0xFFE040FB),
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -2720,8 +2740,10 @@ fun MainMenuSystemStatusCards(
                                     Text("Đồng Bộ NAS", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Spacer(Modifier.height(4.dp))
                                     
-                                    val speed = if (autoBackupVM.autoBackupElapsedTime > 1000L) {
-                                        "%.1f file/s".format(autoBackupVM.autoBackupProcessedCount * 1000f / autoBackupVM.autoBackupElapsedTime)
+                                    val speed = if (autoBackupVM.autoBackupUploadSpeedBps > 0L) {
+                                        "${com.nas.naswebdav.utils.FormatUtils.formatBytes(autoBackupVM.autoBackupUploadSpeedBps)}/s"
+                                    } else if (autoBackupVM.autoBackupElapsedTime > 1000L) {
+                                        "Đang đối chiếu..."
                                     } else "Đang chuẩn bị..."
 
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

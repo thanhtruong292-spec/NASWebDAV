@@ -155,6 +155,21 @@ internal fun MainDashboardHeader(
                     Spacer(Modifier.width(AppSpacing.XXS + AppSpacing.XS))
                     Text(cleanUt, style = AppTypography.BodyMedium.copy(color = AccentCyan, fontWeight = FontWeight.SemiBold))
                 }
+                Spacer(Modifier.width(AppSpacing.SM))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFAB47BC).copy(alpha = 0.25f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "v${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
+                        fontSize = 10.sp,
+                        color = Color(0xFFE040FB),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
         
