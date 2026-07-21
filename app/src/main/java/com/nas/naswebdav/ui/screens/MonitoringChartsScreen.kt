@@ -318,12 +318,9 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         val label: String,
         val unit: String,
         val icon: androidx.compose.ui.graphics.vector.ImageVector,
-        // Neu khac null: moi diem/doan duoc to mau theo gia tri cua chinh no.
-        // Neu null: dung mau co dinh (vd tab Mang khong co nguong nhiet do).
         val colorOf: ((Float) -> Color)? = null
     )
-    // Lay gia tri moi nhat (cuoi danh sach) de quyet dinh mau theo trang thai —
-    // dong bo voi GaugeCard tron tren MainMenuScreen.
+
     val cpuTempVals = history.map { it.cpuTemp }
     val hddTempVals = history.map { it.hddTemp }
     val cpuPctVals  = history.map { it.cpuPercent }
@@ -331,61 +328,71 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, cpuTempStatusColor(cpuTempVals.lastOrNull() ?: 0f), "CPU",    "°C",   Icons.Default.Memory,  colorOf = ::cpuTempStatusColor),
-            Series(hddTempVals, hddTempStatusColor(hddTempVals.lastOrNull() ?: 0f), "HDD",    "°C",   Icons.Default.Storage, colorOf = ::hddTempStatusColor)
+            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, colorOf = ::cpuTempStatusColor),
+            Series(hddTempVals, Color(0xFF00E676), "HDD", "°C", Icons.Default.Storage, colorOf = ::hddTempStatusColor)
         )
         1 -> listOf(
-            Series(cpuPctVals, percentStatusColor(cpuPctVals.lastOrNull() ?: 0f), "CPU",  "%",    Icons.Default.Speed,         colorOf = ::percentStatusColor),
-            Series(ramPctVals, percentStatusColor(ramPctVals.lastOrNull() ?: 0f), "RAM",  "%",    Icons.Default.DeveloperBoard, colorOf = ::percentStatusColor)
+            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, colorOf = { v -> if (v >= 90f) _StatusRed else if (v >= 70f) _StatusYellow else Color(0xFFFF9100) }),
+            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, colorOf = { v -> if (v >= 90f) _StatusRed else if (v >= 70f) _StatusYellow else Color(0xFF00B0FF) })
         )
         else -> listOf(
-            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về",  " MB/s", Icons.Default.ArrowDownward),
-            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF6EC7),  "Tải lên", " MB/s", Icons.Default.ArrowUpward)
+            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về", " MB/s", Icons.Default.ArrowDownward),
+            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF4081), "Tải lên", " MB/s", Icons.Default.ArrowUpward)
         )
     }
 
     val allVals = series.flatMap { it.values }
-    val maxVal  = (allVals.maxOrNull() ?: 1f).coerceAtLeast(1f)
-    val minVal  = (allVals.minOrNull() ?: 0f).coerceAtMost(maxVal * 0.9f)
-    val range   = (maxVal - minVal).coerceAtLeast(1f)
+    
+    // Quy tắc Min/Max thiết kế riêng theo yêu cầu:
+    // Tab 0 (Nhiệt độ): Min 20°C, Max 80°C
+    // Tab 1 (Tài nguyên): Min 0%, Max 100%
+    // Tab 2 (Mạng): Min 0 MB/s, Max động theo băng thông
+    val minVal: Float = when (tabIndex) {
+        0 -> 20f
+        1 -> 0f
+        else -> 0f
+    }
+    val maxVal: Float = when (tabIndex) {
+        0 -> 80f
+        1 -> 100f
+        else -> (allVals.maxOrNull() ?: 1f).coerceAtLeast(0.2f)
+    }
+    val range = (maxVal - minVal).coerceAtLeast(0.1f)
 
     var touchedIndex by remember { mutableIntStateOf(-1) }
-    val pad = 10f
+    val pad = 12f
     val density = androidx.compose.ui.platform.LocalDensity.current.density
-    val textPx = 10f * density 
+    val textPx = 10f * density
 
     Column {
         // Chú thích màu — Legend
-        // Màu theo giá trị ĐANG HIỂN THỊ: nếu user đang chạm thì màu của điểm đó,
-        // nếu không thì màu của giá trị cuối (đồng bộ với GaugeCard tròn).
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 series.forEach { s ->
                     val displayIdx = if (touchedIndex in s.values.indices) touchedIndex else s.values.lastIndex
                     val legendColor = if (displayIdx >= 0) (s.colorOf?.invoke(s.values[displayIdx]) ?: s.color) else s.color
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Icon(s.icon, null, tint = legendColor, modifier = Modifier.size(12.dp))
-                        Text("${s.label} (${s.unit.trim()})", fontSize = 10.sp, color = legendColor, fontWeight = FontWeight.Medium)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(s.icon, null, tint = legendColor, modifier = Modifier.size(13.dp))
+                        Text("${s.label} (${s.unit.trim()})", fontSize = 11.sp, color = legendColor, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
         
         // Canvas biểu đồ + touch detection
         Box(Modifier.fillMaxWidth()) {
             androidx.compose.foundation.Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp)
+                    .height(150.dp)
                     .pointerInput(history.size, tabIndex) {
                         awaitPointerEventScope {
                             while (true) {
-                                // Sử dụng pass Initial để chặn thao tác vuốt màn hình của cha (Scrollable Column)
                                 val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                                 val pos = event.changes.firstOrNull()?.position
                                 if (pos != null && history.size >= 2) {
-                                    val leftPadLocal = 42f * density // 42dp nhường chỗ cho nhãn Y
+                                    val leftPadLocal = 45f * density
                                     val usableW = size.width - leftPadLocal - pad
                                     val step = usableW / (history.size - 1).toFloat()
                                     val idx = ((pos.x - leftPadLocal) / step).toInt().coerceIn(0, history.size - 1)
@@ -408,41 +415,50 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             ) {
                 val w = size.width
                 val h = size.height
-                val leftPad = 42f * density
+                val leftPad = 45f * density
 
-                // Nhãn trục Y (max, mid, min) hiển thị đậm và dứt khoát
+                // Nhãn trục Y rõ ràng
                 val yPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(220, 200, 200, 200)
+                    color = android.graphics.Color.argb(220, 180, 190, 210)
                     textSize = textPx
                     textAlign = android.graphics.Paint.Align.LEFT
                     isAntiAlias = true
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                 }
-                drawContext.canvas.nativeCanvas.apply {
-                    val fmt = if (tabIndex == 2) "%.1f" else "%.0f"
-                    drawText(fmt.format(maxVal), 0f, pad + textPx, yPaint)
-                    drawText(fmt.format((maxVal + minVal) / 2f), 0f, h / 2f + textPx/3f, yPaint)
-                    drawText(fmt.format(minVal), 0f, h - pad, yPaint)
+
+                // Grid 4 đường kẻ ngang rõ ràng
+                val gridCount = 4
+                for (i in 0 until gridCount) {
+                    val fraction = i / (gridCount - 1).toFloat()
+                    val y = pad + fraction * (h - pad * 2)
+                    val gridVal = maxVal - fraction * (maxVal - minVal)
+
+                    // Đường kẻ ngang nét đứt mỏng
+                    drawLine(
+                        color = Color(0x33FFFFFF),
+                        start = Offset(leftPad, y),
+                        end = Offset(w, y),
+                        strokeWidth = 1.2f * density
+                    )
+
+                    // Nhãn trục Y
+                    val fmt = when (tabIndex) {
+                        0 -> "%.0f°C".format(gridVal)
+                        1 -> "%.0f%%".format(gridVal)
+                        else -> if (maxVal < 1f) "%.2f".format(gridVal) else "%.1f".format(gridVal)
+                    }
+                    drawContext.canvas.nativeCanvas.drawText(fmt, 0f, y + textPx / 3f, yPaint)
                 }
 
-                // Grid ngang
-                for (i in 0..3) {
-                    val y = pad + (i / 3f) * (h - pad * 2)
-                    drawLine(Color(0x33FFFFFF), Offset(leftPad, y), Offset(w, y), strokeWidth = 1f)
-                }
-
-                // Vẽ các series
+                // Vẽ các series đường kẻ riêng biệt
                 series.forEach { s ->
                     val pts = s.values
                     if (pts.size < 2) return@forEach
                     val step = (w - leftPad - pad) / (pts.size - 1).toFloat()
                     fun xOf(i: Int) = leftPad + i * step
-                    fun yOf(v: Float) = h - pad - ((v - minVal) / range) * (h - pad * 2)
+                    fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
 
                     if (s.colorOf != null) {
-                        // ----- Tab Nhiet do / Tai nguyen: to mau theo tung diem -----
-                        // Voi moi doan [i, i+1] ve 1 hinh thang fill rieng + line
-                        // mau trung binh cua 2 dau doan -> nhin nhu gradient muot.
                         val colorFn = s.colorOf
                         for (i in 0 until pts.size - 1) {
                             val v1 = pts[i]
@@ -454,7 +470,6 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             val x2 = xOf(i + 1)
                             val y1 = yOf(v1)
                             val y2 = yOf(v2)
-                            // Fill hinh thang duoi doan nay
                             val segPath = androidx.compose.ui.graphics.Path().apply {
                                 moveTo(x1, h - pad)
                                 lineTo(x1, y1)
@@ -462,29 +477,28 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                                 lineTo(x2, h - pad)
                                 close()
                             }
-                            drawPath(segPath, cMid.copy(alpha = 0.15f))
-                            // Duong line cua doan
-                            drawLine(cMid, Offset(x1, y1), Offset(x2, y2), strokeWidth = 1f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                            drawPath(segPath, cMid.copy(alpha = 0.12f))
+                            drawLine(cMid, Offset(x1, y1), Offset(x2, y2), strokeWidth = 2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                         }
                     } else {
-                        // ----- Tab Mang: giu 1 mau co dinh nhu cu -----
                         val fillPath = androidx.compose.ui.graphics.Path()
                         fillPath.moveTo(xOf(0), h - pad)
                         pts.forEachIndexed { i, v -> fillPath.lineTo(xOf(i), yOf(v)) }
                         fillPath.lineTo(xOf(pts.lastIndex), h - pad)
                         fillPath.close()
-                        drawPath(fillPath, s.color.copy(alpha = 0.15f))
+                        drawPath(fillPath, s.color.copy(alpha = 0.12f))
 
                         for (i in 0 until pts.size - 1) {
-                            drawLine(s.color, Offset(xOf(i), yOf(pts[i])), Offset(xOf(i + 1), yOf(pts[i + 1])), strokeWidth = 1f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                            drawLine(s.color, Offset(xOf(i), yOf(pts[i])), Offset(xOf(i + 1), yOf(pts[i + 1])), strokeWidth = 2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                         }
                     }
 
-                    // Điểm mốc cuối cùng nếu ko chạm — dung mau cua chinh diem cuoi
-                    if(touchedIndex == -1) {
+                    // Điểm mốc cuối cùng nếu ko chạm
+                    if (touchedIndex == -1) {
                         val endColor = s.colorOf?.invoke(pts.last()) ?: s.color
-                        drawCircle(endColor, 4f * density, Offset(xOf(pts.lastIndex), yOf(pts.last())))
-                        drawCircle(Color.White, 2f * density, Offset(xOf(pts.lastIndex), yOf(pts.last())))
+                        val lastY = yOf(pts.last())
+                        drawCircle(endColor, 4.5f * density, Offset(xOf(pts.lastIndex), lastY))
+                        drawCircle(Color.White, 2f * density, Offset(xOf(pts.lastIndex), lastY))
                     }
                 }
 
@@ -495,10 +509,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         val step = (w - leftPad - pad) / (pts0.size - 1).toFloat()
                         val cx = leftPad + touchedIndex * step
 
-                        // Đường gióng dọc màu trắng nổi bật
                         drawLine(Color.White, Offset(cx, pad/2), Offset(cx, h), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(15f, 10f)))
 
-                        // Timestamp cho dòng kẻ dọc
                         val tsText = history[touchedIndex].timestamp
                         val timeStr = if (tsText.length >= 19) tsText.substring(11, 19) else tsText
                         val tsPaint = android.graphics.Paint().apply {
@@ -526,15 +538,12 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             textAlign = android.graphics.Paint.Align.CENTER
                         }
 
-                        // Vẽ điểm nổi cho từng loại và hiển thị bong bóng
                         series.forEach { s ->
                             if (touchedIndex >= s.values.size) return@forEach
                             val v = s.values[touchedIndex]
-                            val cy = h - pad - ((v - minVal) / range) * (h - pad * 2)
-                            // Mau cua chinh diem dang cham — to chinh xac theo gia tri tai do
+                            val cy = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
                             val pointColor = s.colorOf?.invoke(v) ?: s.color
 
-                            // Halo sáng hơn tại điểm chạm
                             drawCircle(pointColor.copy(alpha = 0.5f), 10f * density, Offset(cx, cy))
                             drawCircle(pointColor, 6f * density, Offset(cx, cy))
                             drawCircle(Color.White, 3f * density, Offset(cx, cy))
@@ -547,7 +556,6 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             val labelX = if (isLeft) cx - txtW/2 - 15f else cx + txtW/2 + 15f
                             val labelY = cy - 5f
 
-                            // Vẽ nền trong suốt đen nhám của popup (lay theo mau diem chu khong theo series)
                             val bgC = pointColor
                             val bgColor = android.graphics.Color.argb(220, (bgC.red*255).toInt()/5, (bgC.green*255).toInt()/5, (bgC.blue*255).toInt()/5)
 
@@ -556,7 +564,6 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                                 12f, 12f, android.graphics.Paint().apply { color = bgColor }
                             )
 
-                            // Đặt màu text đồng với màu diem
                             labelPaint.color = android.graphics.Color.argb(255, (pointColor.red*255).toInt(), (pointColor.green*255).toInt(), (pointColor.blue*255).toInt())
                             drawContext.canvas.nativeCanvas.drawText(label, labelX, labelY, labelPaint)
                         }
@@ -565,8 +572,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             }
         }
 
-        // Hàng giá trị dưới cùng hiển thị Động theo ngón tay (đồng bộ)
-        // Mau chu theo gia tri hien thi (touched neu co, else gia tri cuoi) — match legend + popup.
+        // Hàng giá trị dưới cùng hiển thị Động theo ngón tay
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
             val idx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
             series.forEach { s ->
