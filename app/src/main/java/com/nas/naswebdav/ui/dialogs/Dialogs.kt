@@ -3266,7 +3266,8 @@ fun DialogsNasInsightsDialog(
 
             DialogsInsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, Color(0xFF66BB6A)) {
                 DialogsInsightRow("Điểm hiện tại", "${insight.hddScore}/100")
-                DialogsInsightRow("Nhiệt độ", "${insight.hddTempC}°C")
+                val liveHddTemp = if (sysMonitorVM.systemStatus.temp.isNotBlank() && sysMonitorVM.systemStatus.temp != "--°C") sysMonitorVM.systemStatus.temp else "${insight.hddTempC}°C"
+                DialogsInsightRow("Nhiệt độ", liveHddTemp)
                 DialogsInsightRow("Thấp nhất 7 ngày", "${insight.hddMinScore}/100")
                 DialogsInsightRow("Biến động", if (insight.hddScoreDelta >= 0) "+${insight.hddScoreDelta}" else "${insight.hddScoreDelta}")
                 if (insight.hddStatusText.isNotBlank()) {
