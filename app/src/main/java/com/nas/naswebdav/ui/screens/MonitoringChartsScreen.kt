@@ -449,7 +449,28 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     drawContext.canvas.nativeCanvas.drawText(fmt, 0f, y + textPx / 3f, yPaint)
                 }
 
-                // Vẽ các series đường kẻ sắc nét bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt rõ ràng
+                // Grid các đường kẻ dọc mờ (0.5dp) tại các điểm mốc cập nhật thời gian
+                val sampleSize = history.size
+                if (sampleSize >= 2) {
+                    val usableW = w - leftPad - pad
+                    val vGridCount = 6.coerceAtMost(sampleSize)
+                    val vStep = (sampleSize - 1) / (vGridCount - 1).toFloat()
+                    
+                    for (gi in 0 until vGridCount) {
+                        val pIdx = (gi * vStep).toInt().coerceIn(0, sampleSize - 1)
+                        val vx = leftPad + (pIdx.toFloat() / (sampleSize - 1)) * usableW
+                        
+                        drawLine(
+                            color = Color(0x1CFFFFFF),
+                            start = Offset(vx, pad),
+                            end = Offset(vx, h - pad),
+                            strokeWidth = 0.5f * density,
+                            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f * density, 4f * density))
+                        )
+                    }
+                }
+
+                // Vẽ các series đường kẻ mảnh (1.0dp) bằng 1 Path liên tục với kiểu Solid/Dashed phân biệt rõ ràng
                 series.forEach { s ->
                     val pts = s.values
                     if (pts.size < 2) return@forEach
@@ -457,14 +478,14 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     fun xOf(i: Int) = leftPad + i * step
                     fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
 
-                    // Fill vùng mờ nhẹ (0.05f alpha)
+                    // Fill vùng mờ nhẹ (0.04f alpha)
                     val fillPath = androidx.compose.ui.graphics.Path().apply {
                         moveTo(xOf(0), h - pad)
                         pts.forEachIndexed { i, v -> lineTo(xOf(i), yOf(v)) }
                         lineTo(xOf(pts.lastIndex), h - pad)
                         close()
                     }
-                    drawPath(fillPath, s.color.copy(alpha = 0.05f))
+                    drawPath(fillPath, s.color.copy(alpha = 0.04f))
 
                     // Tạo 1 Path liên tục vẽ toàn bộ đồ thị
                     val linePath = androidx.compose.ui.graphics.Path().apply {
@@ -474,15 +495,15 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         }
                     }
 
-                    // Dash effect nét đứt to rõ ràng (16dp nhát đứt, 10dp khoảng trống)
-                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(16f * density, 10f * density)) else null
+                    // Dash effect nét đứt mảnh tinh tế (7dp nhát đứt, 4dp khoảng trống)
+                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(7f * density, 4f * density)) else null
 
-                    // Vẽ đường kẻ 1.6dp chuẩn rõ nét trên 1 Path liên tục
+                    // Vẽ đường kẻ mảnh 1.0dp chuẩn cao cấp trên 1 Path liên tục
                     drawPath(
                         path = linePath,
                         color = s.color,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = 1.6f * density,
+                            width = 1.0f * density,
                             cap = androidx.compose.ui.graphics.StrokeCap.Round,
                             join = androidx.compose.ui.graphics.StrokeJoin.Round,
                             pathEffect = dashEffect
