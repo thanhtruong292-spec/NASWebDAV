@@ -243,11 +243,19 @@ class BatchOperationWorker(
                             val trashFolderUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, "", false)
                             val targetUrl = buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, fileName, isDirectory)
                             try { webDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-                            webDavManager.renameFile(sourceUrl, targetUrl)
                             try {
-                                trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
-                            } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
-                                android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
+                                webDavManager.renameFile(sourceUrl, targetUrl)
+                                try {
+                                    trashMetaDao.insert(TrashMeta(trashPath = targetUrl, originalPath = sourceUrl))
+                                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                                    android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
+                                }
+                            } catch (moveEx: Exception) {
+                                // Fallback to direct permanent DELETE if MOVE to trash fails
+                                webDavManager.deleteFile(sourceUrl, isDirectory)
+                                try {
+                                    trashMetaDao.deleteByTrashPath(sourceUrl)
+                                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (_: Exception) {}
                             }
                         } else {
                             webDavManager.deleteFile(sourceUrl, isDirectory)

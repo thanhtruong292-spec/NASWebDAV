@@ -15,6 +15,7 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.AutoDuplicateScanWorker
 import com.nas.naswebdav.DuplicateScanWorker
 import com.nas.naswebdav.toApiBaseUrl
+import com.nas.naswebdav.buildWebDavTrashTargetUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -264,12 +265,24 @@ class SmartToolsViewModel(
                 val isInTrash = file.path.contains(".trash")
                 if (isInTrash) {
                     WebDavManager.deleteFile(file.path, file.isDirectory)
+                    repository.removeDuplicateFromDb(file.path)
                 } else {
-                    val trashFolderUrl = WebDavManager.currentBaseUrl.trimEnd('/') + "/.trash/"
+                    val rootUrl = WebDavManager.currentBaseUrl.trimEnd('/')
+                    val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, "", false)
+                    val trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, file.name, file.isDirectory)
                     try { WebDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-                    val safeName = file.name.replace('/', '_').take(200)
-                    val trashTargetUrl = trashFolderUrl + safeName
-                    WebDavManager.renameFile(file.path, trashTargetUrl)
+                    try {
+                        WebDavManager.renameFile(file.path, trashTargetUrl)
+                        try {
+                            NasApplication.instance.database.trashMetaDao().insert(
+                                com.nas.naswebdav.TrashMeta(trashPath = trashTargetUrl, originalPath = file.path)
+                            )
+                        } catch (_: Exception) {}
+                    } catch (moveEx: Exception) {
+                        // Fallback to direct DELETE if MOVE to trash fails
+                        WebDavManager.deleteFile(file.path, file.isDirectory)
+                    }
+                    repository.removeDuplicateFromDb(file.path)
                 }
                 withContext(Dispatchers.Main) {
                     duplicateFilesList = duplicateFilesList.filter { it.path != file.path }
