@@ -57,16 +57,28 @@ private fun percentStatusColor(latest: Float): Color = when {
     else -> _StatusGreen
 }
 
-private fun cpuTempStatusColor(latest: Float): Color = when {
-    latest >= 80f -> _StatusRed
-    latest >= 60f -> _StatusYellow
-    else -> _StatusGreen
+private fun cpuTempStatusColor(v: Float): Color = when {
+    v >= 80f -> _StatusRed
+    v >= 60f -> _StatusYellow
+    else -> Color(0xFFFF5252)
 }
 
-private fun hddTempStatusColor(latest: Float): Color = when {
-    latest >= 55f -> _StatusRed
-    latest >= 45f -> _StatusYellow
-    else -> _StatusGreen
+private fun hddTempStatusColor(v: Float): Color = when {
+    v >= 55f -> _StatusRed
+    v >= 45f -> _StatusYellow
+    else -> Color(0xFF00E5FF)
+}
+
+private fun cpuPercentStatusColor(v: Float): Color = when {
+    v >= 90f -> _StatusRed
+    v >= 70f -> _StatusYellow
+    else -> Color(0xFFFF9100)
+}
+
+private fun ramPercentStatusColor(v: Float): Color = when {
+    v >= 90f -> _StatusRed
+    v >= 70f -> _StatusYellow
+    else -> Color(0xFF00B0FF)
 }
 
 // Linear blend ARGB cho 2 mau de doan noi 2 diem nhiet do/ phan tram khac mau
@@ -318,7 +330,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         val label: String,
         val unit: String,
         val icon: androidx.compose.ui.graphics.vector.ImageVector,
-        val isDashed: Boolean = false
+        val isDashed: Boolean = false,
+        val colorOf: ((Float) -> Color)? = null
     )
 
     val cpuTempVals = history.map { it.cpuTemp }
@@ -326,17 +339,17 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val cpuPctVals  = history.map { it.cpuPercent }
     val ramPctVals  = history.map { it.ramPercent }
 
-    // Đánh giá màu sắc & kiểu đường kẻ riêng biệt cho từng metric:
-    // - CPU: Nét liền (Solid Line), màu Đỏ Coral (#FF5252) / Cam (#FF9100)
-    // - HDD / RAM / Upload: Nét đứt (Dashed Line), màu Cyan (#00E5FF) / Xanh Dương (#00B0FF) / Hồng (#FF4081)
+    // Đánh giá màu sắc theo TRẠNG THÁI (Bình thường -> Vàng Cảnh báo -> Đỏ Nguy hiểm) & kiểu nét kẻ riêng biệt:
+    // - CPU: Nét liền (Solid Line), màu Đỏ Coral (#FF5252) / Cam (#FF9100) khi bình thường
+    // - HDD / RAM: Nét đứt (Dashed Line), màu Cyan (#00E5FF) / Xanh Dương (#00B0FF) khi bình thường
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, isDashed = false),
-            Series(hddTempVals, Color(0xFF00E5FF), "HDD", "°C", Icons.Default.Storage, isDashed = true)
+            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, isDashed = false, colorOf = ::cpuTempStatusColor),
+            Series(hddTempVals, Color(0xFF00E5FF), "HDD", "°C", Icons.Default.Storage, isDashed = true, colorOf = ::hddTempStatusColor)
         )
         1 -> listOf(
-            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, isDashed = false),
-            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, isDashed = true)
+            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, isDashed = false, colorOf = ::cpuPercentStatusColor),
+            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, isDashed = true, colorOf = ::ramPercentStatusColor)
         )
         else -> listOf(
             Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về", " MB/s", Icons.Default.ArrowDownward, isDashed = false),
@@ -487,33 +500,44 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     }
                     drawPath(fillPath, s.color.copy(alpha = 0.04f))
 
-                    // Tạo 1 Path liên tục vẽ toàn bộ đồ thị
-                    val linePath = androidx.compose.ui.graphics.Path().apply {
-                        moveTo(xOf(0), yOf(pts[0]))
-                        for (i in 1 until pts.size) {
-                            lineTo(xOf(i), yOf(pts[i]))
-                        }
-                    }
+                    val colorFn: (Float) -> Color = { v -> s.colorOf?.invoke(v) ?: s.color }
 
-                    // Dash effect nét đứt mảnh tinh tế (7dp nhát đứt, 4dp khoảng trống)
                     val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f * density, 2f * density)) else null
 
-                    // Vẽ đường kẻ mảnh 1.0dp chuẩn cao cấp trên 1 Path liên tục
-                    drawPath(
-                        path = linePath,
-                        color = s.color,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = 0.5f * density,
-                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
-                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
-                            pathEffect = dashEffect
+                    // Vẽ từng đoạn [i, i+1] chuyển màu theo trạng thái nhiệt độ/tài nguyên (Xanh -> Vàng -> Đỏ)
+                    for (i in 0 until pts.size - 1) {
+                        val v1 = pts[i]
+                        val v2 = pts[i + 1]
+                        val c1 = colorFn(v1)
+                        val c2 = colorFn(v2)
+                        val cMid = lerpColor(c1, c2, 0.5f)
+                        val x1 = xOf(i)
+                        val x2 = xOf(i + 1)
+                        val y1 = yOf(v1)
+                        val y2 = yOf(v2)
+
+                        val segPath = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(x1, y1)
+                            lineTo(x2, y2)
+                        }
+
+                        drawPath(
+                            path = segPath,
+                            color = cMid,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = 0.5f * density,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                pathEffect = dashEffect
+                            )
                         )
-                    )
+                    }
 
                     // Điểm mốc cuối cùng nếu ko chạm
                     if (touchedIndex == -1) {
                         val lastY = yOf(pts.last())
-                        drawCircle(s.color, 3.5f * density, Offset(xOf(pts.lastIndex), lastY))
+                        val lastColor = colorFn(pts.last())
+                        drawCircle(lastColor, 3.5f * density, Offset(xOf(pts.lastIndex), lastY))
                         drawCircle(Color.White, 1.5f * density, Offset(xOf(pts.lastIndex), lastY))
                     }
                 }

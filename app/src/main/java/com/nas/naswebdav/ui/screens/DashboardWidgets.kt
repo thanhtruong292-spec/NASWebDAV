@@ -107,7 +107,9 @@ fun NasInsightsSummaryCard(
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
-                InsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
+                val sysMonitorVM = LocalSystemMonitorVM.current
+                val liveHddTempStr = if (sysMonitorVM.systemStatus.temp.isNotBlank() && sysMonitorVM.systemStatus.temp != "--°C") sysMonitorVM.systemStatus.temp else "${insight.hddTempC}°C"
+                InsightMiniStat("HDD", "${insight.hddScore}/100", liveHddTempStr, AccentGreen, Modifier.weight(1f))
                 InsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
                 InsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
             }
