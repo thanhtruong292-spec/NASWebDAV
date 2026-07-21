@@ -13886,6 +13886,26 @@ if __name__ == "__main__":
         log.info("LAN Whitelist: (trống - chỉ truy cập qua Tailscale hoặc đăng nhập)")
     log.info("=" * 50)
     
+def _ensure_trash_directories():
+    """Tự động kiểm tra và tạo thư mục .trash/ trên các phân vùng đĩa cứng ngoài để WebDAV MOVE hoạt động 100%."""
+    try:
+        if os.path.exists("/srv"):
+            for item in os.listdir("/srv"):
+                if item.startswith("dev-disk-by-"):
+                    disk_path = os.path.join("/srv", item)
+                    trash_dir = os.path.join(disk_path, ".trash")
+                    if os.path.isdir(disk_path) and not os.path.exists(trash_dir):
+                        try:
+                            os.makedirs(trash_dir, mode=0o777, exist_ok=True)
+                            safe_run_cmd("chown -R daica:webdav-users '%s'" % trash_dir)
+                            os.chmod(trash_dir, 0o777)
+                            log.info("[DiskInit] Đã tự động tạo thư mục Thùng rác: %s", trash_dir)
+                        except Exception as e:
+                            log.warning("[DiskInit] Không thể tạo %s: %s", trash_dir, e)
+    except Exception:
+        pass
+
+    _ensure_trash_directories()
     # Thread giam sat log WebDAV de phat hien scan password
     threading.Thread(target=monitor_scanners, daemon=True).start()
     threading.Thread(target=monitor_journalctl, daemon=True).start()

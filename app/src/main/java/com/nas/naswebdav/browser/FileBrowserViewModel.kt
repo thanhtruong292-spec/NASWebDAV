@@ -251,18 +251,53 @@ class FileBrowserViewModel(
     }
 
     fun deleteFile(context: Context, file: NasFile) {
-        // Phase 5b Group 2: actual WebDAV MOVE to trash on NAS
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val trashUrl = file.path.toTrashUrl()
-                if (trashUrl != null) {
+            // Đánh dấu pendingDeletes và cập nhật UI ngay lập tức
+            pendingDeletes.add(file.path)
+            withContext(Dispatchers.Main) {
+                fileList = fileList.filter { it.path != file.path }
+            }
+            var deletedSuccessfully = false
+            var lastError: Exception? = null
+
+            // 1. Thử chuyển file vào Thùng rác (.trash/) qua WebDAV MOVE
+            val trashUrl = file.path.toTrashUrl()
+            if (trashUrl != null) {
+                try {
                     WebDavManager.renameFile(file.path, trashUrl)
-                } else {
-                    WebDavManager.deleteFile(file.path)
+                    deletedSuccessfully = true
+                } catch (e: Exception) {
+                    android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, falling back to DELETE: ${e.message}")
+                    lastError = e
                 }
-            } catch (e: Exception) {
-                android.util.Log.w("FileBrowser", "deleteFile: ${e.message}")
-                // FileBrowserVM.deleteFile handles rollback + offline queue
+            }
+
+            // 2. Nếu MOVE thất bại hoặc không có trashUrl, thực hiện WebDAV DELETE trực tiếp
+            if (!deletedSuccessfully) {
+                try {
+                    WebDavManager.deleteFile(file.path, file.isDirectory)
+                    deletedSuccessfully = true
+                } catch (e: Exception) {
+                    android.util.Log.e("FileBrowser", "WebDAV DELETE failed: ${e.message}", e)
+                    lastError = e
+                }
+            }
+
+            if (deletedSuccessfully) {
+                // Xóa khỏi Room Cache DB để khi refresh ứng dụng không bị khôi phục lại từ SQLite
+                repository.removeDuplicateFromDb(file.path)
+            } else {
+                pendingDeletes.remove(file.path)
+            }
+
+            withContext(Dispatchers.Main) {
+                if (deletedSuccessfully) {
+                    android.widget.Toast.makeText(context, "Đã xóa ${file.name}", android.widget.Toast.LENGTH_SHORT).show()
+                } else {
+                    val errText = lastError?.message ?: "Lỗi hệ thống WebDAV"
+                    android.widget.Toast.makeText(context, "Không thể xóa ${file.name}: $errText", android.widget.Toast.LENGTH_LONG).show()
+                    fileList = fileList + file
+                }
             }
         }
     }
