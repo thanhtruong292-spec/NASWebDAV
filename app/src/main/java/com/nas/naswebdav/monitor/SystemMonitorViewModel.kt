@@ -222,52 +222,8 @@ class SystemMonitorViewModel(
                         val cpuTemp = systemStatus.cpuTemp
                         val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
                         val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                        val cpuPct = systemStatus.cpu.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                        val ramPct = systemStatus.ramPercent.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
 
-                        fun parseKbps(s: String): Float {
-                            val num = s.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                            return when {
-                                s.contains("MB/s", ignoreCase = true) -> num * 1024f
-                                s.contains("GB/s", ignoreCase = true) -> num * 1024f * 1024f
-                                else -> num
-                            }
-                        }
-                        val rxKbps = parseKbps(systemStatus.netRx)
-                        val txKbps = parseKbps(systemStatus.netTx)
-
-                        if (hddVal > 0f || cpuVal > 0f) {
-                            temperatureHistory.add(Pair(cpuVal, hddVal))
-                            while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
-                        }
-
-                        // ĐỒNG BỘ 100% GIỮA VÒNG TRÒN VÀ BIỂU ĐỒ GIÁM SÁT:
-                        // Cùng 1 nguồn dữ liệu từ /api/status -> đồng thời đẩy điểm mới vào metricsHistory
-                        val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
-                        val livePoint = MetricsSnapshot(
-                            timestamp = timeStr,
-                            cpuTemp = cpuVal,
-                            cpuPercent = cpuPct,
-                            ramPercent = ramPct,
-                            hddTemp = hddVal,
-                            netRxKbps = rxKbps,
-                            netTxKbps = txKbps
-                        )
-
-                        if (metricsHistory.isNotEmpty()) {
-                            val lastPoint = metricsHistory.last()
-                            if (System.currentTimeMillis() - lastMetricsRefreshAt < 5000L) {
-                                metricsHistory[metricsHistory.size - 1] = livePoint
-                            } else {
-                                metricsHistory.add(livePoint)
-                            }
-                        } else {
-                            metricsHistory.add(livePoint)
-                        }
-                        if (metricsHistory.size > 1000) {
-                            metricsHistory.removeRange(0, 200)
-                        }
-                        lastMetricsRefreshAt = System.currentTimeMillis()
+                        appendOrUpdateLivePoint()
                     }
                     true
                 } else false
@@ -276,6 +232,67 @@ class SystemMonitorViewModel(
             android.util.Log.w("SysMonitor", "fetchStatusNow: ${e.message}")
             false
         }
+    }
+
+    /**
+     * ĐẢM BẢO ĐIỂM CUỐI CỦA METRICS HISTORY LUÔN LÀ DỮ LIỆU LIVE HIỆN TẠI (100% ĐỒNG BỘ VỚI VÒNG TRÒN SYSTEM)
+     */
+    fun appendOrUpdateLivePoint() {
+        val tempRaw = systemStatus.temp
+        val cpuTemp = systemStatus.cpuTemp
+        val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val cpuPct = systemStatus.cpu.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val ramPct = systemStatus.ramPercent.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+
+        fun parseKbps(s: String): Float {
+            val num = s.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+            return when {
+                s.contains("MB/s", ignoreCase = true) -> num * 1024f
+                s.contains("GB/s", ignoreCase = true) -> num * 1024f * 1024f
+                else -> num
+            }
+        }
+        val rxKbps = parseKbps(systemStatus.netRx)
+        val txKbps = parseKbps(systemStatus.netTx)
+
+        if (hddVal > 0f || cpuVal > 0f) {
+            temperatureHistory.add(Pair(cpuVal, hddVal))
+            while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
+        }
+
+        val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        val livePoint = MetricsSnapshot(
+            timestamp = timeStr,
+            cpuTemp = cpuVal,
+            cpuPercent = cpuPct,
+            ramPercent = ramPct,
+            hddTemp = hddVal,
+            netRxKbps = rxKbps,
+            netTxKbps = txKbps
+        )
+
+        if (metricsHistory.isEmpty()) {
+            metricsHistory.add(livePoint)
+        } else {
+            val last = metricsHistory.last()
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            val diffSec = try {
+                val tLast = sdf.parse(last.timestamp)?.time ?: 0L
+                val tNow = sdf.parse(timeStr)?.time ?: 0L
+                kotlin.math.abs(tNow - tLast) / 1000L
+            } catch (e: Exception) { 999L }
+
+            if (diffSec <= 15L) {
+                metricsHistory[metricsHistory.size - 1] = livePoint
+            } else {
+                metricsHistory.add(livePoint)
+            }
+        }
+        if (metricsHistory.size > 1000) {
+            metricsHistory.removeRange(0, metricsHistory.size - 1000)
+        }
+        lastMetricsRefreshAt = System.currentTimeMillis()
     }
 
     fun launchMetricsPolling() {
@@ -303,8 +320,6 @@ class SystemMonitorViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
-                    // Server trả về columnar format: {timestamps:[...], cpu_percent:[...], ...}
-                    // Không phải mảng objects, phải parse ra từng array riêng
                     val json = org.json.JSONObject(body)
                     val timestamps = json.optJSONArray("timestamps")
                     val cpuArr     = json.optJSONArray("cpu_percent")
@@ -328,7 +343,8 @@ class SystemMonitorViewModel(
                                 netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
                             ))
                         }
-                        lastMetricsRefreshAt = System.currentTimeMillis()
+                        // BẮT BUỘC: Đẩy điểm dữ liệu LIVE hiện tại vào điểm cuối cùng của metricsHistory
+                        appendOrUpdateLivePoint()
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
