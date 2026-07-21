@@ -2332,6 +2332,7 @@ def _update_status_cache():
             if cached_hdd_temp == "--°C" and _smart_cache and _smart_cache.get("data"): 
                 cached_hdd_temp = _smart_cache["data"].get("temperature", "--°C")
 
+            actual_ram_pct = round((float(actual_used) / float(mem.total)) * 100.0, 1)
             data = {
                 "temperature": cached_hdd_temp,
                 "cpu": "%.1f%%" % cpu_percent,
@@ -2339,10 +2340,10 @@ def _update_status_cache():
                 "ram": "%s / %s" % (ram_used, ram_total),
                 "ram_used": ram_used,
                 "ram_total": ram_total,
-                "ram_percent": str(int(round(mem.percent))),
+                "ram_percent": str(int(round(actual_ram_pct))),
                 "mem_used": ram_used,
                 "mem_total": ram_total,
-                "mem_percent": str(int(round(mem.percent))),
+                "mem_percent": str(int(round(actual_ram_pct))),
                 "disk": cached_disk,
                 "net_rx": net_rx,
                 "net_tx": net_tx,
@@ -3718,9 +3719,11 @@ def api_processes():
         if total_sys_cpu <= 0.0:
             total_sys_cpu = round(psutil.cpu_percent(interval=None), 1)
 
-        mem = psutil.virtual_memory()
-        actual_used = mem.total - getattr(mem, 'available', mem.free)
-        total_sys_ram = round((actual_used / mem.total) * 100.0, 1)
+        total_sys_ram = _metric_float(cached_status.get("ram_percent", "0.0"))
+        if total_sys_ram <= 0.0:
+            mem = psutil.virtual_memory()
+            actual_used = mem.total - getattr(mem, 'available', mem.free)
+            total_sys_ram = round((actual_used / float(mem.total)) * 100.0, 1)
 
         active_procs = []
         for p in psutil.process_iter():
