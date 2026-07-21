@@ -950,39 +950,26 @@ fun BrowserScreen(
                         modifier = Modifier.padding(start = 8.dp)
                     )
 
-                    // Nút Chuyển đổi chế độ hiển thị file (ICON / LIST / DETAIL)
+                    // Nút Gộp Chuyển đổi chế độ hiển thị file (ICON -> LIST -> DETAIL -> ICON)
                     if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.padding(start = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(0.dp)
+                        val (currentIcon, nextMode, modeDesc) = when (viewMode) {
+                            BrowserViewMode.ICON -> Triple(Icons.Default.GridView, BrowserViewMode.LIST, "Chế độ Icon (nhấn để đổi sang Danh sách)")
+                            BrowserViewMode.LIST -> Triple(Icons.Default.ViewList, BrowserViewMode.DETAIL, "Chế độ Danh sách (nhấn để đổi sang Chi tiết)")
+                            BrowserViewMode.DETAIL -> Triple(Icons.Default.TableRows, BrowserViewMode.ICON, "Chế độ Chi tiết (nhấn để đổi sang Icon)")
+                        }
+                        IconButton(
+                            onClick = {
+                                viewMode = nextMode
+                                sortPrefs.edit { putString("view_mode", nextMode.name) }
+                            },
+                            modifier = Modifier.size(36.dp)
                         ) {
-                            data class ViewModeOpt(
-                                val mode: BrowserViewMode,
-                                val icon: androidx.compose.ui.graphics.vector.ImageVector,
-                                val desc: String
+                            Icon(
+                                imageVector = currentIcon,
+                                contentDescription = modeDesc,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
                             )
-                            val viewOpts = listOf(
-                                ViewModeOpt(BrowserViewMode.ICON, Icons.Default.GridView, "Chế độ icon"),
-                                ViewModeOpt(BrowserViewMode.LIST, Icons.Default.ViewList, "Chế độ danh sách"),
-                                ViewModeOpt(BrowserViewMode.DETAIL, Icons.Default.TableRows, "Chế độ chi tiết")
-                            )
-                            viewOpts.forEach { opt ->
-                                val isActive = viewMode == opt.mode
-                                IconButton(
-                                    onClick = {
-                                        viewMode = opt.mode
-                                        sortPrefs.edit { putString("view_mode", opt.mode.name) }
-                                    },
-                                    modifier = Modifier.size(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = opt.icon,
-                                        contentDescription = opt.desc,
-                                        tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
                         }
                     }
 
