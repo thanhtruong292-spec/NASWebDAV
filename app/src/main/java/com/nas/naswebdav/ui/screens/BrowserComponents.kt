@@ -649,13 +649,18 @@ fun WebDavCachedThumbnail(
             // Replaced by direct MediaMetadataRetriever fallback
         }
         ThumbStrategy.CLIENT_IMAGE -> {
+            val safeUrl = url.replace(" ", "%20")
             AsyncImage(
                 model = coil.request.ImageRequest.Builder(LocalContext.current)
-                    .data(url)
+                    .data(safeUrl)
                     .addHeader("Authorization", auth)
                     .crossfade(true)
                     .size(coil.size.Size(300, 300))
                     .allowHardware(true)
+                    .listener(
+                        onSuccess = { _, _ -> onStateChange(ThumbState.SUCCESS) },
+                        onError = { _, _ -> onStateChange(ThumbState.ERROR) }
+                    )
                     .build(),
                 contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
             )

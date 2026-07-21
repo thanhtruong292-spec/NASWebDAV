@@ -209,13 +209,14 @@ private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: j
 
 suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth: String, isVideo: Boolean): Boolean = withContext(Dispatchers.IO) {
     try {
-        val parsedUrl = java.net.URL(url)
-        val nasHost = parsedUrl.host
-        val webdavPath = parsedUrl.path ?: url.substringAfter(nasHost ?: "", "")
-        val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}"
+        val safeUrl = url.replace(" ", "%20")
+        val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
+        val webdavPath = parsedUrl?.path ?: url.substringAfter("8822", "").substringAfter("5050", "")
+        val decodedPath = java.net.URLDecoder.decode(webdavPath, "UTF-8")
+        val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(decodedPath, "UTF-8")}"
         if (executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)) return@withContext true
         if (isVideo) {
-            val forcedUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(webdavPath, "UTF-8")}&_t=${System.currentTimeMillis()}"
+            val forcedUrl = "$apiThumbUrl&_t=${System.currentTimeMillis()}"
             if (executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)) return@withContext true
         }
         false

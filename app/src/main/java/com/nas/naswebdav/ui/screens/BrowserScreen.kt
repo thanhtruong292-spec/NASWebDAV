@@ -1262,13 +1262,15 @@ fun BrowserScreen(
                                                     .background(Color(0xFF212121)),
                                                 contentAlignment = Alignment.Center
                                             ) {
+                                                var listThumbState by remember { mutableStateOf<ThumbState?>(null) }
                                                 WebDavCachedThumbnail(
                                                     url = file.path,
                                                     auth = auth,
                                                     isVideo = isVideo,
-                                                    modifier = Modifier.fillMaxSize()
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    onStateChange = { listThumbState = it }
                                                 )
-                                                if (isVideo) {
+                                                if (isVideo && listThumbState == ThumbState.SUCCESS) {
                                                     Icon(
                                                         Icons.Default.PlayArrow,
                                                         contentDescription = null,
@@ -1427,13 +1429,15 @@ fun BrowserScreen(
                                                         .background(Color(0xFF212121)),
                                                     contentAlignment = Alignment.Center
                                                 ) {
+                                                    var detailThumbState by remember { mutableStateOf<ThumbState?>(null) }
                                                     WebDavCachedThumbnail(
                                                         url = file.path,
                                                         auth = auth,
                                                         isVideo = isVideo,
-                                                        modifier = Modifier.fillMaxSize()
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        onStateChange = { detailThumbState = it }
                                                     )
-                                                    if (isVideo) {
+                                                    if (isVideo && detailThumbState == ThumbState.SUCCESS) {
                                                         Icon(
                                                             Icons.Default.PlayArrow,
                                                             contentDescription = null,
