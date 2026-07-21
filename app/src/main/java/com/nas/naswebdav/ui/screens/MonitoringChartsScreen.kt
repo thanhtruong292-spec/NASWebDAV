@@ -496,14 +496,14 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     }
 
                     // Dash effect nét đứt mảnh tinh tế (7dp nhát đứt, 4dp khoảng trống)
-                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(7f * density, 4f * density)) else null
+                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f * density, 2f * density)) else null
 
                     // Vẽ đường kẻ mảnh 1.0dp chuẩn cao cấp trên 1 Path liên tục
                     drawPath(
                         path = linePath,
                         color = s.color,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = 1.0f * density,
+                            width = 0.5f * density,
                             cap = androidx.compose.ui.graphics.StrokeCap.Round,
                             join = androidx.compose.ui.graphics.StrokeJoin.Round,
                             pathEffect = dashEffect
