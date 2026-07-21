@@ -318,7 +318,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         val label: String,
         val unit: String,
         val icon: androidx.compose.ui.graphics.vector.ImageVector,
-        val colorOf: ((Float) -> Color)? = null
+        val isDashed: Boolean = false
     )
 
     val cpuTempVals = history.map { it.cpuTemp }
@@ -326,27 +326,26 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val cpuPctVals  = history.map { it.cpuPercent }
     val ramPctVals  = history.map { it.ramPercent }
 
+    // Đánh giá màu sắc & kiểu đường kẻ riêng biệt cho từng metric:
+    // - CPU: Nét liền (Solid Line), màu Đỏ Coral (#FF5252) / Cam (#FF9100)
+    // - HDD / RAM / Upload: Nét đứt (Dashed Line), màu Cyan (#00E5FF) / Xanh Dương (#00B0FF) / Hồng (#FF4081)
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, colorOf = ::cpuTempStatusColor),
-            Series(hddTempVals, Color(0xFF00E676), "HDD", "°C", Icons.Default.Storage, colorOf = ::hddTempStatusColor)
+            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, isDashed = false),
+            Series(hddTempVals, Color(0xFF00E5FF), "HDD", "°C", Icons.Default.Storage, isDashed = true)
         )
         1 -> listOf(
-            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, colorOf = { v -> if (v >= 90f) _StatusRed else if (v >= 70f) _StatusYellow else Color(0xFFFF9100) }),
-            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, colorOf = { v -> if (v >= 90f) _StatusRed else if (v >= 70f) _StatusYellow else Color(0xFF00B0FF) })
+            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, isDashed = false),
+            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, isDashed = true)
         )
         else -> listOf(
-            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về", " MB/s", Icons.Default.ArrowDownward),
-            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF4081), "Tải lên", " MB/s", Icons.Default.ArrowUpward)
+            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về", " MB/s", Icons.Default.ArrowDownward, isDashed = false),
+            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF4081), "Tải lên", " MB/s", Icons.Default.ArrowUpward, isDashed = true)
         )
     }
 
     val allVals = series.flatMap { it.values }
     
-    // Quy tắc Min/Max thiết kế riêng theo yêu cầu:
-    // Tab 0 (Nhiệt độ): Min 20°C, Max 80°C
-    // Tab 1 (Tài nguyên): Min 0%, Max 100%
-    // Tab 2 (Mạng): Min 0 MB/s, Max động theo băng thông
     val minVal: Float = when (tabIndex) {
         0 -> 20f
         1 -> 0f
@@ -365,15 +364,17 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val textPx = 10f * density
 
     Column {
-        // Chú thích màu — Legend
+        // Chú thích màu & kiểu nét kẻ — Legend
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 series.forEach { s ->
                     val displayIdx = if (touchedIndex in s.values.indices) touchedIndex else s.values.lastIndex
-                    val legendColor = if (displayIdx >= 0) (s.colorOf?.invoke(s.values[displayIdx]) ?: s.color) else s.color
+                    val currentVal = if (displayIdx in s.values.indices) s.values[displayIdx] else 0f
+                    val styleLabel = if (s.isDashed) "- - - " else "━━ "
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Icon(s.icon, null, tint = legendColor, modifier = Modifier.size(13.dp))
-                        Text("${s.label} (${s.unit.trim()})", fontSize = 11.sp, color = legendColor, fontWeight = FontWeight.Bold)
+                        Text(styleLabel, fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Black)
+                        Icon(s.icon, null, tint = s.color, modifier = Modifier.size(13.dp))
+                        Text("${s.label} (${s.unit.trim()})", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -417,31 +418,29 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 val h = size.height
                 val leftPad = 45f * density
 
-                // Nhãn trục Y rõ ràng
+                // Nhãn trục Y
                 val yPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(220, 180, 190, 210)
+                    color = android.graphics.Color.argb(200, 160, 175, 200)
                     textSize = textPx
                     textAlign = android.graphics.Paint.Align.LEFT
                     isAntiAlias = true
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                 }
 
-                // Grid 4 đường kẻ ngang rõ ràng
+                // Grid 4 đường kẻ ngang siêu mảnh (0.6dp)
                 val gridCount = 4
                 for (i in 0 until gridCount) {
                     val fraction = i / (gridCount - 1).toFloat()
                     val y = pad + fraction * (h - pad * 2)
                     val gridVal = maxVal - fraction * (maxVal - minVal)
 
-                    // Đường kẻ ngang nét đứt mỏng
                     drawLine(
-                        color = Color(0x33FFFFFF),
+                        color = Color(0x22FFFFFF),
                         start = Offset(leftPad, y),
                         end = Offset(w, y),
-                        strokeWidth = 1.2f * density
+                        strokeWidth = 0.6f * density
                     )
 
-                    // Nhãn trục Y
                     val fmt = when (tabIndex) {
                         0 -> "%.0f°C".format(gridVal)
                         1 -> "%.0f%%".format(gridVal)
@@ -450,7 +449,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     drawContext.canvas.nativeCanvas.drawText(fmt, 0f, y + textPx / 3f, yPaint)
                 }
 
-                // Vẽ các series đường kẻ riêng biệt
+                // Vẽ các series đường kẻ mảnh (1.2dp) với kiểu Solid/Dashed phân biệt rõ ràng
                 series.forEach { s ->
                     val pts = s.values
                     if (pts.size < 2) return@forEach
@@ -458,47 +457,33 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     fun xOf(i: Int) = leftPad + i * step
                     fun yOf(v: Float) = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
 
-                    if (s.colorOf != null) {
-                        val colorFn = s.colorOf
-                        for (i in 0 until pts.size - 1) {
-                            val v1 = pts[i]
-                            val v2 = pts[i + 1]
-                            val c1 = colorFn(v1)
-                            val c2 = colorFn(v2)
-                            val cMid = lerpColor(c1, c2, 0.5f)
-                            val x1 = xOf(i)
-                            val x2 = xOf(i + 1)
-                            val y1 = yOf(v1)
-                            val y2 = yOf(v2)
-                            val segPath = androidx.compose.ui.graphics.Path().apply {
-                                moveTo(x1, h - pad)
-                                lineTo(x1, y1)
-                                lineTo(x2, y2)
-                                lineTo(x2, h - pad)
-                                close()
-                            }
-                            drawPath(segPath, cMid.copy(alpha = 0.12f))
-                            drawLine(cMid, Offset(x1, y1), Offset(x2, y2), strokeWidth = 2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                        }
-                    } else {
-                        val fillPath = androidx.compose.ui.graphics.Path()
-                        fillPath.moveTo(xOf(0), h - pad)
-                        pts.forEachIndexed { i, v -> fillPath.lineTo(xOf(i), yOf(v)) }
-                        fillPath.lineTo(xOf(pts.lastIndex), h - pad)
-                        fillPath.close()
-                        drawPath(fillPath, s.color.copy(alpha = 0.12f))
+                    // Fill vùng mờ rất nhẹ (0.05f alpha)
+                    val fillPath = androidx.compose.ui.graphics.Path()
+                    fillPath.moveTo(xOf(0), h - pad)
+                    pts.forEachIndexed { i, v -> fillPath.lineTo(xOf(i), yOf(v)) }
+                    fillPath.lineTo(xOf(pts.lastIndex), h - pad)
+                    fillPath.close()
+                    drawPath(fillPath, s.color.copy(alpha = 0.05f))
 
-                        for (i in 0 until pts.size - 1) {
-                            drawLine(s.color, Offset(xOf(i), yOf(pts[i])), Offset(xOf(i + 1), yOf(pts[i + 1])), strokeWidth = 2f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                        }
+                    // Đường kẻ mảnh 1.2dp (Solid cho CPU, Dashed cho HDD/RAM/Upload)
+                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f * density, 6f * density)) else null
+
+                    for (i in 0 until pts.size - 1) {
+                        drawLine(
+                            color = s.color,
+                            start = Offset(xOf(i), yOf(pts[i])),
+                            end = Offset(xOf(i + 1), yOf(pts[i + 1])),
+                            strokeWidth = 1.2f * density,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            pathEffect = dashEffect
+                        )
                     }
 
                     // Điểm mốc cuối cùng nếu ko chạm
                     if (touchedIndex == -1) {
-                        val endColor = s.colorOf?.invoke(pts.last()) ?: s.color
                         val lastY = yOf(pts.last())
-                        drawCircle(endColor, 4.5f * density, Offset(xOf(pts.lastIndex), lastY))
-                        drawCircle(Color.White, 2f * density, Offset(xOf(pts.lastIndex), lastY))
+                        drawCircle(s.color, 3.5f * density, Offset(xOf(pts.lastIndex), lastY))
+                        drawCircle(Color.White, 1.5f * density, Offset(xOf(pts.lastIndex), lastY))
                     }
                 }
 
@@ -509,7 +494,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         val step = (w - leftPad - pad) / (pts0.size - 1).toFloat()
                         val cx = leftPad + touchedIndex * step
 
-                        drawLine(Color.White, Offset(cx, pad/2), Offset(cx, h), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(15f, 10f)))
+                        drawLine(Color.White, Offset(cx, pad/2), Offset(cx, h), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
 
                         val tsText = history[touchedIndex].timestamp
                         val timeStr = if (tsText.length >= 19) tsText.substring(11, 19) else tsText
@@ -542,11 +527,10 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             if (touchedIndex >= s.values.size) return@forEach
                             val v = s.values[touchedIndex]
                             val cy = h - pad - ((v.coerceIn(minVal, maxVal) - minVal) / range) * (h - pad * 2)
-                            val pointColor = s.colorOf?.invoke(v) ?: s.color
 
-                            drawCircle(pointColor.copy(alpha = 0.5f), 10f * density, Offset(cx, cy))
-                            drawCircle(pointColor, 6f * density, Offset(cx, cy))
-                            drawCircle(Color.White, 3f * density, Offset(cx, cy))
+                            drawCircle(s.color.copy(alpha = 0.4f), 8f * density, Offset(cx, cy))
+                            drawCircle(s.color, 5f * density, Offset(cx, cy))
+                            drawCircle(Color.White, 2.5f * density, Offset(cx, cy))
 
                             val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
                             val label = "${fmt.format(v)}${s.unit}"
@@ -556,7 +540,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             val labelX = if (isLeft) cx - txtW/2 - 15f else cx + txtW/2 + 15f
                             val labelY = cy - 5f
 
-                            val bgC = pointColor
+                            val bgC = s.color
                             val bgColor = android.graphics.Color.argb(220, (bgC.red*255).toInt()/5, (bgC.green*255).toInt()/5, (bgC.blue*255).toInt()/5)
 
                             drawContext.canvas.nativeCanvas.drawRoundRect(
@@ -564,7 +548,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                                 12f, 12f, android.graphics.Paint().apply { color = bgColor }
                             )
 
-                            labelPaint.color = android.graphics.Color.argb(255, (pointColor.red*255).toInt(), (pointColor.green*255).toInt(), (pointColor.blue*255).toInt())
+                            labelPaint.color = android.graphics.Color.argb(255, (s.color.red*255).toInt(), (s.color.green*255).toInt(), (s.color.blue*255).toInt())
                             drawContext.canvas.nativeCanvas.drawText(label, labelX, labelY, labelPaint)
                         }
                     }
@@ -579,8 +563,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 if (idx in s.values.indices) {
                     val v = s.values[idx]
                     val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
-                    val rowColor = s.colorOf?.invoke(v) ?: s.color
-                    Text("${s.label}: ${fmt.format(v)}${s.unit}  ", fontSize = 11.sp, color = rowColor, fontWeight = FontWeight.Bold)
+                    Text("${s.label}: ${fmt.format(v)}${s.unit}  ", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
                 }
             }
         }
