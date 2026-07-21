@@ -3688,8 +3688,6 @@ def api_omv_overview():
 _processes_cache = {"data": None, "time": 0.0}
 _processes_lock = threading.Lock()
 
-@app.route("/api/processes", methods=["GET"])
-@requires_auth
 def _is_kernel_or_system_proc(proc):
     """Kiểm tra tiến trình có thuộc Kernel OS hoặc Daemon hệ thống hay không (Python 3.5)."""
     try:
