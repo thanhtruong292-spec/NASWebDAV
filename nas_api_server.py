@@ -13758,10 +13758,14 @@ if __name__ == "__main__":
                 try:
                     if os.path.exists("/tmp"):
                         for f in os.listdir("/tmp"):
-                            if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_"):
+                            if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_") or f.startswith("test_ytdlp_") or f.startswith("nas_fast_index") or f.endswith(".mp4") or f.endswith(".webm") or f.endswith(".ts"):
                                 fpath = os.path.join("/tmp", f)
-                                if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 7200):
-                                    os.remove(fpath)
+                                try:
+                                    if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
+                                        os.remove(fpath)
+                                        log.info("[ResourceReclaimer] Đã xóa file rác RAM-disk /tmp: %s" % f)
+                                except Exception:
+                                    pass
                 except Exception:
                     pass
 
