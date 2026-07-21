@@ -1109,7 +1109,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                 MainMenuDashboardGaugeCard(
                     title = "S.M.A.R.T",
                     value = smartStatusText,
-                    subValue = deviceVM.smartInfo.temperature.replace("°C", "°").replace("--", ""),
+                    subValue = sysMonitorVM.systemStatus.temp.ifEmpty { deviceVM.smartInfo.temperature }.replace("°C", "°").replace("--", ""),
                     icon = Icons.Default.HealthAndSafety,
                     gradientColors = smartColors,
                     modifier = Modifier.weight(1f),
@@ -1648,7 +1648,8 @@ fun MainMenuDashboardNasInsightsSummaryCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MainMenuDashboardInsightMiniStat("HDD", "${insight.hddScore}/100", "${insight.hddTempC}°C", AccentGreen, Modifier.weight(1f))
+                val liveHddTemp = if (sysMonitorVM.systemStatus.temp.isNotBlank() && sysMonitorVM.systemStatus.temp != "--°C") sysMonitorVM.systemStatus.temp else "${insight.hddTempC}°C"
+                MainMenuDashboardInsightMiniStat("HDD", "${insight.hddScore}/100", liveHddTemp, AccentGreen, Modifier.weight(1f))
                 MainMenuDashboardInsightMiniStat("eMMC", "${insight.emmcRootPercent}%", "log ${insight.emmcLogPercent}%", if (insight.emmcWarnings.isEmpty()) AccentCyan else AccentOrange, Modifier.weight(1f))
                 MainMenuDashboardInsightMiniStat("Ghi HDD", insightRate(insight.diskWriteBps), "đọc ${insightRate(insight.diskReadBps)}", AccentPurple, Modifier.weight(1f))
             }
