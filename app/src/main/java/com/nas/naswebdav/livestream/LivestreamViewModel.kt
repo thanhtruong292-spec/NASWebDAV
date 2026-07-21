@@ -254,7 +254,11 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-                withContext(Dispatchers.Main) { livestreamMessage = "✅ Đã gửi lệnh ghi" }
+                withContext(Dispatchers.Main) {
+                    com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "tasks"
+                    livestreamMessage = "✅ Đã gửi lệnh ghi"
+                }
+                fetchLivestreamStatusOnly(NasApplication.instance.applicationContext)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi: ${e.message}" }
             } finally {

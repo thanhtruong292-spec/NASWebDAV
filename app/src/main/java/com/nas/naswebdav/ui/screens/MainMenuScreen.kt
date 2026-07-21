@@ -235,7 +235,7 @@ object ExclusivePanelState {
         androidx.compose.runtime.mutableStateOf(null)
 
     fun toggle(panelId: String) {
-        current.value = if (current.value == panelId) null else panelId
+        current.value = if (current.value == panelId) "closed" else panelId
     }
 }
 
@@ -2451,12 +2451,12 @@ fun MainMenuSystemStatusCards(
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
-        // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
         livestreamVM.syncLivestreamStateWithServer()
         while (isActive) {
-            kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
             livestreamVM.fetchLivestreamStatusOnly(mContext)
             livestreamVM.fetchTikTokLiveWatch(mContext)
+            val pollDelay = if (livestreamVM.activeLivestreams.isNotEmpty()) 3_000L else 10_000L
+            kotlinx.coroutines.delay(pollDelay)
         }
     }
     val usbImport = deviceVM.usbImportState
@@ -2496,7 +2496,7 @@ fun MainMenuSystemStatusCards(
 
     Column(Modifier.fillMaxWidth()) {
         // Mo doc quyen: panel mo dong bo voi ExclusivePanelState
-        val tasksExpanded = ExclusivePanelState.current.value == "tasks"
+        val tasksExpanded = ExclusivePanelState.current.value == "tasks" || ExclusivePanelState.current.value == null
         val activeCount = listOf(dupIsActive, autoBackupIsActive, usbImportIsActive, activeStreams.isNotEmpty()).count { it }
         Spacer(Modifier.height(8.dp))
 
