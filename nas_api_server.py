@@ -2202,8 +2202,11 @@ def get_fan_info():
 
 _EXCLUDED_SYSTEM_PROCS = (
     "kworker", "systemd", "rcu", "migration", "ksoftirqd", "init", "kthreadd",
-    "journald", "udevd", "dbus-daemon", "sshd", "getty", "cron", "syslog",
-    "rsyslog", "networkmanager", "avahi-daemon", "polkitd", "containeractions"
+    "journald", "udevd", "dbus", "sshd", "getty", "cron", "syslog",
+    "rsyslog", "networkmanager", "avahi", "polkit", "containeractions",
+    "containerd", "dockerd", "php-fpm", "omv-engined", "anacron", "atd",
+    "smartd", "watchdog", "ntpd", "tailscaled", "nginx", "nas_api_server",
+    "rpcbind", "rngd", "sd-pam", "bash", "ps", "sh"
 )
 
 def get_top_processes(n=3):
@@ -3688,8 +3691,8 @@ def api_processes():
                     pid = info.get('pid', 0)
                     name = info.get('name', 'unknown').lower()
                     
-                    # Hide system processes, kernel threads, and the NAS API server itself
-                    if pid == nas_pid or pid <= 100 or name.startswith('kworker') or name.startswith('systemd') or name.startswith('rcu') or name.startswith('migration') or name.startswith('ksoftirqd'):
+                    # Hide system processes, kernel threads, OS daemons, and the NAS API server itself
+                    if pid == nas_pid or pid <= 100 or any(name.startswith(sys_name) for sys_name in _EXCLUDED_SYSTEM_PROCS):
                         continue
                         
                     cpu = p.cpu_percent() / num_cores
@@ -13728,6 +13731,14 @@ if __name__ == "__main__":
                             try:
                                 proc.kill()
                                 log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget kẹt quá 10 phút PID=%d" % pid)
+                            except Exception:
+                                pass
+                            continue
+
+                        if name == 'containerd':
+                            try:
+                                proc.kill()
+                                log.info("[ResourceReclaimer] Đã tiêu diệt containerd mồ côi PID=%d" % pid)
                             except Exception:
                                 pass
                             continue
