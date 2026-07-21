@@ -2218,11 +2218,7 @@ def get_top_processes(n=3):
 
         for proc in psutil.process_iter():
             try:
-                pid = proc.pid
-                if pid <= 100:
-                    continue
-                name = (proc.name() or "").lower()
-                if any(name.startswith(sys_name) for sys_name in _EXCLUDED_SYSTEM_PROCS):
+                if _is_kernel_or_system_proc(proc):
                     continue
                 proc.cpu_percent()
                 active_procs.append(proc)
@@ -3673,10 +3669,39 @@ _processes_lock = threading.Lock()
 
 @app.route("/api/processes", methods=["GET"])
 @requires_auth
-def api_processes():
-    """L?y danh sách 100 tien trinh hang dau, sap xep theo CPU hoac RAM."""
+def _is_kernel_or_system_proc(proc):
+    """Kiểm tra tiến trình có thuộc Kernel OS hoặc Daemon hệ thống hay không (Python 3.5)."""
     try:
-        global _processes_cache
+        pid = getattr(proc, 'pid', 0)
+        if pid <= 300 or pid == os.getpid():
+            return True
+        try:
+            if proc.ppid() <= 2:
+                return True
+        except Exception:
+            return True
+        exe_exists = False
+        try:
+            exe_target = os.readlink("/proc/%d/exe" % pid)
+            if exe_target:
+                exe_exists = True
+        except Exception:
+            exe_exists = False
+        if not exe_exists:
+            return True
+        name = (proc.name() or "").lower()
+        if any(name.startswith(sys_name) for sys_name in _EXCLUDED_SYSTEM_PROCS):
+            return True
+        return False
+    except Exception:
+        return True
+
+
+@app.route("/api/processes", methods=["GET"])
+@requires_auth
+def api_processes():
+    """Lấy danh sách tiến trình ứng dụng + Hệ thống OS với toán học khớp 100% với Dashboard Status."""
+    try:
         sort_by = request.args.get("sort", "cpu")
         try:
             limit = int(request.args.get("limit", 100))
@@ -3685,87 +3710,83 @@ def api_processes():
         limit = max(1, min(limit, 200))
         num_cores = psutil.cpu_count() or 1
         
-        with _processes_lock:
-            now = time.time()
-            # Cache tien trinh 30s de khong ngai bi goi lien tuc
-            if now - _processes_cache["time"] < 30.0 and _processes_cache["data"]:
-                procs = list(_processes_cache["data"]) # Copy tu cache
-            else:
-                procs = None
-
-        if procs is None:
-            active_procs = []
-            for p in psutil.process_iter(['pid', 'name', 'username', 'status', 'memory_percent']):
-                try:
-                    p.cpu_percent()
-                    active_procs.append(p)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-                    
-            time.sleep(0.1)
-            
-            procs = []
-            nas_pid = os.getpid()
-            for p in active_procs:
-                try:
-                    info = p.info
-                    pid = info.get('pid', 0)
-                    name = info.get('name', 'unknown').lower()
-                    
-                    # Hide system processes, kernel threads, OS daemons, and the NAS API server itself
-                    if pid == nas_pid or pid <= 100 or any(name.startswith(sys_name) for sys_name in _EXCLUDED_SYSTEM_PROCS):
-                        continue
-                        
-                    cpu = p.cpu_percent() / num_cores
-                    # Handle status string
-                    st = str(info.get('status', ''))
-                    
-                    procs.append({
-                        "pid": pid,
-                        "name": info.get('name', 'unknown'),
-                        "user": info.get('username', 'root') or "root",
-                        "status": st,
-                        "cpu": round(cpu, 1),
-                        "mem": round(info.get('memory_percent', 0.0) or 0.0, 1)
-                    })
-                except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
-                    continue
-                    
-            # Tự động tính toán % Tiến trình Hệ thống (System OS) để tổng luôn bằng 100% tài nguyên đã dùng
-            user_cpu_sum = sum(p["cpu"] for p in procs)
-            user_mem_sum = sum(p["mem"] for p in procs)
-
+        # 1. Lấy dữ liệu live từ _status_cache để đồng bộ 100% với biểu đồ vòng tròn trên Dashboard
+        with _cache_lock:
+            cached_status = dict(_status_cache)
+        
+        total_sys_cpu = _metric_float(cached_status.get("cpu", "0.0"))
+        if total_sys_cpu <= 0.0:
             total_sys_cpu = round(psutil.cpu_percent(interval=None), 1)
+
+        mem = psutil.virtual_memory()
+        actual_used = mem.total - getattr(mem, 'available', mem.free)
+        total_sys_ram = round((actual_used / mem.total) * 100.0, 1)
+
+        active_procs = []
+        for p in psutil.process_iter():
             try:
-                total_sys_mem = round(psutil.virtual_memory().percent, 1)
-            except Exception:
-                total_sys_mem = 0.0
-
-            sys_cpu = max(0.0, round(total_sys_cpu - user_cpu_sum, 1))
-            sys_mem = max(0.0, round(total_sys_mem - user_mem_sum, 1))
-
-            procs.append({
-                "pid": -1,
-                "name": "Hệ thống (System OS)",
-                "user": "root",
-                "status": "running",
-                "cpu": sys_cpu,
-                "mem": sys_mem,
-                "is_system": True
-            })
-
-            if len(procs) > 0:
-                # Ghi lai vao cache
-                with _processes_lock:
-                    _processes_cache["data"] = list(procs)
-                    _processes_cache["time"] = time.time()
+                if _is_kernel_or_system_proc(p):
+                    continue
+                p.cpu_percent()
+                active_procs.append(p)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
                 
+        time.sleep(0.1)
+        
+        user_procs = []
+        for p in active_procs:
+            try:
+                info = p.as_dict(attrs=['pid', 'name', 'username', 'status', 'memory_percent'])
+                pid = info.get('pid', 0)
+                name = info.get('name', 'unknown')
+                cpu = round(p.cpu_percent() / num_cores, 1)
+                mem_pct = round(info.get('memory_percent', 0.0) or 0.0, 1)
+                st = str(info.get('status', 'running'))
+                user_procs.append({
+                    "pid": pid,
+                    "name": name,
+                    "user": info.get('username', 'root') or "root",
+                    "status": st,
+                    "cpu": cpu,
+                    "mem": mem_pct
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
+                continue
+
+        # 2. Tính tổng số % đã hiển thị của user procs
+        user_cpu_sum = round(sum(p["cpu"] for p in user_procs), 1)
+        user_mem_sum = round(sum(p["mem"] for p in user_procs), 1)
+
+        if user_cpu_sum > total_sys_cpu:
+            total_sys_cpu = user_cpu_sum
+
+        if user_mem_sum > total_sys_ram:
+            total_sys_ram = user_mem_sum
+
+        # 3. Tính % Hệ thống (System OS) = Dashboard total - User procs sum
+        sys_cpu = max(0.0, round(total_sys_cpu - user_cpu_sum, 1))
+        sys_mem = max(0.0, round(total_sys_ram - user_mem_sum, 1))
+
+        # 4. Tạo hàng đại diện duy nhất cho Hệ thống (System OS)
+        sys_entry = {
+            "pid": -1,
+            "name": "Hệ thống (System OS)",
+            "user": "root",
+            "status": "running",
+            "cpu": sys_cpu,
+            "mem": sys_mem,
+            "is_system": True
+        }
+
+        all_procs = [sys_entry] + user_procs
+
         if sort_by == "mem":
-            procs.sort(key=lambda x: x["mem"], reverse=True)
+            all_procs.sort(key=lambda x: x["mem"], reverse=True)
         else:
-            procs.sort(key=lambda x: x["cpu"], reverse=True)
+            all_procs.sort(key=lambda x: x["cpu"], reverse=True)
             
-        return jsonify({"status": "success", "data": procs[:limit]})
+        return jsonify({"status": "success", "data": all_procs[:limit]})
     except Exception as e:
         log.error("Lỗi API danh sách tiến trình: %s", e)
         return jsonify({"error": str(e)}), 500
