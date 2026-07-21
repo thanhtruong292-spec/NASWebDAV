@@ -309,10 +309,26 @@ fun MonitoringChartCard() {
             }
 
             // Panel báo cáo mở rộng
-            androidx.compose.animation.AnimatedVisibility(visible = showReport && report != null) {
+            androidx.compose.animation.AnimatedVisibility(visible = showReport) {
                 Column {
                     Spacer(Modifier.height(8.dp))
-                    report?.let { NasDailyReportPanel(it) }
+                    if (report != null) {
+                        NasDailyReportPanel(report)
+                    } else if (sysMonitorVM.isDailyReportLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(60.dp).background(_ChartDarkSurface, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = _ChartAccentCyan, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(50.dp).background(_ChartDarkSurface, RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Chưa có dữ liệu báo cáo hôm qua.", fontSize = 11.sp, color = _ChartTextSecond)
+                        }
+                    }
                 }
             }
 
