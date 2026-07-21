@@ -1,68 +1,98 @@
-# NASWebDAV - PROJECT ARCHITECTURE MAP
+# NASWebDAV - BẢN ĐỒ KIẾN TRÚC DỰ ÁN (PROJECT MAP)
 
-> **BẮT BUỘC ĐỌC:** Tất cả AI Agent làm việc trên dự án này PHẢI đọc, hiểu và ghi nhớ bản đồ này TRƯỚC KHI thực hiện bất kỳ thay đổi nào. Sau khi thay đổi kiến trúc hoặc tính năng, BẮT BUỘC phải cập nhật lại file này.
-
-## 1. Tổng quan hệ thống (System Overview)
-NASWebDAV là một hệ sinh thái gồm 2 thành phần chính:
-- **Server (NAS):** Chạy trên thiết bị phần cứng yếu (Chainedbox L1 Pro - CPU RK3328, 1-2GB RAM). Chỉ đóng vai trò lưu trữ thuần túy (Dumb Storage).
-- **Client (Android):** Ứng dụng quản lý NAS (Kotlin + Jetpack Compose), đảm nhiệm toàn bộ tác vụ nặng (Tạo thumbnail, quét file trùng lặp, xử lý media).
+> **BẮT BUỘC ĐỌC:** Tài liệu này là ranh giới kiến trúc tuyệt đối. Tất cả AI Agent làm việc trên dự án này PHẢI đọc, hiểu và tuân thủ bản đồ này TRƯỚC KHI thực hiện bất kỳ thay đổi nào. Cấm "dẫm đạp" (overwrite) logic của các thành phần đã được định nghĩa ở đây.
 
 ---
 
-## 2. Server Backend (`nas_api_server.py`)
-- **Ngôn ngữ:** Python 3.5 (KHÔNG hỗ trợ f-string, walrus operator `:=`, hay type hints phức tạp).
-- **Framework:** Flask.
-- **Port hoạt động:** `5050` (API), `8822` (Nginx WebDAV).
-- **Môi trường:** Armbian, giới hạn tài nguyên khắt khe.
+## 1. SƠ ĐỒ LUỒNG DỮ LIỆU & KIẾN TRÚC (MERMAID)
 
-### Các giới hạn & Quy tắc sinh tử (Hard Rules) trên NAS:
-1. **Tuyệt đối KHÔNG chạy tác vụ nặng:** Các tính năng như tạo Thumbnail (`_thumbnail_generator`), nén/giải nén file zip lớn, quét trùng lặp phải được offload sang Android. NAS chỉ làm nhiệm vụ nhận/trả file (`POST /api/thumb/upload`).
-2. **eMMC Protection (Bảo vệ bộ nhớ trong):** 
-   - Tuyệt đối không lưu file tạm, file rác, hay thư mục `.trash/` vào phân vùng root của hệ điều hành.
-   - Các thao tác file (xóa, chuyển) phải được thực hiện trên **cùng một ổ cứng ngoài** (vd: `Box Data`, `N300`) để tránh hiện tượng copy chéo làm tràn eMMC.
-3. **Mạng & IP:** 
-   - LAN IP: `192.168.100.254` (Ưu tiên dùng khi ở nhà).
-   - Tailscale IP: `100.90.135.102` (Dùng khi ra ngoài).
-   - Firewall: Khi cấu hình `iptables`, rule `DROP` bắt buộc phải đặt SAU rule `ACCEPT`.
-4. **Security:** Không được khóa tài khoản `daica` bằng `pam_tally2`. Không dùng `subprocess.run` trực tiếp mà phải dùng hàm wrapper bảo mật `safe_run_cmd`.
+```mermaid
+graph TD
+    subgraph Android App (Client - Xử lý tác vụ nặng)
+        UI[Jetpack Compose UI] -->|CompositionLocal| VMP[DomainViewModelProvider]
+        
+        VMP --> Auth[AuthSessionViewModel]
+        VMP --> Browser[FileBrowserViewModel]
+        VMP --> System[SystemMonitorViewModel]
+        VMP --> Device[DeviceManagementViewModel]
+        VMP --> Smart[SmartToolsViewModel]
+        VMP --> Live[LivestreamViewModel]
+        VMP --> Backup[AutoBackupViewModel]
+        VMP --> Global[GlobalUiViewModel]
+        
+        Auth & Browser & System & Device & Smart & Live & Backup --> WebDavManager
+    end
 
----
-
-## 3. Android Client (Kotlin / Jetpack Compose)
-- **Kiến trúc:** MVVM + Strangler Fig Pattern (Đang trong quá trình bẻ God Class `WebDavViewModel` thành các Domain VMs nhỏ).
-- **DI (Dependency Injection):** Sử dụng `DomainViewModelProvider` và `CompositionLocalProvider` tại `MainActivity.kt`.
-
-### Cấu trúc Domain ViewModels (Phase 7):
-1. **`AuthSessionViewModel`**: Đăng nhập, quản lý phiên WebDAV, TCP Ping.
-2. **`DeviceManagementViewModel`**: SMB, Docker, Quạt (Fan), Ổ cứng (Storage), Whitelist.
-3. **`SystemMonitorViewModel`**: Giám sát hiệu năng (RAM, CPU), nhiệt độ, Disk Health.
-4. **`FileBrowserViewModel`**: Duyệt file, CRUD (Tạo, Đọc, Cập nhật, Xóa).
-5. **`AutoBackupViewModel`**: Tự động sao lưu ngầm qua `WorkManager`.
-6. **`LivestreamViewModel`**: TikTok live watcher, Social extractor.
-7. **`SmartToolsViewModel`**: Xóa file trùng lặp, xử lý metadata/thumbnail.
-
-### Quy tắc sinh tử (Hard Rules) trên Android:
-1. **Thumbnail Generation:** App tự động sinh thumbnail cho ảnh/video bằng `MediaMetadataRetriever` hoặc `BitmapFactory` tại local, sau đó upload lên `/api/thumb/upload` thông qua `ThumbnailGenerator.kt`.
-2. **WAKE_LOCK:** CẤM TUYỆT ĐỐI xóa `tools:node="replace"` ở thẻ `WAKE_LOCK` trong `AndroidManifest.xml` (tránh thư viện bên thứ 3 giới hạn quyền ngầm `maxSdkVersion=25`).
-3. **Giao diện (UI):** Sử dụng `NasTheme {}` bọc ngoài cùng. Tuyệt đối không dùng trực tiếp `MaterialTheme {}` trong `setContent` vì sẽ làm mất font chữ hệ thống `SamsungOneFontFamily`.
+    subgraph NAS Server (Chainedbox RK3328 - Dumb Storage)
+        WebDavManager -->|Port 8822 - I/O| Nginx[Nginx WebDAV]
+        WebDavManager -->|Port 5050 - HTTP| Flask[Flask API Backend]
+        
+        Nginx -->|Read/Write| Storage[(HDD Ngoài: Box Data, N300)]
+        Flask -->|Metrics/Control| OS[Armbian OS]
+        Flask -->|Metadata/Logs| SQLite[(nas_state.db)]
+    end
+    
+    %% Quy tắc đỏ
+    Flask -.->|CẤM CHẠY| Heavy[Tạo Thumbnail, Dò File Trùng]
+    Smart -.->|Trích xuất Local| ThumbGen[ThumbnailGenerator.kt]
+    ThumbGen -->|POST /api/thumb/upload| Flask
+```
 
 ---
 
-## 4. API Endpoints Quan Trọng
-- **Auth:** `POST /api/login`, `GET /api/status`
-- **File & WebDAV:** `PROPFIND /webdav/...`, `MKCOL`, `MOVE`, `DELETE`
-- **Thumbnail:** `GET /api/thumb` (Lấy ảnh), `POST /api/thumb/upload` (Android upload lên NAS)
-- **System:** `GET /api/system/monitor`, `GET /api/system/storage`, `POST /api/lan/whitelist`
-- **Trash:** `POST /api/trash/move`, `POST /api/trash/restore`, `DELETE /api/trash/empty`
+## 2. SERVER BACKEND (`nas_api_server.py`)
+**Môi trường:** Chainedbox L1 Pro (CPU RK3328, 1-2GB RAM). Python 3.5.
+**Trách nhiệm:** Chỉ cung cấp API điều khiển hệ thống, giám sát phần cứng và tiếp nhận file. KHÔNG xử lý các tác vụ ngốn CPU/RAM (Media processing).
+
+### Danh mục API Endpoints (Flask - Port 5050):
+*Được nhóm theo chức năng để tránh viết trùng lặp.*
+
+#### 2.1. System & Hardware (Giám sát & Phần cứng)
+- `GET /api/status`, `/api/status/realtime`: Thông số CPU, RAM, Disk, Uptime tổng hợp.
+- `GET /api/system/workload`, `/api/system/idle`: Đo tải hệ thống để quyết định ngủ đông (Sleep).
+- `GET /api/disk/smart`, `/api/disk/health`: S.M.A.R.T Disk health và lịch sử.
+- `POST /api/fan/control`: Điều khiển quạt tản nhiệt (Custom curve).
+- `POST /api/power/reboot`, `suspend`, `shutdown`: Điều khiển nguồn.
+
+#### 2.2. Network & Security (Mạng & Bảo mật)
+- `POST /api/auth/authorize`: Sinh token xác thực IP.
+- `GET /api/lan/whitelist`, `POST`, `DELETE`: Quản lý IP được phép truy cập (Firewall).
+- `GET /api/tailscale/status`: Trạng thái kết nối Tailscale IP (`100.90.135.102`).
+- `POST /api/guest/create`, `revoke`: Quản lý tài khoản khách.
+
+#### 2.3. Media & Smart Tools (Nhận dữ liệu từ Android)
+- `POST /api/thumb/upload`: Nhận file thumbnail chuẩn JPEG 300x300 từ Android tải lên.
+- `GET /api/thumb`: Lấy ảnh thumbnail (Trả 404 nếu không có, ép Android tự sinh rồi upload).
+- `POST /api/tools/smart_organize/...`: Kích hoạt job di chuyển, sắp xếp file dựa trên metadata (Android tính toán, NAS thực thực thi dời file).
+
+#### 2.4. Services (Docker, SMB, Torrent, etc)
+- `GET /api/docker/containers`, `POST /api/docker/control`: Quản lý Container.
+- `GET /api/smb/status`, `POST /api/smb/toggle`: Bật/Tắt Samba.
+- `POST /api/torrent/control`, `add_file`: Quản lý tải Torrent (Transmission).
+
+### Quy tắc sinh tử trên NAS (Anti-Patterns):
+- **Cấm ghi eMMC:** Không được lưu file vào các thư mục `/root`, `/home`, hay phân vùng hệ điều hành. Chỉ làm việc trên `/media/Box Data/` hoặc ổ USB.
+- **Python 3.5:** Tuyệt đối cấm dùng f-string (`f"..."`), walrus (`:=`), hoặc thư viện chỉ có ở Python 3.6+. Phải dùng `"...".format(...)`.
+- **An toàn mạng:** `daica` là tài khoản hệ thống bất tử, đã được cấu hình PAM bypass `pam_tally2`. Không được can thiệp khóa tài khoản này.
+- **Iptables:** Lệnh `DROP` luôn phải đẩy xuống cuối cùng (sau `ACCEPT`). Dùng lệnh `iptables-save > /etc/iptables/rules.v4` sau khi chỉnh sửa.
 
 ---
 
-## 5. Quy trình Deploy / Cập nhật
-1. Chỉnh sửa code trên PC (Android Studio / Antigravity IDE).
-2. Khi sửa Backend Python (`nas_api_server.py`), ưu tiên deploy qua LAN:
-   ```bash
-   scp nas_api_server.py root@192.168.100.254:/root/nas_api_server.py
-   ssh root@192.168.100.254 "cp /root/nas_api_server.py /opt/nas_api_server.py && systemctl daemon-reload && systemctl restart nas_api.service"
-   ```
-3. Luôn kiểm tra lại Log `tail -10 /tmp/nas_api.log` sau khi deploy.
-4. Cập nhật file `MAP.md` (file này) nếu có bất kỳ module, service, hay luồng dữ liệu nào thay đổi.
+## 3. ANDROID CLIENT (App Kotlin)
+**Kiến trúc:** Strangler Fig Pattern. Phân rã `WebDavViewModel` khổng lồ thành 8 Domain ViewModels độc lập, cung cấp qua `DomainViewModelProvider`.
+
+### 3.1. Các Domain ViewModels (Ranh giới tính năng):
+1. **`AuthSessionViewModel.kt`**: Chuyên trách quản lý kết nối TCP Ping, xác thực WebDAV, IP LAN (`192.168.100.254`) vs Tailscale (`100.90.135.102`). Cấm viết logic UI hay file vào đây.
+2. **`DeviceManagementViewModel.kt`**: Chuyên tương tác API Service (SMB, Docker, Fan, Whitelist). 
+3. **`SystemMonitorViewModel.kt`**: Polling liên tục `GET /api/status` và vẽ biểu đồ hiệu năng, Disk S.M.A.R.T.
+4. **`FileBrowserViewModel.kt`**: Logic lõi của ứng dụng - Duyệt WebDAV (PROPFIND), tạo thư mục, đổi tên, tải xuống.
+5. **`SmartToolsViewModel.kt`**: Nhận luồng dữ liệu từ NAS, tính toán MD5, phát hiện file trùng lặp, điều phối `ThumbnailGenerator.kt` trích xuất ảnh/video từ máy local rồi đẩy lên NAS.
+6. **`LivestreamViewModel.kt`**: Theo dõi TikTok Live, gọi API tải stream.
+7. **`AutoBackupViewModel.kt`**: Giao tiếp với `WorkManager` để đẩy ảnh/video ngầm lên NAS. Đảm bảo chạy nền hoàn hảo.
+8. **`GlobalUiViewModel.kt`**: Quản lý State của Toast, Snackbar, Dialog cảnh báo chung toàn cục.
+
+### Quy tắc sinh tử trên Android:
+- **WAKE_LOCK:** Thẻ `<uses-permission android:name="android.permission.WAKE_LOCK" tools:node="replace"/>` trong `AndroidManifest.xml` là BẤT KHẢ XÂM PHẠM. Cấm xóa `tools:node="replace"` để tránh lỗi mất quyền chạy nền trên Android đời cao.
+- **Giao diện (UI):** Theme bắt buộc dùng `NasTheme {}`. Gọi `MaterialTheme {}` trực tiếp sẽ ghi đè và làm mất font hệ thống `SamsungOneFontFamily`.
+- **Background Workers:** Việc upload/download nền phải dùng `WorkManager` (Foreground Service) kết hợp Notification. Tại đây, `AutoBackupWorker` phải gọi `ThumbnailGenerator` để tự sinh thumbnail trước khi upload.
+- **State Flow:** Tất cả State phải được expose ra UI qua `StateFlow` hoặc `MutableState`. Hạn chế gọi trực tiếp `suspend` function từ UI mà không bọc trong `viewModelScope`.
