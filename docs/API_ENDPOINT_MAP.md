@@ -143,18 +143,20 @@ rg -oN '"/api/[a-zA-Z0-9_/<>\-]+"' nas_api_server.py | sort -u
 
 ## B. ENDPOINTS WITHOUT SERVER ROUTE (Client → 404)
 
-These are now explicitly 404-handled (commit `18f40e5b`) so the user sees a clear message instead of silent failure. Future work: either implement server routes, or remove the UI controls.
+**Status: ✅ All removed (commit `360baacc`)**
+All 6 orphan endpoints have been fully removed from both client code and UI.
+No Kotlin runtime call now references a non-existent server route.
 
-| Android (file:line) | Client URL | Status |
-|---|---|---|
-| `device/DeviceManagementViewModel.kt:1096`, `ui/dialogs/MiscDialogs.kt:655` | `/api/telegram/test` | ⚠️ No server route. Shows "Chức năng Telegram test chưa được hỗ trợ trên server hiện tại" |
-| `livestream/LivestreamViewModel.kt:350` | `/api/stream/pipe` | ⚠️ No server route. Shows "Chức năng stream pipe chưa được hỗ trợ trên server" |
-| `livestream/LivestreamViewModel.kt:371` | `/api/stream/cancel` | ⚠️ No server route. Silent log only (cancel is best-effort). |
-| `monitor/SystemMonitorViewModel.kt:451` | `/api/config/backups` | ⚠️ No server route. Shows "Server chưa hỗ trợ quản lý backup cấu hình NAS" |
-| `monitor/SystemMonitorViewModel.kt:487,515` | `/api/config/backup` | ⚠️ No server route (POST + DELETE both 404). |
-| `monitor/SystemMonitorViewModel.kt:536` | `/api/config/restore` | ⚠️ No server route. |
+| Former Client URL | What was removed |
+|---|---|
+| `/api/telegram/test` | Test button in TelegramSettingsDialog + network call in DeviceManagementViewModel; kept local save only |
+| `/api/stream/pipe` | LivestreamViewModel.startStreamPipe methods + SocialExtractorScreen pipe-mode calls; usePipeMode now false |
+| `/api/stream/cancel` | LivestreamViewModel.cancelStreamPipe methods + SocialExtractorScreen back-button cancel |
+| `/api/config/backups` | fetchNasConfigBackups method + list UI in DialogsNasConfigBackupDialog (deleted) |
+| `/api/config/backup` | createNasConfigBackup, deleteNasConfigBackup methods + create/delete buttons (deleted) |
+| `/api/config/restore` | restoreNasConfigBackup method + restore button (deleted) |
 
-**Decision needed:** Either (a) implement the missing routes on the server, or (b) remove the corresponding UI buttons to avoid confusion.
+**If you need these features later:** implement the corresponding server routes first, then re-add the client calls.
 
 ---
 
