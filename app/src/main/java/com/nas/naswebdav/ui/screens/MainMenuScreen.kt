@@ -338,8 +338,6 @@ fun MainMenuScreen(
     var showLivestreamDialog by remember { mutableStateOf(false) }
     var showSmbDialog by remember { mutableStateOf(false) }
 
-    // STATE CHO NAS CONFIG BACKUP/RESTORE
-    var showNasBackupDialog by remember { mutableStateOf(false) }
     // STATE CHO DISK HEALTH MONITOR
     var showDiskHealthDialog by remember { mutableStateOf(false) }
     var showNewDiskProfileSheet by remember { mutableStateOf(false) }
@@ -637,11 +635,6 @@ fun MainMenuScreen(
             onDismiss = { showLivestreamDialog = false }
         )
     }
-    if (showNasBackupDialog) {
-        DialogsNasConfigBackupDialog(
-            onDismiss = { showNasBackupDialog = false }
-        )
-    }
     if (showDiskHealthDialog) {
         DialogsDiskHealthDialog(
             onDismiss = { showDiskHealthDialog = false }
@@ -702,7 +695,6 @@ fun MainMenuScreen(
             "organizer" -> onOpenOrganizer()
             "guest" -> onOpenGuestPass()
             "log" -> { deviceVM.loadSystemLogs(minIntervalMs = 0L); deviceVM.showLogDialog = true }
-            "nasbackup" -> { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true }
             "smb" -> { deviceVM.fetchSmbStatus(); showSmbDialog = true }
             "duplicate" -> showDuplicateScanDialog = true
             "screen_record" -> onStartScreenRecord()
@@ -851,7 +843,6 @@ fun MainMenuScreen(
             showAutoBackupDialog = { showAutoBackupDialog = true },
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
-            showNasBackupDialog = { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true },
             showDiskHealthDialog = { showDiskHealthDialog = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
@@ -2142,7 +2133,6 @@ fun MainMenuToolboxDialog(
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
-    showNasBackupDialog: () -> Unit = {},
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
@@ -2226,12 +2216,12 @@ fun MainMenuToolboxDialog(
                     onClick = { onDismiss(); showAutoBackupDialog() }
                 )
                 MainMenuSettingsMenuCard(
-                    title = "Sao lưu cấu hình NAS",
-                    subtitle = "Config + watcher + cookies",
-                    icon = Icons.Default.SettingsBackupRestore,
+                    title = "USB Import",
+                    subtitle = "Auto copy từ USB gắn ngoài",
+                    icon = Icons.Default.Usb,
                     color = Color(0xFF66BB6A),
                     modifier = Modifier.weight(1f),
-                    onClick = { onDismiss(); showNasBackupDialog() }
+                    onClick = { onDismiss(); showUsbImportDialog() }
                 )
             }
             Spacer(Modifier.height(8.dp))

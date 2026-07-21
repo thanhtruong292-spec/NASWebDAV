@@ -156,14 +156,6 @@ class LivestreamViewModel(
 
     fun monitorYtdlpJob() { /* TODO Phase 3b */ }
 
-    fun startStreamPipe(url: String, format: String, outputPath: String, onError: (String) -> Unit = {}) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
-
-    fun cancelStreamPipe(onError: (String) -> Unit = {}) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
-
     fun requestSocialDownload(url: String, format: String, onError: (String) -> Unit = {}) {
         viewModelScope.launch { /* TODO Phase 3b */ }
     }
@@ -335,43 +327,6 @@ class LivestreamViewModel(
                 }
             } catch (e: Exception) {
                 android.util.Log.w("Livestream", "syncState: ${e.message}")
-            }
-        }
-    }
-
-    fun startStreamPipe(sourceUrl: String, fileName: String) {
-        isStreamPiping = true
-        streamPipeStatus = "Đang bắt đầu..."
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val body = org.json.JSONObject().put("url", sourceUrl).put("filename", fileName).toString()
-                    .toRequestBody("application/json".toMediaTypeOrNull())
-                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/stream/pipe").post(body).let(WebDavManager::tagCurrentAuth).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    val respBody = resp.body?.string() ?: ""
-                    when {
-                        resp.isSuccessful -> Unit
-                        resp.code == 404 -> withContext(Dispatchers.Main) { streamPipeStatus = "Chức năng stream pipe chưa được hỗ trợ trên server hiện tại." }
-                        else -> withContext(Dispatchers.Main) { streamPipeStatus = "Lỗi server ${resp.code}: $respBody" }
-                    }
-                }
-            } catch (e: Exception) {
-                streamPipeStatus = "Lỗi: ${e.message}"
-            } finally {
-                withContext(Dispatchers.Main) { isStreamPiping = false }
-            }
-        }
-    }
-
-    fun cancelStreamPipe() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/stream/cancel").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
-            } catch (e: Exception) {
-                android.util.Log.w("Livestream", "cancelStreamPipe: ${e.message}")
             }
         }
     }

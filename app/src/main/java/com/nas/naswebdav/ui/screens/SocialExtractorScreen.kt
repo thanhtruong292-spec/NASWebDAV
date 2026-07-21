@@ -102,8 +102,9 @@ fun SocialExtractorScreen(
         val clip = clipboardManager.getText()?.text ?: ""
         mutableStateOf(if (isSocialUrl(clip)) clip else "")
     }
-    // Chế độ: true = Stream Pipe (điện thoại bơm), false = yt-dlp (NAS tự tải)
-    var usePipeMode by remember { mutableStateOf(true) }
+    // Chế độ: Stream Pipe tạm tắt (server chưa hỗ trợ /api/stream/pipe)
+    // Fallback sang yt-dlp mode (NAS tự tải)
+    val usePipeMode = false
     // Kết quả URL video đã bóc được từ WebView
     var extractedVideoUrl by remember { mutableStateOf<String?>(null) }
     // Trạng thái WebView extraction
@@ -118,11 +119,10 @@ fun SocialExtractorScreen(
     LaunchedEffect(extractedVideoUrl) {
         val mp4Url = extractedVideoUrl ?: return@LaunchedEffect
         if (mp4Url.isNotEmpty() && usePipeMode) {
-            val platform = detectPlatform(linkInput)
-            val fileName = "social_${platform}_${System.currentTimeMillis()}.mp4"
-            livestreamVM.startStreamPipe(mp4Url, fileName)
+            // Pipe mode tạm tắt (server chưa hỗ trợ /api/stream/pipe). WebView extract thành công,
+            // chỉ hiển thị URL cho user tự tải về.
             extractedVideoUrl = null
-            webViewStatus = ""
+            webViewStatus = "Đã bóc link MP4: $mp4Url\n(Chế độ stream pipe tạm thời không khả dụng — sao chép link và dùng chức năng khác.)"
             isExtracting = false
         }
     }
@@ -137,10 +137,7 @@ fun SocialExtractorScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = {
-                        livestreamVM.cancelStreamPipe()
-                        onBack()
-                    }) { Icon(Icons.Default.ArrowBack, null, tint = SeTextPrimary) }
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = SeTextPrimary) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SeDarkBg)
             )
@@ -234,7 +231,6 @@ fun SocialExtractorScreen(
                     }
                 },
                 onCancel = {
-                    livestreamVM.cancelStreamPipe()
                     isExtracting = false
                     webViewStatus = ""
                     extractTriggerUrl = ""

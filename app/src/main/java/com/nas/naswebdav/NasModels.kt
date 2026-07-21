@@ -11,17 +11,6 @@ package com.nas.naswebdav
 
 // ─── Inner data classes of WebDavViewModel (Phase 7d.7 extraction) ─────
 
-/**
- * File metadata for a NAS config backup (.tar.gz snapshot of the server's
- * config). Surfaced in the DiskHealth / Backup dialogs.
- */
-data class NasConfigBackup(
-    val filename: String,
-    val sizeBytes: Long,
-    val sizeHuman: String,
-    val createdAt: String,
-    val mtime: Double,
-)
 
 /**
  * A single SMART/disk-health sample — either current snapshot or one history

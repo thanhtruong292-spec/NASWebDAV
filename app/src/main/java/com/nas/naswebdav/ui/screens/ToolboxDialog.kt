@@ -64,7 +64,6 @@ fun ToolboxDialog(
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
-    showNasBackupDialog: () -> Unit = {},
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
@@ -165,14 +164,6 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     checked = isAutoBackupEnabled,
                     onClick = { onDismiss(); showAutoBackupDialog() }
-                )
-                MainMenuSettingsMenuCard(
-                    title = "Sao lưu cấu hình NAS",
-                    subtitle = "Config + watcher + cookies",
-                    icon = Icons.Default.SettingsBackupRestore,
-                    color = AccentGreen,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onDismiss(); showNasBackupDialog() }
                 )
             }
             Spacer(Modifier.height(AppSpacing.SM))

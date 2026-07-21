@@ -1074,7 +1074,6 @@ class DeviceManagementViewModel(
         enabled: Boolean,
         botToken: String,
         chatId: String,
-        test: Boolean,
         onResult: (Boolean, String) -> Unit,
     ) {
         val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
@@ -1083,33 +1082,9 @@ class DeviceManagementViewModel(
             putString("telegram_bot_token", botToken)
             putString("telegram_chat_id", chatId)
         }
-        if (test) {
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                    if (base.isBlank()) { withContext(Dispatchers.Main) { onResult(false, "Chưa có địa chỉ NAS") }; return@launch }
-                    val jsonBody = org.json.JSONObject().apply {
-                        put("token", botToken)
-                        put("chat_id", chatId)
-                    }.toString()
-                    val body = jsonBody.toRequestBody("application/json".toMediaTypeOrNull())
-                    val request = okhttp3.Request.Builder().url("$base/api/telegram/test").post(body).build()
-                    val response = WebDavManager.optimizedClient.newCall(request).execute()
-                    val bodyStr = response.body?.string() ?: ""
-                    withContext(Dispatchers.Main) {
-                        when {
-                            response.isSuccessful -> onResult(true, "Tin nhắn test đã gửi thành công!")
-                            response.code == 404 -> onResult(false, "Chức năng Telegram test chưa được hỗ trợ trên server hiện tại. Cấu hình đã lưu.")
-                            else -> onResult(false, "Lỗi ${response.code}: $bodyStr")
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) { onResult(false, "Lỗi gửi test: ${e.message}") }
-                }
-            }
-        } else {
-            onResult(true, "Đã lưu cấu hình Telegram")
-        }
+        // NOTE: server chưa hỗ trợ POST /api/telegram/test — chỉ lưu config local.
+        // Khi server thêm endpoint, có thể mở rộng method này để gọi test.
+        onResult(true, "Đã lưu cấu hình Telegram")
     }
 
     // ═══ RULES CONFIG (Phase 7d.3 — moved from WebDavViewModel facade) ═══

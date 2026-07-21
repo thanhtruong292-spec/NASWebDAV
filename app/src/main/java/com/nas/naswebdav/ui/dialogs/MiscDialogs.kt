@@ -626,8 +626,9 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = {
-                    if (!busy) {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
                         busy = true
                         val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
                         p.edit {
@@ -635,50 +636,20 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
                             putString("telegram_bot_token", botToken)
                             putString("telegram_chat_id", chatId)
                         }
-                        busy = false
-                        onDismiss()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            busy = false
+                            resultMsg = "Đã lưu cấu hình Telegram"
+                            botToken = ""
+                            val reloadedToken = p.getString("telegram_bot_token", "") ?: ""
+                            hasToken = reloadedToken.isNotBlank()
+                        }
                     }
-                }) { Text("Chỉ lưu", color = Color(0xFF8892B0)) }
+                ) { Text("Lưu", color = Color(0xFF8892B0)) }
                 Spacer(Modifier.width(8.dp))
                 Button(
-                    enabled = !loading && !busy,
-                    onClick = {
-                        busy = true; resultMsg = "Đang lưu + gửi thử..."
-                        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                        p.edit {
-                            putBoolean("telegram_enabled", enabled)
-                            putString("telegram_bot_token", botToken)
-                            putString("telegram_chat_id", chatId)
-                        }
-                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try {
-                                val url = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/telegram/test"
-                                val body = okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),
-                                    """{"token":"$botToken","chat_id":"$chatId"}""")
-                                val request = okhttp3.Request.Builder().url(url).post(body).build()
-                                val response = WebDavManager.optimizedClient.newCall(request).execute()
-                                val bodyStr = response.body?.string() ?: ""
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    busy = false
-                                    resultMsg = when {
-                                        response.isSuccessful -> "Tin nhắn test đã gửi thành công!"
-                                        response.code == 404 -> "Chức năng Telegram test chưa được hỗ trợ trên server hiện tại. Cấu hình đã lưu."
-                                        else -> "Lỗi ${response.code}: $bodyStr"
-                                    }
-                                    botToken = ""
-                                    val reloadedToken = p.getString("telegram_bot_token", "") ?: ""
-                                    hasToken = reloadedToken.isNotBlank()
-                                }
-                            } catch (e: Exception) {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    busy = false
-                                    resultMsg = "Lỗi gửi test: ${e.message}"
-                                    botToken = ""
-                                }
-                            }
-                        }
-                    }
-                ) { Text("Lưu & Gửi thử") }
+                    enabled = !busy,
+                    onClick = onDismiss
+                ) { Text("Đóng") }
             }
             Spacer(Modifier.height(8.dp))
         }
