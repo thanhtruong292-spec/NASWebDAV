@@ -304,18 +304,18 @@ internal fun DashboardSystemOverviewCard(
                             Row(Modifier.fillMaxWidth().background(DarkCard, AppShapes.Badge).padding(AppSpacing.SM - AppSpacing.XS), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val fanStatusStr = systemVM.systemStatus.fanStatus
+                                    val fanPercentFromApi = systemVM.systemStatus.fanPercent
                                     val statusPercent = Regex("""(\d+)\s*%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val rpmFromApi = systemVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
-                                    val realPercent = statusPercent ?: percentFromRpm ?: 0
+                                    val rawPercent = fanPercentFromApi ?: statusPercent ?: percentFromRpm ?: 0
 
-                                    // Hiển thị ĐÚNG trạng thái thực tế do server báo (get_fan_info đã đọc
-                                    // PWM duty + enable + cổng nguồn 5V GPIO). KHÔNG tự suy đoán theo nhiệt
-                                    // độ: trước đây ở chế độ custom app tính lại percent từ HDD temp nên lệch
-                                    // với quạt thật (vd HDD temp "--" -> đoán "Dừng" dù quạt đang chạy).
-                                    val displayPercent = realPercent.coerceIn(0, 100)
-                                    val displayStatusStr = if (realPercent > 0) fanStatusStr else "Dừng"
+                                    val displayPercent = if (systemVM.systemStatus.fanMode == "off") 0 else rawPercent.coerceIn(0, 100)
                                     val isFanDisplayRunning = displayPercent > 0
+                                    val displayStatusStr = if (isFanDisplayRunning) {
+                                        if (fanStatusStr.contains("Đang chạy")) fanStatusStr else "Đang chạy $displayPercent%"
+                                    } else "Dừng"
+
                                     FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) AccentGreen else TextSecondary, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(AppSpacing.SM))
                                     Column {

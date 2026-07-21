@@ -194,6 +194,9 @@ class SystemMonitorViewModel(
                     val fanRpmRaw = json.opt("fan_rpm")
                     val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
 
+                    val fanPctRaw = json.opt("fan_percent")
+                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Int) else null
+
                     withContext(Dispatchers.Main) {
                         systemStatus = NasSystemStatus(
                             temp = json.optString("temperature", "--°C"),
@@ -214,6 +217,7 @@ class SystemMonitorViewModel(
                             fanOnTemp = json.optDouble("fan_on_temp", 50.0).toFloat(),
                             fanOffTemp = json.optDouble("fan_off_temp", 40.0).toFloat(),
                             fanRpm = fanRpm,
+                            fanPercent = fanPercent,
                             topProcesses = topProcs
                         )
                         lastStatusRefreshAt = System.currentTimeMillis()

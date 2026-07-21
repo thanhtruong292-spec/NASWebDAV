@@ -2322,9 +2322,8 @@ def _update_status_cache():
             ram_total = format_bytes(mem.total)
             net_rx, net_tx = get_network_speed()
 
-            # Cap nhat thong tin Fan (moi 30 giay)
-            if loop_count % 24 == 0:
-                cached_fan = get_fan_info()
+            # Cap nhat thong tin Fan (moi 4 giay - doc 2 sysfs file nhe)
+            cached_fan = get_fan_info()
 
             # Cap nhat top_processes va torrents (moi 2 phut) - Giam tai CPU
             if loop_count % 24 == 0:
@@ -7924,6 +7923,8 @@ def api_fan_control():
             _pwm_apply_off()
             with _cache_lock:
                 _status_cache['fan_mode'] = 'off'
+                _status_cache['fan_percent'] = 0
+                _status_cache['fan_rpm'] = 0
                 _status_cache['fan_status'] = 'Dừng'
             return jsonify({"status": "success", "mode": "off"})
 
@@ -7936,8 +7937,20 @@ def api_fan_control():
             _pwm_apply_on(duty=10000, period=10000)
             with _cache_lock:
                 _status_cache['fan_mode'] = 'on'
+                _status_cache['fan_percent'] = 100
+                _status_cache['fan_rpm'] = _fan_rpm_for_percent(100)
                 _status_cache['fan_status'] = 'Đang chạy 100%'
             return jsonify({"status": "success", "mode": "on"})
+
+        # Cap nhat lai fan info ngay cho cache
+        try:
+            cur_fan = get_fan_info()
+            with _cache_lock:
+                _status_cache['fan_rpm'] = cur_fan.get('rpm')
+                _status_cache['fan_percent'] = cur_fan.get('percent')
+                _status_cache['fan_status'] = cur_fan.get('status', '--')
+        except Exception:
+            pass
             
         return jsonify({"error": "Chế độ không hợp lệ"}), 400
     except Exception as e:

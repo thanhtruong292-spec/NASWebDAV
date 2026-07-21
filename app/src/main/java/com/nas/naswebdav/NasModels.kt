@@ -292,6 +292,7 @@ data class NasSystemStatus(
     val fanOnTemp: Float = 45f,
     val fanOffTemp: Float = 40f,
     val fanRpm: Int? = null,
+    val fanPercent: Int? = null,
     val topProcesses: List<Pair<String, Float>> = emptyList()
 )
 
