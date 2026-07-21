@@ -13689,15 +13689,25 @@ if __name__ == "__main__":
     def _auto_resource_reclaimer_thread():
         """
         TRÌNH TỰ ĐỘNG GIẢI PHÓNG CPU/RAM VÀ DIỆT TIẾN TRÌNH THỪA (Chạy tự động mỗi 3 phút):
-        1. Tiêu diệt các tiến trình Zombie / Defunct.
-        2. Tiêu diệt tiến trình curl/wget/yt-dlp/python kẹt quá 10-20 phút hoặc mồ côi.
-        3. Tự động thu gom rác Python gc.collect() và thu hồi RAM từ glibc qua libc.malloc_trim(0).
-        4. Xóa sạch file tạm rác trong /tmp quá 2 giờ.
+        
+        BẢO VỆ AN TOÀN TUYỆT ĐỐI CHO CÁC TIẾN TRÌNH ĐANG CHẠY:
+        - BỎ QUA HOÀN TOÀN: Tất cả tiến trình ffmpeg, yt-dlp, aria2c đang ghi livestream hoặc tải file.
+        - BỎ QUA HOÀN TOÀN: Tiến trình sao lưu tự động / WebDAV upload / đồng bộ file đang diễn ra.
+        - BỎ QUA HOÀN TOÀN: Các file đệm tạm đang được ghi (mtime < 30 phút).
+        
+        CHỈ DỌN DẸP:
+        1. Tiến trình Zombie / Defunct (đã chết hẳn).
+        2. Tiến trình containerd mồ côi (khi Docker không hoạt động).
+        3. Lệnh curl/wget thử nghiệm mồ côi bị treo > 10 phút.
+        4. File rác mồ côi trong /tmp hoàn toàn không có hoạt động ghi > 30 phút.
+        5. Ép thu gom rác Python gc.collect() và thu hồi RAM từ glibc qua libc.malloc_trim(0).
         """
-        log.info("[ResourceReclaimer] Trình tự động giải phóng RAM/CPU đã khởi động.")
+        log.info("[ResourceReclaimer] Trình tự động giải phóng RAM/CPU (bảo vệ tuyệt đối tiến trình livestream & backup) đã khởi động.")
         while True:
             try:
                 time.sleep(180)
+                
+                # 1. Ép thu gom rác RAM Python & trả lại RAM thừa cho Linux OS Kernel
                 try:
                     gc.collect()
                     try:
@@ -13708,6 +13718,7 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
+                # 2. Rà soát tiến trình — BẢO VỆ TIẾN TRÌNH ĐANG HOẠT ĐỘNG
                 now = time.time()
                 current_pid = os.getpid()
                 for proc in psutil.process_iter():
@@ -13717,24 +13728,32 @@ if __name__ == "__main__":
                             continue
                         
                         name = (proc.name() or "").lower()
+                        cmdline = " ".join(proc.cmdline() or []).lower()
                         status = str(proc.status())
+
+                        # BẢO VỆ TUYỆT ĐỐI: Tiến trình ghi Livestream / ffmpeg / yt-dlp / aria2c / backup
+                        if any(protected in name or protected in cmdline for protected in ('ffmpeg', 'yt-dlp', 'ytdlp', 'aria2c', 'rsync', 'rclone')):
+                            continue
                         
+                        # Trảm duy nhất tiến trình Zombie (đã chết hẳn)
                         if status in ('zombie', 'dead') or status == getattr(psutil, 'STATUS_ZOMBIE', 'zombie'):
                             try:
                                 proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt tiến trình Zombie PID=%d" % pid)
+                                log.info("[ResourceReclaimer] Đã dọn tiến trình Zombie PID=%d (%s)" % (pid, name))
                             except Exception:
                                 pass
                             continue
 
+                        # Trảm lệnh curl/wget thử nghiệm mồ côi bị treo > 10 phút
                         if name in ('curl', 'wget') and (now - proc.create_time() > 600):
                             try:
                                 proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget kẹt quá 10 phút PID=%d" % pid)
+                                log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget treo > 10 phút PID=%d" % pid)
                             except Exception:
                                 pass
                             continue
 
+                        # Trảm containerd mồ côi khi Docker không hoạt động
                         if name == 'containerd':
                             try:
                                 proc.kill()
@@ -13743,11 +13762,11 @@ if __name__ == "__main__":
                                 pass
                             continue
 
-                        cmdline = " ".join(proc.cmdline() or [])
+                        # Trảm script test Python mồ côi cũ > 20 phút
                         if "python" in name and ("/tmp/loop_" in cmdline or "-c import" in cmdline) and (now - proc.create_time() > 1200):
                             try:
                                 proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt Python script mồ côi PID=%d" % pid)
+                                log.info("[ResourceReclaimer] Đã tiêu diệt Python test script mồ côi PID=%d" % pid)
                             except Exception:
                                 pass
                             continue
@@ -13755,15 +13774,17 @@ if __name__ == "__main__":
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
 
+                # 3. Dọn dẹp file đệm tạm trong /tmp — CHỈ XÓA FILE KHÔNG CÓ HOẠT ĐỘNG GHI > 30 PHÚT
                 try:
                     if os.path.exists("/tmp"):
                         for f in os.listdir("/tmp"):
                             if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_") or f.startswith("test_ytdlp_") or f.startswith("nas_fast_index") or f.endswith(".mp4") or f.endswith(".webm") or f.endswith(".ts"):
                                 fpath = os.path.join("/tmp", f)
                                 try:
+                                    # Kiểm tra thời điểm sửa đổi (mtime): Nếu đang ghi file (mtime mới < 30 phút), BỎ QUA HOÀN TOÀN
                                     if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
                                         os.remove(fpath)
-                                        log.info("[ResourceReclaimer] Đã xóa file rác RAM-disk /tmp: %s" % f)
+                                        log.info("[ResourceReclaimer] Đã xóa file đệm rác RAM-disk /tmp: %s" % f)
                                 except Exception:
                                     pass
                 except Exception:
