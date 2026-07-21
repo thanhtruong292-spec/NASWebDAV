@@ -348,7 +348,14 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/stream/pipe").post(body).let(WebDavManager::tagCurrentAuth).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val respBody = resp.body?.string() ?: ""
+                    when {
+                        resp.isSuccessful -> Unit
+                        resp.code == 404 -> withContext(Dispatchers.Main) { streamPipeStatus = "Chức năng stream pipe chưa được hỗ trợ trên server hiện tại." }
+                        else -> withContext(Dispatchers.Main) { streamPipeStatus = "Lỗi server ${resp.code}: $respBody" }
+                    }
+                }
             } catch (e: Exception) {
                 streamPipeStatus = "Lỗi: ${e.message}"
             } finally {

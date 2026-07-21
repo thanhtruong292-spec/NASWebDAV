@@ -660,7 +660,11 @@ fun TelegramSettingsDialog(onDismiss: () -> Unit) {
                                 val bodyStr = response.body?.string() ?: ""
                                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     busy = false
-                                    resultMsg = if (response.isSuccessful) "Tin nhắn test đã gửi thành công!" else "Lỗi: $bodyStr"
+                                    resultMsg = when {
+                                        response.isSuccessful -> "Tin nhắn test đã gửi thành công!"
+                                        response.code == 404 -> "Chức năng Telegram test chưa được hỗ trợ trên server hiện tại. Cấu hình đã lưu."
+                                        else -> "Lỗi ${response.code}: $bodyStr"
+                                    }
                                     botToken = ""
                                     val reloadedToken = p.getString("telegram_bot_token", "") ?: ""
                                     hasToken = reloadedToken.isNotBlank()

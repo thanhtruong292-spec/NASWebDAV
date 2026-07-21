@@ -334,7 +334,11 @@ class SmartToolsViewModel(
     fun stopThumbGeneration() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/stop").build()
+                val json = org.json.JSONObject().put("action", "pause").toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val request = okhttp3.Request.Builder()
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control")
+                    .post(json).build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
             } catch (_: Exception) {}
             thumbRunning = false
@@ -513,8 +517,41 @@ class SmartToolsViewModel(
     }
 
     fun organizeLegacyVideos() {
-        viewModelScope.launch {
-            // TODO Phase 2b
+        organizingLegacyRunning = true
+        organizingLegacyResult = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (apiBase.isBlank()) {
+                    withContext(Dispatchers.Main) {
+                        organizingLegacyResult = "Chưa có địa chỉ NAS"
+                    }
+                    return@launch
+                }
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/tools/organize_legacy_videos")
+                    .post(ByteArray(0).toRequestBody(null, 0, 0))
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val ok = resp.isSuccessful && json.optBoolean("success", false)
+                    val moved = json.optInt("moved_count", 0)
+                    val errCount = json.optJSONArray("errors")?.length() ?: 0
+                    val msg = if (ok) {
+                        if (errCount > 0) "Đã di chuyển $moved video, $errCount lỗi" else "Đã di chuyển $moved video vào /Other Video/"
+                    } else {
+                        "Lỗi server: ${json.optString("message", body)}"
+                    }
+                    withContext(Dispatchers.Main) { organizingLegacyResult = msg }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    organizingLegacyResult = "Lỗi: ${e.message}"
+                }
+            } finally {
+                withContext(Dispatchers.Main) { organizingLegacyRunning = false }
+            }
         }
     }
     fun resetOrganizingLegacy() { organizingLegacyRunning = false; organizingLegacyResult = null }

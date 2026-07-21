@@ -725,7 +725,7 @@ class DeviceManagementViewModel(
                 }
                 val body = json.toString().toRequestBody(jsonMediaType)
                 val req = okhttp3.Request.Builder()
-                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/container/control")
+                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/control")
                     .post(body).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
                 loadDockerContainers()
@@ -1097,7 +1097,11 @@ class DeviceManagementViewModel(
                     val response = WebDavManager.optimizedClient.newCall(request).execute()
                     val bodyStr = response.body?.string() ?: ""
                     withContext(Dispatchers.Main) {
-                        onResult(response.isSuccessful, if (response.isSuccessful) "Tin nhắn test đã gửi thành công!" else "Lỗi: $bodyStr")
+                        when {
+                            response.isSuccessful -> onResult(true, "Tin nhắn test đã gửi thành công!")
+                            response.code == 404 -> onResult(false, "Chức năng Telegram test chưa được hỗ trợ trên server hiện tại. Cấu hình đã lưu.")
+                            else -> onResult(false, "Lỗi ${response.code}: $bodyStr")
+                        }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { onResult(false, "Lỗi gửi test: ${e.message}") }

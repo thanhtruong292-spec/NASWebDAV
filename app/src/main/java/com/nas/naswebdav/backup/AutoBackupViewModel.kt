@@ -252,7 +252,7 @@ class AutoBackupViewModel(
                 }
                 val body = org.json.JSONObject().put("conflicts", arr).toString()
                     .toRequestBody("application/json".toMediaTypeOrNull())
-                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/resolve").post(body).let(WebDavManager::tagCurrentAuth).build()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/resolve_conflicts").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "resolveUsbImportConflicts: ${e.message}")
@@ -312,7 +312,7 @@ class AutoBackupViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val req = okhttp3.Request.Builder().url("$apiBase/api/hdd/spindown")
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/hdd_spindown_now")
                     .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) { onDone?.invoke(resp.isSuccessful, if (resp.isSuccessful) "OK" else "HTTP ${resp.code}") }
