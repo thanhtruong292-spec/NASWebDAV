@@ -13713,10 +13713,93 @@ if __name__ == "__main__":
     threading.Thread(target=_cron_worker, daemon=True).start()
     log.info("[Cron] Tác vụ tự động dọn dẹp và cảnh báo chủ động đã khởi động.")
 
+def _auto_resource_reclaimer_thread():
+    """
+    TRÌNH TỰ ĐỘNG GIẢI PHÓNG CPU/RAM VÀ DIỆT TIẾN TRÌNH THỪA (Chạy tự động mỗi 3 phút):
+    1. Tiêu diệt các tiến trình Zombie / Defunct.
+    2. Tiêu diệt tiến trình curl/wget/yt-dlp/python kẹt quá 10-20 phút hoặc mồ côi.
+    3. Tự động thu gom rác Python gc.collect() và thu hồi RAM từ glibc qua libc.malloc_trim(0).
+    4. Xóa sạch file tạm rác trong /tmp quá 2 giờ.
+    """
+    log.info("[ResourceReclaimer] Trình tự động giải phóng RAM/CPU đã khởi động.")
+    while True:
+        try:
+            time.sleep(180)
+            
+            # 1. Ép thu gom rác & trả RAM thừa về cho OS Linux Kernel
+            try:
+                gc.collect()
+                try:
+                    libc = ctypes.CDLL('libc.so.6')
+                    libc.malloc_trim(0)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # 2. Rà soát & Trảm các tiến trình kẹt / mồ côi
+            now = time.time()
+            current_pid = os.getpid()
+            for proc in psutil.process_iter():
+                try:
+                    pid = proc.pid
+                    if pid == current_pid or pid <= 100:
+                        continue
+                    
+                    name = (proc.name() or "").lower()
+                    status = str(proc.status())
+                    
+                    # Trảm tiến trình Zombie
+                    if status in ('zombie', 'dead') or status == getattr(psutil, 'STATUS_ZOMBIE', 'zombie'):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt tiến trình Zombie PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Trảm tiến trình curl/wget kẹt > 10 phút
+                    if name in ('curl', 'wget') and (now - proc.create_time() > 600):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget kẹt quá 10 phút PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                    # Trảm script test Python mồ côi / loop tạm cũ > 20 phút
+                    cmdline = " ".join(proc.cmdline() or [])
+                    if "python" in name and ("/tmp/loop_" in cmdline or "-c import" in cmdline) and (now - proc.create_time() > 1200):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt Python script mồ côi PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            # 3. Dọn dẹp file rác tạm trong /tmp
+            try:
+                if os.path.exists("/tmp"):
+                    for f in os.listdir("/tmp"):
+                        if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_"):
+                            fpath = os.path.join("/tmp", f)
+                            if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 7200):
+                                os.remove(fpath)
+            except Exception:
+                pass
+
+        except Exception as e:
+            log.warning("[ResourceReclaimer] Lỗi: %s" % str(e))
+
+
     # Thread dò TikTok live chạy hoàn toàn trên NAS. App Android chỉ cấu hình và
     # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
     threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
+    threading.Thread(target=_auto_resource_reclaimer_thread, daemon=True, name="ResourceReclaimer").start()
     threading.Thread(target=_nas_api_self_watchdog, daemon=True, name="NasApiSelfWatchdog").start()
     log.info("[NasAPI] Self-watchdog tự khởi động lại đã được kích hoạt.")
     # ============ TOI UU HOA CUC DAI: WAITRESS MULTI-THREAD ============
