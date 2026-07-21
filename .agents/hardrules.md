@@ -35,3 +35,11 @@
 - **CẤM TUYỆT ĐỐI** định nghĩa hàm helper (`def _something():`) trực tiếp bên trong khối `if __name__ == '__main__':` hoặc lồng trong hàm khác của `nas_api_server.py`.
 - **Hậu quả:** Cú pháp thụt đầu dòng (indentation) của Python sẽ làm các dòng khởi tạo thread server (`Waitress`/`Tornado`) bị nuốt chửng vào thân hàm đó. Python chạy xong hàm tự kết thúc (exit 0), dịch vụ `nas_api.service` liên tục crash/restart loop làm App sập kết nối/không đăng nhập được.
 - **Quy tắc:** Tất cả các hàm helper phải luôn khai báo ở cấp độ module (top-level, 0 space indentation). Khối `if __name__ == '__main__':` chỉ gọi hàm phẳng.
+
+### 9. ĐỒNG BỘ ĐỒNG THỜI VÒNG TRÒN CPU/RAM VÀ BẢNG TIẾN TRÌNH
+- Khi ứng dụng Android lấy dữ liệu tiến trình từ `/api/processes`, API trả về `total_cpu` và `total_ram` live tại cùng thời điểm. App Android (`SystemMonitorViewModel.kt`) BẮT BUỘC phải cập nhật `systemStatus` CPU/RAM đồng thời để Vòng Tròn CPU phía trên và Bảng Tiến Trình phía dưới khớp đúng 100% từng decimal điểm tại cùng 1 thời điểm.
+
+### 10. QUẢN LÝ FILE: THÙNG RÁC .TRASH VÀ CƠ CHẾ DỰ PHÒNG XÓA VĨNH VIỄN
+- Khi xóa file/thư mục, App thử di chuyển vào `.trash/` qua WebDAV `MOVE`.
+- Nếu WebDAV `MOVE` thất bại (do `.trash` chưa được mount hoặc lỗi phân vùng), App BẮT BUỘC phải tự động fallback sang lệnh WebDAV `DELETE` (xóa thẳng vĩnh viễn), đồng thời xóa bản ghi khỏi SQLite Room DB (`repository.removeDuplicateFromDb(file.path)`).
+- Server NAS (`nas_api_server.py`) khởi động tự động kiểm tra và khởi tạo thư mục `.trash/` quyền `777` trên tất cả phân vùng `/srv/dev-disk-by-*`.

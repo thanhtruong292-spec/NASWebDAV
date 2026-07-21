@@ -22,6 +22,7 @@ import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
