@@ -2249,9 +2249,30 @@ def get_top_processes(n=3):
             key = p["name"]
             if key in grouped:
                 grouped[key]["cpu"] = min(round(grouped[key]["cpu"] + p["cpu"], 1), 100.0)
+                grouped[key]["mem"] = min(round(grouped[key]["mem"] + p["mem"], 1), 100.0)
             else:
                 p["cpu"] = min(p["cpu"], 100.0)
                 grouped[key] = dict(p)
+        
+        user_cpu_sum = sum(p["cpu"] for p in grouped.values())
+        user_mem_sum = sum(p["mem"] for p in grouped.values())
+
+        total_sys_cpu = round(psutil.cpu_percent(interval=None), 1)
+        try:
+            total_sys_mem = round(psutil.virtual_memory().percent, 1)
+        except Exception:
+            total_sys_mem = 0.0
+
+        sys_cpu = max(0.0, round(total_sys_cpu - user_cpu_sum, 1))
+        sys_mem = max(0.0, round(total_sys_mem - user_mem_sum, 1))
+
+        grouped["Hệ thống (System OS)"] = {
+            "name": "Hệ thống (System OS)",
+            "cpu": sys_cpu,
+            "mem": sys_mem,
+            "is_system": True
+        }
+
         result = sorted(grouped.values(), key=lambda x: x["cpu"], reverse=True)
         return result[:n]
     except Exception:
@@ -3710,6 +3731,29 @@ def api_processes():
                 except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError):
                     continue
                     
+            # Tự động tính toán % Tiến trình Hệ thống (System OS) để tổng luôn bằng 100% tài nguyên đã dùng
+            user_cpu_sum = sum(p["cpu"] for p in procs)
+            user_mem_sum = sum(p["mem"] for p in procs)
+
+            total_sys_cpu = round(psutil.cpu_percent(interval=None) / num_cores, 1)
+            try:
+                total_sys_mem = round(psutil.virtual_memory().percent, 1)
+            except Exception:
+                total_sys_mem = 0.0
+
+            sys_cpu = max(0.0, round(total_sys_cpu - user_cpu_sum, 1))
+            sys_mem = max(0.0, round(total_sys_mem - user_mem_sum, 1))
+
+            procs.append({
+                "pid": -1,
+                "name": "Hệ thống (System OS)",
+                "user": "root",
+                "status": "running",
+                "cpu": sys_cpu,
+                "mem": sys_mem,
+                "is_system": True
+            })
+
             if len(procs) > 0:
                 # Ghi lai vao cache
                 with _processes_lock:
@@ -3736,8 +3780,8 @@ def api_process_kill():
         if not pid:
             return jsonify({"error": "Missing pid"}), 400
         
-        # Security: Do not allow killing self or system critical PIDs (e.g., 1)
-        if int(pid) <= 1 or int(pid) == os.getpid():
+        # Security: Do not allow killing self or system critical PIDs (e.g., <= 100 or -1)
+        if int(pid) <= 100 or int(pid) == os.getpid() or int(pid) == -1:
             return jsonify({"error": "Tiến trình hệ thống không thể kill"}), 403
 
         import signal

@@ -311,7 +311,8 @@ data class SystemProcess(
     val user: String,
     val status: String,
     val cpu: Float,
-    val mem: Float
+    val mem: Float,
+    val isSystem: Boolean = false
 )
 
 /** An entry in the Social Download history (TikTok / Facebook / YouTube). */

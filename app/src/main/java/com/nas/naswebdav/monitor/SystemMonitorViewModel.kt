@@ -671,7 +671,8 @@ class SystemMonitorViewModel(
                                 user = it.optString("user", "root"),
                                 status = it.optString("status", "running"),
                                 cpu = it.optDouble("cpu", 0.0).toFloat(),
-                                mem = it.optDouble("mem", 0.0).toFloat()
+                                mem = it.optDouble("mem", 0.0).toFloat(),
+                                isSystem = it.optBoolean("is_system", false) || it.optInt("pid", 0) <= 0
                             )
                         }
                     }

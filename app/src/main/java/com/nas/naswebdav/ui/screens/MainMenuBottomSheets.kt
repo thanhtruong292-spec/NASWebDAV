@@ -121,8 +121,7 @@ fun ProcessListBottomSheet(
             )
 
             val displayProcesses = systemMonitorVM.systemProcesses.filter {
-                val isSys = it.pid <= 300 || sysProcKeywords.any { sys -> it.name.lowercase().startsWith(sys) }
-                !isSys && (if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f)
+                (if (sortBy == "cpu") it.cpu >= 0f else it.mem >= 0f)
             }
 
             if (displayProcesses.isEmpty() && !systemMonitorVM.isLoadingProcesses) {
@@ -140,25 +139,26 @@ fun ProcessListBottomSheet(
             ) {
                 items(displayProcesses.size, key = { displayProcesses[it].pid }) { index ->
                     val proc = displayProcesses[index]
-                    val statusColor = when (proc.status) {
-                        "running" -> Color(0xFF66BB6A)
-                        "sleeping" -> Color(0xFF9E9E9E)
-                        "disk-sleep" -> Color(0xFFFFA726)
-                        "zombie", "dead" -> Color(0xFFEF5350)
-                        "idle" -> Color(0xFF29B6F6)
+                    val isSysEntry = proc.isSystem || proc.pid <= 0
+                    val statusColor = when {
+                        isSysEntry -> Color(0xFF29B6F6)
+                        proc.status == "running" -> Color(0xFF66BB6A)
+                        proc.status == "sleeping" -> Color(0xFF9E9E9E)
+                        proc.status == "disk-sleep" -> Color(0xFFFFA726)
+                        proc.status in listOf("zombie", "dead") -> Color(0xFFEF5350)
                         else -> Color(0xFF9E9E9E)
                     }
-                    val statusChar = when (proc.status) {
-                        "running" -> "R"
-                        "sleeping" -> "S"
-                        "disk-sleep" -> "D"
-                        "zombie" -> "Z"
-                        "idle" -> "I"
-                        else -> "?"
+                    val statusChar = when {
+                        isSysEntry -> "OS"
+                        proc.status == "running" -> "R"
+                        proc.status == "sleeping" -> "S"
+                        proc.status == "disk-sleep" -> "D"
+                        proc.status == "zombie" -> "Z"
+                        else -> "I"
                     }
 
                     var showKillConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                    if (showKillConfirm) {
+                    if (showKillConfirm && !isSysEntry) {
                         AppStatusDialog(
                             type = DialogType.CONFIRM,
                             message = "Bạn có chắc muốn tắt tiến trình ${proc.name} (PID: ${proc.pid}) không?",
@@ -173,8 +173,8 @@ fun ProcessListBottomSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
-                            .clickable(onClick = { showKillConfirm = true })
+                            .background(if (isSysEntry) Color(0xFF15232D) else Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .clickable(enabled = !isSysEntry, onClick = { showKillConfirm = true })
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
