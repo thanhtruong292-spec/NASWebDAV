@@ -3081,7 +3081,14 @@ def api_report_daily():
         cur.execute("SELECT report_json, generated_at FROM daily_reports WHERE report_date = ?", (date_str,))
         row = cur.fetchone()
         conn.close()
-        if row:
+        if not row or not row[0]:
+            _generate_daily_report(date_str)
+            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            cur = conn.cursor()
+            cur.execute("SELECT report_json, generated_at FROM daily_reports WHERE report_date = ?", (date_str,))
+            row = cur.fetchone()
+            conn.close()
+        if row and row[0]:
             report = json.loads(row[0])
             report["generated_at"] = row[1]
             return jsonify(report)
