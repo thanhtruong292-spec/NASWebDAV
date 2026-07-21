@@ -301,8 +301,7 @@ class SmartToolsViewModel(
         DuplicateProgressState.percent.value = 0f
     }
 
-    fun triggerSmartOrganizeScan() { /* TODO Phase 2b */ }
-    fun executeSmartOrganize(action: String = "move") { /* TODO Phase 2b */ }
+
     fun resetSmartOrganize() { organizerScanResult = null; organizerError = null; organizerResult = null }
 
     fun fetchThumbStatus() {

@@ -62,7 +62,7 @@ fun LivestreamRecordDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
-    LaunchedEffect(Unit) { liveVM.syncLivestreamStateWithServer(context) }
+    LaunchedEffect(Unit) { liveVM.syncLivestreamStateWithServer() }
     // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
     // giao dien gon, user chu dong bam header de xem section can xem.
     androidx.compose.runtime.DisposableEffect(Unit) {
@@ -481,7 +481,7 @@ fun LivestreamRecordDialog(
                             if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
-                                onClick = { liveVM.stopLivestreamRecord(context, job.jobId) },
+                                onClick = { liveVM.stopLivestreamRecord(job.jobId) },
                                 modifier = Modifier.fillMaxWidth().height(38.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
                                 shape = RoundedCornerShape(10.dp)

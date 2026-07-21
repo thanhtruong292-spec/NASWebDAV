@@ -338,6 +338,9 @@ fun MainMenuScreen(
     var showLivestreamDialog by remember { mutableStateOf(false) }
     var showSmbDialog by remember { mutableStateOf(false) }
 
+    // STATE CHO NAS CONFIG BACKUP/RESTORE
+    var showNasBackupDialog by remember { mutableStateOf(false) }
+
     // STATE CHO DISK HEALTH MONITOR
     var showDiskHealthDialog by remember { mutableStateOf(false) }
     var showNewDiskProfileSheet by remember { mutableStateOf(false) }
@@ -360,7 +363,7 @@ fun MainMenuScreen(
         deviceVM.fetchSmartData(minIntervalMs = 0L)
         deviceVM.fetchOmvOverview(minIntervalMs = 0L)
         sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
-        livestreamVM.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer()
         sysMonitorVM.startDashboardMonitoring(resetStatusPoll = false)
     }
 
@@ -608,7 +611,11 @@ fun MainMenuScreen(
                 showAutoBackupDialog = false
             },
             onTriggerManualSync = {
-                autoBackupVM.triggerManualBackup(mContext)
+                autoBackupVM.triggerManualBackup(mContext) { msg ->
+                    commonDialogMessage = msg
+                    commonDialogType = com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS
+                    showCommonDialog = true
+                }
                 showAutoBackupDialog = false
             },
             onDismiss = { showAutoBackupDialog = false }
@@ -633,6 +640,11 @@ fun MainMenuScreen(
     if (showLivestreamDialog) {
         LivestreamRecordDialog(
             onDismiss = { showLivestreamDialog = false }
+        )
+    }
+    if (showNasBackupDialog) {
+        DialogsNasConfigBackupDialog(
+            onDismiss = { showNasBackupDialog = false }
         )
     }
     if (showDiskHealthDialog) {
@@ -843,6 +855,7 @@ fun MainMenuScreen(
             showAutoBackupDialog = { showAutoBackupDialog = true },
             showLanWhitelistDialog = { showLanWhitelistDialog = true },
             showLivestreamDialog = { showLivestreamDialog = true },
+            showNasBackupDialog = { sysMonitorVM.fetchNasConfigBackups(); showNasBackupDialog = true },
             showDiskHealthDialog = { showDiskHealthDialog = true },
             showSleepScheduleDialog = { showSleepScheduleDialog = true },
             showBandwidthDialog = { showBandwidthDialog = true },
@@ -2133,6 +2146,7 @@ fun MainMenuToolboxDialog(
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
+    showNasBackupDialog: () -> Unit = {},
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
@@ -2390,7 +2404,7 @@ fun MainMenuSystemStatusCards(
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         smartToolsVM.fetchThumbStatus()
-        livestreamVM.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer()
         deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
             val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
@@ -2424,7 +2438,7 @@ fun MainMenuSystemStatusCards(
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
-        livestreamVM.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer()
         while (isActive) {
             kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
             livestreamVM.fetchLivestreamStatusOnly(mContext)

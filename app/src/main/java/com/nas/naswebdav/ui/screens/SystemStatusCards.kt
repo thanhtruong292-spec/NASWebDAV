@@ -79,7 +79,7 @@ fun DashboardSystemStatusCards(
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         smartToolsVM.fetchThumbStatus()
-        livestreamVM.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer()
         deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         var consecutiveFails = 0
         while (isActive) {
@@ -119,7 +119,7 @@ fun DashboardSystemStatusCards(
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
         // Lần đầu: đồng bộ đầy đủ (bao gồm WorkManager restore)
-        livestreamVM.syncLivestreamStateWithServer(mContext)
+        livestreamVM.syncLivestreamStateWithServer()
         while (isActive) {
             kotlinx.coroutines.delay(30_000L) // poll nhẹ mỗi 30 giây, không flicker
             livestreamVM.fetchLivestreamStatusOnly(mContext)

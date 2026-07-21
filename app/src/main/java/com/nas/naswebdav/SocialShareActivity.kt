@@ -35,10 +35,13 @@ class SocialShareActivity : Activity() {
             // Try content resolver — Facebook content:// URIs sometimes redirect
             // to the share URL; read as text line and scan for a URL.
             runCatching {
-                contentResolver.openInputStream(streamUri)?.bufferedReader()?.use { reader ->
-                    reader.lineSequence().take(5).forEach { line ->
-                        SocialShareParser.extractSupportedUrl(line)?.let { found ->
-                            candidates += found
+                val mimeType = contentResolver.getType(streamUri)
+                if (mimeType?.startsWith("text/") == true) {
+                    contentResolver.openInputStream(streamUri)?.bufferedReader()?.use { reader ->
+                        reader.lineSequence().take(5).forEach { line ->
+                            SocialShareParser.extractSupportedUrl(line)?.let { found ->
+                                candidates += found
+                            }
                         }
                     }
                 }

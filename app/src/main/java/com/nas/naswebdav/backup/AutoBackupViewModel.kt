@@ -82,12 +82,95 @@ class AutoBackupViewModel(
     var lockNowRequested by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
-    // ═══ PLACEHOLDER METHODS — implement Phase 3b ═══
+    init {
+        // Cập nhật trạng thái Auto Backup từ WorkManager
+        viewModelScope.launch {
+            try {
+                androidx.work.WorkManager.getInstance(NasApplication.instance.applicationContext)
+                    .getWorkInfosByTagFlow("com.nas.naswebdav.AutoBackupWorker").collect { workInfos ->
+                        val workInfo = workInfos.find {
+                            it.state == androidx.work.WorkInfo.State.RUNNING
+                        } ?: workInfos.find {
+                            it.state == androidx.work.WorkInfo.State.ENQUEUED &&
+                                it.tags.contains("MANUAL_AUTO_BACKUP")
+                        }
+                        if (workInfo != null) {
+                            isAutoBackupRunning = true
+                            autoBackupProgress = workInfo.progress.getFloat("progress", 0f)
+                            autoBackupCurrentFile = workInfo.progress.getString("fileName") ?: "Đang sao lưu..."
+                            autoBackupSourcePath = workInfo.progress.getString("sourcePath") ?: ""
+                            autoBackupDestPath = workInfo.progress.getString("destPath") ?: ""
+                            autoBackupProcessedCount = workInfo.progress.getInt("processedCount", 0)
+                            autoBackupTotalCount = workInfo.progress.getInt("totalCount", 0)
+                            autoBackupElapsedTime = workInfo.progress.getLong("elapsedTime", 0L)
+                            autoBackupIsPaused = com.nas.naswebdav.AutoBackupState.isPaused.value
+                        } else {
+                            isAutoBackupRunning = false
+                        }
+                    }
+            } catch (e: Exception) {
+                android.util.Log.w("AutoBackup", "WorkManager observe error: ${e.message}")
+            }
+        }
+    }
 
-    fun triggerManualBackup(context: Context) {
-        isAutoBackupRunning = true
-        autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
+    fun triggerManualBackup(context: Context, onResult: (String) -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            if (!android.os.Environment.isExternalStorageManager()) {
+                onResult("Thiếu quyền truy cập tất cả tệp. Đang mở cài đặt...")
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        addCategory("android.intent.category.DEFAULT")
+                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    try {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (e2: Exception) {
+                        android.util.Log.e("AutoBackup", "Failed to open settings", e2)
+                    }
+                }
+                return
+            }
+        } else {
+            val permissions = mutableListOf<String>()
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (permissions.isNotEmpty()) {
+                onResult("Thiếu quyền Media. Đang mở cài đặt để bạn cấp quyền...")
+                try {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("AutoBackup", "Failed to open settings", e)
+                }
+                return
+            }
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
+            val url = com.nas.naswebdav.SmartNetworkManager.getActiveBaseUrl(context)
+                .ifEmpty { com.nas.naswebdav.SecurePrefsHelper.getUrl(context) }
+            if (url.isEmpty()) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onResult("Chưa kết nối NAS. Vui lòng đăng nhập NAS trước khi đồng bộ!")
+                }
+                return@launch
+            }
+
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                onResult("Quyền đã được cấp đầy đủ! Đang bắt đầu đồng bộ nền...")
+                isAutoBackupRunning = true
+                autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
+            }
             try {
                 val workManager = androidx.work.WorkManager.getInstance(context)
                 val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.AutoBackupWorker>()
@@ -97,8 +180,6 @@ class AutoBackupViewModel(
                     androidx.work.ExistingWorkPolicy.REPLACE, request)
             } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "trigger: ${e.message}")
-            } finally {
-                withContext(Dispatchers.Main) { isAutoBackupRunning = false }
             }
         }
     }
@@ -116,6 +197,7 @@ class AutoBackupViewModel(
 
     fun toggleAutoBackupPause() {
         autoBackupIsPaused = !autoBackupIsPaused
+        com.nas.naswebdav.AutoBackupState.isPaused.value = autoBackupIsPaused
     }
 
     fun fetchBackupSchedule() {

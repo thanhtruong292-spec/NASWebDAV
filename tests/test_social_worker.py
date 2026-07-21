@@ -236,25 +236,25 @@ class TestSocialWorker(unittest.TestCase):
         self.assertEqual(observed_progress, 42)
         self.assertEqual(social_extractor._social_download_jobs[job_id]["platform"], "youtube")
 
-    def test_facebook_download_stays_public_and_uses_default_best_format(self):
+    def test_facebook_download_uses_cookies_and_uses_default_best_format(self):
         job_id = "facebook"
         self._seed_job(job_id)
         original_isfile = os.path.isfile
 
         def fake_isfile(path):
-            return str(path).endswith("facebook_cookies.txt") or original_isfile(path)
+            return str(path).endswith("cookies.txt") or original_isfile(path)
 
         with tempfile.TemporaryDirectory() as tmp_root, tempfile.TemporaryDirectory() as destination:
             worker = _load_worker_namespace(tmp_root, destination)["_social_worker"]
             with patch("subprocess.Popen", _SuccessfulDownloadProcess), patch(
-                "os.path.isfile", side_effect=fake_isfile
+                "os.path.exists", side_effect=fake_isfile
             ), patch(
                 "os.access", return_value=True
             ):
                 worker(job_id, "https://www.facebook.com/reel/123", "Downloads/social")
 
         command = _SuccessfulDownloadProcess.last_command
-        self.assertNotIn("--cookies", command)
+        self.assertIn("--cookies", command)
         self.assertNotIn("136/135/134/bestvideo", command)
 
     def test_worker_revalidates_url_before_spawning_ytdlp(self):

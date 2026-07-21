@@ -18,26 +18,12 @@ scp nas_api_server.py root@100.90.135.102:/root/nas_api_server.py
 ssh root@100.90.135.102 "cp /root/nas_api_server.py /opt/nas_api_server.py"
 ```
 
-### 2. Kill ĐÚNG tiến trình cũ bằng PID file (an toàn, không chạm Tailscale)
+### 2. Khởi động lại service bằng SystemD
 // turbo
 ```
-ssh root@100.90.135.102 "if [ -f /var/run/nas_api_server.pid ]; then kill $(cat /var/run/nas_api_server.pid) 2>/dev/null; sleep 2; fi"
+ssh root@100.90.135.102 "systemctl daemon-reload && systemctl restart nas_api.service"
 ```
-> PID file `/var/run/nas_api_server.pid` chỉ chứa PID của nas_api_server.py
-> → Chắc chắn KHÔNG BAO GIỜ kill Tailscale hay bất kỳ tiến trình nào khác
-
-### 3. Fallback: nếu PID file không tồn tại, kill bằng tên tiến trình cụ thể
-// turbo
-```
-ssh root@100.90.135.102 "pkill -f 'python3 /root/nas_api_server.py' 2>/dev/null; pkill -f 'python3 nas_api_server.py' 2>/dev/null; sleep 2; exit 0"
-```
-> Chỉ kill đúng `python3 nas_api_server.py`, KHÔNG dùng `fuser -k` (có thể kill Tailscale)
-
-### 4. Khởi động server mới
-// turbo
-```
-ssh root@100.90.135.102 "nohup python3 /root/nas_api_server.py > /tmp/nas_api.log 2>&1 &"
-```
+> Việc khởi động lại qua systemd sẽ đảm bảo NAS tự động lấy đúng các biến môi trường (như WEBDAV_ROOT) và tự động chạy lại nếu bị lỗi.
 
 ### 5. Kiểm tra server chạy thành công
 // turbo

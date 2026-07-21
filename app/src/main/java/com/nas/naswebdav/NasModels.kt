@@ -23,6 +23,7 @@ data class NasConfigBackup(
     val mtime: Double,
 )
 
+
 /**
  * A single SMART/disk-health sample — either current snapshot or one history
  * point. Many nullables because not every SMART counter is reported on every

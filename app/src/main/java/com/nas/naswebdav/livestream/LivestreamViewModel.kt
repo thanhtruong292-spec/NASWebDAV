@@ -94,23 +94,7 @@ class LivestreamViewModel(
     var tiktokCookiesMessage by androidx.compose.runtime.mutableStateOf("")
         internal set
 
-    // ═══ PLACEHOLDER METHODS — implement Phase 3b ═══
 
-    fun startLivestreamRecord(url: String, onError: (String) -> Unit = {}) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
-
-    fun stopLivestreamRecord(context: android.content.Context, jobId: String) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
-
-    fun syncLivestreamStateWithServer(context: android.content.Context) {
-        syncLivestreamStateWithServer()
-    }
-
-    fun restoreLivestreamStateIfRunning() {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
 
     fun fetchLivestreamStatusOnly(context: android.content.Context) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -150,15 +134,7 @@ class LivestreamViewModel(
         }
     }
 
-    fun observeLivestreamWorker(context: android.content.Context) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
 
-    fun monitorYtdlpJob() { /* TODO Phase 3b */ }
-
-    fun requestSocialDownload(url: String, format: String, onError: (String) -> Unit = {}) {
-        viewModelScope.launch { /* TODO Phase 3b */ }
-    }
 
     fun clearLivestreamMessage() { livestreamMessage = "" }
 

@@ -64,6 +64,7 @@ fun ToolboxDialog(
     showAutoBackupDialog: () -> Unit,
     showLanWhitelistDialog: () -> Unit,
     showLivestreamDialog: () -> Unit,
+    showNasBackupDialog: () -> Unit = {},
     showDiskHealthDialog: () -> Unit = {},
     showSleepScheduleDialog: () -> Unit = {},
     showBandwidthDialog: () -> Unit = {},
@@ -170,12 +171,23 @@ fun ToolboxDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
                 MainMenuSettingsMenuCard(
                     title = "USB Import",
-                    subtitle = "Tự copy ổ USB 3.0",
+                    subtitle = "Tự copy từ USB 3.0",
                     icon = Icons.Default.Usb,
                     color = AccentGreen,
                     modifier = Modifier.weight(1f),
                     checked = deviceVM.usbImportState.settings.enabled,
                     onClick = { onDismiss(); showUsbImportDialog() }
+                )
+            }
+            Spacer(Modifier.height(AppSpacing.SM))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
+                MainMenuSettingsMenuCard(
+                    title = "Sao lưu cấu hình NAS",
+                    subtitle = "Config + watcher + cookies",
+                    icon = Icons.Default.SettingsBackupRestore,
+                    color = AccentGreen,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onDismiss(); showNasBackupDialog() }
                 )
                 MainMenuSettingsMenuCard(
                     title = "Sức khoẻ ổ cứng",

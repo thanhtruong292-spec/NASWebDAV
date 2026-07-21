@@ -47,6 +47,7 @@ object AutoBackupState {
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "AutoBackup", "Bắt đầu tiến trình đồng bộ nền (Worker khởi động).")
         // FIX CRITICAL: On Android 14+ (API 34), setForeground() throws
         // MissingForegroundServiceTypeException if manifest or code omits the correct
         // foregroundServiceType. Swallowing the exception silently causes the Worker to
@@ -61,6 +62,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             }
             if (isFatal) {
                 android.util.Log.e("AutoBackup", "setForeground failed (fatal)", e)
+                SystemLogger.log("ERROR", "AutoBackup", "Lỗi khởi động nền (Foreground): ${e.message}")
                 return@withContext Result.failure()
             }
             // Non-fatal — continue (e.g. notification channel not yet created)
@@ -75,7 +77,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
-        val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
+        val webDavManager = loadWebDavManager() ?: run {
+            SystemLogger.log("ERROR", "AutoBackup", "Lỗi cấu hình NAS: URL hoặc tài khoản trống.")
+            return@withContext Result.failure()
+        }
         if (runAttemptCount >= 3) {
             SystemLogger.log("ERROR", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
             return@withContext Result.failure()
@@ -369,6 +374,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 SystemLogger.log(if (failedCount > 0) "WARNING" else "SUCCESS", "AutoBackup", logMessage)
             } else {
                 SystemLogger.log("INFO", "AutoBackup", logMessage)
+            }
+            
+            if (totalFilesToProcess == 0) {
+                AutoBackupState.resultTotal.value = 0
+                AutoBackupState.resultSuccess.value = 0
+                AutoBackupState.resultSkipped.value = 0
+                AutoBackupState.resultFailed.value = 0
+                AutoBackupState.showResultDialog.value = true
+                return@withContext Result.success()
             }
             
             AutoBackupState.resultTotal.value = totalFilesToProcess

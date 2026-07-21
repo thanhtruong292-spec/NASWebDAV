@@ -60,19 +60,19 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
     private val notificationId = 999
     private val channelId = "scan_channel"
 
-    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        try {
-            setForeground(makeForegroundInfo(channelId, "Quét dọn hệ thống", notificationId, "Đang quét dữ liệu trùng lặp..."))
-        } catch (_: Exception) {}
-
-        val currentUrl = inputData.getString("currentUrl") ?: return@withContext Result.failure()
+    override suspend fun doWork(): Result {
+        val currentUrl = inputData.getString("currentUrl") ?: return Result.failure()
         val forceRestart = inputData.getBoolean("forceRestart", false)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
+        if (user.isEmpty() || pass.isEmpty()) return Result.failure()
 
-        val webDavManager = WebDavManager
-        webDavManager.connect(currentUrl, user, pass)
+        return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(currentUrl, user, pass))) {
+            try {
+                setForeground(makeForegroundInfo(channelId, "Quét dọn hệ thống", notificationId, "Đang quét dữ liệu trùng lặp..."))
+            } catch (_: Exception) {}
+
+            val webDavManager = WebDavManager
         setThumbnailActivity("sync", true)
         val db = NasApplication.instance.database
 
@@ -731,6 +731,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
             uiScope.cancel()
         }
+    }
     }
 
     /** Helper: Hash trên phone CPU qua WebDAV (SHA-256 partial 1MB)

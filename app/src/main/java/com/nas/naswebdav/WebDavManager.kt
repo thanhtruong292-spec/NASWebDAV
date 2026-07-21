@@ -119,6 +119,8 @@ object WebDavManager {
             )
     }
 
+    val threadLocalAuth = ThreadLocal<AuthState>()
+
     @Volatile
     private var authState = AuthState()
 
@@ -140,11 +142,13 @@ object WebDavManager {
     }
 
     fun tagCurrentAuth(builder: Request.Builder): Request.Builder {
-        return builder.tag(AuthState::class.java, authState)
+        val currentAuth = threadLocalAuth.get() ?: authState
+        return builder.tag(AuthState::class.java, currentAuth)
     }
 
     fun Request.Builder.withCurrentAuth(): Request.Builder {
-        return tag(AuthState::class.java, authState)
+        val currentAuth = threadLocalAuth.get() ?: authState
+        return this.tag(AuthState::class.java, currentAuth)
     }
 
     // Kế thừa kết nối (Connection Pooling) & Keep-Alive

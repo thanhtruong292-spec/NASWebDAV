@@ -259,7 +259,7 @@ def _social_is_supported_content_url(parsed, host):
         return (
             "/videos/" in path_lower
             or path_lower.startswith((
-                "/reel/", "/stories/", "/s/", "/share/r/", "/share/v/"
+                "/reel/", "/stories/", "/s/", "/share/r/", "/share/v/", "/story.php", "/story/"
             ))
             or (path_lower in ("/watch", "/watch/") and "v=" in query_lower)
             or (path_lower == "/photo.php" and "v=" in query_lower)
@@ -7963,6 +7963,48 @@ def _social_worker(job_id, url, folder):
         platform = _detect_platform(url)
         _social_update_job(job_id, platform=platform)
 
+        # Fallback to RapidAPI (third-party) for Facebook if no Facebook cookies are present
+        # This helps bypass Facebook's strict bot protection and Cobalt's shutdown
+        cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+        has_fb_cookies = False
+        if os.path.exists(cookies_path) and os.access(cookies_path, os.R_OK):
+            try:
+                with open(cookies_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    if '.facebook.com' in f.read():
+                        has_fb_cookies = True
+            except Exception:
+                pass
+
+        if platform == "facebook" and not has_fb_cookies:
+            rapidapi_key = os.environ.get('RAPIDAPI_KEY')
+            if rapidapi_key:
+                import urllib.request, urllib.parse, json
+                rapidapi_host = os.environ.get('RAPIDAPI_HOST', 'facebook-video-downloader-api.p.rapidapi.com')
+                rapidapi_endpoint = os.environ.get('RAPIDAPI_ENDPOINT', 'https://' + rapidapi_host + '/fb/video/')
+                try:
+                    # Xây dựng HTTP Request chuẩn cho RapidAPI
+                    api_url = rapidapi_endpoint + "?url=" + urllib.parse.quote(url)
+                    req = urllib.request.Request(
+                        api_url,
+                        headers={
+                            'X-RapidAPI-Key': rapidapi_key,
+                            'X-RapidAPI-Host': rapidapi_host,
+                            'User-Agent': 'Mozilla/5.0'
+                        }
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as response:
+                        if response.status == 200:
+                            resp_data = json.loads(response.read().decode('utf-8'))
+                            # Lấy URL trực tiếp tùy theo cấu trúc JSON trả về của từng API
+                            if 'url' in resp_data:
+                                url = resp_data['url']
+                            elif 'hd' in resp_data:
+                                url = resp_data['hd']
+                            elif 'sd' in resp_data:
+                                url = resp_data['sd']
+                except Exception as e:
+                    log.error('[Social] RapidAPI fallback failed: %s', e)
+
         output_template = os.path.join(tmp_dir, '%(title)s.%(ext)s')
         cmd = [
             ytdlp_bin, url,
@@ -7983,6 +8025,22 @@ def _social_worker(job_id, url, folder):
             '--ignore-errors',
             '--no-warnings',
         ]
+
+        cookies_path = os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
+        if os.path.exists(cookies_path) and os.access(cookies_path, os.R_OK):
+            cmd.extend(["--cookies", cookies_path])
+
+        if platform == "tiktok":
+            cmd.extend([
+                "--user-agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "--add-header", "Referer: https://www.tiktok.com/"
+            ])
+        elif platform == "facebook":
+            cmd.extend([
+                "--user-agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ])
 
         _social_update_job(job_id, status='downloading')
 
