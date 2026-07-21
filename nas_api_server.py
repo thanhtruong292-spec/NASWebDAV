@@ -3807,7 +3807,12 @@ def api_processes():
         else:
             all_procs.sort(key=lambda x: x["cpu"], reverse=True)
             
-        return jsonify({"status": "success", "data": all_procs[:limit]})
+        return jsonify({
+            "status": "success",
+            "total_cpu": "%.1f%%" % total_sys_cpu,
+            "total_ram": "%.1f%%" % total_sys_ram,
+            "data": all_procs[:limit]
+        })
     except Exception as e:
         log.error("Lỗi API danh sách tiến trình: %s", e)
         return jsonify({"error": str(e)}), 500

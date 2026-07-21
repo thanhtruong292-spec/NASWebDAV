@@ -655,6 +655,7 @@ class SystemMonitorViewModel(
     fun fetchSystemProcesses(context: Context) {
         isLoadingProcesses = true
         viewModelScope.launch(Dispatchers.IO) {
+            fetchStatusNow()
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().let(WebDavManager::tagCurrentAuth).build()
@@ -662,8 +663,16 @@ class SystemMonitorViewModel(
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val obj = org.json.JSONObject(body)
+                    val totalCpuStr = obj.optString("total_cpu", "")
+                    val totalRamStr = obj.optString("total_ram", "")
                     val arr = obj.optJSONArray("data") ?: org.json.JSONArray()
                     withContext(Dispatchers.Main) {
+                        if (totalCpuStr.isNotBlank()) {
+                            systemStatus = systemStatus.copy(
+                                cpu = totalCpuStr,
+                                ramPercent = if (totalRamStr.isNotBlank()) totalRamStr.replace("%", "").trim() else systemStatus.ramPercent
+                            )
+                        }
                         systemProcesses = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             SystemProcess(
                                 pid = it.optInt("pid", 0),
