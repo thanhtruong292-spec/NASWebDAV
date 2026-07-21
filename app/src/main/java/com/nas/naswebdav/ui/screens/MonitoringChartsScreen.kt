@@ -481,6 +481,10 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                 if (sampleSize >= 2) {
                     val vGridCount = 5.coerceAtMost(sampleSize)
                     val vStep = (sampleSize - 1) / (vGridCount - 1).toFloat()
+                    val spansMultipleDays = (
+                        history.first().timestamp.length >= 10 && history.last().timestamp.length >= 10 &&
+                        history.first().timestamp.substring(0, 10) != history.last().timestamp.substring(0, 10)
+                    )
                     
                     for (gi in 0 until vGridCount) {
                         val pIdx = (gi * vStep).toInt().coerceIn(0, sampleSize - 1)
@@ -494,10 +498,22 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                             pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4f * density, 4f * density))
                         )
 
-                        // Nhãn thời gian động (HH:mm) dưới chân đường kẻ dọc
+                        // Nhãn thời gian động (HH:mm hoặc HH:mm (dd/M/yy)) dưới chân đường kẻ dọc
                         val rawTs = history[pIdx].timestamp
                         val timeLabel = when {
-                            rawTs.length >= 19 -> rawTs.substring(11, 16) // Lấy HH:mm từ "YYYY-MM-DD HH:mm:ss"
+                            rawTs.length >= 19 -> {
+                                val hhmm = rawTs.substring(11, 16)
+                                val datePart = rawTs.substring(0, 10)
+                                val latestDate = history.last().timestamp.take(10)
+                                if (spansMultipleDays && datePart != latestDate) {
+                                    val y2 = rawTs.substring(2, 4)
+                                    val m2 = rawTs.substring(5, 7).toIntOrNull() ?: 0
+                                    val d2 = rawTs.substring(8, 10).toIntOrNull() ?: 0
+                                    "$hhmm ($d2/$m2/$y2)"
+                                } else {
+                                    hhmm
+                                }
+                            }
                             rawTs.length >= 5 -> rawTs.substring(0, 5)
                             else -> rawTs
                         }
@@ -645,7 +661,23 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             val idx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
             val tsText = if (idx in history.indices) history[idx].timestamp else ""
-            val timeLabel = if (tsText.length >= 19) tsText.substring(11, 19) else if (tsText.isNotBlank()) tsText else "Vừa cập nhật"
+            val spansMultipleDays = (
+                history.firstOrNull()?.timestamp?.take(10) != null && history.lastOrNull()?.timestamp?.take(10) != null &&
+                history.first().timestamp.take(10) != history.last().timestamp.take(10)
+            )
+            val timeLabel = if (tsText.length >= 19) {
+                val timePart = tsText.substring(11, 19)
+                val datePart = tsText.substring(0, 10)
+                val latestDate = history.last().timestamp.take(10)
+                if (spansMultipleDays && datePart != latestDate) {
+                    val y2 = tsText.substring(2, 4)
+                    val m2 = tsText.substring(5, 7).toIntOrNull() ?: 0
+                    val d2 = tsText.substring(8, 10).toIntOrNull() ?: 0
+                    "$timePart ($d2/$m2/$y2)"
+                } else {
+                    timePart
+                }
+            } else if (tsText.isNotBlank()) tsText else "Vừa cập nhật"
             val prefixText = if (touchedIndex != -1) "Mốc vuốt: " else "Cập nhật lúc: "
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
