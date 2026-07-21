@@ -3735,7 +3735,7 @@ def api_processes():
             user_cpu_sum = sum(p["cpu"] for p in procs)
             user_mem_sum = sum(p["mem"] for p in procs)
 
-            total_sys_cpu = round(psutil.cpu_percent(interval=None) / num_cores, 1)
+            total_sys_cpu = round(psutil.cpu_percent(interval=None), 1)
             try:
                 total_sys_mem = round(psutil.virtual_memory().percent, 1)
             except Exception:

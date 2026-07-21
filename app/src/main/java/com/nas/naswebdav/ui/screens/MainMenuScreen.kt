@@ -3140,7 +3140,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
             androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
 
             val displayProcesses = systemMonitorVM.systemProcesses.filter {
-                if (sortBy == "cpu") it.cpu > 0f else it.mem > 0f
+                (if (sortBy == "cpu") it.cpu >= 0f else it.mem >= 0f)
             }
 
             if (displayProcesses.isEmpty() && !systemMonitorVM.isLoadingProcesses) {
@@ -3158,25 +3158,26 @@ fun MainMenuBottomSheetProcessListBottomSheet(
             ) {
                 items(displayProcesses.size, key = { displayProcesses[it].pid }) { index ->
                     val proc = displayProcesses[index]
-                    val statusColor = when (proc.status) {
-                        "running" -> Color(0xFF66BB6A)
-                        "sleeping" -> Color(0xFF9E9E9E)
-                        "disk-sleep" -> Color(0xFFFFA726)
-                        "zombie", "dead" -> Color(0xFFEF5350)
-                        "idle" -> Color(0xFF29B6F6)
+                    val isSysEntry = proc.isSystem || proc.pid <= 0
+                    val statusColor = when {
+                        isSysEntry -> Color(0xFF29B6F6)
+                        proc.status == "running" -> Color(0xFF66BB6A)
+                        proc.status == "sleeping" -> Color(0xFF9E9E9E)
+                        proc.status == "disk-sleep" -> Color(0xFFFFA726)
+                        proc.status in listOf("zombie", "dead") -> Color(0xFFEF5350)
                         else -> Color(0xFF9E9E9E)
                     }
-                    val statusChar = when (proc.status) {
-                        "running" -> "R"
-                        "sleeping" -> "S"
-                        "disk-sleep" -> "D"
-                        "zombie" -> "Z"
-                        "idle" -> "I"
-                        else -> "?"
+                    val statusChar = when {
+                        isSysEntry -> "OS"
+                        proc.status == "running" -> "R"
+                        proc.status == "sleeping" -> "S"
+                        proc.status == "disk-sleep" -> "D"
+                        proc.status == "zombie" -> "Z"
+                        else -> "I"
                     }
 
                     var showKillConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                    if (showKillConfirm) {
+                    if (showKillConfirm && !isSysEntry) {
                         AppStatusDialog(
                             type = DialogType.CONFIRM,
                             message = "Bạn có chắc muốn tắt tiến trình ${proc.name} (PID: ${proc.pid}) không?",
@@ -3191,8 +3192,8 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
-                            .clickable(onClick = { showKillConfirm = true })
+                            .background(if (isSysEntry) Color(0xFF15232D) else Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .clickable(enabled = !isSysEntry, onClick = { showKillConfirm = true })
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -3206,17 +3207,21 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(proc.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
+                            Text(if (isSysEntry) "Hệ điều hành OS" else "${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
                         }
                         val displayValue = if (sortBy == "cpu") "${proc.cpu}%" else "${proc.mem}%"
                         Text(displayValue, color = AccentCyan, fontSize = 12.sp, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.width(8.dp))
-                        androidx.compose.material3.Icon(
-                            androidx.compose.material.icons.Icons.Default.Close,
-                            contentDescription = "Kill",
-                            tint = Color(0xFFEF5350).copy(alpha = 0.7f),
-                            modifier = Modifier.size(16.dp)
-                        )
+                        if (!isSysEntry) {
+                            androidx.compose.material3.Icon(
+                                androidx.compose.material.icons.Icons.Default.Close,
+                                contentDescription = "Kill",
+                                tint = Color(0xFFEF5350).copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        } else {
+                            Spacer(Modifier.size(16.dp))
+                        }
                     }
                 }
             }
