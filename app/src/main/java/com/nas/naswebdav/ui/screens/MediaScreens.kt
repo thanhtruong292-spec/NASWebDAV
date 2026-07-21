@@ -239,20 +239,10 @@ fun ImageViewerScreen(
                 path = file.path,
                 auth = okhttp3.Credentials.basic(user, pass),
                 fileName = file.name,
+                onTap = { showControls = !showControls },
                 modifier = Modifier.fillMaxSize()
             )
         }
-
-        // Tap-anywhere-to-toggle-controls (overlay invisible layer above pager)
-        Box(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { showControls = !showControls }
-                    )
-                }
-        )
 
         // ============ TOP TOOLBAR (auto-hide) ============
         AnimatedVisibility(
@@ -433,6 +423,7 @@ private fun ZoomableImage(
     path: String,
     auth: String,
     fileName: String,
+    onTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
@@ -459,6 +450,7 @@ private fun ZoomableImage(
         modifier = modifier
             .pointerInput(path) {
                 detectTapGestures(
+                    onTap = { onTap() },
                     onDoubleTap = { tapOffset ->
                         if (scale > 1f) {
                             // Zoom out về 1f
