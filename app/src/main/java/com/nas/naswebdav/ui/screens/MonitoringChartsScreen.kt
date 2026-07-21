@@ -377,17 +377,19 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     val textPx = 10f * density
 
     Column {
-        // Chú thích màu & kiểu nét kẻ — Legend
+        // Chú thích màu & kiểu nét kẻ — Legend gộp chung thông số số liệu
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                val displayIdx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
                 series.forEach { s ->
-                    val displayIdx = if (touchedIndex in s.values.indices) touchedIndex else s.values.lastIndex
                     val currentVal = if (displayIdx in s.values.indices) s.values[displayIdx] else 0f
+                    val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
+                    val valStr = "${fmt.format(currentVal)}${s.unit}"
                     val styleLabel = if (s.isDashed) "- - - " else "━━ "
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(styleLabel, fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Black)
                         Icon(s.icon, null, tint = s.color, modifier = Modifier.size(13.dp))
-                        Text("${s.label} (${s.unit.trim()})", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
+                        Text("${s.label}: $valStr", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -619,15 +621,16 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             }
         }
 
-        // Hàng giá trị dưới cùng hiển thị Động theo ngón tay
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) {
+        // Hàng dưới cùng: Nhãn thời gian cập nhật
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             val idx = if (touchedIndex in history.indices) touchedIndex else history.size - 1
-            series.forEach { s ->
-                if (idx in s.values.indices) {
-                    val v = s.values[idx]
-                    val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
-                    Text("${s.label}: ${fmt.format(v)}${s.unit}  ", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
-                }
+            val tsText = if (idx in history.indices) history[idx].timestamp else ""
+            val timeLabel = if (tsText.length >= 19) tsText.substring(11, 19) else if (tsText.isNotBlank()) tsText else "Vừa cập nhật"
+            val prefixText = if (touchedIndex != -1) "Mốc vuốt: " else "Cập nhật lúc: "
+
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(Icons.Default.Schedule, null, tint = Color(0xFF8892B0), modifier = Modifier.size(12.dp))
+                Text("$prefixText$timeLabel", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Medium)
             }
         }
     }
