@@ -398,18 +398,30 @@ class SystemMonitorViewModel(
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val cpuObj = json.optJSONObject("cpu")
+                    val ramObj = json.optJSONObject("ram")
+                    val cpuTempObj = json.optJSONObject("cpu_temp")
+                    val hddTempObj = json.optJSONObject("hdd_temp")
+                    val netObj = json.optJSONObject("network")
+                    val alertObj = json.optJSONObject("alerts")
+
                     withContext(Dispatchers.Main) {
                         dailyReport = DailyReportData(
                             date = json.optString("date", ""),
                             healthScore = json.optInt("health_score", 0),
-                            cpuAvg = json.optDouble("cpu_avg", 0.0).toFloat(),
-                            cpuPeak = json.optDouble("cpu_peak", 0.0).toFloat(),
-                            ramAvg = json.optDouble("ram_avg", 0.0).toFloat(),
-                            ramPeak = json.optDouble("ram_peak", 0.0).toFloat(),
-                            downloadMb = json.optDouble("download_mb", 0.0).toFloat(),
-                            uploadMb = json.optDouble("upload_mb", 0.0).toFloat(),
-                            errorCount = json.optInt("error_count", 0),
-                            warningCount = json.optInt("warning_count", 0)
+                            cpuAvg = (cpuObj?.optDouble("avg") ?: json.optDouble("cpu_avg", 0.0)).toFloat(),
+                            cpuPeak = (cpuObj?.optDouble("peak") ?: json.optDouble("cpu_peak", 0.0)).toFloat(),
+                            ramAvg = (ramObj?.optDouble("avg") ?: json.optDouble("ram_avg", 0.0)).toFloat(),
+                            ramPeak = (ramObj?.optDouble("peak") ?: json.optDouble("ram_peak", 0.0)).toFloat(),
+                            cpuTempAvg = (cpuTempObj?.optDouble("avg") ?: json.optDouble("cpu_temp_avg", 0.0)).toFloat(),
+                            cpuTempPeak = (cpuTempObj?.optDouble("peak") ?: json.optDouble("cpu_temp_peak", 0.0)).toFloat(),
+                            hddTempAvg = (hddTempObj?.optDouble("avg") ?: json.optDouble("hdd_temp_avg", 0.0)).toFloat(),
+                            hddTempPeak = (hddTempObj?.optDouble("peak") ?: json.optDouble("hdd_temp_peak", 0.0)).toFloat(),
+                            downloadMb = (netObj?.optDouble("total_download_mb") ?: json.optDouble("download_mb", 0.0)).toFloat(),
+                            uploadMb = (netObj?.optDouble("total_upload_mb") ?: json.optDouble("upload_mb", 0.0)).toFloat(),
+                            errorCount = alertObj?.optInt("errors") ?: json.optInt("error_count", 0),
+                            warningCount = alertObj?.optInt("warnings") ?: json.optInt("warning_count", 0),
+                            samples = json.optInt("samples", 0)
                         )
                     }
                 }
