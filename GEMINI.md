@@ -104,3 +104,9 @@ Xem [CHANGELOG.md](./CHANGELOG.md) để biết chi tiết từng thay đổi.
 
 ### 7. WAKE_LOCK & Manifest Merger (Xem chi tiết hardrules)
 - CẤM TUYỆT ĐỐI xóa 	ools:node=" replace\ ở thẻ WAKE_LOCK trong AndroidManifest.xml. Thư viện ngoài lén lút giới hạn maxSdkVersion=25 gây lỗi mất quyền ngầm trên tiến trình nền.
+
+### 8. CẤM KHAI BÁO HÀM TRONG KHỐI THỰC THI (INDENTATION TRAP TRÊN PYTHON)
+- **CẤM TUYỆT ĐỐI** định nghĩa hàm helper (`def _something():`) trực tiếp bên trong khối `if __name__ == '__main__':` hoặc lồng trong hàm khác của `nas_api_server.py`.
+- **Hậu quả:** Thụt đầu dòng (indentation) sẽ vô tình nuốt toàn bộ các thread khởi tạo server (`Waitress`/`Tornado`) vào trong hàm đó. Kết quả: Python chạy xong hàm tự thoát (exit 0) làm `nas_api.service` liên tục crash/restart loop làm App không đăng nhập được.
+- **Quy tắc:** Mọi hàm helper BẮT BUỘC phải nằm ở cấp độ module (top-level scope, 0 space indentation). Khối `if __name__ == '__main__':` chỉ chứa các lời gọi hàm phẳng.
+

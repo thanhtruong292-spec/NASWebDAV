@@ -30,3 +30,8 @@
 
 ### 7. PROJECT MAP (BẢN ĐỒ DỰ ÁN)
 - Toàn bộ AI bắt buộc phải đọc file `MAP.md` ở thư mục gốc trước khi bắt tay thực hiện bất kỳ thay đổi nào. Khi có thay đổi kiến trúc hoặc tính năng, phải cập nhật nội dung tương ứng vào `MAP.md`.
+
+### 8. QUY TẮC CẤM KHAI BÁO HÀM TRONG KHỐI THỰC THI (INDENTATION TRAP TRÊN PYTHON)
+- **CẤM TUYỆT ĐỐI** định nghĩa hàm helper (`def _something():`) trực tiếp bên trong khối `if __name__ == '__main__':` hoặc lồng trong hàm khác của `nas_api_server.py`.
+- **Hậu quả:** Cú pháp thụt đầu dòng (indentation) của Python sẽ làm các dòng khởi tạo thread server (`Waitress`/`Tornado`) bị nuốt chửng vào thân hàm đó. Python chạy xong hàm tự kết thúc (exit 0), dịch vụ `nas_api.service` liên tục crash/restart loop làm App sập kết nối/không đăng nhập được.
+- **Quy tắc:** Tất cả các hàm helper phải luôn khai báo ở cấp độ module (top-level, 0 space indentation). Khối `if __name__ == '__main__':` chỉ gọi hàm phẳng.
