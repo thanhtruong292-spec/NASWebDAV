@@ -13718,6 +13718,16 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
+                # Ép giải phóng Kernel page cache nếu RAM khả dụng xuống dưới 250 MB
+                try:
+                    mem = psutil.virtual_memory()
+                    if getattr(mem, 'available', mem.free) < 250 * 1024 * 1024:
+                        with open("/proc/sys/vm/drop_caches", "w") as f:
+                            f.write("3\n")
+                        log.info("[ResourceReclaimer] Đã tự động giải phóng Kernel Page Cache VFS.")
+                except Exception:
+                    pass
+
                 # 2. Rà soát tiến trình — BẢO VỆ TIẾN TRÌNH ĐANG HOẠT ĐỘNG
                 now = time.time()
                 current_pid = os.getpid()
