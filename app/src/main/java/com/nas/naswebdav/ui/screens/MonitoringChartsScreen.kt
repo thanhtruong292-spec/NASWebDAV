@@ -502,9 +502,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
                     val colorFn: (Float) -> Color = { v -> s.colorOf?.invoke(v) ?: s.color }
 
-                    val dashEffect = if (s.isDashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f * density, 2f * density)) else null
-
                     // Vẽ từng đoạn [i, i+1] chuyển màu theo trạng thái nhiệt độ/tài nguyên (Xanh -> Vàng -> Đỏ)
+                    var accumulatedLength = 0f
                     for (i in 0 until pts.size - 1) {
                         val v1 = pts[i]
                         val v2 = pts[i + 1]
@@ -515,6 +514,15 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         val x2 = xOf(i + 1)
                         val y1 = yOf(v1)
                         val y2 = yOf(v2)
+
+                        val len = kotlin.math.hypot(x2 - x1, y2 - y1)
+                        val dashEffect = if (s.isDashed) {
+                            androidx.compose.ui.graphics.PathEffect.dashPathEffect(
+                                floatArrayOf(5f * density, 2.5f * density),
+                                phase = accumulatedLength
+                            )
+                        } else null
+                        accumulatedLength += len
 
                         val segPath = androidx.compose.ui.graphics.Path().apply {
                             moveTo(x1, y1)
