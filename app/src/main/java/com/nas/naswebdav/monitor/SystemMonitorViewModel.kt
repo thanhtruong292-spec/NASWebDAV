@@ -293,10 +293,35 @@ class SystemMonitorViewModel(
                 metricsHistory.add(livePoint)
             }
         }
-        if (metricsHistory.size > 1000) {
-            metricsHistory.removeRange(0, metricsHistory.size - 1000)
-        }
+        pruneOldPoints()
         lastMetricsRefreshAt = System.currentTimeMillis()
+    }
+
+    private fun pruneOldPoints() {
+        if (metricsHistory.isEmpty()) return
+        val maxWindowMs = metricsHours * 3600 * 1000L + 120_000L
+        val sdfIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val sdfLocal = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+
+        fun parseMs(ts: String): Long {
+            return try {
+                if (ts.contains("T")) sdfIso.parse(ts)?.time ?: 0L
+                else sdfLocal.parse(ts)?.time ?: 0L
+            } catch (e: Exception) { 0L }
+        }
+
+        val newestMs = parseMs(metricsHistory.last().timestamp).let { if (it > 0L) it else System.currentTimeMillis() }
+
+        val iterator = metricsHistory.iterator()
+        while (iterator.hasNext()) {
+            val pt = iterator.next()
+            val ptMs = parseMs(pt.timestamp)
+            if (ptMs > 0L && (newestMs - ptMs) > maxWindowMs) {
+                iterator.remove()
+            }
+        }
     }
 
     fun launchMetricsPolling() {
@@ -314,10 +339,14 @@ class SystemMonitorViewModel(
         }
     }
 
+    private var metricsFetchJob: kotlinx.coroutines.Job? = null
+
     fun fetchMetricsHistory(hours: Int = 1) {
-        if (isLoadingMetrics) return
+        metricsHours = hours
+        metricsError = null
+        metricsFetchJob?.cancel()
         isLoadingMetrics = true
-        viewModelScope.launch(Dispatchers.IO) {
+        metricsFetchJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().let(WebDavManager::tagCurrentAuth).build()
@@ -333,22 +362,23 @@ class SystemMonitorViewModel(
                     val netRxArr   = json.optJSONArray("net_rx_kbps")
                     val netTxArr   = json.optJSONArray("net_tx_kbps")
                     val count = timestamps?.length() ?: 0
+                    val parsedPoints = mutableListOf<MetricsSnapshot>()
+                    for (i in 0 until count) {
+                        parsedPoints.add(MetricsSnapshot(
+                            timestamp = timestamps?.optString(i, "") ?: "",
+                            cpuTemp   = cpuTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            cpuPercent = cpuArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            ramPercent = ramArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            hddTemp    = hddTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            netRxKbps  = netRxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
+                        ))
+                    }
                     withContext(Dispatchers.Main) {
-                        metricsHours = hours
                         metricsHistory.clear()
-                        for (i in 0 until count) {
-                            metricsHistory.add(MetricsSnapshot(
-                                timestamp = timestamps?.optString(i, "") ?: "",
-                                cpuTemp   = cpuTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
-                                cpuPercent = cpuArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
-                                ramPercent = ramArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
-                                hddTemp    = hddTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
-                                netRxKbps  = netRxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
-                                netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
-                            ))
-                        }
-                        // BẮT BUỘC: Đẩy điểm dữ liệu LIVE hiện tại vào điểm cuối cùng của metricsHistory
+                        metricsHistory.addAll(parsedPoints)
                         appendOrUpdateLivePoint()
+                        pruneOldPoints()
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
