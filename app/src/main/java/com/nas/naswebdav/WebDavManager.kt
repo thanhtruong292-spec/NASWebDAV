@@ -974,6 +974,15 @@ object WebDavManager {
 
     }
 
+    fun extractApiError(response: okhttp3.Response): String? {
+        return runCatching {
+            val bodyStr = response.body?.string() ?: ""
+            if (bodyStr.isNotBlank()) {
+                org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null }
+            } else null
+        }.getOrNull()
+    }
+
 }
 
 

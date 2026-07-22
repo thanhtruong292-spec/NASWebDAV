@@ -304,10 +304,14 @@ class LivestreamMonitorWorker(
         // Hiện thông báo hoàn tất tùy theo kết quả
         clearJobNotifications(applicationContext, jobId)
 
+        if (isStopped) {
+            return@withContext Result.retry()
+        }
+
         if (finalStatus == "error") {
             val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được video. Nguồn livestream rỗng hoặc yt-dlp báo lỗi."
             showCompletionNotification(notifId, platformLabel, "⚠️", msg)
-            return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to safeDataText(finalErrorReason, 512)))
+            return@withContext Result.failure(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to safeDataText(finalErrorReason, 512)))
         } else {
             showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã được lưu vào thư mục Livestream/ trên NAS")
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))

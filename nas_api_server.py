@@ -10977,7 +10977,24 @@ def _delete_linux_user(username):
     except Exception as e:
         log.error("Lỗi xóa user %s: %s", username, e)
 
-GUEST_PASSES_FILE = "/opt/guest_passes.json"
+def _get_hdd_config_dir():
+    """Lấy thư mục lưu cấu hình trên ổ cứng HDD để TRÁNH GHI LÊN eMMC hệ thống (GEMINI §6)."""
+    if os.path.exists("/srv"):
+        for item in os.listdir("/srv"):
+            if item.startswith("dev-disk-by-"):
+                disk_path = os.path.join("/srv", item)
+                if os.path.isdir(disk_path):
+                    config_dir = os.path.join(disk_path, ".naswebdav")
+                    try:
+                        os.makedirs(config_dir, mode=0o755, exist_ok=True)
+                        return config_dir
+                    except Exception:
+                        pass
+    fallback_dir = "/var/lib/nas_api"
+    os.makedirs(fallback_dir, mode=0o755, exist_ok=True)
+    return fallback_dir
+
+GUEST_PASSES_FILE = os.path.join(_get_hdd_config_dir(), "guest_passes.json")
 
 def _load_guest_passes():
     global _guest_passes

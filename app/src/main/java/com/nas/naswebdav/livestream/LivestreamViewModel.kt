@@ -184,7 +184,7 @@ class LivestreamViewModel(
 
     private fun throwOnUnsuccessfulResponse(resp: okhttp3.Response) {
         if (!resp.isSuccessful) {
-            val errStr = runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull()
+            val errStr = WebDavManager.extractApiError(resp)
             throw Exception(if (!errStr.isNullOrBlank()) errStr else "Lỗi NAS: HTTP ${resp.code}")
         }
     }
@@ -359,7 +359,6 @@ class LivestreamViewModel(
     }
 
     fun dedupeLivestreamJobsForDisplay(jobs: List<LivestreamJob>): List<LivestreamJob> {
-        // SP3 fix: originally applied in WebDavViewModel facade — no-op now
-        return jobs
+        return jobs.distinctBy { it.jobId.ifBlank { "${it.platform}_${it.watchUsername}_${it.outputFile}" } }
     }
 }
