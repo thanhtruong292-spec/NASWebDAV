@@ -10,9 +10,6 @@
 # ─── OkHttp & Okio ───────────────────────────────────────────────────────────
 -dontwarn okhttp3.**
 -dontwarn okio.**
--keep class okhttp3.** { *; }
--keep interface okhttp3.** { *; }
--keep class okio.** { *; }
 
 # ─── Room Database ───────────────────────────────────────────────────────────
 # Giữ tất cả Entity, DAO, và Database class để Room reflection hoạt động
@@ -37,11 +34,9 @@
 
 # ─── Coil Image Loader ───────────────────────────────────────────────────────
 -dontwarn coil.**
--keep class coil.** { *; }
 
 # ─── Compose (Jetpack Compose) ───────────────────────────────────────────────
 -dontwarn androidx.compose.**
--keep class androidx.compose.** { *; }
 
 # ─── Kotlinx Coroutines ──────────────────────────────────────────────────────
 -dontwarn kotlinx.coroutines.**
@@ -50,7 +45,6 @@
 
 # ─── ExoPlayer / Media3 ──────────────────────────────────────────────────────
 -dontwarn androidx.media3.**
--keep class androidx.media3.** { *; }
 
 # ─── Serialization & JSON ────────────────────────────────────────────────────
 # org.json không cần keep (built-in) nhưng các callback class JSON cần giữ

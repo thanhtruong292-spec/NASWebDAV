@@ -40,7 +40,7 @@ fun PerformanceScreen(onBack: () -> Unit) {
             }
             PerfMetricCard("Kho Gạch Ngói Hình Ảnh (Coil Disk Cache)", Icons.Default.Storage, "${metrics.diskCacheSizeMb} MB đang ngốn rác", (metrics.diskCacheSizeMb / 800f).coerceIn(0f, 1f), Color(0xFF9C27B0))
             Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = { coil.Coil.imageLoader(mContext).memoryCache?.clear(); System.gc() }, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))) { Icon(Icons.Default.DeleteForever, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("BĂM NÚT BỘ ĐỆM RAM (Tránh Đơ Máy)", fontWeight = FontWeight.Bold) }
+            Button(onClick = { coil.Coil.imageLoader(mContext).memoryCache?.clear() }, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))) { Icon(Icons.Default.DeleteForever, contentDescription = "Clear cache icon"); Spacer(Modifier.width(8.dp)); Text("BĂM NÚT BỘ ĐỆM RAM (Tránh Đơ Máy)", fontWeight = FontWeight.Bold) }
         }
     }
 }
