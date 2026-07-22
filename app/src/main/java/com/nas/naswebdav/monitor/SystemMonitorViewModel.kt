@@ -203,36 +203,32 @@ class SystemMonitorViewModel(
                     val fanPctRaw = json.opt("fan_percent")
                     val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Int) else null
 
+                    val newStatus = NasSystemStatus(
+                        temp = json.optString("temperature", "--°C"),
+                        cpu = json.optString("cpu", "--%"),
+                        cpuTemp = json.optString("cpu_temp", "--°C"),
+                        ram = json.optString("ram", "--"),
+                        disk = diskStr,
+                        diskCapacity = diskCapacity,
+                        netRx = json.optString("net_rx", "0 B/s"),
+                        netTx = json.optString("net_tx", "0 B/s"),
+                        uptime = json.optString("uptime", "--"),
+                        status = "Đã kết nối",
+                        ramPercent = json.optString("ram_percent", "0"),
+                        torrents = torrentList,
+                        diskParts = diskPartList,
+                        fanStatus = json.optString("fan_status", "--"),
+                        fanMode = json.optString("fan_mode", "auto"),
+                        fanOnTemp = json.optDouble("fan_on_temp", 50.0).toFloat(),
+                        fanOffTemp = json.optDouble("fan_off_temp", 40.0).toFloat(),
+                        fanRpm = fanRpm,
+                        fanPercent = fanPercent,
+                        topProcesses = topProcs
+                    )
+
                     withContext(Dispatchers.Main) {
-                        systemStatus = NasSystemStatus(
-                            temp = json.optString("temperature", "--°C"),
-                            cpu = json.optString("cpu", "--%"),
-                            cpuTemp = json.optString("cpu_temp", "--°C"),
-                            ram = json.optString("ram", "--"),
-                            disk = diskStr,
-                            diskCapacity = diskCapacity,
-                            netRx = json.optString("net_rx", "0 B/s"),
-                            netTx = json.optString("net_tx", "0 B/s"),
-                            uptime = json.optString("uptime", "--"),
-                            status = "Đã kết nối",
-                            ramPercent = json.optString("ram_percent", "0"),
-                            torrents = torrentList,
-                            diskParts = diskPartList,
-                            fanStatus = json.optString("fan_status", "--"),
-                            fanMode = json.optString("fan_mode", "auto"),
-                            fanOnTemp = json.optDouble("fan_on_temp", 50.0).toFloat(),
-                            fanOffTemp = json.optDouble("fan_off_temp", 40.0).toFloat(),
-                            fanRpm = fanRpm,
-                            fanPercent = fanPercent,
-                            topProcesses = topProcs
-                        )
+                        systemStatus = newStatus
                         lastStatusRefreshAt = System.currentTimeMillis()
-
-                        val tempRaw = systemStatus.temp
-                        val cpuTemp = systemStatus.cpuTemp
-                        val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                        val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-
                         appendOrUpdateLivePoint()
                     }
                     true
