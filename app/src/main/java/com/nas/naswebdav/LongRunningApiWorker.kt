@@ -177,6 +177,9 @@ class LongRunningApiWorker(
                 return@withContext if (isSuccess) Result.success() else Result.failure()
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            if (isStopped) {
+                return@withContext Result.retry()
+            }
             android.util.Log.e(TAG, "Lỗi API tác vụ dài: ${e.message}", e)
 
             setProgress(workDataOf(

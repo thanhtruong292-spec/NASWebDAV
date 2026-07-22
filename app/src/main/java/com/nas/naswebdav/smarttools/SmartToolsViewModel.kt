@@ -118,6 +118,7 @@ class SmartToolsViewModel(
         internal set
 
     var globalUi: com.nas.naswebdav.GlobalUiViewModel? = null
+        private set
 
     fun attachGlobalUi(ui: com.nas.naswebdav.GlobalUiViewModel) {
         globalUi = ui

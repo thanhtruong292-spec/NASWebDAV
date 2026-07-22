@@ -437,6 +437,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (isStopped) {
+                return@withContext Result.retry()
+            }
             SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()

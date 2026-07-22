@@ -182,6 +182,13 @@ class LivestreamViewModel(
         }
     }
 
+    private fun checkResponseOk(resp: okhttp3.Response) {
+        if (!resp.isSuccessful) {
+            val errStr = runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull()
+            throw Exception(if (!errStr.isNullOrBlank()) errStr else "Lỗi NAS: HTTP ${resp.code}")
+        }
+    }
+
     fun addTikTokLiveWatchUser(context: android.content.Context, username: String) { addTikTokLiveWatchUser(username) }
 
     fun addTikTokLiveWatchUser(username: String) {
@@ -192,7 +199,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
+                    checkResponseOk(resp)
                 }
                 fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -211,7 +218,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
+                    checkResponseOk(resp)
                 }
                 fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -236,7 +243,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
+                    checkResponseOk(resp)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "updateTikTokLiveWatchSettings: ${e.message}")
@@ -262,10 +269,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        val errStr = runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull()
-                        throw Exception(if (!errStr.isNullOrBlank()) errStr else "Lỗi NAS: HTTP ${resp.code}")
-                    }
+                    checkResponseOk(resp)
                 }
                 withContext(Dispatchers.Main) {
                     com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "tasks"
@@ -288,7 +292,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/stop").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
+                    checkResponseOk(resp)
                 }
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
