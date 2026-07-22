@@ -3033,7 +3033,7 @@ def api_metrics_history():
         # Tinh san WHERE time filter bang Python roi truyen vao query
         hours_filter = "-%d hours" % hours
         cur.execute(
-            "SELECT strftime('%Y-%m-%dT%H:%M:%S', timestamp),"
+            "SELECT strftime('%Y-%m-%dT%H:%M:%S', timestamp, 'localtime'),"
             " cpu_percent, ram_percent, cpu_temp, hdd_temp,"
             " net_rx_kbps, net_tx_kbps"
             " FROM system_metrics_history"
