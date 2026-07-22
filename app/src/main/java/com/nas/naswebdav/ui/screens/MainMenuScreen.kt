@@ -139,17 +139,24 @@ fun DashboardCompactBottomSheetHandle() {
 @Composable
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
-    val durationMs = if (isRunning) maxOf(300, (30000 / maxOf(percent, 1))) else 9999
+    val safePercent = percent.coerceIn(1, 100)
+    // 100% -> 80ms (12.5 RPS fast spin), 50% -> 250ms, 25% -> 400ms
+    val durationMs = if (isRunning) (80 + ((100 - safePercent) * 3.5f).toInt()) else 9999
     
-    val infiniteTransition = rememberInfiniteTransition(label = "fan")
-    val angle by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMs, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ), label = "fan_angle"
-    )
-    val currentAngle = if (isRunning) angle else 0f
+    val angle = if (isRunning) {
+        key(durationMs) {
+            val infiniteTransition = rememberInfiniteTransition(label = "fan")
+            val animAngle by infiniteTransition.animateFloat(
+                initialValue = 0f, targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMs, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                ), label = "fan_angle"
+            )
+            animAngle
+        }
+    } else 0f
+    val currentAngle = angle
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1143,32 +1150,51 @@ private fun MainMenuDashboardSystemOverviewCard(
                                     Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
                                 }
                             }
-                            // Mute / Auto / Max Toggle
-                            var showFanSettings by rememberSaveable { mutableStateOf(false) }
-                            Row(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black)) {
-                                val modes = listOf("custom" to "Tùy chỉnh", "on" to "Bật", "off" to "Tắt")
-                                val currentMode = sysMonitorVM.systemStatus.fanMode
-                                val isFanControlLocked = deviceVM.isFanModeUpdating
-                                modes.forEach { (m, label) ->
-                                    val active = m == currentMode
-                                    Box(
-                                        Modifier.clickable(
-                                            enabled = !isFanControlLocked,
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            indication = null
-                                        ) {
-                                            if (m == "custom") showFanSettings = true else {
-                                                deviceVM.setFanMode(m)
-                                            }
-                                        }
-                                            .background(if (active) if (m == "off") Color(0xFFEF5350) else Color(0xFF00E676) else Color.Transparent)
-                                            .alpha(if (isFanControlLocked && !active) 0.5f else 1f)
-                                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(label, fontSize = 9.sp, color = if (active) Color.Black else TextSecondary, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
+                             // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)
+                             var showFanSettings by rememberSaveable { mutableStateOf(false) }
+                             val rawMode = sysMonitorVM.systemStatus.fanMode.lowercase()
+                             val currentMode = if (rawMode == "auto") "custom" else rawMode
+                             val isFanControlLocked = deviceVM.isFanModeUpdating
+
+                             val nextMode = when (currentMode) {
+                                 "custom" -> "on"
+                                 "on" -> "off"
+                                 "off" -> "custom"
+                                 else -> "custom"
+                             }
+                             val currentLabel = when (currentMode) {
+                                 "on" -> "Bật 100%"
+                                 "off" -> "Tắt"
+                                 else -> "Tùy chỉnh"
+                             }
+                             val badgeColor = when (currentMode) {
+                                 "on" -> Color(0xFF00E676)
+                                 "off" -> Color(0xFFEF5350)
+                                 else -> Color(0xFF00E5FF)
+                             }
+
+                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                 Box(
+                                     modifier = Modifier
+                                         .clip(RoundedCornerShape(6.dp))
+                                         .background(badgeColor)
+                                         .alpha(if (isFanControlLocked) 0.5f else 1f)
+                                         .clickable(enabled = !isFanControlLocked) {
+                                             deviceVM.setFanMode(nextMode, onSuccess = { sysMonitorVM.triggerStatusUpdate() })
+                                         }
+                                         .padding(horizontal = 10.dp, vertical = 6.dp)
+                                 ) {
+                                     Text(currentLabel, fontSize = 10.sp, color = Color.Black, fontWeight = FontWeight.Bold)
+                                 }
+                                 if (currentMode == "custom") {
+                                     IconButton(
+                                         onClick = { showFanSettings = true },
+                                         modifier = Modifier.size(24.dp)
+                                     ) {
+                                         Icon(Icons.Default.Settings, contentDescription = "Cài đặt nhiệt độ", tint = Color(0xFF00E5FF), modifier = Modifier.size(16.dp))
+                                     }
+                                 }
+                             }
                             
                             if (showFanSettings) {
                                 var onTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
@@ -1190,7 +1216,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                                         Button(
                                             enabled = !isFanControlLocked,
                                             onClick = { 
-                                                deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f)
+                                                deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f, onSuccess = { sysMonitorVM.triggerStatusUpdate() })
                                                 showFanSettings = false 
                                             }
                                         ) { Text("Lưu & Áp dụng") }

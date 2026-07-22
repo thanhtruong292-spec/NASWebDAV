@@ -137,7 +137,13 @@ class SystemMonitorViewModel(
         }
     }
 
-    private suspend fun fetchStatusNow(): Boolean {
+    fun triggerStatusUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchStatusNow()
+        }
+    }
+
+    internal suspend fun fetchStatusNow(): Boolean {
         return try {
             val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
             // Dùng /api/status thay vì /api/status/realtime vì cần full data (disk, uptime, string formats)

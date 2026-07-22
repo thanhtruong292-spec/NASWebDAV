@@ -7927,19 +7927,36 @@ def api_fan_control():
 
         elif mode == 'custom':
             settings['mode'] = 'custom'
-            settings['on_temp'] = data.get('on_temp', settings.get('on_temp', FAN_DEFAULT_ON_TEMP))
-            settings['off_temp'] = data.get('off_temp', settings.get('off_temp', FAN_DEFAULT_OFF_TEMP))
+            settings['on_temp'] = float(data.get('on_temp', settings.get('on_temp', FAN_DEFAULT_ON_TEMP)))
+            settings['off_temp'] = float(data.get('off_temp', settings.get('off_temp', FAN_DEFAULT_OFF_TEMP)))
+            if settings['off_temp'] >= settings['on_temp']:
+                settings['off_temp'] = max(28.0, settings['on_temp'] - 3.0)
             _save_fan_settings(settings)
             run_cmd(["systemctl", "stop", "fan.service"])
-            # Watchdog se quyet dinh duty 0/10000 theo hysteresis. Cho phep
-            # PWM peripheral chay san de watchdog ghi duty co tac dung.
-            _fan_power_set(True)
-            _pwm_write("enable", 1)
+            
+            cpu_t = _fan_temp_value(get_cpu_temp())
+            hdd_t = _fan_temp_value(get_hdd_temp())
+            ctrl_t = hdd_t if hdd_t > 0 else cpu_t
+            
+            if ctrl_t >= settings['on_temp']:
+                _pwm_apply_on(duty=10000, period=10000)
+                pct, rpm, st = 100, _fan_rpm_for_percent(100), 'Đang chạy 100%'
+            elif ctrl_t <= settings['off_temp']:
+                _pwm_apply_off()
+                pct, rpm, st = 0, 0, 'Dừng'
+            else:
+                _fan_power_set(True)
+                _pwm_write("enable", 1)
+                pct, rpm, st = 0, 0, 'Dừng'
+                
             with _cache_lock:
                 _status_cache['fan_mode'] = 'custom'
                 _status_cache['fan_on_temp'] = settings['on_temp']
                 _status_cache['fan_off_temp'] = settings['off_temp']
-            return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp']})
+                _status_cache['fan_percent'] = pct
+                _status_cache['fan_rpm'] = rpm
+                _status_cache['fan_status'] = st
+            return jsonify({"status": "success", "mode": "custom", "on_temp": settings['on_temp'], "off_temp": settings['off_temp'], "fan_percent": pct, "fan_rpm": rpm, "fan_status": st})
 
         elif mode == 'off':
             settings['mode'] = 'off'

@@ -505,7 +505,7 @@ class DeviceManagementViewModel(
     }
 
     /** Set fan mode (on/off/auto/custom) — Phase 2b wired */
-    fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null) {
+    fun setFanMode(mode: String, onTemp: Float? = null, offTemp: Float? = null, onSuccess: (() -> Unit)? = null) {
         if (isFanModeUpdating) return
         isFanModeUpdating = true
         viewModelScope.launch(Dispatchers.IO) {
@@ -522,6 +522,9 @@ class DeviceManagementViewModel(
                     .build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    onSuccess?.invoke()
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "setFanMode: ${e.message}")
