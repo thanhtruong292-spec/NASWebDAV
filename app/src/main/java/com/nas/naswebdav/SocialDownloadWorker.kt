@@ -212,8 +212,9 @@ class SocialDownloadWorker(
             callFactory = NasApplication.instance.fastApiClient
         )
 
-        if (dlResult.jobId != null) {
-            val pollSuccess = pollSocialJobStatus(apiBaseUrl, authHeader, dlResult.jobId, NasApplication.instance.fastApiClient)
+        val currentJobId = dlResult.jobId
+        if (currentJobId != null) {
+            val pollSuccess = pollSocialJobStatus(apiBaseUrl, authHeader, currentJobId, NasApplication.instance.fastApiClient)
             if (pollSuccess) {
                 notifyResult(
                     title = "Tải video mạng xã hội hoàn tất",

@@ -268,7 +268,7 @@ class FileBrowserViewModel(
                     deletedSuccessfully = true
                     try {
                         NasApplication.instance.database.trashMetaDao().insert(
-                            com.nas.naswebdav.database.TrashMeta(trashPath = trashUrl, originalPath = file.path)
+                            com.nas.naswebdav.TrashMeta(trashPath = trashUrl, originalPath = file.path)
                         )
                     } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                         android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash", dbEx)

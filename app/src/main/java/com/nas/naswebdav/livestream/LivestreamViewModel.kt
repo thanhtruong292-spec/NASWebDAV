@@ -194,7 +194,7 @@ class LivestreamViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
                 }
-                fetchTikTokLiveWatchState(NasApplication.instance.applicationContext)
+                fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "addTikTokLiveWatchUser: ${e.message}")
             }
@@ -213,7 +213,7 @@ class LivestreamViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw Exception("NAS error ${resp.code}")
                 }
-                fetchTikTokLiveWatchState(NasApplication.instance.applicationContext)
+                fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "removeTikTokLiveWatchUser: ${e.message}")
             }
