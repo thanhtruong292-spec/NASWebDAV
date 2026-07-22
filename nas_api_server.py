@@ -10977,6 +10977,38 @@ def _delete_linux_user(username):
     except Exception as e:
         log.error("Lỗi xóa user %s: %s", username, e)
 
+GUEST_PASSES_FILE = "/opt/guest_passes.json"
+
+def _load_guest_passes():
+    global _guest_passes
+    if os.path.exists(GUEST_PASSES_FILE):
+        try:
+            with open(GUEST_PASSES_FILE, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                now = time.time()
+                valid = {}
+                for username, info in loaded.items():
+                    if info.get("expires_at", 0) > now:
+                        valid[username] = info
+                    else:
+                        _delete_linux_user(username)
+                with _guest_lock:
+                    _guest_passes = valid
+        except Exception as e:
+            log.warning("[GuestPass] Error loading guest passes: %s", e)
+
+def _save_guest_passes():
+    try:
+        with _guest_lock:
+            data = dict(_guest_passes)
+        with open(GUEST_PASSES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.chmod(GUEST_PASSES_FILE, 0o600)
+    except Exception as e:
+        log.warning("[GuestPass] Error saving guest passes: %s", e)
+
+_load_guest_passes()
+
 def _guest_expiry_watcher():
     """Background thread: quet va xoá Guest Pass da het han (moi 30 giay)."""
     while True:
@@ -10984,11 +11016,13 @@ def _guest_expiry_watcher():
             now = time.time()
             with _guest_lock:
                 expired = [u for u, v in _guest_passes.items() if v["expires_at"] <= now]
-            for username in expired:
-                _delete_linux_user(username)
-                with _guest_lock:
-                    _guest_passes.pop(username, None)
-                log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
+            if expired:
+                for username in expired:
+                    _delete_linux_user(username)
+                    with _guest_lock:
+                        _guest_passes.pop(username, None)
+                    log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
+                _save_guest_passes()
         except Exception as e:
             log.error("[GuestPass] Lỗi watcher: %s", e)
         time.sleep(30)
@@ -11018,6 +11052,7 @@ def api_guest_create():
 
         with _guest_lock:
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
+        _save_guest_passes()
 
         # L?y IP LAN cua NAS (vi Android can dia chi FTP)
         try:
@@ -11052,6 +11087,7 @@ def api_guest_revoke():
         _delete_linux_user(username)
         with _guest_lock:
             _guest_passes.pop(username, None)
+        _save_guest_passes()
 
         return jsonify({"message": "Đã thu hồi Guest FTP user '%s' thành công." % username})
     except Exception as e:

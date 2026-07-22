@@ -137,7 +137,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             .filterValues { it > 0L }
             .minByOrNull { it.value }
             ?.key
-        if (!bestUrl.isNullOrBlank()) {
+        if (!bestUrl.isNullOrBlank() && ipInput.isBlank()) {
             ipInput = fullUrlToIp(bestUrl)
         }
     }

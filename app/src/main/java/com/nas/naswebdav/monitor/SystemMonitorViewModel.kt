@@ -605,7 +605,7 @@ class SystemMonitorViewModel(
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/backup/create")
-                    .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     was404 = resp.code == 404
                     withContext(Dispatchers.Main) {
@@ -628,6 +628,7 @@ class SystemMonitorViewModel(
     fun deleteNasConfigBackup(filename: String) {
         viewModelScope.launch(Dispatchers.IO) {
             var was404 = false
+            var isOk = false
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val body = org.json.JSONObject().put("filename", filename).toString()
@@ -635,11 +636,18 @@ class SystemMonitorViewModel(
                 val req = okhttp3.Request.Builder().url("$apiBase/api/backup/delete").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     was404 = resp.code == 404
+                    isOk = resp.isSuccessful
+                    val errStr = if (!isOk) runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull() else null
                     withContext(Dispatchers.Main) {
-                        if (was404) nasConfigBackupMessage = "Server chưa hỗ trợ xoá backup cấu hình."
+                        nasConfigBackupMessage = when {
+                            isOk -> "Đã xóa bản sao lưu $filename"
+                            was404 -> "Server chưa hỗ trợ xoá backup cấu hình."
+                            !errStr.isNullOrBlank() -> errStr
+                            else -> "Xóa thất bại (HTTP ${resp.code})"
+                        }
                     }
                 }
-                if (!was404) fetchNasConfigBackups()
+                if (isOk) fetchNasConfigBackups()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "deleteNasConfigBackup: ${e.message}")
             }

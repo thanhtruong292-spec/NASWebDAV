@@ -182,7 +182,7 @@ class LivestreamViewModel(
         }
     }
 
-    private fun checkResponseOk(resp: okhttp3.Response) {
+    private fun throwOnUnsuccessfulResponse(resp: okhttp3.Response) {
         if (!resp.isSuccessful) {
             val errStr = runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull()
             throw Exception(if (!errStr.isNullOrBlank()) errStr else "Lỗi NAS: HTTP ${resp.code}")
@@ -199,7 +199,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/add").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    checkResponseOk(resp)
+                    throwOnUnsuccessfulResponse(resp)
                 }
                 fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -218,7 +218,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/remove").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    checkResponseOk(resp)
+                    throwOnUnsuccessfulResponse(resp)
                 }
                 fetchTikTokLiveWatch()
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -243,7 +243,7 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val req = okhttp3.Request.Builder().url("$apiBase/api/tiktok/live_watch/settings").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    checkResponseOk(resp)
+                    throwOnUnsuccessfulResponse(resp)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("Livestream", "updateTikTokLiveWatchSettings: ${e.message}")
@@ -269,7 +269,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/record").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    checkResponseOk(resp)
+                    throwOnUnsuccessfulResponse(resp)
                 }
                 withContext(Dispatchers.Main) {
                     com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "tasks"
@@ -292,7 +292,7 @@ class LivestreamViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/stop").post(body).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    checkResponseOk(resp)
+                    throwOnUnsuccessfulResponse(resp)
                 }
                 withContext(Dispatchers.Main) {
                     activeLivestreams.removeAll { it.jobId == jobId }
