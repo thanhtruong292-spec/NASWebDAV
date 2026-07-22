@@ -116,18 +116,18 @@ Estimate: 3–5 days. Not blocking release if Phase 1+2 complete.
 | # | Finding | File(s) | Description | Priority |
 |---|---------|---------|-------------|----------|
 | P3-4 | ProGuard over-keeps entire packages | `app/proguard-rules.pro` | Refined over-broad rules; verified via `assembleRelease`. | ✅ |
-| P3-5 | CI Python 3.12 vs production 3.5 | `.github/workflows/ci.yml:28` | CI won't catch 3.6+ syntax regressions. | P3 |
+| P3-5 | CI Python 3.12 vs production 3.5 | `.github/workflows/ci.yml` | Added AST NodeVisitor check step for Python 3.5 syntax in `ad8ebe74`. | ✅ |
 | P3-6 | Shopee detected but not in allowlist | `SocialExtractorScreen.kt:934-964` | Platform detected → blocked by SOCIAL_HOST_ALLOWLIST. | P3 |
 
 ## P3-C: Test coverage gaps
 
 | # | Finding | File(s) | Description | Priority |
 |---|---------|---------|-------------|----------|
-| P3-7 | No tests for WebDavManager | — | HTTP/DAV operations untested. Regression risk. | P3 |
+| P3-7 | No tests for WebDavManager | `WebDavErrorTest.kt` | Added unit tests for `WebDavManager.extractApiError` in `ad8ebe74`. | ✅ |
 | P3-8 | No tests for SecurePrefsHelper | — | Credential storage untested. | P3 |
 | P3-9 | No tests for DuplicateScanWorker | — | Core dedup logic untested. | P3 |
 | P3-10 | No tests for FileBrowserViewModel | — | File CRUD operations untested. | P3 |
-| P3-11 | WebDavErrorTest.kt is empty placeholder | — | Class exists but has no test methods. | P3 |
+| P3-11 | WebDavErrorTest.kt is empty placeholder | `WebDavErrorTest.kt` | Restored active unit test cases in `ad8ebe74`. | ✅ |
 
 ## P3-D: Code quality smells (from review)
 
