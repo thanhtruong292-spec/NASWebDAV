@@ -40,6 +40,11 @@ try:
 except ImportError:
     psutil = None
 
+try:
+    import ssl
+except ImportError:
+    ssl = None
+
 def _get_process_name(pid_int):
     if psutil is not None:
         try:
@@ -14151,19 +14156,21 @@ def _get_ssl_config():
 
 def _make_ssl_context(cert, key):
     """P1-1: Creates an SSLContext supporting TLS auto-negotiation (TLS 1.2 / TLS 1.3)."""
-    if not cert or not key:
+    if not cert or not key or ssl is None:
         return None
-    import ssl
     try:
         if hasattr(ssl, "create_default_context"):
             ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         else:
-            protocol = getattr(ssl, "PROTOCOL_TLS", getattr(ssl, "PROTOCOL_SSLv23", ssl.PROTOCOL_TLSv1_2))
+            protocol = getattr(ssl, "PROTOCOL_TLS", getattr(ssl, "PROTOCOL_SSLv23", getattr(ssl, "PROTOCOL_TLSv1_2", None)))
+            if protocol is None:
+                return None
             ctx = ssl.SSLContext(protocol)
         ctx.load_cert_chain(certfile=cert, keyfile=key)
         return ctx
     except Exception as e:
-        log.warning("[HTTPS] Lỗi tạo SSL context (%s: %s)" % (cert, str(e)))
+        safe_cert_name = os.path.basename(cert) if cert else "unknown"
+        log.warning("[HTTPS] Lỗi tạo SSL context (%s: %s)" % (safe_cert_name, str(e)))
         return None
 
 

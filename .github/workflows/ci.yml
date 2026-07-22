@@ -142,7 +142,7 @@ jobs:
         run: ./gradlew :app:assembleRelease --stacktrace
 
       - name: Dependency check (Gradle runtime dependencies)
-        run: ./gradlew :app:dependencies --configuration debugRuntimeClasspath --stacktrace
+        run: ./gradlew :app:dependencies --configuration releaseRuntimeClasspath --stacktrace
 
       - name: Upload release APK
         if: success()
