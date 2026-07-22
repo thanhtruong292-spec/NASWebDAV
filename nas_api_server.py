@@ -5564,25 +5564,41 @@ def _maintenance_advisor():
 @app.route('/api/disk/health/trend', methods=['GET'])
 @requires_auth
 def api_disk_health_trend():
-    return jsonify(_disk_health_trend(request.args.get("days", "7")))
+    try:
+        return jsonify(_disk_health_trend(request.args.get("days", "7")))
+    except Exception as e:
+        log.error("[API] Error in api_disk_health_trend: %s", e)
+        return jsonify({"error": str(e), "history": []}), 500
 
 
 @app.route('/api/system/workload', methods=['GET'])
 @requires_auth
 def api_system_workload():
-    return jsonify(_workload_coordinator())
+    try:
+        return jsonify(_workload_coordinator())
+    except Exception as e:
+        log.error("[API] Error in api_system_workload: %s", e)
+        return jsonify({"error": str(e), "status": "unknown"}), 500
 
 
 @app.route('/api/system/emmc_guard', methods=['GET'])
 @requires_auth
 def api_system_emmc_guard():
-    return jsonify(_emmc_guard())
+    try:
+        return jsonify(_emmc_guard())
+    except Exception as e:
+        log.error("[API] Error in api_system_emmc_guard: %s", e)
+        return jsonify({"error": str(e), "status": "unknown"}), 500
 
 
 @app.route('/api/system/data_flow', methods=['GET'])
 @requires_auth
 def api_system_data_flow():
-    return jsonify(_data_flow_snapshot())
+    try:
+        return jsonify(_data_flow_snapshot())
+    except Exception as e:
+        log.error("[API] Error in api_system_data_flow: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 
 _SYSTEM_INSIGHTS_CACHE = {
@@ -7460,58 +7476,70 @@ def api_usb_import_settings():
 @app.route("/api/usb_import/start", methods=["POST"])
 @requires_auth
 def api_usb_import_start():
-    global _usb_import_running
-    if _usb_import_running:
-        return jsonify({"ok": True, "already_running": True, "message": "USB Import đang chạy, không khởi tạo phiên trùng.", "state": _usb_import_public_state()})
-    settings = _usb_import_load_settings()
-    candidates = _usb_import_find_candidates(settings)
-    if not candidates:
-        return jsonify({"ok": False, "message": "Không tìm thấy ổ USB hợp lệ", "state": _usb_import_public_state()}), 404
-    if not _usb_import_try_mark_running():
-        return jsonify({"ok": True, "already_running": True, "message": "USB Import Ä‘ang cháº¡y, khÃ´ng khá»Ÿi táº¡o phiÃªn trÃ¹ng.", "state": _usb_import_public_state()})
-    _usb_import_cancel.clear()
-    threading.Thread(target=_usb_import_copy_tree, args=(candidates[0], settings), daemon=True, name="USBImportManualCopy").start()
-    return jsonify({"ok": True, "message": "Đã bắt đầu copy USB", "state": _usb_import_public_state()})
+    try:
+        global _usb_import_running
+        if _usb_import_running:
+            return jsonify({"ok": True, "already_running": True, "message": "USB Import đang chạy, không khởi tạo phiên trùng.", "state": _usb_import_public_state()})
+        settings = _usb_import_load_settings()
+        candidates = _usb_import_find_candidates(settings)
+        if not candidates:
+            return jsonify({"ok": False, "message": "Không tìm thấy ổ USB hợp lệ", "state": _usb_import_public_state()}), 404
+        if not _usb_import_try_mark_running():
+            return jsonify({"ok": True, "already_running": True, "message": "USB Import đang chạy, không khởi tạo phiên trùng.", "state": _usb_import_public_state()})
+        _usb_import_cancel.clear()
+        threading.Thread(target=_usb_import_copy_tree, args=(candidates[0], settings), daemon=True, name="USBImportManualCopy").start()
+        return jsonify({"ok": True, "message": "Đã bắt đầu copy USB", "state": _usb_import_public_state()})
+    except Exception as e:
+        log.error("[API] Error in api_usb_import_start: %s", e)
+        return jsonify({"ok": False, "message": str(e), "state": _usb_import_public_state()}), 500
 
 
 @app.route("/api/usb_import/cancel", methods=["POST"])
 @requires_auth
 def api_usb_import_cancel():
-    _usb_import_cancel.set()
-    if _usb_import_running:
-        _usb_import_set_state(status="cancelling", message="Đang huỷ copy USB.")
-    else:
-        _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.")
-    return jsonify({"ok": True, "state": _usb_import_public_state()})
+    try:
+        _usb_import_cancel.set()
+        if _usb_import_running:
+            _usb_import_set_state(status="cancelling", message="Đang huỷ copy USB.")
+        else:
+            _usb_import_set_state(status="cancelled", message="Đã huỷ copy USB.")
+        return jsonify({"ok": True, "state": _usb_import_public_state()})
+    except Exception as e:
+        log.error("[API] Error in api_usb_import_cancel: %s", e)
+        return jsonify({"ok": False, "message": str(e)}), 500
 
 
 @app.route("/api/usb_import/resolve_conflicts", methods=["POST"])
 @requires_auth
 def api_usb_import_resolve_conflicts():
-    global _usb_import_running
-    if _usb_import_running:
-        return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
-    body = request.get_json(silent=True) or {}
-    action = str(body.get("action") or "").strip().lower()
-    if action not in ("overwrite", "rename", "skip"):
-        return jsonify({"ok": False, "message": "action phải là overwrite, rename hoặc skip", "state": _usb_import_public_state()}), 400
-    with _usb_import_lock:
-        conflicts = list(_usb_import_state.get("pending_conflicts") or [])
-    if not conflicts:
-        return jsonify({"ok": False, "message": "Không có file trùng tên cần xử lý", "state": _usb_import_public_state()}), 404
-    selected = body.get("items")
-    if selected is not None and not isinstance(selected, list):
-        return jsonify({"ok": False, "message": "items phải là danh sách rel/dest/source", "state": _usb_import_public_state()}), 400
-    if not _usb_import_try_mark_running():
-        return jsonify({"ok": False, "message": "USB import Ä‘ang cháº¡y", "state": _usb_import_public_state()}), 409
-    _usb_import_cancel.clear()
-    threading.Thread(
-        target=_usb_import_resolve_conflicts_worker,
-        args=(action, selected or []),
-        daemon=True,
-        name="USBImportResolveConflicts",
-    ).start()
-    return jsonify({"ok": True, "message": "Đã bắt đầu xử lý file trùng tên", "state": _usb_import_public_state()})
+    try:
+        global _usb_import_running
+        if _usb_import_running:
+            return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
+        body = request.get_json(silent=True) or {}
+        action = str(body.get("action") or "").strip().lower()
+        if action not in ("overwrite", "rename", "skip"):
+            return jsonify({"ok": False, "message": "action phải là overwrite, rename hoặc skip", "state": _usb_import_public_state()}), 400
+        with _usb_import_lock:
+            conflicts = list(_usb_import_state.get("pending_conflicts") or [])
+        if not conflicts:
+            return jsonify({"ok": False, "message": "Không có file trùng tên cần xử lý", "state": _usb_import_public_state()}), 404
+        selected = body.get("items")
+        if selected is not None and not isinstance(selected, list):
+            return jsonify({"ok": False, "message": "items phải là danh sách rel/dest/source", "state": _usb_import_public_state()}), 400
+        if not _usb_import_try_mark_running():
+            return jsonify({"ok": False, "message": "USB import đang chạy", "state": _usb_import_public_state()}), 409
+        _usb_import_cancel.clear()
+        threading.Thread(
+            target=_usb_import_resolve_conflicts_worker,
+            args=(action, selected or []),
+            daemon=True,
+            name="USBImportResolveConflicts",
+        ).start()
+        return jsonify({"ok": True, "message": "Đã bắt đầu xử lý file trùng tên", "state": _usb_import_public_state()})
+    except Exception as e:
+        log.error("[API] Error in api_usb_import_resolve_conflicts: %s", e)
+        return jsonify({"ok": False, "message": str(e)}), 500
 
 
 @app.route('/api/backup/schedule', methods=['GET'])
