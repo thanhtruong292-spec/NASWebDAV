@@ -152,11 +152,11 @@ private fun GuestInfoRow(
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0F3460).copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold); Text(displayValue, fontSize = 14.sp, color = Color(0xFFE8E8E8), fontWeight = FontWeight.SemiBold) }
         if (isPassword && onTogglePasswordVisible != null) {
-            IconButton(onClick = onTogglePasswordVisible, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onTogglePasswordVisible, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
                 Icon(if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle password visibility", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
             }
         }
-        IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
             Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, "Copy button", tint = if (isCopied) Color(0xFF00E676) else Color(0xFF8892B0), modifier = Modifier.size(18.dp))
         }
     }
