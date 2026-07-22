@@ -399,25 +399,21 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                // FIX: endpoint đúng cho realtime metrics là /api/status/realtime,
-                // không phải /api/process_state (là worker cursor data, không phải metrics)
                 val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val point = MetricsSnapshot(
+                        timestamp  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
+                        cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
+                        cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
+                        ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
+                        hddTemp    = json.optDouble("hdd_temp", 0.0).toFloat(),
+                        netRxKbps  = json.optDouble("net_rx_kbps", 0.0).toFloat(),
+                        netTxKbps  = json.optDouble("net_tx_kbps", 0.0).toFloat()
+                    )
                     withContext(Dispatchers.Main) {
-                        val point = MetricsSnapshot(
-                            // BUG FIX: dung format ISO thay vi epoch ms raw string
-                            // de pruneOldPoints() co the parse va giu diem nay dung
-                            timestamp  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
-                            cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
-                            cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
-                            ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
-                            hddTemp    = json.optDouble("hdd_temp", 0.0).toFloat(),
-                            netRxKbps  = json.optDouble("net_rx_kbps", 0.0).toFloat(),
-                            netTxKbps  = json.optDouble("net_tx_kbps", 0.0).toFloat()
-                        )
                         metricsHistory.add(point)
                         if (metricsHistory.size > 1000) {
                             metricsHistory.removeRange(0, 200)
@@ -690,61 +686,62 @@ class SystemMonitorViewModel(
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val health = json.optJSONObject("health_trend") ?: org.json.JSONObject()
+                    val workload = json.optJSONObject("workload") ?: org.json.JSONObject()
+                    val emmc = json.optJSONObject("emmc_guard") ?: org.json.JSONObject()
+                    val rootEmmc = emmc.optJSONObject("root") ?: org.json.JSONObject()
+                    val logEmmc = emmc.optJSONObject("log") ?: org.json.JSONObject()
+                    val flow = json.optJSONObject("data_flow") ?: org.json.JSONObject()
+                    
+                    val emmcWarningsList: List<String> = emmc.optJSONArray("warnings")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                    val emmcRecsList: List<String> = emmc.optJSONArray("recommendations")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                    val workloadReasonsList: List<String> = workload.optJSONArray("reasons")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+
+                    val maintenanceArr = json.optJSONArray("maintenance")
+                    val parsedActions: List<InsightAction> = maintenanceArr?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            InsightAction(
+                                priority = it.optString("priority", ""),
+                                title = it.optString("title", ""),
+                                detail = it.optString("detail", "")
+                            )
+                        }
+                    } ?: emptyList()
+
+                    val tasksArr = flow.optJSONArray("tasks")
+                    val parsedTasks: List<InsightFlowTask> = tasksArr?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            InsightFlowTask(
+                                label = it.optString("label", ""),
+                                file = it.optString("file", "")
+                            )
+                        }
+                    } ?: emptyList()
+
+                    val parsedInsights = NasInsights(
+                        hddScore = health.optInt("score", 0),
+                        hddStatusText = health.optString("status_text", health.optString("smart_status", "")),
+                        hddTempC = health.optInt("temp_c", 0),
+                        hddMinScore = health.optInt("min_score", 0),
+                        hddScoreDelta = health.optInt("score_delta", 0),
+                        workloadMode = workload.optString("mode", "normal"),
+                        workloadPressure = workload.optInt("pressure", 0),
+                        workloadRecommendation = workload.optString("recommendation", ""),
+                        workloadReasons = workloadReasonsList,
+                        emmcRootPercent = rootEmmc.optInt("percent", 0),
+                        emmcLogPercent = logEmmc.optInt("percent", 0),
+                        emmcWarnings = emmcWarningsList,
+                        emmcRecommendations = emmcRecsList,
+                        diskReadBps = flow.optLong("disk_read_bps", 0L),
+                        diskWriteBps = flow.optLong("disk_write_bps", 0L),
+                        netRxBps = flow.optLong("net_rx_bps", 0L),
+                        netTxBps = flow.optLong("net_tx_bps", 0L),
+                        flowTasks = parsedTasks,
+                        maintenanceActions = parsedActions,
+                        updatedAt = System.currentTimeMillis()
+                    )
                     withContext(Dispatchers.Main) {
-                        val health = json.optJSONObject("health_trend") ?: org.json.JSONObject()
-                        val workload = json.optJSONObject("workload") ?: org.json.JSONObject()
-                        val emmc = json.optJSONObject("emmc_guard") ?: org.json.JSONObject()
-                        val rootEmmc = emmc.optJSONObject("root") ?: org.json.JSONObject()
-                        val logEmmc = emmc.optJSONObject("log") ?: org.json.JSONObject()
-                        val flow = json.optJSONObject("data_flow") ?: org.json.JSONObject()
-                        
-                        val emmcWarningsList: List<String> = emmc.optJSONArray("warnings")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
-                        val emmcRecsList: List<String> = emmc.optJSONArray("recommendations")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
-                        val workloadReasonsList: List<String> = workload.optJSONArray("reasons")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
-
-                        val maintenanceArr = json.optJSONArray("maintenance")
-                        val parsedActions: List<InsightAction> = maintenanceArr?.let { arr ->
-                            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                                InsightAction(
-                                    priority = it.optString("priority", ""),
-                                    title = it.optString("title", ""),
-                                    detail = it.optString("detail", "")
-                                )
-                            }
-                        } ?: emptyList()
-
-                        val tasksArr = flow.optJSONArray("tasks")
-                        val parsedTasks: List<InsightFlowTask> = tasksArr?.let { arr ->
-                            (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                                InsightFlowTask(
-                                    label = it.optString("label", ""),
-                                    file = it.optString("file", "")
-                                )
-                            }
-                        } ?: emptyList()
-
-                        nasInsights = NasInsights(
-                            hddScore = health.optInt("score", 0),
-                            hddStatusText = health.optString("status_text", health.optString("smart_status", "")),
-                            hddTempC = health.optInt("temp_c", 0),
-                            hddMinScore = health.optInt("min_score", 0),
-                            hddScoreDelta = health.optInt("score_delta", 0),
-                            workloadMode = workload.optString("mode", "normal"),
-                            workloadPressure = workload.optInt("pressure", 0),
-                            workloadRecommendation = workload.optString("recommendation", ""),
-                            workloadReasons = workloadReasonsList,
-                            emmcRootPercent = rootEmmc.optInt("percent", 0),
-                            emmcLogPercent = logEmmc.optInt("percent", 0),
-                            emmcWarnings = emmcWarningsList,
-                            emmcRecommendations = emmcRecsList,
-                            diskReadBps = flow.optLong("disk_read_bps", 0L),
-                            diskWriteBps = flow.optLong("disk_write_bps", 0L),
-                            netRxBps = flow.optLong("net_rx_bps", 0L),
-                            netTxBps = flow.optLong("net_tx_bps", 0L),
-                            flowTasks = parsedTasks,
-                            maintenanceActions = parsedActions,
-                            updatedAt = System.currentTimeMillis()
-                        )
+                        nasInsights = parsedInsights
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -794,6 +791,17 @@ class SystemMonitorViewModel(
                     val totalCpuStr = obj.optString("total_cpu", "")
                     val totalRamStr = obj.optString("total_ram", "")
                     val arr = obj.optJSONArray("data") ?: org.json.JSONArray()
+                    val parsedProcesses = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        SystemProcess(
+                            pid = it.optInt("pid", 0),
+                            name = it.optString("name", ""),
+                            user = it.optString("user", "root"),
+                            status = it.optString("status", "running"),
+                            cpu = it.optDouble("cpu", 0.0).toFloat(),
+                            mem = it.optDouble("mem", 0.0).toFloat(),
+                            isSystem = it.optBoolean("is_system", false) || it.optInt("pid", 0) <= 0
+                        )
+                    }
                     withContext(Dispatchers.Main) {
                         if (totalCpuStr.isNotBlank()) {
                             systemStatus = systemStatus.copy(
@@ -801,17 +809,7 @@ class SystemMonitorViewModel(
                                 ramPercent = if (totalRamStr.isNotBlank()) totalRamStr.replace("%", "").trim() else systemStatus.ramPercent
                             )
                         }
-                        systemProcesses = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            SystemProcess(
-                                pid = it.optInt("pid", 0),
-                                name = it.optString("name", ""),
-                                user = it.optString("user", "root"),
-                                status = it.optString("status", "running"),
-                                cpu = it.optDouble("cpu", 0.0).toFloat(),
-                                mem = it.optDouble("mem", 0.0).toFloat(),
-                                isSystem = it.optBoolean("is_system", false) || it.optInt("pid", 0) <= 0
-                            )
-                        }
+                        systemProcesses = parsedProcesses
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

@@ -69,7 +69,7 @@ def _get_qbt_credentials():
         conf_path = "/etc/nas/qbt.conf"
         if os.path.exists(conf_path):
             try:
-                with open(conf_path, "r") as f:
+                with open(conf_path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if line.startswith("user="):
