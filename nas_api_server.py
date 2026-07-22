@@ -492,13 +492,27 @@ WEBDAV_LOG = "/var/log/nginx/openmediavault-webgui_access.log"
 AI_TAGS_PATH = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "ai_tags.json")
 NAS_TMP_ROOT = "/tmp/nas_meta_tmp"
 
+def _get_hdd_tmp_root():
+    """Tự động tìm thư mục tạm trên HDD để tránh tràn RAM tmpfs (/tmp)."""
+    hdd_dir = _get_hdd_config_dir()
+    if hdd_dir:
+        tmp_root = os.path.join(hdd_dir, "nas_meta_tmp")
+        try:
+            os.makedirs(tmp_root, mode=0o700, exist_ok=True)
+            return tmp_root
+        except Exception:
+            pass
+    fallback_root = "/tmp/nas_meta_tmp"
+    os.makedirs(fallback_root, mode=0o700, exist_ok=True)
+    return fallback_root
+
 def _make_hdd_tmp_dir(prefix):
     """Tạo thư mục tmp riêng trên HDD để tránh làm đầy /tmp tmpfs."""
     safe_prefix = _re_module.sub(r"[^A-Za-z0-9_.-]+", "_", str(prefix or "job")).strip("_") or "job"
     try:
-        os.makedirs(NAS_TMP_ROOT, exist_ok=True)
+        root_dir = _get_hdd_tmp_root()
         tmp_dir = os.path.join(
-            NAS_TMP_ROOT,
+            root_dir,
             "%s_%d_%s" % (safe_prefix, int(time.time() * 1000), uuid.uuid4().hex[:8])
         )
         os.makedirs(tmp_dir, exist_ok=True)
@@ -1293,7 +1307,7 @@ def _load_credentials():
     except Exception as e:
         log.error("Không đọc được %s: %s", AUTH_CONFIG_PATH, e)
     if not user or not passwd:
-        log.warning("Chưa cấu hình WEBDAV_USER/WEBDAV_PASS. Hãy tạo file %s với WEBDAV_USER=... WEBDAV_PASS=...", AUTH_CONFIG_PATH)
+        log.warning("Chưa cấu hình WEBDAV_USER/WEBDAV_PASS. Hãy tạo file auth.conf với WEBDAV_USER=... WEBDAV_PASS=...")
     return user, passwd
 
 
@@ -1443,7 +1457,9 @@ def _request_client_ip():
 # ============ XAC THUC ============
 def check_auth(username, password):
     import hmac
-    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) & hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
+    u_ok = hmac.compare_digest(str(username or ""), str(WEBDAV_USER or ""))
+    p_ok = hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
+    return bool(u_ok and p_ok)
 
 def _async_persist_trusted_ip(ip):
     def _worker():
@@ -8961,7 +8977,10 @@ def _media_cache_headers(real_path, file_size, mime_type):
 
 
 def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
-    f = open(real_path, "rb")
+    try:
+        f = open(real_path, "rb")
+    except Exception:
+        return
     try:
         f.seek(start)
         remaining = end - start + 1

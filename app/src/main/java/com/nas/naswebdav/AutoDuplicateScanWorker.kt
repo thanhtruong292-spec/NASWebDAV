@@ -185,7 +185,8 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     if (identicalFiles.size > 1) {
                         val sorted = identicalFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
                         val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
-                        for (trashFile in filesToTrash) { if (moveFileToTrash(webDavManager, trashFile.path, user, pass)) { movedCount++; savedBytes += trashFile.contentLength } }
+                        val authCtx = WebDavAuthContext(webDavManager, user, pass)
+                        for (trashFile in filesToTrash) { if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength } }
                     }
                 }
             }
@@ -198,15 +199,31 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}"); Result.retry()
         }
     }
-    private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
+
+    private data class WebDavAuthContext(val manager: WebDavManager, val user: String, val pass: String) {
+        val authHeader: String get() = okhttp3.Credentials.basic(user, pass)
+    }
+
+    private fun executeWebDavRequest(url: String, method: String, authHeader: String, vararg extraHeaders: Pair<String, String>): Boolean {
+        return try {
+            val builder = okhttp3.Request.Builder().url(url).method(method, null).header("Authorization", authHeader)
+            for ((k, v) in extraHeaders) builder.header(k, v)
+            NasApplication.instance.sharedHttpClient.newCall(builder.build()).execute().use { it.isSuccessful }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun moveFileToTrash(ctx: WebDavAuthContext, sourceUrl: String): Boolean {
         try {
-            val rootUrl = manager.currentBaseUrl.trimEnd('/')
-            val authHeader = okhttp3.Credentials.basic(user, pass)
+            val rootUrl = ctx.manager.currentBaseUrl.trimEnd('/')
             val fileName = sourceUrl.substringAfterLast("/")
             val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
             val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
-            try { NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(trashFolderUrl).method("MKCOL", null).header("Authorization", authHeader).build()).execute().use {} } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-            val success = NasApplication.instance.sharedHttpClient.newCall(okhttp3.Request.Builder().url(sourceUrl).method("MOVE", null).header("Destination", destUrl).header("Overwrite", "F").header("Authorization", authHeader).build()).execute().use { it.isSuccessful }
+            executeWebDavRequest(trashFolderUrl, "MKCOL", ctx.authHeader)
+            val success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
             if (success) {
                 try {
                     NasApplication.instance.database.trashMetaDao().insert(
@@ -222,20 +239,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
 
         // Fallback: WebDAV DELETE (xóa thẳng vĩnh viễn theo hardrule GEMINI §10)
-        return try {
-            val authHeader = okhttp3.Credentials.basic(user, pass)
-            val delSuccess = NasApplication.instance.sharedHttpClient.newCall(
-                okhttp3.Request.Builder().url(sourceUrl).method("DELETE", null).header("Authorization", authHeader).build()
-            ).execute().use { it.isSuccessful }
-            if (delSuccess) {
-                android.util.Log.i("AutoCleanWorker", "Permanently deleted duplicate file $sourceUrl as fallback")
-            }
-            delSuccess
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            android.util.Log.e("AutoCleanWorker", "Fallback DELETE also failed for $sourceUrl: ${e.message}")
-            false
+        val delSuccess = executeWebDavRequest(sourceUrl, "DELETE", ctx.authHeader)
+        if (delSuccess) {
+            android.util.Log.i("AutoCleanWorker", "Permanently deleted duplicate file $sourceUrl as fallback")
+        } else {
+            android.util.Log.e("AutoCleanWorker", "Fallback DELETE also failed for $sourceUrl")
         }
+        return delSuccess
     }
 }
