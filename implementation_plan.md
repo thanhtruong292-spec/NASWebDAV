@@ -194,13 +194,16 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] P0-9: JsonReader wrap `.use {}`
 - [x] P0-10: Fix executor leak trong UncaughtExceptionHandler
 
-## P1 Pre-Production (Before public release)
+## P1 Pre-Production (Before public release) — commit `09627ef4`
 - [ ] P1-1: HTTPS cho nas_api_server.py
-- [ ] P1-2/3: Xóa duplicate functions
-- [ ] P1-4/5/6/7: Eviction policies cho 4 cache dicts
-- [ ] P1-8/9: Context manager cho open() calls
-- [ ] P1-10/11: Fix thread-safety race conditions
-- [ ] P1-12/13/14/15: Worker reliability fixes
+- [x] P1-2/3: Xóa duplicate functions (`_target_hdd_devname`, `_read_io_stats`)
+- [x] P1-4/5/6/7: Eviction policies cho 4 cache dicts (`recent_auth_ips` 1h, ARP TTL, smart_organize_jobs 2h, social_jobs daemon 5m)
+- [x] P1-8/9: Context manager cho open() calls (thumbnail FD + cache_f try/finally)
+- [ ] P1-10/11: Fix thread-safety race conditions (WebDavManager authState, IO→Main dispatch)
+- [x] P1-12: SocialDownloadWorker poll loop honors `isStopped`
+- [ ] P1-13: LongRunningApiWorker stream-parse response body
+- [x] P1-14: AutoDuplicateScanWorker retry capped at 3
+- [x] P1-15: AutoBackupWorker tmpFile cleanup in finally
 - [ ] P1-16: CI release build + dep scanning
-- [ ] P1-19: Nâng security-crypto
+- [ ] P1-19: Nâng security-crypto lên 1.1.0-alpha06
 - [ ] Full regression test on real NAS hardware
