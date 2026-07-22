@@ -13672,66 +13672,227 @@ def api_ytdlp_status():
     return jsonify({"active_jobs": len(active), "jobs": list(active.values())})
 
 
-# ============ KHOI CHAY ============
+# ============ KHOI CHAY HELPER FUNCTIONS (TOP-LEVEL) ============
+def _graceful_shutdown(signum, frame):
+    """Dung server sach, không để lai zombie."""
+    log.info("[Shutdown] Nhận tín hiệu %s, đang dọn dẹp...", signum)
+    try:
+        parent = psutil.Process(os.getpid())
+        children = parent.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except Exception:
+                pass
+        _, alive = psutil.wait_procs(children, timeout=3)
+        for child in alive:
+            try:
+                child.kill()
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning("[Shutdown] Khong don duoc child processes: %s", e)
+    try:
+        os.remove(PID_FILE)
+    except Exception:
+        pass
+    try:
+        for info in list(_livestream_jobs.values()) + list(_ytdlp_jobs.values()):
+            _cleanup_job_tmp(info.get("tmp_dir", ""))
+        _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
+    except Exception:
+        pass
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(128 + signum)
+
+
+def _cleanup_pid():
+    try:
+        os.remove(PID_FILE)
+    except Exception:
+        pass
+
+
+def _force_free_port(port):
+    """Terminate only our own stale NAS API listener on port before bind."""
+    import socket as _socket
+    try:
+        test_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        test_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        test_sock.bind(('0.0.0.0', port))
+        test_sock.close()
+        return
+    except OSError:
+        pass
+    log.warning("[Port %d] Dang bi chiem, kiem tra listener an toan...", port)
+    targets = []
+    seen_pids = set()
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if conn.status != psutil.CONN_LISTEN or not conn.laddr or conn.laddr.port != port or not conn.pid:
+                continue
+            if conn.pid in seen_pids:
+                continue
+            try:
+                proc = psutil.Process(conn.pid)
+                name = (proc.name() or "").lower()
+                cmdline = " ".join(proc.cmdline()).lower()
+                exe_name = ""
+                try:
+                    exe_name = os.path.basename(os.readlink("/proc/%s/exe" % proc.pid)).lower()
+                except OSError:
+                    pass
+                if "nas_api_server.py" not in cmdline and "nas_api_server.py" not in exe_name:
+                    log.warning("[Port %d] Skip PID %d (%s) - khong phai NAS API.", port, proc.pid, name)
+                    continue
+                targets.append(proc)
+                seen_pids.add(conn.pid)
+            except psutil.NoSuchProcess:
+                continue
+    except (psutil.Error, OSError) as e:
+        log.warning("[Port %d] Khong doc duoc listener list: %s", port, e)
+        return
+    if not targets:
+        log.warning("[Port %d] Khong tim thay NAS API listener nao, bo qua.", port)
+        return
+    for proc in targets:
+        try:
+            log.warning("[Port %d] Dang terminate PID %d (%s)...", port, proc.pid, proc.name())
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            continue
+        except Exception as e:
+            log.warning("[Port %d] Khong terminate duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
+    _, alive = psutil.wait_procs(targets, timeout=5)
+    for proc in alive:
+        try:
+            log.warning("[Port %d] PID %d chua dung, kill...", port, proc.pid)
+            proc.kill()
+        except psutil.NoSuchProcess:
+            continue
+        except Exception as e:
+            log.warning("[Port %d] Khong kill duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
+    if alive:
+        psutil.wait_procs(alive, timeout=5)
+    log.info("[Port %d] Da giai phong.", port)
+
+
+def _auto_resource_reclaimer_thread():
+    """TRÌNH TỰ ĐỘNG GIẢI PHÓNG CPU/RAM VÀ DIỆT TIẾN TRÌNH THỪA"""
+    log.info("[ResourceReclaimer] Trình tự động giải phóng RAM/CPU đã khởi động.")
+    while True:
+        try:
+            time.sleep(180)
+            try:
+                gc.collect()
+                try:
+                    libc = ctypes.CDLL('libc.so.6')
+                    libc.malloc_trim(0)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            try:
+                mem = psutil.virtual_memory()
+                if getattr(mem, 'available', mem.free) < 250 * 1024 * 1024:
+                    with open("/proc/sys/vm/drop_caches", "w") as f:
+                        f.write("3\n")
+                    log.info("[ResourceReclaimer] Đã tự động giải phóng Kernel Page Cache VFS.")
+            except Exception:
+                pass
+
+            now = time.time()
+            current_pid = os.getpid()
+            for proc in psutil.process_iter():
+                try:
+                    pid = proc.pid
+                    if pid == current_pid or pid <= 100:
+                        continue
+                    
+                    name = (proc.name() or "").lower()
+                    cmdline = " ".join(proc.cmdline() or []).lower()
+                    status = str(proc.status())
+
+                    if any(protected in name or protected in cmdline for protected in ('ffmpeg', 'yt-dlp', 'ytdlp', 'aria2c', 'rsync', 'rclone')):
+                        continue
+                    
+                    if status in ('zombie', 'dead') or status == getattr(psutil, 'STATUS_ZOMBIE', 'zombie'):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã dọn tiến trình Zombie PID=%d (%s)" % (pid, name))
+                        except Exception:
+                            pass
+                        continue
+
+                    if name in ('curl', 'wget') and (now - proc.create_time() > 600):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget treo > 10 phút PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                    if name == 'containerd':
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt containerd mồ côi PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                    if "python" in name and ("/tmp/loop_" in cmdline or "-c import" in cmdline) and (now - proc.create_time() > 1200):
+                        try:
+                            proc.kill()
+                            log.info("[ResourceReclaimer] Đã tiêu diệt Python test script mồ côi PID=%d" % pid)
+                        except Exception:
+                            pass
+                        continue
+
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            try:
+                if os.path.exists("/tmp"):
+                    for f in os.listdir("/tmp"):
+                        if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_") or f.startswith("test_ytdlp_") or f.startswith("nas_fast_index") or f.endswith(".mp4") or f.endswith(".webm") or f.endswith(".ts"):
+                            fpath = os.path.join("/tmp", f)
+                            try:
+                                if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
+                                    os.remove(fpath)
+                                    log.info("[ResourceReclaimer] Đã xóa file đệm rác RAM-disk /tmp: %s" % f)
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+        except Exception as e:
+            log.warning("[ResourceReclaimer] Lỗi: %s" % str(e))
+
+
+def run_flask():
+    try:
+        from waitress import serve
+        serve(app, host="0.0.0.0", port=5050, threads=6, connection_limit=50)
+    except ImportError:
+        log.warning("Thiếu thư viện Waitress. Vui lòng chạy: pip3 install waitress")
+        app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
+
+
+# ============ KHOI CHAY MAIN ============
 if __name__ == "__main__":
-    # Initialize main IO loop here so it's bound to the main thread
     main_loop = tornado.ioloop.IOLoop.current()
     _cleanup_stale_job_tmp(max_age_hours=1)
     _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
     
-    # SIGTERM/SIGINT: Graceful shutdown - kill tất c? child processes truoc khi thoat
-    def _graceful_shutdown(signum, frame):
-        """Dung server sach, không để lai zombie."""
-        log.info("[Shutdown] Nhận tín hiệu %s, đang dọn dẹp...", signum)
-        # Kill child process do NAS API sinh ra. Khong kill ca process group vi
-        # SIGTERM se quay lai chinh process hien tai va lap de quy shutdown.
-        try:
-            parent = psutil.Process(os.getpid())
-            children = parent.children(recursive=True)
-            for child in children:
-                try:
-                    child.terminate()
-                except Exception:
-                    pass
-            _, alive = psutil.wait_procs(children, timeout=3)
-            for child in alive:
-                try:
-                    child.kill()
-                except Exception:
-                    pass
-        except Exception as e:
-            log.warning("[Shutdown] Khong don duoc child processes: %s", e)
-        # Xo? PID file
-        try:
-            os.remove(PID_FILE)
-        except Exception:
-            pass
-        try:
-            for info in list(_livestream_jobs.values()) + list(_ytdlp_jobs.values()):
-                _cleanup_job_tmp(info.get("tmp_dir", ""))
-            _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
-        except Exception:
-            pass
-        # Signal handler runs while Tornado/background threads may be active.
-        # os._exit avoids systemd waiting until TimeoutStopSec and then SIGKILL.
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except Exception:
-            pass
-        os._exit(128 + signum)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
     signal.signal(signal.SIGINT, _graceful_shutdown)
-
-    # atexit: Don dep PID file khi thoat binh thuong
-    def _cleanup_pid():
-        try:
-            os.remove(PID_FILE)
-        except Exception:
-            pass
     atexit.register(_cleanup_pid)
 
-    # Ghi PID file de restart an toan
     try:
         with open(PID_FILE, 'w') as f:
             f.write(str(os.getpid()))
@@ -13739,186 +13900,6 @@ if __name__ == "__main__":
         pass
     
     bind_host = "0.0.0.0"
-
-    import socket as _socket
-    def _force_free_port(port):
-        """Terminate only our own stale NAS API listener on port before bind."""
-        try:
-            test_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-            test_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
-            test_sock.bind(('0.0.0.0', port))
-            test_sock.close()
-            return
-        except OSError:
-            pass
-        log.warning("[Port %d] Dang bi chiem, kiem tra listener an toan...", port)
-        targets = []
-        seen_pids = set()
-        try:
-            for conn in psutil.net_connections(kind="inet"):
-                if conn.status != psutil.CONN_LISTEN or not conn.laddr or conn.laddr.port != port or not conn.pid:
-                    continue
-                if conn.pid in seen_pids:
-                    continue
-                try:
-                    proc = psutil.Process(conn.pid)
-                    name = (proc.name() or "").lower()
-                    cmdline = " ".join(proc.cmdline()).lower()
-                    exe_name = ""
-                    try:
-                        exe_name = os.path.basename(os.readlink("/proc/%s/exe" % proc.pid)).lower()
-                    except OSError:
-                        pass
-                    if "nas_api_server.py" not in cmdline and "nas_api_server.py" not in exe_name:
-                        log.warning("[Port %d] Skip PID %d (%s) - khong phai NAS API.", port, proc.pid, name)
-                        continue
-                    targets.append(proc)
-                    seen_pids.add(conn.pid)
-                except psutil.NoSuchProcess:
-                    continue
-        except (psutil.Error, OSError) as e:
-            log.warning("[Port %d] Khong doc duoc listener list: %s", port, e)
-            return
-        if not targets:
-            log.warning("[Port %d] Khong tim thay NAS API listener nao, bo qua.", port)
-            return
-        for proc in targets:
-            try:
-                log.warning("[Port %d] Dang terminate PID %d (%s)...", port, proc.pid, proc.name())
-                proc.terminate()
-            except psutil.NoSuchProcess:
-                continue
-            except Exception as e:
-                log.warning("[Port %d] Khong terminate duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
-        _, alive = psutil.wait_procs(targets, timeout=5)
-        for proc in alive:
-            try:
-                log.warning("[Port %d] PID %d chua dung, kill...", port, proc.pid)
-                proc.kill()
-            except psutil.NoSuchProcess:
-                continue
-            except Exception as e:
-                log.warning("[Port %d] Khong kill duoc PID %d: %s", port, getattr(proc, "pid", -1), e)
-        if alive:
-            psutil.wait_procs(alive, timeout=5)
-        log.info("[Port %d] Da giai phong.", port)
-
-    def _auto_resource_reclaimer_thread():
-        """
-        TRÌNH TỰ ĐỘNG GIẢI PHÓNG CPU/RAM VÀ DIỆT TIẾN TRÌNH THỪA (Chạy tự động mỗi 3 phút):
-        
-        BẢO VỆ AN TOÀN TUYỆT ĐỐI CHO CÁC TIẾN TRÌNH ĐANG CHẠY:
-        - BỎ QUA HOÀN TOÀN: Tất cả tiến trình ffmpeg, yt-dlp, aria2c đang ghi livestream hoặc tải file.
-        - BỎ QUA HOÀN TOÀN: Tiến trình sao lưu tự động / WebDAV upload / đồng bộ file đang diễn ra.
-        - BỎ QUA HOÀN TOÀN: Các file đệm tạm đang được ghi (mtime < 30 phút).
-        
-        CHỈ DỌN DẸP:
-        1. Tiến trình Zombie / Defunct (đã chết hẳn).
-        2. Tiến trình containerd mồ côi (khi Docker không hoạt động).
-        3. Lệnh curl/wget thử nghiệm mồ côi bị treo > 10 phút.
-        4. File rác mồ côi trong /tmp hoàn toàn không có hoạt động ghi > 30 phút.
-        5. Ép thu gom rác Python gc.collect() và thu hồi RAM từ glibc qua libc.malloc_trim(0).
-        """
-        log.info("[ResourceReclaimer] Trình tự động giải phóng RAM/CPU (bảo vệ tuyệt đối tiến trình livestream & backup) đã khởi động.")
-        while True:
-            try:
-                time.sleep(180)
-                
-                # 1. Ép thu gom rác RAM Python & trả lại RAM thừa cho Linux OS Kernel
-                try:
-                    gc.collect()
-                    try:
-                        libc = ctypes.CDLL('libc.so.6')
-                        libc.malloc_trim(0)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-                # Ép giải phóng Kernel page cache nếu RAM khả dụng xuống dưới 250 MB
-                try:
-                    mem = psutil.virtual_memory()
-                    if getattr(mem, 'available', mem.free) < 250 * 1024 * 1024:
-                        with open("/proc/sys/vm/drop_caches", "w") as f:
-                            f.write("3\n")
-                        log.info("[ResourceReclaimer] Đã tự động giải phóng Kernel Page Cache VFS.")
-                except Exception:
-                    pass
-
-                # 2. Rà soát tiến trình — BẢO VỆ TIẾN TRÌNH ĐANG HOẠT ĐỘNG
-                now = time.time()
-                current_pid = os.getpid()
-                for proc in psutil.process_iter():
-                    try:
-                        pid = proc.pid
-                        if pid == current_pid or pid <= 100:
-                            continue
-                        
-                        name = (proc.name() or "").lower()
-                        cmdline = " ".join(proc.cmdline() or []).lower()
-                        status = str(proc.status())
-
-                        # BẢO VỆ TUYỆT ĐỐI: Tiến trình ghi Livestream / ffmpeg / yt-dlp / aria2c / backup
-                        if any(protected in name or protected in cmdline for protected in ('ffmpeg', 'yt-dlp', 'ytdlp', 'aria2c', 'rsync', 'rclone')):
-                            continue
-                        
-                        # Trảm duy nhất tiến trình Zombie (đã chết hẳn)
-                        if status in ('zombie', 'dead') or status == getattr(psutil, 'STATUS_ZOMBIE', 'zombie'):
-                            try:
-                                proc.kill()
-                                log.info("[ResourceReclaimer] Đã dọn tiến trình Zombie PID=%d (%s)" % (pid, name))
-                            except Exception:
-                                pass
-                            continue
-
-                        # Trảm lệnh curl/wget thử nghiệm mồ côi bị treo > 10 phút
-                        if name in ('curl', 'wget') and (now - proc.create_time() > 600):
-                            try:
-                                proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt curl/wget treo > 10 phút PID=%d" % pid)
-                            except Exception:
-                                pass
-                            continue
-
-                        # Trảm containerd mồ côi khi Docker không hoạt động
-                        if name == 'containerd':
-                            try:
-                                proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt containerd mồ côi PID=%d" % pid)
-                            except Exception:
-                                pass
-                            continue
-
-                        # Trảm script test Python mồ côi cũ > 20 phút
-                        if "python" in name and ("/tmp/loop_" in cmdline or "-c import" in cmdline) and (now - proc.create_time() > 1200):
-                            try:
-                                proc.kill()
-                                log.info("[ResourceReclaimer] Đã tiêu diệt Python test script mồ côi PID=%d" % pid)
-                            except Exception:
-                                pass
-                            continue
-
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
-
-                # 3. Dọn dẹp file đệm tạm trong /tmp — CHỈ XÓA FILE KHÔNG CÓ HOẠT ĐỘNG GHI > 30 PHÚT
-                try:
-                    if os.path.exists("/tmp"):
-                        for f in os.listdir("/tmp"):
-                            if f.startswith("loop_") or f.startswith("ffmpeg_") or f.startswith("thumb_tmp_") or f.startswith("test_ytdlp_") or f.startswith("nas_fast_index") or f.endswith(".mp4") or f.endswith(".webm") or f.endswith(".ts"):
-                                fpath = os.path.join("/tmp", f)
-                                try:
-                                    # Kiểm tra thời điểm sửa đổi (mtime): Nếu đang ghi file (mtime mới < 30 phút), BỎ QUA HOÀN TOÀN
-                                    if os.path.isfile(fpath) and (now - os.path.getmtime(fpath) > 1800):
-                                        os.remove(fpath)
-                                        log.info("[ResourceReclaimer] Đã xóa file đệm rác RAM-disk /tmp: %s" % f)
-                                except Exception:
-                                    pass
-                except Exception:
-                    pass
-
-            except Exception as e:
-                log.warning("[ResourceReclaimer] Lỗi: %s" % str(e))
 
     _force_free_port(5050)
     _force_free_port(5051)
@@ -13936,24 +13917,17 @@ if __name__ == "__main__":
     log.info("=" * 50)
     _ensure_trash_directories()
 
-    # Thread giam sat log WebDAV de phat hien scan password
     threading.Thread(target=monitor_scanners, daemon=True).start()
     threading.Thread(target=monitor_journalctl, daemon=True).start()
-    
-    # Thread cache dữ liệu h? thỏng (cap nhat mới 2 gi?y) → API ph?n h?i tuc thi
     threading.Thread(target=_update_status_cache, daemon=True).start()
-    
-    # Thread tao thumbnail tu dong (Synology-style)
     threading.Thread(target=_thumbnail_generator, daemon=True).start()
     log.info("[Thumbnail] Trình tạo ảnh thu nhỏ nền đã khởi động.")
     
-    # Thread giam sat Hảnh vi H? thỏng Toan Dien (Mat HDD, Mat LAN IP, Chet Service)
     threading.Thread(target=_system_health_watchdog, daemon=True).start()
-    log.info("[Watchdog] Trình giám sát sức khỏe hệ thống đã khởi động (tự động xử lý lỗi mạng/ổ cứng).")
+    log.info("[Watchdog] Trình giám sát sức khỏe hệ thống đã khởi động.")
 
-    # FEATURE: Disk health time-series daemon + scheduled backup daemon
     threading.Thread(target=_disk_health_watchdog, daemon=True).start()
-    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động (SMART theo lịch: khỏe 30 ngày, cảnh báo 7 ngày, lỗi 24 giờ).")
+    log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động.")
     threading.Thread(target=_scheduled_backup_worker, daemon=True).start()
     log.info("[BackupSchedule] Trình lên lịch backup tự động đã khởi động.")
     threading.Thread(target=_usb_import_watchdog, daemon=True, name="USBImportWatchdog").start()
@@ -13961,27 +13935,16 @@ if __name__ == "__main__":
     threading.Thread(target=_sleep_schedule_worker, daemon=True).start()
     log.info("[SleepSchedule] Trình lên lịch HDD spindown đã khởi động.")
 
-    # Thread cron don dep Thung rac + phat hien cầnh b?o + kick AI ban dem
     threading.Thread(target=_cron_worker, daemon=True).start()
     log.info("[Cron] Tác vụ tự động dọn dẹp và cảnh báo chủ động đã khởi động.")
 
-    # Thread dò TikTok live chạy hoàn toàn trên NAS. App Android chỉ cấu hình và
-    # hiển thị trạng thái; việc phát hiện live + ghi hình không phụ thuộc app.
     threading.Thread(target=_tiktok_live_watchdog, daemon=True, name="TikTokLiveWatchdog").start()
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
     threading.Thread(target=_auto_resource_reclaimer_thread, daemon=True, name="ResourceReclaimer").start()
     log.info("[ResourceReclaimer] Watcher giải phóng tài nguyên ngầm đã khởi động.")
     threading.Thread(target=_nas_api_self_watchdog, daemon=True, name="NasApiSelfWatchdog").start()
     log.info("[NasAPI] Self-watchdog tự khởi động lại đã được kích hoạt.")
-    # ============ TOI UU HOA CUC DAI: WAITRESS MULTI-THREAD ============
-    def run_flask():
-        try:
-            from waitress import serve
-            serve(app, host=bind_host, port=5050, threads=6, connection_limit=50)
-        except ImportError:
-            log.warning("Thiếu thư viện Waitress. Vui lòng chạy: pip3 install waitress")
-            app.run(host=bind_host, port=5050, debug=False, threaded=True)
-            
+    
     threading.Thread(target=run_flask, daemon=True).start()
 
     # Chay Tornado WebSocket tren port 5051 (main thread) dung de ban thong bao (Alerts)
