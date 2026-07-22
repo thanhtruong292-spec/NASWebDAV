@@ -35,6 +35,32 @@ import base64
 import urllib.request
 import urllib.error
 import urllib.parse
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+def _get_process_name(pid_int):
+    if psutil is not None:
+        try:
+            name = (psutil.Process(pid_int).name() or "").strip()
+            if name:
+                return name.lower()
+        except Exception:
+            pass
+    # Fallback to reading /proc/<pid>/comm or /proc/<pid>/cmdline directly
+    try:
+        with open("/proc/%d/comm" % pid_int, "r") as f:
+            return f.read().strip().lower()
+    except Exception:
+        try:
+            with open("/proc/%d/cmdline" % pid_int, "r") as f:
+                raw = f.read().replace("\x00", " ").strip()
+                if raw:
+                    return os.path.basename(raw.split()[0]).lower()
+        except Exception:
+            pass
+    return ""
 
 def sanitize_log_input(text):
     if not text: return str(text)
@@ -824,20 +850,61 @@ def broadcast(data):
             for c in dead:
                 clients.discard(c)
 
+_ws_unauth_log_cache = {}
+_ws_unauth_log_lock = threading.Lock()
+
 class AlertWebSocket(tornado.websocket.WebSocketHandler):
     def check_origin(self, origin):
-        return True
+        if not origin:
+            return True
+        try:
+            parsed = urllib.parse.urlparse(origin)
+            host = (parsed.hostname or "").lower()
+            if not host:
+                return True
+            if host in ("localhost", "127.0.0.1") or host.startswith(("192.168.", "10.", "100.", "172.")):
+                return True
+            if _ip_in_whitelist(host):
+                return True
+            req_host = (self.request.host or "").split(":")[0].lower()
+            if req_host and host == req_host:
+                return True
+            return False
+        except Exception:
+            return False
 
     def open(self):
         ip = (self.request.remote_ip or "").strip()
-        token = self.get_argument("token", "")
+        token = (
+            self.get_argument("token", "") or
+            self.request.headers.get("X-NAS-Token", "") or
+            self.request.headers.get("Sec-WebSocket-Protocol", "")
+        )
+
+        auth_header = self.request.headers.get("Authorization", "")
+        if auth_header and auth_header.startswith("Basic "):
+            try:
+                raw_b64 = auth_header.split(" ", 1)[1]
+                decoded = base64.b64decode(raw_b64).decode("utf-8")
+                if ":" in decoded:
+                    u, p = decoded.split(":", 1)
+                    if check_auth(u, p):
+                        token = p
+            except Exception:
+                pass
+
         is_authorized = (
             _ip_in_whitelist(ip) or
             (ip and ip in _refresh_authorized_ips_cache()) or
             (token and check_auth(WEBDAV_USER, token))
         )
         if not is_authorized:
-            log.warning("[AlertWebSocket] Tu choi ket noi WebSocket tu IP unauthorized: %s", ip)
+            now_ts = time.time()
+            with _ws_unauth_log_lock:
+                last_logged = _ws_unauth_log_cache.get(ip, 0)
+                if now_ts - last_logged > 60:
+                    _ws_unauth_log_cache[ip] = now_ts
+                    log.warning("[AlertWebSocket] Tu choi ket noi WebSocket tu IP unauthorized: %s", ip)
             self.close(code=4001, reason="Unauthorized")
             return
 
@@ -3856,14 +3923,9 @@ def api_process_kill():
         if pid_int <= 100 or pid_int == os.getpid() or pid_int == os.getppid():
             return jsonify({"error": "Tiến trình hệ thống không thể kill"}), 403
 
-        try:
-            import psutil
-            p = psutil.Process(pid_int)
-            pname = (p.name() or "").lower()
-            if pname in ("nginx", "sshd", "systemd", "init", "bash", "sh") or "nas_api" in pname:
-                return jsonify({"error": "Tiến trình hệ thống được bảo vệ: %s" % pname}), 403
-        except Exception:
-            pass
+        pname = _get_process_name(pid_int)
+        if pname in ("nginx", "sshd", "systemd", "init", "bash", "sh") or "nas_api" in pname:
+            return jsonify({"error": "Tiến trình hệ thống được bảo vệ: %s" % (pname or str(pid_int))}), 403
 
         import signal
         os.kill(pid_int, signal.SIGKILL)
@@ -8067,6 +8129,8 @@ def api_torrent_control():
         qbt_base = "http://127.0.0.1:8080/api/v2"
         qbt_user = os.environ.get("QBT_USER", "admin")
         qbt_pass = os.environ.get("QBT_PASS", "adminadmin")
+        if qbt_pass == "adminadmin":
+            log.warning("[Security] qBittorrent dang dung mat khau mac dinh 'adminadmin'. Vui long thiet lap QBT_PASS trong bien moi truong.")
 
         # Step 1: Login to qBittorrent to get SID cookie
         login_data = urllib.parse.urlencode({"username": qbt_user, "password": qbt_pass}).encode("utf-8")
