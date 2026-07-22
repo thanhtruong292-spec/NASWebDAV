@@ -117,7 +117,16 @@ class SmartToolsViewModel(
     var organizingLegacyResult by androidx.compose.runtime.mutableStateOf<String?>(null)
         internal set
 
-    private val _globalUi: com.nas.naswebdav.GlobalUiViewModel by lazy {
+    var globalUi: com.nas.naswebdav.GlobalUiViewModel? = null
+
+    fun attachGlobalUi(ui: com.nas.naswebdav.GlobalUiViewModel) {
+        globalUi = ui
+    }
+
+    private val _globalUi: com.nas.naswebdav.GlobalUiViewModel
+        get() = globalUi ?: fallbackGlobalUi
+
+    private val fallbackGlobalUi by lazy {
         com.nas.naswebdav.GlobalUiViewModel()
     }
 
@@ -136,6 +145,11 @@ class SmartToolsViewModel(
             val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(
                 30, java.util.concurrent.TimeUnit.DAYS)
                 .setConstraints(constraints)
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL,
+                    30,
+                    java.util.concurrent.TimeUnit.SECONDS
+                )
                 .build()
             workManager.enqueueUniquePeriodicWork(
                 "AutoCleanDuplicates", androidx.work.ExistingPeriodicWorkPolicy.UPDATE, req)
@@ -320,7 +334,7 @@ class SmartToolsViewModel(
     fun fetchThumbStatus() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status").build()
+                val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status").let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newBuilder().readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
                     .newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -441,7 +455,7 @@ class SmartToolsViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
                 val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/scan").post(body).build()
+                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/scan").post(body).let(WebDavManager::tagCurrentAuth).build()
                 val scanClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(3, java.util.concurrent.TimeUnit.MINUTES).build()
                 scanClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string()
@@ -476,7 +490,7 @@ class SmartToolsViewModel(
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
                 val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
-                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/execute").post(body).build()
+                val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/execute").post(body).let(WebDavManager::tagCurrentAuth).build()
                 val execClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).callTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
                 execClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string() ?: throw Exception("Empty response body")
@@ -512,7 +526,7 @@ class SmartToolsViewModel(
     private suspend fun pollSmartOrganizeJob(apiBase: String, jobId: String): org.json.JSONObject {
         var delayMs = 1000L; val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
         while (System.currentTimeMillis() < deadline) {
-            val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/status/$jobId").get().build()
+            val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/status/$jobId").get().let(WebDavManager::tagCurrentAuth).build()
             NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                 val responseBody = response.body?.string()
                 if (!response.isSuccessful || responseBody == null) throw Exception("Lỗi NAS: ${response.code}")

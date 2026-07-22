@@ -213,18 +213,67 @@ class SocialDownloadWorker(
         )
 
         if (dlResult.jobId != null) {
-            notifyResult(
-                title = "NAS đã nhận liên kết",
-                message = "Video đang được tải vào ${AppConfig.SOCIAL_DOWNLOAD_FOLDER}",
-                isSuccess = true,
-                notificationKey = socialUrl
-            )
-            return@withContext Result.success(dlResult.outputData)
+            val pollSuccess = pollSocialJobStatus(apiBaseUrl, authHeader, dlResult.jobId, NasApplication.instance.fastApiClient)
+            if (pollSuccess) {
+                notifyResult(
+                    title = "Tải video mạng xã hội hoàn tất",
+                    message = "Video đã được tải thành công vào ${AppConfig.SOCIAL_DOWNLOAD_FOLDER}",
+                    isSuccess = true,
+                    notificationKey = socialUrl
+                )
+                return@withContext Result.success(dlResult.outputData)
+            } else {
+                notifyResult(
+                    title = "Tải video mạng xã hội thất bại",
+                    message = "Không thể hoàn tất tải video từ $socialUrl",
+                    isSuccess = false,
+                    notificationKey = socialUrl
+                )
+                return@withContext Result.failure(workDataOf("error" to "Job $socialUrl failed on NAS"))
+            }
         }
         if (dlResult.isRetry) return@withContext Result.retry()
 
         notifyResult("Không thể tải video", dlResult.error.orEmpty(), false, socialUrl)
         return@withContext Result.failure(dlResult.outputData)
+    }
+
+    private suspend fun pollSocialJobStatus(
+        apiBaseUrl: String,
+        authHeader: String,
+        jobId: String,
+        callFactory: okhttp3.Call.Factory
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + 15 * 60 * 1000L
+        var delayMs = 2000L
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                val pollReq = okhttp3.Request.Builder()
+                    .url("$apiBaseUrl/api/social/status/$jobId")
+                    .header("Authorization", authHeader)
+                    .get()
+                    .build()
+                val (status, errorMsg) = callFactory.newCall(pollReq).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use Pair("error", "HTTP ${resp.code}")
+                    val json = JSONObject(resp.body?.string() ?: "{}")
+                    Pair(json.optString("status", "running"), json.optString("error", ""))
+                }
+                when (status) {
+                    "completed", "success", "done" -> return true
+                    "error", "failed" -> {
+                        android.util.Log.e("SocialWorker", "Social job $jobId failed: $errorMsg")
+                        return false
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("SocialWorker", "Error polling social job $jobId: ${e.message}")
+            }
+            kotlinx.coroutines.delay(delayMs)
+            delayMs = (delayMs * 1.5).toLong().coerceAtMost(10000L)
+        }
+        return false
     }
 
     private fun fail(message: String, notificationKey: String = message): Result {

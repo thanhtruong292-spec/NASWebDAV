@@ -434,6 +434,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.showResultDialog.value = true
             
             return@withContext Result.success()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException

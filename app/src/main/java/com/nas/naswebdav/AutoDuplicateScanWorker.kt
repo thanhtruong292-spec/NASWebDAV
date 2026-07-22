@@ -199,7 +199,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
     }
     private suspend fun moveFileToTrash(manager: WebDavManager, sourceUrl: String, user: String, pass: String): Boolean {
-        return try {
+        try {
             val rootUrl = manager.currentBaseUrl.trimEnd('/')
             val authHeader = okhttp3.Credentials.basic(user, pass)
             val fileName = sourceUrl.substringAfterLast("/")
@@ -213,8 +213,29 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
                     )
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                return true
             }
-            success
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("AutoCleanWorker", "MOVE to .trash failed: ${e.message}")
+        }
+
+        // Fallback: WebDAV DELETE (xóa thẳng vĩnh viễn theo hardrule GEMINI §10)
+        return try {
+            val authHeader = okhttp3.Credentials.basic(user, pass)
+            val delSuccess = NasApplication.instance.sharedHttpClient.newCall(
+                okhttp3.Request.Builder().url(sourceUrl).method("DELETE", null).header("Authorization", authHeader).build()
+            ).execute().use { it.isSuccessful }
+            if (delSuccess) {
+                android.util.Log.i("AutoCleanWorker", "Permanently deleted duplicate file $sourceUrl as fallback")
+            }
+            delSuccess
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("AutoCleanWorker", "Fallback DELETE also failed for $sourceUrl: ${e.message}")
+            false
+        }
     }
 }

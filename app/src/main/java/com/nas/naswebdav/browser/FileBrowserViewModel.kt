@@ -266,7 +266,14 @@ class FileBrowserViewModel(
                 try {
                     WebDavManager.renameFile(file.path, trashUrl)
                     deletedSuccessfully = true
-                } catch (e: Exception) {
+                    try {
+                        NasApplication.instance.database.trashMetaDao().insert(
+                            com.nas.naswebdav.database.TrashMeta(trashPath = trashUrl, originalPath = file.path)
+                        )
+                    } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                        android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash", dbEx)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, falling back to DELETE: ${e.message}")
                     lastError = e
                 }

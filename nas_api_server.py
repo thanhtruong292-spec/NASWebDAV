@@ -954,12 +954,14 @@ def ban_ip_permanently(ip):
     try:
         now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
-        cur = conn.cursor()
-        safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
-        cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
-                   ("WARNING", "Firewall", safe_msg))
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
+            cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
+                       ("WARNING", "Firewall", safe_msg))
+            conn.commit()
+        finally:
+            conn.close()
     except Exception as e:
         log.error("[Firewall] Lỗi ghi log yêu cầu chặn IP %s: %s", ip, e)
 
@@ -1988,6 +1990,7 @@ def format_speed(bps):
 
 # L?u tru bang thong mang cho tinh toan delta
 _last_net = {"rx": 0, "tx": 0, "time": 0}
+_net_stats_lock = threading.Lock()
 
 
 def get_network_speed():
@@ -1998,12 +2001,13 @@ def get_network_speed():
         now = time.time()
         rx_speed = 0
         tx_speed = 0
-        if _last_net["time"] > 0:
-            dt = now - _last_net["time"]
-            if dt > 0:
-                rx_speed = (counters.bytes_recv - _last_net["rx"]) / dt
-                tx_speed = (counters.bytes_sent - _last_net["tx"]) / dt
-        _last_net = {"rx": counters.bytes_recv, "tx": counters.bytes_sent, "time": now}
+        with _net_stats_lock:
+            if _last_net["time"] > 0:
+                dt = now - _last_net["time"]
+                if dt > 0:
+                    rx_speed = (counters.bytes_recv - _last_net["rx"]) / dt
+                    tx_speed = (counters.bytes_sent - _last_net["tx"]) / dt
+            _last_net = {"rx": counters.bytes_recv, "tx": counters.bytes_sent, "time": now}
         return format_speed(max(0, rx_speed)), format_speed(max(0, tx_speed))
     except Exception:
         return "0 B/s", "0 B/s"
@@ -2389,7 +2393,7 @@ def _ensure_trash_directories():
                     if os.path.isdir(disk_path) and not os.path.exists(trash_dir):
                         try:
                             os.makedirs(trash_dir, mode=0o777, exist_ok=True)
-                            safe_run_cmd("chown -R daica:webdav-users '%s'" % trash_dir)
+                            safe_run_cmd(["chown", "-R", "daica:webdav-users", trash_dir])
                             os.chmod(trash_dir, 0o777)
                             log.info("[DiskInit] Đã tự động tạo thư mục Thùng rác: %s", trash_dir)
                         except Exception as e:

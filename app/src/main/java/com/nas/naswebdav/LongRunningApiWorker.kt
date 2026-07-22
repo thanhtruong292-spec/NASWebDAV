@@ -205,6 +205,11 @@ class LongRunningApiWorker(
                 ))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
+            val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException || e is java.io.IOException
+            if (isTransient && runAttemptCount < 3) {
+                android.util.Log.w(TAG, "Transient error in LongRunningApiWorker (attempt $runAttemptCount), retrying: ${e.message}")
+                return@withContext Result.retry()
+            }
             return@withContext Result.failure()
         }
     }

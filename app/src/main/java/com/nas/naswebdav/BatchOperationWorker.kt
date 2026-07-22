@@ -250,6 +250,8 @@ class BatchOperationWorker(
                                 } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
                                     android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
                                 }
+                            } catch (moveEx: kotlinx.coroutines.CancellationException) {
+                                throw moveEx
                             } catch (moveEx: Exception) {
                                 // Fallback to direct permanent DELETE if MOVE to trash fails
                                 webDavManager.deleteFile(sourceUrl, isDirectory)
@@ -287,12 +289,17 @@ class BatchOperationWorker(
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                android.util.Log.e(TAG, "Lï¿½?i $operation file: $fileName", e)
+                android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
                 failCount++
             }
             
             // UX-01: Delay 100ms to prevent NAS WebDAV daemon from hanging during mass I/O
             kotlinx.coroutines.delay(100L)
+        }
+
+        if (isStopped) {
+            android.util.Log.w(TAG, "Batch operation $operation was stopped/cancelled before completion ($successCount/$total succeeded)")
+            return@withContext Result.retry()
         }
 
         // BÃ¡o cÃ¡o káº¿t quáº£ cuï¿½?i cÃ¹ng cho UI

@@ -20,7 +20,7 @@ class AppDatabaseMigrationTest {
     )
 
     @Test
-    fun migrateFromVersion1To13_preservesCachedFilesAndValidatesSchema() {
+    fun migrateFromVersion1To15_preservesCachedFilesAndValidatesSchema() {
         helper.createDatabase(TEST_DB, 1).apply {
             execSQL(
                 """
@@ -34,12 +34,14 @@ class AppDatabaseMigrationTest {
 
         val db = helper.runMigrationsAndValidate(
             TEST_DB,
-            13,
+            15,
             true,
             MIGRATION_1_10,
             MIGRATION_10_11,
             MIGRATION_11_12,
-            MIGRATION_12_13
+            MIGRATION_12_13,
+            MIGRATION_13_14,
+            MIGRATION_14_15
         )
 
         db.query("SELECT path, name, contentLength, lastModified FROM files_cache").use { cursor ->
@@ -49,6 +51,19 @@ class AppDatabaseMigrationTest {
             assertEquals(12345L, cursor.getLong(2))
             assertEquals(0L, cursor.getLong(3))
         }
+    }
+
+    @Test
+    fun migrateFromVersion13To15_validatesSchema() {
+        helper.createDatabase(TEST_DB + "_13_15", 13).close()
+
+        helper.runMigrationsAndValidate(
+            TEST_DB + "_13_15",
+            15,
+            true,
+            MIGRATION_13_14,
+            MIGRATION_14_15
+        )
     }
 
     companion object {
