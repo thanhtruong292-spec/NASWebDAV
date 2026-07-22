@@ -248,6 +248,8 @@ class SocialDownloadWorker(
         val deadline = System.currentTimeMillis() + 15 * 60 * 1000L
         var delayMs = 2000L
         while (System.currentTimeMillis() < deadline) {
+            // P1-12: Honor WorkManager stop signal to avoid leaked poll loop
+            if (isStopped) return false
             try {
                 val pollReq = okhttp3.Request.Builder()
                     .url("$apiBaseUrl/api/social/status/$jobId")

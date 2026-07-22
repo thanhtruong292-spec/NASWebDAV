@@ -384,8 +384,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         java.io.FileOutputStream(tmpFile).use { out -> input.copyTo(out) }
                                     }
                                     if (tmpFile.exists()) {
-                                        com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(tmpFile, targetFileNasPath, SecurePrefsHelper.getPass(applicationContext))
-                                        tmpFile.delete()
+                                        // P1-15: Use try/finally so tmpFile is always deleted
+                                        try {
+                                            com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(tmpFile, targetFileNasPath, SecurePrefsHelper.getPass(applicationContext))
+                                        } finally {
+                                            tmpFile.delete()
+                                        }
                                     }
                                 } catch (e: Exception) {
                                     android.util.Log.e("AutoBackup", "Failed to generate thumbnail for $fileName", e)

@@ -260,6 +260,16 @@ _social_download_jobs = {}
 _social_download_lock = threading.Lock()
 
 
+def _social_jobs_cleanup_daemon():
+    """P1-7: Background daemon to periodically evict expired social download jobs."""
+    while True:
+        try:
+            time.sleep(300)  # run every 5 minutes
+            _social_remove_expired_jobs(max_age_sec=3600)
+        except Exception:
+            pass
+
+
 def _social_is_public_ip(address):
     try:
         ip_obj = _social_ipaddress.ip_address(str(address).split("%", 1)[0])
@@ -1030,10 +1040,14 @@ def monitor_scanners():
                     last_seen = recent_auth_ips.get(ip, 0)
                     if now - last_seen > 1800:
                         recent_auth_ips[ip] = now
-                        
+                        # P1-4: Evict entries older than 1 hour to prevent unbounded growth
+                        stale_ips = [k for k, v in recent_auth_ips.items() if now - v > 3600]
+                        for _k in stale_ips:
+                            del recent_auth_ips[_k]
                         # A. Lấy thông tin MAC Address bằng lệnh arp
                         mac_address = "Không rõ"
                         try:
+                            # P1-5: Evict stale ARP entries before lookup
                             cached = _ARP_LOOKUP_CACHE.get(ip)
                             if cached and time.time() - float(cached.get("ts", 0) or 0) < _ARP_LOOKUP_TTL:
                                 mac_address = cached.get("mac", "Không rõ")
@@ -5608,37 +5622,6 @@ def _emmc_guard():
     }
 
 
-def _target_hdd_devname():
-    try:
-        if os.path.exists("/proc/diskstats"):
-            with open("/proc/diskstats", "r") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 12:
-                        dev = parts[2]
-                        if dev.startswith("sd") and dev[-1].isalpha():
-                            return dev
-    except Exception:
-        pass
-    return "sda"
-
-
-def _read_io_stats(devname):
-    res = {"sectors_read": 0, "sectors_written": 0, "ios_in_progress": 0}
-    try:
-        if os.path.exists("/proc/diskstats"):
-            with open("/proc/diskstats", "r") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 12 and parts[2] == devname:
-                        res["sectors_read"] = int(parts[5])
-                        res["sectors_written"] = int(parts[9])
-                        res["ios_in_progress"] = int(parts[11])
-                        break
-    except Exception:
-        pass
-    return res
-
 
 def _data_flow_snapshot():
     global _DATA_FLOW_LAST_SAMPLE
@@ -9832,6 +9815,13 @@ def _smart_organize_job_update(job_id, **fields):
         job = _smart_organize_jobs.setdefault(job_id, {"job_id": job_id})
         job.update(fields)
         job["updated_at"] = time.time()
+        # P1-6: Evict completed jobs older than 2 hours to prevent unbounded growth
+        _now = time.time()
+        stale = [jid for jid, j in _smart_organize_jobs.items()
+                 if j.get("status") in ("done", "error") and
+                 _now - float(j.get("updated_at") or 0) > 7200]
+        for _jid in stale:
+            del _smart_organize_jobs[_jid]
         return dict(job)
 
 
@@ -10128,8 +10118,11 @@ def generate_fast_index(force=False):
     tail = '], "total": %d}' % total
     yield tail
     if cache_f:
-        cache_f.write(tail)
-        cache_f.close()
+        try:
+            cache_f.write(tail)
+        finally:
+            # P1-9: Always close cache_f to prevent FD leak on exception
+            cache_f.close()
 
 @app.route("/api/disk/trash_batch", methods=["POST"])
 @requires_auth
@@ -10546,8 +10539,11 @@ def api_thumb():
             return jsonify({"error": "Không hỗ trợ"}), 415
     
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+        # P1-8: Use context manager to prevent FD leak
+        with open(thumb_path, 'rb') as _tf:
+            data = _tf.read()
         return Response(
-            open(thumb_path, 'rb').read(),
+            data,
             mimetype='image/jpeg',
             headers={'Cache-Control': 'public, max-age=86400'}
         )
@@ -14186,6 +14182,8 @@ if __name__ == "__main__":
     
     threading.Thread(target=_system_health_watchdog, daemon=True).start()
     log.info("[Watchdog] Trình giám sát sức khỏe hệ thống đã khởi động.")
+    threading.Thread(target=_social_jobs_cleanup_daemon, daemon=True).start()
+    log.info("[Social] Background cleanup daemon started (purge expired jobs every 5m).")
 
     threading.Thread(target=_disk_health_watchdog, daemon=True).start()
     log.info("[DiskHealth] Trình theo dõi sức khỏe HDD đã khởi động.")

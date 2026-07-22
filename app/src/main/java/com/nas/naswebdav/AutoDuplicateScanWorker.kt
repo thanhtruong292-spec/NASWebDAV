@@ -196,7 +196,14 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             throttleJob.cancel()
             if (isStopped) return@withContext Result.failure()
-            SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}"); Result.retry()
+            // P1-14: Cap retries at 3 to prevent infinite retry loop
+            if (runAttemptCount < 3) {
+                SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}")
+                Result.retry()
+            } else {
+                SystemLogger.log("ERROR", "AutoClean", "Dọn dẹp thất bại sau 3 lần thử: ${e.message}")
+                Result.failure()
+            }
         }
     }
 
