@@ -34,6 +34,25 @@ jobs:
         if: hashFiles('nas_api_server.py') != ''
         run: python -m py_compile nas_api_server.py
 
+      - name: Verify Python 3.5 compatibility (No f-strings/walrus/ann-assign)
+        if: hashFiles('nas_api_server.py') != ''
+        run: |
+          python -c "
+          import ast
+          class Py35Checker(ast.NodeVisitor):
+              def __init__(self): self.errors = []
+              def visit_JoinedStr(self, node): self.errors.append('Line %d: f-string used (Python 3.6+)' % node.lineno); self.generic_visit(node)
+              def visit_NamedExpr(self, node): self.errors.append('Line %d: walrus operator used (Python 3.8+)' % node.lineno); self.generic_visit(node)
+              def visit_AnnAssign(self, node): self.errors.append('Line %d: type annotation used (Python 3.6+)' % node.lineno); self.generic_visit(node)
+          tree = ast.parse(open('nas_api_server.py', 'r', encoding='utf-8').read())
+          checker = Py35Checker()
+          checker.visit(tree)
+          if checker.errors:
+              for err in checker.errors: print('SYNTAX ERROR:', err)
+              exit(1)
+          print('Python 3.5 compatibility check PASSED')
+          "
+
       - name: Run server unit tests
         if: hashFiles('nas_api_server.py') != ''
         run: python -m pytest -q

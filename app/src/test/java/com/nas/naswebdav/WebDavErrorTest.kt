@@ -1,14 +1,37 @@
 package com.nas.naswebdav
 
-/**
- * WebDavErrorTest — Placeholder.
- *
- * Class WebDavError đã được refactor/loại bỏ trong quá trình modularization.
- * Test này được giữ lại như placeholder để không gây compilation failure.
- * Khi WebDavError được tái triển khai (nếu cần), các test cases có thể được restore.
- *
- * Tham chiếu lịch sử: test HTTP status classification (401, 403, 404, 413, 5xx, isRetryable)
- */
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
 class WebDavErrorTest {
-    // Placeholder — no active tests
+
+    @Test
+    fun extractApiError_returnsErrorMessageFromValidJson() {
+        val response = okhttp3.Response.Builder()
+            .request(okhttp3.Request.Builder().url("http://localhost/").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(400)
+            .message("Bad Request")
+            .body("{\"error\": \"Tập tin không tồn tại\"}".toResponseBody(null))
+            .build()
+
+        val err = WebDavManager.extractApiError(response)
+        assertEquals("Tập tin không tồn tại", err)
+    }
+
+    @Test
+    fun extractApiError_returnsNullWhenBodyIsEmpty() {
+        val response = okhttp3.Response.Builder()
+            .request(okhttp3.Request.Builder().url("http://localhost/").build())
+            .protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(500)
+            .message("Internal Server Error")
+            .body("".toResponseBody(null))
+            .build()
+
+        val err = WebDavManager.extractApiError(response)
+        assertNull(err)
+    }
 }

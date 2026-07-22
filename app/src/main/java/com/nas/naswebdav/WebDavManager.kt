@@ -978,7 +978,11 @@ object WebDavManager {
         return runCatching {
             val bodyStr = response.body?.string() ?: ""
             if (bodyStr.isNotBlank()) {
-                org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null }
+                val jsonErr = runCatching { org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null } }.getOrNull()
+                if (!jsonErr.isNullOrBlank()) return@runCatching jsonErr
+
+                val match = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(bodyStr)
+                match?.groupValues?.get(1)?.ifBlank { null }
             } else null
         }.getOrNull()
     }
