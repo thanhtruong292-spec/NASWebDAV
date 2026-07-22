@@ -79,90 +79,127 @@ Estimate: 2–3 days. Each item independently shippable.
 | P2-29 | Backup delete treats non-404 as success | `SystemMonitorViewModel.kt:635-642` | Parses non-2xx, extracts error body, refreshes only on success (commit `b9f4fff0`). | ✅ |
 | P2-30 | Backup creation missing auth tagging | `SystemMonitorViewModel.kt:606-609` | Added `.let(WebDavManager::tagCurrentAuth)` (commit `b9f4fff0`). | ✅ |
 
-## P2-D: Python backend hardening ⏳
 
-| # | Finding | File(s) | Description | Priority |
-|---|---------|---------|-------------|----------|
-| P2-31 | File handle leak in api_media_fast | `nas_api_server.py:8960` | `open()` without context manager. Exception path leaks FD. Merged into P3-19. | ⏳ |
-| P2-32 | Recent_auth_ips unbounded growth | `nas_api_server.py:986` | No eviction. Memory leak over weeks. | ⏳ |
-| P2-33 | _social_download_jobs unbounded growth | `nas_api_server.py:259` | Expired jobs only cleaned on new job creation. | ⏳ |
-| P2-34 | Duplicate functions `_target_hdd_devname` | `nas_api_server.py:1234,5588` | Same function defined twice; second silently overwrites. | ⏳ |
-| P2-35 | Duplicate functions `_read_io_stats` | `nas_api_server.py:4938,5603` | Same situation. | ⏳ |
+
+# Phase 3 — Production Hardening & Polish ⏳
+
+**Status: Deep review COMPLETED 2026-07-23. 5 agents quét song song: Workers/DB (17 HIGH, 24 MED, 12 LOW), ViewModels/UI (2 HIGH, 30 MED), Python backend (6 HIGH, 14 MED, 8 LOW), Build/CI (1 CRIT, 8 HIGH, 11 MED, 8 LOW), Verification cross-check. Kết quả dưới đây.**
+
+Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành rồi — xem Phase 3 section dưới.
+
+## P0: Release Blockers (MUST fix before any release)
+
+| # | Finding | File(s) | Severity | Fix |
+|---|---------|---------|----------|-----|
+| P0-1 | Plaintext password `Tr26161992` trong `MIGRATION_HDD.md` — git history exposure | `MIGRATION_HDD.md:199,212,279` | CRITICAL | Rotate password, xóa khỏi file, `git filter-repo` để sạch history |
+| P0-2 | Path traversal trong `api_ytdlp_download` — không validate `save_folder` | `nas_api_server.py:13776-13806` | CRITICAL | Apply `_social_sanitize_folder` cho `save_folder` |
+| P0-3 | LAN auto-whitelist không có expiry — một lần login → IP trusted vĩnh viễn | `nas_api_server.py:1488-1500` | CRITICAL | Thêm TTL/expiry cho `authorized_ips` (vd. 24h) |
+| P0-4 | Workers trả `Result.retry()` khi user cancel — 5 workers | `LivestreamMonitorWorker.kt:304`, `BatchOperationWorker.kt:300`, `LongRunningApiWorker.kt:181`, `AutoDuplicateScanWorker.kt:199`, `StreamPipeWorker.kt:197` | CRITICAL | Đổi sang `Result.failure()` khi `isStopped` |
+| P0-5 | Guest password dùng `random.choice` — không cryptographically secure | `nas_api_server.py:10951` | HIGH | Đổi sang `os.urandom` |
+| P0-6 | MANAGE_EXTERNAL_STORAGE — Google Play sẽ reject | `AndroidManifest.xml:18` | HIGH | Bỏ `MANAGE_EXTERNAL_STORAGE`, dùng SAF/Photo Picker |
+| P0-7 | `/tmp` cho 50MB speed test + backup tarball → OOM trên NAS 1GB RAM | `nas_api_server.py:1287,7948` | HIGH | Route sang HDD `_get_hdd_tmp_root()` |
+| P0-8 | Plaintext Exception thay vì `CancellationException` trong 2 workers | `AutoBackupWorker.kt:273`, `StreamPipeWorker.kt:197` | HIGH | Đổi `throw Exception(...)` → `throw kotlinx.coroutines.CancellationException(...)` |
+| P0-9 | 2 `JsonReader` không wrap `.use{}` — stream leak | `DuplicateScanWorker.kt:228`, `AutoDuplicateScanWorker.kt:138` | HIGH | Wrap `InputStreamReader` trong `.use {}` |
+| P0-10 | `Executors.newSingleThreadExecutor()` leak trong UncaughtExceptionHandler | `NasApplication.kt:283` | HIGH | Thay bằng `applicationScope.launch(IO)` |
+
+## P1: Pre-Production Hardening (fix before public release)
+
+| # | Finding | File(s) | Severity | Fix |
+|---|---------|---------|----------|-----|
+| P1-1 | API HTTP cleartext (không TLS) trên 0.0.0.0 | `nas_api_server.py:14151,14154` | HIGH | Bật HTTPS (self-signed + `network_security_config`) |
+| P1-2 | Duplicate `_target_hdd_devname` (L1250 vs L5608) — silent overwrite | `nas_api_server.py` | HIGH | Xóa duplicate, giữ 1 phiên bản |
+| P1-3 | Duplicate `_read_io_stats` (L4958 vs L5623) — silent overwrite | `nas_api_server.py` | HIGH | Xóa duplicate, giữ 1 phiên bản |
+| P1-4 | `recent_auth_ips` unbounded growth | `nas_api_server.py:1002` | HIGH | Thêm LRU cap hoặc TTL eviction |
+| P1-5 | `_ARP_LOOKUP_CACHE` unbounded growth | `nas_api_server.py:1003` | MEDIUM | TTL eviction |
+| P1-6 | `_smart_organize_jobs` unbounded growth | `nas_api_server.py:9816` | MEDIUM | TTL eviction |
+| P1-7 | `_social_download_jobs` chỉ cleanup khi tạo job mới | `nas_api_server.py:259,390,407` | HIGH | Background cleanup thread |
+| P1-8 | FD leak `open(thumb_path,'rb').read()` | `nas_api_server.py:10546` | HIGH | Context manager |
+| P1-9 | FD leak `generate_fast_index` cache_f | `nas_api_server.py:10092` | HIGH | Context manager |
+| P1-10 | `WebDavManager.authState` race condition | `WebDavManager.kt:122-138,178-183` | HIGH | `AtomicReference` hoặc mutex |
+| P1-11 | State mutations trên IO thread (SmartToolsViewModel, DeviceManagementViewModel) | `SmartToolsViewModel.kt:371`, `DeviceManagementViewModel.kt:153-154` | HIGH | Wrap `MutableState.value =` trong `Dispatchers.Main` |
+| P1-12 | `SocialDownloadWorker` poll loop không honor `isStopped` | `SocialDownloadWorker.kt:248-277` | HIGH | Thêm `if (isStopped) return false` |
+| P1-13 | `LongRunningApiWorker` load entire response body vào RAM | `LongRunningApiWorker.kt:122` | MEDIUM | Stream-parse |
+| P1-14 | `AutoDuplicateScanWorker` retry không ceiling | `AutoDuplicateScanWorker.kt:199` | MEDIUM | Thêm `if (runAttemptCount < 3) Result.retry() else Result.failure()` |
+| P1-15 | `AutoBackupWorker.tmpFile` không cleanup khi exception | `AutoBackupWorker.kt:381-388` | MEDIUM | `try { ... } finally { tmpFile.delete() }` |
+| P1-16 | CI không build release APK, không có dep scanning | `.github/workflows/ci.yml` | HIGH | Thêm job `assembleRelease`, dependency scanning |
+| P1-17 | CI lint không enforced (không fail build) | `.github/workflows/ci.yml:91` | MEDIUM | Thêm `continue-on-error: false` |
+| P1-18 | Stale ProGuard rules (dead `WebDavViewModel`, `data.**`, `SmartNetworkManager`) | `proguard-rules.pro:68,72,64` | MEDIUM | Xóa dead rules |
+| P1-19 | `security-crypto:1.0.0` outdated | `libs.versions.toml:21` | HIGH | Nâng lên `1.1.0-alpha06` |
+| P1-20 | `MANAGE_EXTERNAL_STORAGE` suppress làm mất warning | `AndroidManifest.xml:18` | HIGH | Thực sự bỏ permission |
+
+## P2: Polish & Accessibility
+
+| # | Finding | File(s) | Severity | Fix |
+|---|---------|---------|----------|-----|
+| P2-1 | ~30+ Icons missing `contentDescription` | BrowserScreen, DashboardCards, MainMenuScreen | MEDIUM | Thêm `contentDescription = "..."` |
+| P2-2 | Shopee blocked bởi `SOCIAL_HOST_ALLOWLIST` | `SocialExtractorScreen.kt:934-964` | MEDIUM | Add Shopee domains vào allowlist |
+| P2-3 | Test coverage: SecurePrefsHelper, DuplicateScanWorker, FileBrowserViewModel | — | MEDIUM | Viết unit tests |
+| P2-4 | 14 `MutableState` thiếu `private set` (chủ yếu SmartToolsViewModel) | `SmartToolsViewModel.kt:62-73` | MEDIUM | Thêm `private set` |
+| P2-5 | `TrashMeta` không index `originalPath` — full scan trên N lớn | `Database.kt:321-327` | MEDIUM | Thêm `Index(value = ["originalPath"])` |
+| P2-6 | Migration test chỉ 2 cases — matrix under-tested | `AppDatabaseMigrationTest.kt` | MEDIUM | Mở rộng seed per-version preservation |
+| P2-7 | Hardcoded IPs trong `network_security_config.xml` | `res/xml/network_security_config.xml:6-9` | MEDIUM | User-configurable override |
+| P2-8 | `gradle.properties:28` Windows path hardcode | `gradle.properties:28` | MEDIUM | Xóa, dùng env var |
+| P2-9 | `sardine-android` / `smbj` không có ProGuard rules | `proguard-rules.pro` | LOW | Verify via release build test |
+| P2-10 | N+1 query cho `partialHash`/`imageFingerprint` updates | `DuplicateScanWorker.kt:609`, `FingerprintWorker.kt:83,88` | LOW | Batch `UPDATE WHERE path IN (:paths)` |
+| P2-11 | 376 hardcoded Vietnamese strings (i18n blocker) | Tất cả screen/ViewModel | LOW | String resources |
 
 ---
 
-# Phase 3 — Polish & backlog ⏳
+## Phase 3 (đã hoàn thành trước deep review)
 
-Estimate: 3–5 days. Not blocking release if Phase 1+2 complete.
-
-**Status: 14/15 items complete.** Remaining: P3-1, P3-6, P3-8, P3-9, P3-10 + P2-31→35 (backlog).
-
-## P3-A: Accessibility & security UX
-
-| # | Finding | File(s) | Description | Status |
-|---|---------|---------|-------------|--------|
-| P3-1 | ~30+ Icons missing contentDescription | BrowserScreen, DashboardCards, MainMenuScreen, etc. | TalkBack announces blank. Play Store requirement. | ⏳ |
-| P3-2 | GuestPassScreen password plaintext | `GuestPassScreen.kt` | Masked default, eye toggle, state reset (`remember(pass?.username)`), 40dp+A11y. | ✅ |
-| P3-3 | PerformanceScreen calls `System.gc()` | `PerformanceScreen.kt` | Removed `System.gc()` call; retained Coil memory cache clear. | ✅ |
-
-## P3-B: Build & CI
-
-| # | Finding | File(s) | Description | Status |
-|---|---------|---------|-------------|--------|
-| P3-4 | ProGuard over-keeps entire packages | `app/proguard-rules.pro` | Refined over-broad rules; verified via `assembleRelease`. | ✅ |
-| P3-5 | CI Python 3.12 vs production 3.5 | `.github/workflows/ci.yml` | Added AST NodeVisitor check for Python 3.5 syntax in `ad8ebe74`. | ✅ |
-| P3-6 | Shopee detected but not in allowlist | `SocialExtractorScreen.kt:934-964` | Platform detected → blocked by SOCIAL_HOST_ALLOWLIST. | ⏳ |
-
-## P3-C: Test coverage gaps
-
-| # | Finding | File(s) | Description | Status |
-|---|---------|---------|-------------|--------|
-| P3-7 | No tests for WebDavManager | `WebDavErrorTest.kt` | Added unit tests for `WebDavManager.extractApiError` in `ad8ebe74`. | ✅ |
-| P3-8 | No tests for SecurePrefsHelper | — | Credential storage untested. | ⏳ |
-| P3-9 | No tests for DuplicateScanWorker | — | Core dedup logic untested. | ⏳ |
-| P3-10 | No tests for FileBrowserViewModel | — | File CRUD operations untested. | ⏳ |
-| P3-11 | WebDavErrorTest.kt is empty placeholder | `WebDavErrorTest.kt` | Restored active unit test cases in `ad8ebe74`. | ✅ |
-
-## P3-D: Code quality smells (from review)
-
-| # | Finding | File(s) | Description | Priority |
-|---|---------|---------|-------------|----------|
-| P3-12 | Livestream checkResponseOk naming | `LivestreamViewModel.kt:185` | Renamed to `throwOnUnsuccessfulResponse` in `b9f4fff0`. | ✅ |
-| P3-13 | Duplicated Livestream HTTP pattern | `LivestreamViewModel.kt` (5 methods) | `throwOnUnsuccessfulResponse` helper extracted in `2ee4e35b`. | ✅ |
-| P3-14 | Duplicated AutoDuplicate try-catch shape | `AutoDuplicateScanWorker.kt` | Extracted `executeWebDavRequest` helper in `fd5c757a`. | ✅ |
-| P3-15 | Data Clumps in AutoDuplicateScanWorker | `AutoDuplicateScanWorker.kt` | Encapsulated into `WebDavAuthContext` in `fd5c757a`. | ✅ |
-
-## P3-E: Python backend maintenance
-
-| # | Finding | File(s) | Description | Priority |
-|---|---------|---------|-------------|----------|
-| P3-16 | `check_auth` uses `&` instead of `and` | `nas_api_server.py` | Evaluated digests separately; combined with `and` in `fd5c757a`. | ✅ |
-| P3-17 | `NAS_TMP_ROOT` on /tmp (tmpfs/RAM) | `nas_api_server.py` | Routed temp files to HDD `.naswebdav/nas_meta_tmp` in `fd5c757a`. | ✅ |
-| P3-18 | Credential/config path logged at INFO | `nas_api_server.py` | Masked config path in warning logs in `fd5c757a`. | ✅ |
-| P3-19 | `api_media_fast` file handle leak | `nas_api_server.py` | Wrapped `open()` safely in generator in `fd5c757a`. | ✅ |
+| # | Finding | Status |
+|---|---------|--------|
+| P3-2 | GuestPassScreen password plaintext | ✅ |
+| P3-3 | PerformanceScreen calls `System.gc()` | ✅ |
+| P3-4 | ProGuard over-keeps entire packages | ✅ |
+| P3-5 | CI Python 3.12 vs production 3.5 | ✅ |
+| P3-7 | No tests for WebDavManager | ✅ (partial: `extractApiError` tested) |
+| P3-11 | WebDavErrorTest.kt is empty placeholder | ✅ |
+| P3-12 | Livestream checkResponseOk naming | ✅ |
+| P3-13 | Duplicated Livestream HTTP pattern | ✅ |
+| P3-14 | Duplicated AutoDuplicate try-catch shape | ✅ |
+| P3-15 | Data Clumps in AutoDuplicateScanWorker | ✅ |
+| P3-16 | `check_auth` uses `&` instead of `and` | ✅ |
+| P3-17 | `NAS_TMP_ROOT` on /tmp | ✅ |
+| P3-18 | Credential/config path logged at INFO | ✅ |
+| P3-19 | `api_media_fast` file handle leak | ✅ |
 
 ---
 
 # Verification Checklist
 
-## After Phase 1 (DONE) ✅
+## After Phase 1 ✅
 - [x] `python -m py_compile nas_api_server.py` → SYNTAX OK
 - [x] `pytest` → 88 passed, 3 skipped
 - [x] `.\gradlew assembleDebug` → BUILD SUCCESSFUL
 - [x] 2-axis code review → 0 hard violations, 0 spec fails
 
 ## After Phase 2 ✅
-- [x] Deploy updated `nas_api_server.py` to NAS and restart `nas_api.service`
+- [x] Deploy `nas_api_server.py` to NAS and restart `nas_api.service`
 - [x] `pytest` → 88 passed, 3 skipped
 - [x] `.\gradlew assembleDebug` → BUILD SUCCESSFUL
 - [x] 2-axis review of Phase 2 changes
 - [x] NAS deployed via Tailscale `100.90.135.102`
 
-## Before release (Phase 3 complete)
-- [ ] Accessibility audit: TalkBack on all screens (~30 Icons need `contentDescription`)
-- [ ] P3-6: Shopee allowlist in `SOCIAL_HOST_ALLOWLIST`
-- [ ] P3-8: Test coverage for SecurePrefsHelper
-- [ ] P3-9: Test coverage for DuplicateScanWorker
-- [ ] P3-10: Test coverage for FileBrowserViewModel
-- [ ] P2-31 to P2-35: Python backend hardening (memory leaks, unbounded growth, duplicate functions)
+## P0 Release Blockers (Before any release)
+- [ ] P0-1: Rotate password `Tr26161992`, xóa khỏi MIGRATION_HDD.md
+- [ ] P0-2: Validate `save_folder` in `api_ytdlp_download`
+- [ ] P0-3: Add TTL/expiry cho LAN auto-whitelist
+- [ ] P0-4: Fix 5 workers → `Result.failure()` on user cancel
+- [ ] P0-5: Guest password dùng `os.urandom`
+- [ ] P0-6: Bỏ MANAGE_EXTERNAL_STORAGE
+- [ ] P0-7: Route speed test + backup sang HDD
+- [ ] P0-8: Exception → CancellationException ở 2 workers
+- [ ] P0-9: JsonReader wrap `.use {}`
+- [ ] P0-10: Fix executor leak trong UncaughtExceptionHandler
+
+## P1 Pre-Production (Before public release)
+- [ ] P1-1: HTTPS cho nas_api_server.py
+- [ ] P1-2/3: Xóa duplicate functions
+- [ ] P1-4/5/6/7: Eviction policies cho 4 cache dicts
+- [ ] P1-8/9: Context manager cho open() calls
+- [ ] P1-10/11: Fix thread-safety race conditions
+- [ ] P1-12/13/14/15: Worker reliability fixes
+- [ ] P1-16: CI release build + dep scanning
+- [ ] P1-19: Nâng security-crypto
 - [ ] Full regression test on real NAS hardware
