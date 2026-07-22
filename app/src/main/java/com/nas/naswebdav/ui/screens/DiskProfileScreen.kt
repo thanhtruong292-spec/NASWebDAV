@@ -182,9 +182,16 @@ internal fun DiskProfileBottomSheet(
     var installedAt by remember(activeDiskKey) {
         val serialValue = prefs.getLong("${activeDiskKey}_installed_at", 0L)
         val legacyValue = prefs.getLong("toshiba_n300_installed_at", 0L)
-        mutableStateOf(if (serialValue > 0L) serialValue else legacyValue)
+        val value = if (serialValue > 0L) serialValue else legacyValue
+        val now = System.currentTimeMillis()
+        if (value <= 0L) {
+            prefs.edit { putLong("${activeDiskKey}_installed_at", now) }
+            mutableStateOf(now)
+        } else {
+            mutableStateOf(value)
+        }
     }
-    val isTrackingNewDisk = installedAt > 0L
+    val isTrackingNewDisk = true
     val usedPercent = hddDisk?.percent ?: profilePercent(sysMonitorVM.systemStatus.disk)
     val remainingPercent = (100f - usedPercent).coerceIn(0f, 100f)
     val fsBytes = deviceVM.omvOverview.filesystems
@@ -408,33 +415,21 @@ internal fun DiskProfileBottomSheet(
                     Icon(Icons.Default.Storage, null, tint = AccentGreen, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Column {
-                        Text("Hồ sơ ổ cứng mới", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Theo dõi sức khỏe HDD", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         Text("$diskModel • $diskSerial", color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(horizontalAlignment = Alignment.End) {
-                    Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Box(
-                        modifier = Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            if (!isTrackingNewDisk) showTrackingConfirm = true
-                        }
-                    ) {
-                        Text(if (isTrackingNewDisk) "Đang theo dõi" else "Đặt theo dõi hôm nay", color = AccentCyan, fontSize = 10.sp)
-                    }
-                    if (isTrackingNewDisk) {
+                        Text(trialStatus, color = AccentGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         Box(
                             modifier = Modifier.clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null
                             ) { showResetTrackingConfirm = true }
                         ) {
-                            Text("Đặt lại mốc", color = AccentOrange, fontSize = 10.sp)
+                            Text("Đặt lại mốc theo dõi", color = AccentOrange, fontSize = 10.sp)
                         }
-                    }
                     }
                 }
             }
