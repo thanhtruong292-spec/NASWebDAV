@@ -61,16 +61,22 @@
 # ─── SecurePrefsHelper & AppConfig (truy cập reflection) ────────────────────
 -keep class com.nas.naswebdav.SecurePrefsHelper { *; }
 -keep class com.nas.naswebdav.AppConfig { *; }
--keep class com.nas.naswebdav.SmartNetworkManager { *; }
+# P1-18: SmartNetworkManager deleted — dead rule removed
 
 # ─── Application & ViewModels ────────────────────────────────────────────────
 -keep class com.nas.naswebdav.NasApplication { *; }
--keep class com.nas.naswebdav.WebDavViewModel { *; }
--keep class com.nas.naswebdav.WebDavManager { *; }
+# P1-18: WebDavViewModel and SmartNetworkManager have been removed from the codebase
+# (Strangler Fig refactor). Dead keep-rules removed to avoid false confidence.
 -keep class com.nas.naswebdav.**.*ViewModel { *; }
 -keep class com.nas.naswebdav.**.*Entity { *; }
 -keep class com.nas.naswebdav.data.** { *; }
 
-# ─── SMB Library (smbj) missing classes ─────────────────────────────────────
+# ─── SMB Library (smbj) & Sardine missing classes ────────────────────────────
+# P2-9: Add missing dontwarn rules for smbj/sardine-android to suppress R8 warnings
 -dontwarn org.ietf.jgss.**
 -dontwarn javax.el.**
+-dontwarn net.schmizz.**
+-dontwarn com.hierynomus.smbj.**
+-dontwarn com.thegrizzlylabs.sardineandroid.**
+-dontwarn org.apache.http.**
+-dontwarn android.net.http.**

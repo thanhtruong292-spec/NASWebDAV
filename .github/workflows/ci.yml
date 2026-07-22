@@ -87,6 +87,8 @@ jobs:
       - name: Run JVM unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
+      # P1-17: lintDebug fails CI by default when abortOnError=true (set in build.gradle).
+      # Any lint ERROR halts the pipeline here — warnings are uploaded as artifact only.
       - name: Run Android Lint
         run: ./gradlew :app:lintDebug --stacktrace
 
@@ -104,4 +106,41 @@ jobs:
         with:
           name: lint-report
           path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+  # P1-16: Verify ProGuard/R8 release build does not break after every merge.
+  # Uses unsigned release build — replace with proper signing secrets for distribution.
+  release-build:
+    name: Release build (ProGuard verification)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: unit-tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Assemble Release APK
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Upload release APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: app/build/outputs/apk/release/
           if-no-files-found: ignore
