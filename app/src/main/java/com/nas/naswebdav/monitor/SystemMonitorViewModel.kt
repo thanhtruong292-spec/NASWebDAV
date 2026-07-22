@@ -447,24 +447,26 @@ class SystemMonitorViewModel(
                     val netObj = json.optJSONObject("network")
                     val alertObj = json.optJSONObject("alerts")
 
+                    val report = DailyReportData(
+                        date = json.optString("date", ""),
+                        healthScore = json.optInt("health_score", 0),
+                        cpuAvg = (cpuObj?.optDouble("avg") ?: json.optDouble("cpu_avg", 0.0)).toFloat(),
+                        cpuPeak = (cpuObj?.optDouble("peak") ?: json.optDouble("cpu_peak", 0.0)).toFloat(),
+                        ramAvg = (ramObj?.optDouble("avg") ?: json.optDouble("ram_avg", 0.0)).toFloat(),
+                        ramPeak = (ramObj?.optDouble("peak") ?: json.optDouble("ram_peak", 0.0)).toFloat(),
+                        cpuTempAvg = (cpuTempObj?.optDouble("avg") ?: json.optDouble("cpu_temp_avg", 0.0)).toFloat(),
+                        cpuTempPeak = (cpuTempObj?.optDouble("peak") ?: json.optDouble("cpu_temp_peak", 0.0)).toFloat(),
+                        hddTempAvg = (hddTempObj?.optDouble("avg") ?: json.optDouble("hdd_temp_avg", 0.0)).toFloat(),
+                        hddTempPeak = (hddTempObj?.optDouble("peak") ?: json.optDouble("hdd_temp_peak", 0.0)).toFloat(),
+                        downloadMb = (netObj?.optDouble("total_download_mb") ?: json.optDouble("download_mb", 0.0)).toFloat(),
+                        uploadMb = (netObj?.optDouble("total_upload_mb") ?: json.optDouble("upload_mb", 0.0)).toFloat(),
+                        errorCount = alertObj?.optInt("errors") ?: json.optInt("error_count", 0),
+                        warningCount = alertObj?.optInt("warnings") ?: json.optInt("warning_count", 0),
+                        samples = json.optInt("samples", 0)
+                    )
+
                     withContext(Dispatchers.Main) {
-                        dailyReport = DailyReportData(
-                            date = json.optString("date", ""),
-                            healthScore = json.optInt("health_score", 0),
-                            cpuAvg = (cpuObj?.optDouble("avg") ?: json.optDouble("cpu_avg", 0.0)).toFloat(),
-                            cpuPeak = (cpuObj?.optDouble("peak") ?: json.optDouble("cpu_peak", 0.0)).toFloat(),
-                            ramAvg = (ramObj?.optDouble("avg") ?: json.optDouble("ram_avg", 0.0)).toFloat(),
-                            ramPeak = (ramObj?.optDouble("peak") ?: json.optDouble("ram_peak", 0.0)).toFloat(),
-                            cpuTempAvg = (cpuTempObj?.optDouble("avg") ?: json.optDouble("cpu_temp_avg", 0.0)).toFloat(),
-                            cpuTempPeak = (cpuTempObj?.optDouble("peak") ?: json.optDouble("cpu_temp_peak", 0.0)).toFloat(),
-                            hddTempAvg = (hddTempObj?.optDouble("avg") ?: json.optDouble("hdd_temp_avg", 0.0)).toFloat(),
-                            hddTempPeak = (hddTempObj?.optDouble("peak") ?: json.optDouble("hdd_temp_peak", 0.0)).toFloat(),
-                            downloadMb = (netObj?.optDouble("total_download_mb") ?: json.optDouble("download_mb", 0.0)).toFloat(),
-                            uploadMb = (netObj?.optDouble("total_upload_mb") ?: json.optDouble("upload_mb", 0.0)).toFloat(),
-                            errorCount = alertObj?.optInt("errors") ?: json.optInt("error_count", 0),
-                            warningCount = alertObj?.optInt("warnings") ?: json.optInt("warning_count", 0),
-                            samples = json.optInt("samples", 0)
-                        )
+                        dailyReport = report
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -488,27 +490,28 @@ class SystemMonitorViewModel(
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
                     val currentObj = json.optJSONObject("current") ?: json
+                    val sample = DiskHealthSample(
+                        ts = System.currentTimeMillis(),
+                        datetime = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                        score = currentObj.optInt("score", 0),
+                        smartStatus = currentObj.optString("smart_status", "unknown"),
+                        tempC = currentObj.optInt("temperature", 0).takeIf { it > 0 }
+                            ?: currentObj.optInt("temp_c", 0).takeIf { it > 0 },
+                        powerOnHours = currentObj.optInt("power_on_hours", 0).takeIf { it > 0 },
+                        reallocatedSectors = currentObj.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                        pendingSectors = currentObj.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                        offlineUncorrectable = currentObj.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                        udmaCrcErr = currentObj.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                        commandTimeout = currentObj.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                        ext4ErrorsRecent = diskHealthCurrent?.ext4ErrorsRecent ?: 0,
+                        sataResetsRecent = diskHealthCurrent?.sataResetsRecent ?: 0,
+                        ioErrorsRecent = diskHealthCurrent?.ioErrorsRecent ?: 0,
+                        warnings = (currentObj.optJSONArray("warnings")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { arr.optString(it) }
+                        } ?: emptyList())
+                    )
                     withContext(Dispatchers.Main) {
-                        diskHealthCurrent = DiskHealthSample(
-                            ts = System.currentTimeMillis(),
-                            datetime = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
-                            score = currentObj.optInt("score", 0),
-                            smartStatus = currentObj.optString("smart_status", "unknown"),
-                            tempC = currentObj.optInt("temperature", 0).takeIf { it > 0 }
-                                ?: currentObj.optInt("temp_c", 0).takeIf { it > 0 },
-                            powerOnHours = currentObj.optInt("power_on_hours", 0).takeIf { it > 0 },
-                            reallocatedSectors = currentObj.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
-                            pendingSectors = currentObj.optJSONObject("watch_fields")?.optInt("pending_sectors"),
-                            offlineUncorrectable = currentObj.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
-                            udmaCrcErr = currentObj.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
-                            commandTimeout = currentObj.optJSONObject("watch_fields")?.optInt("command_timeout"),
-                            ext4ErrorsRecent = diskHealthCurrent?.ext4ErrorsRecent ?: 0,
-                            sataResetsRecent = diskHealthCurrent?.sataResetsRecent ?: 0,
-                            ioErrorsRecent = diskHealthCurrent?.ioErrorsRecent ?: 0,
-                            warnings = (currentObj.optJSONArray("warnings")?.let { arr ->
-                                (0 until arr.length()).mapNotNull { arr.optString(it) }
-                            } ?: emptyList())
-                        )
+                        diskHealthCurrent = sample
                         lastDiskHealthRefreshAt = System.currentTimeMillis()
                     }
                 }
@@ -534,26 +537,27 @@ class SystemMonitorViewModel(
                     } catch (e: Exception) {
                         org.json.JSONArray(body)
                     }
+                    val historyList = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        DiskHealthSample(
+                            ts = it.optLong("ts", 0L),
+                            datetime = it.optString("datetime", ""),
+                            score = it.optInt("score", 0),
+                            smartStatus = it.optString("smart_status", "unknown"),
+                            tempC = it.optInt("temp_c", 0).takeIf { v -> v > 0 },
+                            powerOnHours = it.optInt("power_on_hours", 0).takeIf { v -> v > 0 },
+                            reallocatedSectors = it.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                            pendingSectors = it.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                            offlineUncorrectable = it.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                            udmaCrcErr = it.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                            commandTimeout = it.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                            ext4ErrorsRecent = it.optInt("ext4_errors_recent", 0),
+                            sataResetsRecent = it.optInt("sata_resets_recent", 0),
+                            ioErrorsRecent = it.optInt("io_errors_recent", 0),
+                            warnings = emptyList()
+                        )
+                    }
                     withContext(Dispatchers.Main) {
-                        diskHealthHistory = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            DiskHealthSample(
-                                ts = it.optLong("ts", 0L),
-                                datetime = it.optString("datetime", ""),
-                                score = it.optInt("score", 0),
-                                smartStatus = it.optString("smart_status", "unknown"),
-                                tempC = it.optInt("temp_c", 0).takeIf { v -> v > 0 },
-                                powerOnHours = it.optInt("power_on_hours", 0).takeIf { v -> v > 0 },
-                                reallocatedSectors = it.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
-                                pendingSectors = it.optJSONObject("watch_fields")?.optInt("pending_sectors"),
-                                offlineUncorrectable = it.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
-                                udmaCrcErr = it.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
-                                commandTimeout = it.optJSONObject("watch_fields")?.optInt("command_timeout"),
-                                ext4ErrorsRecent = it.optInt("ext4_errors_recent", 0),
-                                sataResetsRecent = it.optInt("sata_resets_recent", 0),
-                                ioErrorsRecent = it.optInt("io_errors_recent", 0),
-                                warnings = emptyList()
-                            )
-                        }
+                        diskHealthHistory = historyList
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -583,16 +587,17 @@ class SystemMonitorViewModel(
                     } catch (e: Exception) {
                         org.json.JSONArray(body)
                     }
+                    val backupList = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        NasConfigBackup(
+                            filename = it.optString("filename", ""),
+                            createdAt = it.optString("created_at", ""),
+                            sizeBytes = if (it.has("size")) it.optLong("size", 0L) else it.optLong("size_bytes", 0L),
+                            sizeHuman = it.optString("size_human", "--"),
+                            mtime = it.optDouble("mtime", 0.0)
+                        )
+                    }
                     withContext(Dispatchers.Main) {
-                        nasConfigBackups = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            NasConfigBackup(
-                                filename = it.optString("filename", ""),
-                                createdAt = it.optString("created_at", ""),
-                                sizeBytes = if (it.has("size")) it.optLong("size", 0L) else it.optLong("size_bytes", 0L),
-                                sizeHuman = it.optString("size_human", "--"),
-                                mtime = it.optDouble("mtime", 0.0)
-                            )
-                        }
+                        nasConfigBackups = backupList
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

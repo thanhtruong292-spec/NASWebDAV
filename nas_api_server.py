@@ -62,6 +62,27 @@ def _get_process_name(pid_int):
             pass
     return ""
 
+def _get_qbt_credentials():
+    user = os.environ.get("QBT_USER")
+    password = os.environ.get("QBT_PASS")
+    if not user or not password:
+        conf_path = "/etc/nas/qbt.conf"
+        if os.path.exists(conf_path):
+            try:
+                with open(conf_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("user="):
+                            user = user or line.split("=", 1)[1].strip()
+                        elif line.startswith("password="):
+                            password = password or line.split("=", 1)[1].strip()
+            except Exception as e:
+                log.warning("[Security] Khong doc duoc file qbt.conf: %s", e)
+    user = user or "admin"
+    if not password:
+        raise ValueError("Chua thiet lap mat khau qBittorrent. Vui long khai bao QBT_PASS trong environment hoac file /etc/nas/qbt.conf.")
+    return user, password
+
 def sanitize_log_input(text):
     if not text: return str(text)
     return _re_module.sub(r'[\r\n]+', ' ', str(text))
@@ -8127,10 +8148,10 @@ def api_torrent_control():
             return jsonify({"error": "Thiếu hash"}), 400
 
         qbt_base = "http://127.0.0.1:8080/api/v2"
-        qbt_user = os.environ.get("QBT_USER", "admin")
-        qbt_pass = os.environ.get("QBT_PASS", "adminadmin")
-        if qbt_pass == "adminadmin":
-            log.warning("[Security] qBittorrent dang dung mat khau mac dinh 'adminadmin'. Vui long thiet lap QBT_PASS trong bien moi truong.")
+        try:
+            qbt_user, qbt_pass = _get_qbt_credentials()
+        except ValueError as ve:
+            return jsonify({"error": str(ve)}), 500
 
         # Step 1: Login to qBittorrent to get SID cookie
         login_data = urllib.parse.urlencode({"username": qbt_user, "password": qbt_pass}).encode("utf-8")
