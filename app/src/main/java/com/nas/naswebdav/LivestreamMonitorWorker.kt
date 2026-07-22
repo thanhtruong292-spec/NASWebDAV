@@ -302,7 +302,7 @@ class LivestreamMonitorWorker(
         }
 
         if (isStopped) {
-            return@withContext Result.retry()
+            return@withContext Result.failure()
         }
 
         // Hiện thông báo hoàn tất tùy theo kết quả

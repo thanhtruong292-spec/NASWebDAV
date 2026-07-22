@@ -196,7 +196,7 @@ systemctl is-active nas_api nginx
 # Cả 2: active
 
 # 4. Disk Health Monitor verify
-curl -s -u 'daica:Tr26161992' http://127.0.0.1:5050/api/disk/health | python3 -m json.tool
+curl -s -u 'daica:<your_password>' http://127.0.0.1:5050/api/disk/health | python3 -m json.tool
 
 # Output mong đợi:
 #   "score": 100,
@@ -209,7 +209,7 @@ curl -s -u 'daica:Tr26161992' http://127.0.0.1:5050/api/disk/health | python3 -m
 #   "warnings": []
 
 # 5. Watcher state preserved (đã clone từ HDD cũ)
-curl -s -u 'daica:Tr26161992' http://127.0.0.1:5050/api/tiktok/live_watch | head -c 200
+curl -s -u 'daica:<your_password>' http://127.0.0.1:5050/api/tiktok/live_watch | head -c 200
 # Phải thấy 12 user TikTok như trước
 
 # 6. Cookies still valid

@@ -194,7 +194,7 @@ class StreamPipeWorker(
                             var readCount: Long
                             while (cdnSource.read(sink.buffer, bufferSize)
                                        .also { readCount = it } != -1L) {
-                                if (isStopped) throw Exception("Người dùng đã hủy tác vụ")
+                                if (isStopped) throw kotlinx.coroutines.CancellationException("Người dùng đã hủy tác vụ")
                                 sink.emit()
                                 totalBytesRead += readCount
 

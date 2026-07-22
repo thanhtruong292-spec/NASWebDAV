@@ -299,7 +299,7 @@ class BatchOperationWorker(
 
         if (isStopped) {
             android.util.Log.w(TAG, "Batch operation $operation was stopped/cancelled before completion ($successCount/$total succeeded)")
-            return@withContext Result.retry()
+            return@withContext Result.failure()
         }
 
         // BÃ¡o cÃ¡o káº¿t quáº£ cuï¿½?i cÃ¹ng cho UI

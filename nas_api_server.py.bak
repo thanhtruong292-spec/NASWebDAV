@@ -492,27 +492,13 @@ WEBDAV_LOG = "/var/log/nginx/openmediavault-webgui_access.log"
 AI_TAGS_PATH = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "ai_tags.json")
 NAS_TMP_ROOT = "/tmp/nas_meta_tmp"
 
-def _get_hdd_tmp_root():
-    """Tự động tìm thư mục tạm trên HDD để tránh tràn RAM tmpfs (/tmp)."""
-    hdd_dir = _get_hdd_config_dir()
-    if hdd_dir:
-        tmp_root = os.path.join(hdd_dir, "nas_meta_tmp")
-        try:
-            os.makedirs(tmp_root, mode=0o700, exist_ok=True)
-            return tmp_root
-        except Exception:
-            pass
-    fallback_root = "/tmp/nas_meta_tmp"
-    os.makedirs(fallback_root, mode=0o700, exist_ok=True)
-    return fallback_root
-
 def _make_hdd_tmp_dir(prefix):
     """Tạo thư mục tmp riêng trên HDD để tránh làm đầy /tmp tmpfs."""
     safe_prefix = _re_module.sub(r"[^A-Za-z0-9_.-]+", "_", str(prefix or "job")).strip("_") or "job"
     try:
-        root_dir = _get_hdd_tmp_root()
+        os.makedirs(NAS_TMP_ROOT, exist_ok=True)
         tmp_dir = os.path.join(
-            root_dir,
+            NAS_TMP_ROOT,
             "%s_%d_%s" % (safe_prefix, int(time.time() * 1000), uuid.uuid4().hex[:8])
         )
         os.makedirs(tmp_dir, exist_ok=True)
@@ -1307,7 +1293,7 @@ def _load_credentials():
     except Exception as e:
         log.error("Không đọc được %s: %s", AUTH_CONFIG_PATH, e)
     if not user or not passwd:
-        log.warning("Chưa cấu hình WEBDAV_USER/WEBDAV_PASS. Hãy tạo file auth.conf với WEBDAV_USER=... WEBDAV_PASS=...")
+        log.warning("Chưa cấu hình WEBDAV_USER/WEBDAV_PASS. Hãy tạo file %s với WEBDAV_USER=... WEBDAV_PASS=...", AUTH_CONFIG_PATH)
     return user, passwd
 
 
@@ -1340,16 +1326,13 @@ def _refresh_authorized_ips_cache(force=False):
         conn = sqlite3.connect(DB_PATH, timeout=5.0)
         try:
             cur = conn.cursor()
-            cutoff = (datetime.datetime.now() - datetime.timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
-            cur.execute('DELETE FROM authorized_ips WHERE created_at < ?', (cutoff,))
-            cur.execute('SELECT ip FROM authorized_ips WHERE created_at >= ?', (cutoff,))
+            cur.execute('SELECT ip FROM authorized_ips')
             ips = set()
             for row in cur.fetchall():
                 if row and row[0]:
                     ips.add(str(row[0]))
             _AUTHORIZED_IPS_CACHE["ips"] = ips
             _AUTHORIZED_IPS_CACHE["ts"] = now
-            conn.commit()
         finally:
             conn.close()
     except Exception as e:
@@ -1460,9 +1443,7 @@ def _request_client_ip():
 # ============ XAC THUC ============
 def check_auth(username, password):
     import hmac
-    u_ok = hmac.compare_digest(str(username or ""), str(WEBDAV_USER or ""))
-    p_ok = hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
-    return bool(u_ok and p_ok)
+    return hmac.compare_digest(str(username or ""), str(WEBDAV_USER or "")) & hmac.compare_digest(str(password or ""), str(WEBDAV_PASS or ""))
 
 def _async_persist_trusted_ip(ip):
     def _worker():
@@ -7948,8 +7929,7 @@ def api_backup_restore():
     try:
         if request.files and "file" in request.files:
             up = request.files["file"]
-            tmp_dir = _get_hdd_tmp_root()
-            tmp_file = tempfile.NamedTemporaryFile(prefix="nas_restore_", suffix=".tar.gz", dir=tmp_dir, delete=False)
+            tmp_file = tempfile.NamedTemporaryFile(prefix="nas_restore_", suffix=".tar.gz", dir="/tmp", delete=False)
             tmp = tmp_file.name
             tmp_file.close()
             up.save(tmp)
@@ -8981,10 +8961,7 @@ def _media_cache_headers(real_path, file_size, mime_type):
 
 
 def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
-    try:
-        f = open(real_path, "rb")
-    except Exception:
-        return
+    f = open(real_path, "rb")
     try:
         f.seek(start)
         remaining = end - start + 1
@@ -10952,14 +10929,7 @@ def _generate_guest_name():
 
 def _generate_guest_password(length=10):
     chars = string.ascii_letters + string.digits
-    rand_bytes = os.urandom(length * 2)
-    result = []
-    idx = 0
-    while len(result) < length and idx < len(rand_bytes):
-        val = rand_bytes[idx] % len(chars)
-        result.append(chars[val])
-        idx += 1
-    return ''.join(result)
+    return ''.join(random.choice(chars) for _ in range(length))
 
 def _create_linux_user(username, password):
     """Tao user Linux khoa SSH, pha shell /sbin/nologin."""
@@ -11007,66 +10977,6 @@ def _delete_linux_user(username):
     except Exception as e:
         log.error("Lỗi xóa user %s: %s", username, e)
 
-def _get_hdd_config_dir():
-    """Lấy thư mục lưu cấu hình trên ổ cứng HDD để TRÁNH GHI LÊN eMMC hệ thống (GEMINI §6)."""
-    if os.path.exists("/srv"):
-        for item in os.listdir("/srv"):
-            if item.startswith("dev-disk-by-"):
-                disk_path = os.path.join("/srv", item)
-                if os.path.isdir(disk_path):
-                    config_dir = os.path.join(disk_path, ".naswebdav")
-                    try:
-                        os.makedirs(config_dir, mode=0o700, exist_ok=True)
-                        try:
-                            os.chmod(config_dir, 0o700)
-                        except Exception:
-                            pass
-                        return config_dir
-                    except Exception:
-                        pass
-    return None
-
-def _get_guest_passes_file():
-    hdd_dir = _get_hdd_config_dir()
-    if hdd_dir:
-        return os.path.join(hdd_dir, "guest_passes.json")
-    return None
-
-def _load_guest_passes():
-    global _guest_passes
-    file_path = _get_guest_passes_file()
-    if file_path and os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                now = time.time()
-                valid = {}
-                for username, info in loaded.items():
-                    if info.get("expires_at", 0) > now:
-                        valid[username] = info
-                    else:
-                        _delete_linux_user(username)
-                with _guest_lock:
-                    _guest_passes = valid
-        except Exception as e:
-            log.warning("[GuestPass] Error loading guest passes: %s", e)
-
-def _save_guest_passes():
-    file_path = _get_guest_passes_file()
-    if not file_path:
-        log.warning("[GuestPass] Skip saving guest passes: No HDD partition mounted to prevent eMMC wear.")
-        return
-    try:
-        with _guest_lock:
-            data = dict(_guest_passes)
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        os.chmod(file_path, 0o600)
-    except Exception as e:
-        log.warning("[GuestPass] Error saving guest passes: %s", e)
-
-_load_guest_passes()
-
 def _guest_expiry_watcher():
     """Background thread: quet va xoá Guest Pass da het han (moi 30 giay)."""
     while True:
@@ -11074,13 +10984,11 @@ def _guest_expiry_watcher():
             now = time.time()
             with _guest_lock:
                 expired = [u for u, v in _guest_passes.items() if v["expires_at"] <= now]
-            if expired:
-                for username in expired:
-                    _delete_linux_user(username)
-                    with _guest_lock:
-                        _guest_passes.pop(username, None)
-                    log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
-                _save_guest_passes()
+            for username in expired:
+                _delete_linux_user(username)
+                with _guest_lock:
+                    _guest_passes.pop(username, None)
+                log.info("[GuestPass] Đã thu hồi user hết hạn: %s", username)
         except Exception as e:
             log.error("[GuestPass] Lỗi watcher: %s", e)
         time.sleep(30)
@@ -11110,7 +11018,6 @@ def api_guest_create():
 
         with _guest_lock:
             _guest_passes[username] = {"password": password, "expires_at": expires_at}
-        _save_guest_passes()
 
         # L?y IP LAN cua NAS (vi Android can dia chi FTP)
         try:
@@ -11145,7 +11052,6 @@ def api_guest_revoke():
         _delete_linux_user(username)
         with _guest_lock:
             _guest_passes.pop(username, None)
-        _save_guest_passes()
 
         return jsonify({"message": "Đã thu hồi Guest FTP user '%s' thành công." % username})
     except Exception as e:
@@ -13789,11 +13695,32 @@ def api_ytdlp_download():
     try:
         body = request.get_json(force=True) or {}
         video_url = body.get("url", "").strip()
-        save_folder_input = body.get("save_folder", "Downloads/social/")
-        save_folder = _social_sanitize_folder(save_folder_input)
-        dest_dir = _resolve_webdav_request_path(save_folder)
-        if not dest_dir:
-            return jsonify({"error": "Thư mục lưu không hợp lệ hoặc nằm ngoài phạm vi"}), 400
+        save_folder = body.get("save_folder", "Downloads/social/").strip("/")
+        quality = body.get("quality", "best")
+
+        if not video_url:
+            return jsonify({"error": "Thiếu URL video"}), 400
+
+        # Kiểm tra yt-dlp co san khong
+        ytdlp_bin = None
+        for candidate in ["yt-dlp", "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"]:
+            try:
+                if subprocess.run([candidate, "--version"],
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL).returncode == 0:
+                    ytdlp_bin = candidate
+                    break
+            except Exception:
+                continue
+
+        if not ytdlp_bin:
+            return jsonify({
+                "error": "yt-dlp chưa được cài đặt. Chạy: pip3 install yt-dlp",
+                "install_hint": "sudo pip3 install yt-dlp"
+            }), 503
+
+        # Xay duong dan l?u (tuyet doi)
+        dest_dir = os.path.join(WEBDAV_FILE_ROOT, save_folder)
         try:
             os.makedirs(dest_dir, exist_ok=True)
         except Exception:

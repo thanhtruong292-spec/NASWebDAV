@@ -225,10 +225,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         call.execute().use { response ->
                         if (response.isSuccessful && response.body != null) {
                             try {
-                                val reader = android.util.JsonReader(java.io.InputStreamReader(response.body?.byteStream() ?: return@use, "UTF-8"))
-                                // android.util.JsonReader KHÔNG có isLenient — bỏ qua
-
                                 val batchBuffer = mutableListOf<CachedFile>()
+                                android.util.JsonReader(java.io.InputStreamReader(response.body?.byteStream() ?: return@use, "UTF-8")).use { reader ->
 
                                 // Chỉ xóa checkpoint — file index cập nhật tăng dần qua INSERT OR REPLACE,
                                 // KHÔNG xóa toàn bộ để tránh churn DB lớn mỗi lần scan (hàng triệu row).
@@ -319,6 +317,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                     }
                                 }
                                 reader.endObject()
+                                }
 
                                 val finalFlush = mutableListOf<CachedFile>()
                                 bufferMutex.withLock {

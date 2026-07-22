@@ -135,29 +135,28 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             val client = NasApplication.instance.sharedHttpClient
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful && response.body != null) {
-                    val reader = android.util.JsonReader(response.body?.charStream())
-                    // FIX #8: android.util.JsonReader KHÔNG có isLenient public trên mọi API level
-                    // Comment ở DuplicateScanWorker line 220 đã xác nhận việc này — xóa dòng tránh crash
-                    reader.beginObject()
-                    while (reader.hasNext()) {
-                        val key = reader.nextName()
-                        if (key == "total") { reader.nextInt() }
-                        else if (key == "files") {
-                            reader.beginArray(); val batch = mutableListOf<CachedFile>()
-                            while (reader.hasNext()) {
-                                reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
-                                while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
-                                reader.endObject()
-                                val rootUrl = url.trimEnd('/'); val absolutePath = rootUrl + (if (path.startsWith("/")) path else "/$path"); val parentUrl = absolutePath.substringBeforeLast("/") + "/"
-                                batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime))
-                                totalFiles++
-                                if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
-                            }
-                            reader.endArray()
-                            if (batch.isNotEmpty()) db.withTransaction { db.fileDao().insertFiles(batch) }
-                        } else reader.skipValue()
+                    android.util.JsonReader(response.body?.charStream()).use { reader ->
+                        reader.beginObject()
+                        while (reader.hasNext()) {
+                            val key = reader.nextName()
+                            if (key == "total") { reader.nextInt() }
+                            else if (key == "files") {
+                                reader.beginArray(); val batch = mutableListOf<CachedFile>()
+                                while (reader.hasNext()) {
+                                    reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
+                                    while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
+                                    reader.endObject()
+                                    val rootUrl = url.trimEnd('/'); val absolutePath = rootUrl + (if (path.startsWith("/")) path else "/$path"); val parentUrl = absolutePath.substringBeforeLast("/") + "/"
+                                    batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime))
+                                    totalFiles++
+                                    if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
+                                }
+                                reader.endArray()
+                                if (batch.isNotEmpty()) db.withTransaction { db.fileDao().insertFiles(batch) }
+                            } else reader.skipValue()
+                        }
+                        reader.endObject()
                     }
-                    reader.endObject()
                 } else throw Exception("Không thể kết nối FastPath API")
             }
             val duplicateSizes = db.fileDao().getDuplicateSizes()
@@ -196,6 +195,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             throttleJob.cancel()
+            if (isStopped) return@withContext Result.failure()
             SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}"); Result.retry()
         }
     }

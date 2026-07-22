@@ -181,17 +181,18 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] 2-axis review of Phase 2 changes
 - [x] NAS deployed via Tailscale `100.90.135.102`
 
-## P0 Release Blockers (Before any release)
-- [ ] P0-1: Rotate password `Tr26161992`, xóa khỏi MIGRATION_HDD.md
-- [ ] P0-2: Validate `save_folder` in `api_ytdlp_download`
-- [ ] P0-3: Add TTL/expiry cho LAN auto-whitelist
-- [ ] P0-4: Fix 5 workers → `Result.failure()` on user cancel
-- [ ] P0-5: Guest password dùng `os.urandom`
-- [ ] P0-6: Bỏ MANAGE_EXTERNAL_STORAGE
-- [ ] P0-7: Route speed test + backup sang HDD
-- [ ] P0-8: Exception → CancellationException ở 2 workers
-- [ ] P0-9: JsonReader wrap `.use {}`
-- [ ] P0-10: Fix executor leak trong UncaughtExceptionHandler
+## P0 Release Blockers (MUST fix before any release) - ALL COMPLETED ✅
+
+- [x] P0-1: Rotate password `Tr26161992`, xóa khỏi MIGRATION_HDD.md
+- [x] P0-2: Validate `save_folder` in `api_ytdlp_download`
+- [x] P0-3: Add TTL/expiry cho LAN auto-whitelist
+- [x] P0-4: Fix 5 workers → `Result.failure()` on user cancel
+- [x] P0-5: Guest password dùng `os.urandom`
+- [x] P0-6: Bỏ MANAGE_EXTERNAL_STORAGE
+- [x] P0-7: Route speed test + backup sang HDD
+- [x] P0-8: Exception → CancellationException ở 2 workers
+- [x] P0-9: JsonReader wrap `.use {}`
+- [x] P0-10: Fix executor leak trong UncaughtExceptionHandler
 
 ## P1 Pre-Production (Before public release)
 - [ ] P1-1: HTTPS cho nas_api_server.py

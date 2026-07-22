@@ -270,7 +270,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     ) { bytesWritten, totalBytes ->
                                         // FIX: Check isStopped inside the upload callback
                                         // so a WorkManager cancellation actually halts SMB upload.
-                                        if (isStopped) throw Exception("User cancelled upload")
+                                        if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
                                         val now = System.currentTimeMillis()
                                         val dt = (now - lastSpeedCalcTime) / 1000.0
                                         if (dt >= 0.4 || bytesWritten == totalBytes) {

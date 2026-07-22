@@ -294,21 +294,24 @@ class NasApplication : Application(), ImageLoaderFactory {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
             try {
-                // FIX #21: Ghi DB trên main thread trong crash handler có thể gây ANR nếu DB lỗi.
-                // Dùng runBlocking với timeout ngắn để tránh ANR — nếu timeout thì bỏ qua log.
-                val logResult = java.util.concurrent.Executors.newSingleThreadExecutor().submit<Boolean> {
-                      try {
-                        database.logDao().insertLog(
-                            SystemLog(
-                            type = "CRASH",
-                            module = "CrashHandler",
-                            message = "${exception.javaClass.simpleName}: ${exception.message}"
-                        ))
-                        true
-                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
+                val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                try {
+                    val logResult = executor.submit<Boolean> {
+                        try {
+                            database.logDao().insertLog(
+                                SystemLog(
+                                type = "CRASH",
+                                module = "CrashHandler",
+                                message = "${exception.javaClass.simpleName}: ${exception.message}"
+                            ))
+                            true
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
+                    }
+                    // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
+                    try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
+                } finally {
+                    executor.shutdown()
                 }
-                // Chờ tối đa 500ms — đủ để ghi log nhưng không ANR
-                try { logResult.get(500, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
