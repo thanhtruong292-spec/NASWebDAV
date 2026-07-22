@@ -118,3 +118,11 @@ Xem [CHANGELOG.md](./CHANGELOG.md) để biết chi tiết từng thay đổi.
 - Nếu WebDAV `MOVE` thất bại (do `.trash` chưa được mount hoặc lỗi phân vùng), App BẮT BUỘC phải tự động fallback sang lệnh WebDAV `DELETE` (xóa thẳng vĩnh viễn), đồng thời xóa bản ghi khỏi SQLite Room DB (`repository.removeDuplicateFromDb(file.path)`).
 - Server NAS (`nas_api_server.py`) khởi động tự động kiểm tra và khởi tạo thư mục `.trash/` quyền `777` trên tất cả phân vùng `/srv/dev-disk-by-*`.
 
+### 11. CẬP NHẬT `_status_cache` THỜI GIAN THỰC KHI ĐỔI NGUỒN/PWM QUẠT
+- Trong `_fan_controller_watchdog`, ngay khi lệnh PWM được ghi xuống phần cứng (`sysfs duty_cycle`), BẮT BUỘC ghi đè ngay `fan_percent`, `fan_rpm`, và `fan_status` vào `_status_cache` trong khối `with _cache_lock:`.
+- Giảm `stable_seconds` từ 4.0s xuống 1.0s để quạt và API `/api/status` phản hồi dưới 1 giây.
+
+### 12. TỐC ĐỘ ANIMATION ICON QUẠT VÀ RE-KEY TRANSITION TRÊN COMPOSE UI
+- Cấm dùng công thức `30000 / percent` (gây lag 300ms/vòng = 200 RPM góc nhìn UI làm icon lờ đà lờ đờ).
+- Tốc độ xoay quạt khi chạy 100% BẮT BUỘC là **80ms/vòng** (12.5 RPS siêu mượt).
+- BẮT BUỘC bọc `key(durationMs)` quanh `rememberInfiniteTransition` để Jetpack Compose re-evaluate animation spec ngay khi % thay đổi, không bị gián đoạn hay kẹt tốc độ cũ.
