@@ -4227,10 +4227,10 @@ def _save_fan_settings(settings):
 # ============================================================================
 PWM_PATH = "/sys/class/pwm/pwmchip0/pwm0"
 FAN_POWER_GPIO = "79"
-FAN_DEFAULT_ON_TEMP = 42.0
-FAN_DEFAULT_OFF_TEMP = 38.0
-FAN_CPU_FORCE_ON_TEMP = 70.0
-FAN_HDD_FORCE_ON_TEMP = 45.0
+FAN_DEFAULT_ON_TEMP = 45.0
+FAN_DEFAULT_OFF_TEMP = 40.0
+FAN_CPU_FORCE_ON_TEMP = 75.0
+FAN_HDD_FORCE_ON_TEMP = 60.0
 FAN_MAX_RPM = 4300
 
 
@@ -11480,25 +11480,31 @@ def _fan_controller_watchdog():
             if force_hot:
                 target_percent = 100
                 target_since_ts = now_ts
-            elif control_temp <= off_temp:
-                target_percent = 0
             elif control_temp >= on_temp:
                 target_percent = 100
+            elif control_temp <= off_temp:
+                target_percent = 0
             else:
-                span = max(on_temp - off_temp, 1.0)
-                # Strict Hysteresis: if fan is currently OFF (or hasn't started), DO NOT turn on until it reaches on_temp.
-                if last_applied_percent in (0, None) and control_temp < on_temp:
-                    target_percent = 0
-                else:
-                    ratio = (control_temp - off_temp) / span
-                    if ratio <= 0.25:
-                        target_percent = 25
-                    elif ratio <= 0.50:
-                        target_percent = 50
-                    elif ratio <= 0.75:
-                        target_percent = 75
+                # Vung Hysteresis (off_temp < control_temp < on_temp):
+                # Khi o mode custom: giu nguyen trang thai quat hien tai!
+                # Neu quat dang TAT (0% hoac None) va chua cham on_temp -> TIEP TUC TAT (0%).
+                # Neu quat dang BAT (100%) va chua ha xuong off_temp -> TIEP TUC BAT (100%).
+                if mode == "custom":
+                    if last_applied_percent in (0, None):
+                        target_percent = 0
                     else:
                         target_percent = 100
+                else:
+                    # Auto mode: giu Hysteresis nghiem ngat, không bat quat neu dang Tat
+                    if last_applied_percent in (0, None):
+                        target_percent = 0
+                    else:
+                        span = max(on_temp - off_temp, 1.0)
+                        ratio = (control_temp - off_temp) / span
+                        if ratio <= 0.25: target_percent = 25
+                        elif ratio <= 0.50: target_percent = 50
+                        elif ratio <= 0.75: target_percent = 75
+                        else: target_percent = 100
 
             if mode != last_mode:
                 last_target_percent = None
