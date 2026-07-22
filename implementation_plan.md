@@ -91,11 +91,11 @@ Estimate: 2–3 days. Each item independently shippable.
 
 ---
 
-# Phase 3 — Polish & backlog ✅
+# Phase 3 — Polish & backlog ⏳
 
 Estimate: 3–5 days. Not blocking release if Phase 1+2 complete.
 
-**Status: 14/15 items complete.** Remaining: P3-1, P3-6, P3-8, P3-9, P3-10 (backlog).
+**Status: 14/15 items complete.** Remaining: P3-1, P3-6, P3-8, P3-9, P3-10 + P2-31→35 (backlog).
 
 ## P3-A: Accessibility & security UX
 
