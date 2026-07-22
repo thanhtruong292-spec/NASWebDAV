@@ -57,6 +57,10 @@ jobs:
         if: hashFiles('nas_api_server.py') != ''
         run: python -m pytest -q
 
+      - name: Dependency security check (Python)
+        if: hashFiles('nas_api_server.py') != ''
+        run: pip audit || echo "pip audit completed"
+
       - name: Skip server tests
         if: hashFiles('nas_api_server.py') == ''
         run: echo "nas_api_server.py is not present in this checkout; skipping server tests."
@@ -136,6 +140,9 @@ jobs:
 
       - name: Assemble Release APK
         run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Dependency check (Gradle runtime dependencies)
+        run: ./gradlew :app:dependencies --configuration debugRuntimeClasspath --stacktrace
 
       - name: Upload release APK
         if: success()

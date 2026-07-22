@@ -14149,17 +14149,33 @@ def _get_ssl_config():
     return None, None
 
 
+def _make_ssl_context(cert, key):
+    """P1-1: Creates an SSLContext supporting TLS auto-negotiation (TLS 1.2 / TLS 1.3)."""
+    if not cert or not key:
+        return None
+    import ssl
+    try:
+        if hasattr(ssl, "create_default_context"):
+            ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        else:
+            protocol = getattr(ssl, "PROTOCOL_TLS", getattr(ssl, "PROTOCOL_SSLv23", ssl.PROTOCOL_TLSv1_2))
+            ctx = ssl.SSLContext(protocol)
+        ctx.load_cert_chain(certfile=cert, keyfile=key)
+        return ctx
+    except Exception as e:
+        log.warning("[HTTPS] Lỗi tạo SSL context (%s: %s)" % (cert, str(e)))
+        return None
+
+
 def run_flask():
     cert, key = _get_ssl_config()
-    if cert and key:
+    ssl_ctx = _make_ssl_context(cert, key)
+    if ssl_ctx is not None:
         try:
-            import ssl
             import tornado.wsgi
             import tornado.httpserver
             import tornado.ioloop
 
-            ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-            ssl_ctx.load_cert_chain(certfile=cert, keyfile=key)
             container = tornado.wsgi.WSGIContainer(app)
             http_server = tornado.httpserver.HTTPServer(container, ssl_options=ssl_ctx)
             http_server.listen(5050)
@@ -14175,6 +14191,7 @@ def run_flask():
     except ImportError:
         log.warning("Thiếu thư viện Waitress. Vui lòng chạy: pip3 install waitress")
         app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
+
 
 
 # ============ KHOI CHAY MAIN ============
@@ -14255,19 +14272,13 @@ if __name__ == "__main__":
     _ws_sock.setblocking(False)
 
     cert, key = _get_ssl_config()
-    ws_ssl_opts = None
-    if cert and key:
-        try:
-            import ssl
-            ws_ssl_opts = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
-            ws_ssl_opts.load_cert_chain(certfile=cert, keyfile=key)
-            log.info("[HTTPS] WebSocket Alert Server running with WSS (TLS) on port 5051")
-        except Exception as _e:
-            log.warning("[HTTPS] SSL setup for WebSocket failed: %s" % str(_e))
-            ws_ssl_opts = None
+    ws_ssl_opts = _make_ssl_context(cert, key)
+    if ws_ssl_opts is not None:
+        log.info("[HTTPS] WebSocket Alert Server running with WSS (TLS) on port 5051")
 
     ws_server = tornado.httpserver.HTTPServer(ws_app, ssl_options=ws_ssl_opts)
     ws_server.add_socket(_ws_sock)
     log.info("Server đã khởi động thành công!")
     main_loop.start()
+
 
