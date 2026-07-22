@@ -1,116 +1,181 @@
-# Implementation Plan: Phase 7 - UI Migration (The Final Phase)
+# Implementation Plan — NASWebDAV Production Readiness
 
-Quá trình "Tháo dỡ dàn giáo" Facade và di chuyển 27 files UI sang sử dụng trực tiếp 7 Domain VMs là bước cuối cùng để hoàn thiện **Strangler Fig Pattern**. Đây là một quá trình Refactor theo chiều ngang (chạm tới hầu hết mọi file giao diện) nên cần chiến thuật cuốn chiếu an toàn.
-
-## Tóm tắt Mục tiêu
-- Xóa bỏ kiểu truyền tham số `viewModel: WebDavViewModel` đang phủ khắp 27 file UI.
-- Thay thế bằng việc inject/truyền chính xác Domain VM cần thiết (VD: `LoginScreen` chỉ cần `AuthSessionViewModel`).
-- Cắt bỏ hoàn toàn 7 block Facade (`val deviceManagement`, `val smartTools`,...) ra khỏi `WebDavViewModel`.
-
-## ⚠️ QUAN TRỌNG: Phase 7a — Move State TRƯỚC khi Migrate UI
-
-**Vấn đề**: Facade hiện vẫn giữ state thực sự (`currentUrl`, `fileList`, `urlStack`, `systemStatus`, etc.). Domain VMs chỉ wired API calls + update VM state riêng. UI đọc `viewModel.currentUrl` từ facade, không từ domain VM.
-
-**Nếu chỉ đổi UI call sites mà không move state**: UI sẽ break vì domain VM state ≠ facade state.
-
-**Phase 7a (3 commits, ~1.5 ngày): Move state to domain VMs**
-
-| Sub | Commit | Nội dung |
-|---|---|---|
-| 7a.1 | Move FileBrowser state | `currentUrl`, `urlStack`, `fileList`, `isLoading`, `pendingDeletes`, `loadGeneration` → FileBrowserVM. Facade giữ mirror state sync 2 chiều. |
-| 7a.2 | Move SystemMonitor state | `systemStatus`, `temperatureHistory`, `metricsHistory`, `metricsHours`, `metricsChartTab`, `dailyReport`, `networkPingMs`, `apiLatencyMs`, `apiFailureCount`, `diskHealthCurrent`, `diskHealthHistory` → SystemMonitorVM. |
-| 7a.3 | Move remaining state | AutoBackupVM, LivestreamVM, DeviceManagementVM, SmartToolsVM — move batch operation state, image counter, text preview. |
-
-Sau Phase 7a: facade là pure forward, mọi state đã ở domain VMs.
+Address P2/P3 reliability, security, and data safety issues identified in codebase-wide audit across `nas_api_server.py` and Android Kotlin components.
 
 ---
 
-## Mức độ Ưu tiên và Rủi ro
+## Status Legend
 
-> [!WARNING]
-> Việc sửa 27 file cùng lúc sẽ gây ra một "Vụ nổ lớn" (Big Bang refactor). Nếu có lỗi xảy ra, việc dò tìm nguyên nhân sẽ cực kỳ tốn thời gian.
-> Do đó, bắt buộc phải chia nhỏ quá trình Migration thành nhiều nhóm (Commit riêng lẻ).
-
-## Chiến thuật Migration (Chia để trị)
-
-### Nhóm 1: Các màn hình Đơn nhiệm (Dễ, Rủi ro thấp)
-Các màn hình này chỉ phụ thuộc vào 1 hoặc 2 Domain ViewModel cụ thể.
-- **`LoginScreen.kt`** & **`GuestPassScreen.kt`**: Chuyển sang dùng `AuthSessionViewModel`.
-- **`SmartOrganizerScreen.kt`** & **`DuplicateDialogs.kt`**: Chuyển sang dùng `SmartToolsViewModel`.
-- **`VideoPlayerScreen.kt`** & **`MediaScreens.kt`**: Phụ thuộc `FileBrowserViewModel` (cho danh sách/URL) và `AuthSessionViewModel`.
-- **`SocialExtractorScreen.kt`** & **`LivestreamWatchDialogs.kt`**: Chuyển sang dùng `LivestreamViewModel`.
-
-### Nhóm 2: Các màn hình Quản trị (Trung bình)
-Các màn hình này tương tác với phần cứng hoặc hệ thống NAS.
-- **`DashboardCards.kt`** & **`DashboardWidgets.kt`**: Chuyển sang dùng `SystemMonitorViewModel` và `DeviceManagementViewModel`.
-- **`DiskProfileScreen.kt`** & **`SystemStatusCards.kt`**: Chuyển sang dùng `SystemMonitorViewModel`.
-- **`ToolboxDialogs.kt`** & **`MiscDialogs.kt`**: Chia nhỏ theo `SmartToolsViewModel` và `DeviceManagementViewModel`.
-
-### Nhóm 3: Các màn hình Xương sống (Khó, Rủi ro cao)
-Là màn hình điều hướng chính, nơi tụ hội của nhiều tính năng.
-- **`MainMenuScreen.kt`** & **`MainMenuSections.kt`**: Do đây là menu chính, nó sẽ phải nhận vào hầu hết các Domain VMs để truyền xuống cho các Section bên dưới. **Dùng CompositionLocal** để tránh truyền tham số qua nhiều lớp Composable.
-- **`BrowserScreen.kt`** & **`BrowserComponents.kt`**: Trung tâm điều khiển. Chuyển sang dùng `FileBrowserViewModel` làm chủ đạo, kết hợp `AutoBackupViewModel` (nếu có thanh trạng thái upload).
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Fixed, reviewed, merged |
+| 🔧 | In progress / pending fix |
+| ⏳ | Backlog / not yet started |
+| ❌ | Skipped / out of scope |
 
 ---
 
-## Mức độ Ưu tiên và Rủi ro
+# Phase 1 — Mandatory P2 Bug Fixes ✅ COMPLETED
 
-> [!WARNING]
-> Việc sửa 27 file cùng lúc sẽ gây ra một "Vụ nổ lớn" (Big Bang refactor). Nếu có lỗi xảy ra, việc dò tìm nguyên nhân sẽ cực kỳ tốn thời gian.
-> Do đó, bắt buộc phải chia nhỏ quá trình Migration thành nhiều nhóm (Commit riêng lẻ).
+**Commits:** `49ed009a` + `2ee4e35b` | **Review:** 2-axis PASS (0 hard violations, 0 spec fails)
 
-## Chiến thuật Migration (Chia để trị)
+### Python Backend (`nas_api_server.py`) ✅
 
-### Nhóm 1: Các màn hình Đơn nhiệm (Dễ, Rủi ro thấp)
-Các màn hình này chỉ phụ thuộc vào 1 hoặc 2 Domain ViewModel cụ thể.
-- **`LoginScreen.kt`** & **`GuestPassScreen.kt`**: Chuyển sang dùng `AuthSessionViewModel`.
-- **`SmartOrganizerScreen.kt`** & **`DuplicateDialogs.kt`**: Chuyển sang dùng `SmartToolsViewModel`.
-- **`VideoPlayerScreen.kt`** & **`MediaScreens.kt`**: Phụ thuộc `FileBrowserViewModel` (cho danh sách/URL) và `AuthSessionViewModel`.
-- **`SocialExtractorScreen.kt`** & **`LivestreamWatchDialogs.kt`**: Chuyển sang dùng `LivestreamViewModel`.
+| # | Finding | Fix | Status |
+|---|---------|-----|--------|
+| #18 | `safe_run_cmd` receives string instead of list | Changed to `["chown", "-R", "daica:webdav-users", trash_dir]` | ✅ |
+| #17 | SQLite connection leak in `ban_ip_permanently` | Wrapped in `try/finally: conn.close()` | ✅ |
+| #19 | `_last_net` thread-safety race condition | Added `_net_stats_lock = threading.Lock()` | ✅ |
 
-### Nhóm 2: Các màn hình Quản trị (Trung bình)
-Các màn hình này tương tác với phần cứng hoặc hệ thống NAS.
-- **`DashboardCards.kt`** & **`DashboardWidgets.kt`**: Chuyển sang dùng `SystemMonitorViewModel` và `DeviceManagementViewModel`.
-- **`DiskProfileScreen.kt`** & **`SystemStatusCards.kt`**: Chuyển sang dùng `SystemMonitorViewModel`.
-- **`ToolboxDialogs.kt`** & **`MiscDialogs.kt`**: Chia nhỏ theo `SmartToolsViewModel` và `DeviceManagementViewModel`.
+### Android Workers & ViewModels ✅
 
-### Nhóm 3: Các màn hình Xương sống (Khó, Rủi ro cao)
-Là màn hình điều hướng chính, nơi tụ hội của nhiều tính năng.
-- **`MainMenuScreen.kt`** & **`MainMenuSections.kt`**: Do đây là menu chính, nó sẽ phải nhận vào hầu hết các Domain VMs để truyền xuống cho các Section bên dưới.
-- **`BrowserScreen.kt`** & **`BrowserComponents.kt`**: Trung tâm điều khiển. Chuyển sang dùng `FileBrowserViewModel` làm chủ đạo, kết hợp `AutoBackupViewModel` (nếu có thanh trạng thái upload).
-
----
-
-## Trình tự Triển khai (Step-by-Step)
-
-### Bước 1: Khởi tạo ViewModels tại `MainActivity.kt`
-- Tại `MainActivity.kt`, khai báo khởi tạo cả 7 Domain VMs thông qua `viewModels()` hoặc truyền `repository`.
-- Truyền các VMs này vào hàm gốc của Compose (Navigation Graph / NavHost).
-- **Manual injection qua ViewModelFactory**: Giữ cách hiện tại — không thêm Hilt/Koin. Tạo `DomainViewModelFactory` tạo cả 7 VMs cùng lúc, share với `WebDavViewModel` (vẫn cần trong giai đoạn transition).
-
-### Bước 2: Migrate dần từng Nhóm UI
-1. Bắt đầu từ **Nhóm 1**: Mở `LoginScreen.kt`, đổi signature từ `(viewModel: WebDavViewModel)` thành `(authVM: AuthSessionViewModel)`. Fix lỗi đỏ tại file đó. Mở app chạy test thử màn hình Login.
-2. Commit.
-3. Tiếp tục cuốn chiếu cho Nhóm 2, rồi cuối cùng là Nhóm 3. Luôn tuân thủ quy tắc: **Sửa 1 màn hình -> Chạy app thử -> Commit**.
-
-### Bước 3: Dọn dẹp tàn dư (Cleanup)
-- Sau khi toàn bộ 27 files không còn gọi `viewModel.` nào nữa.
-- Quay trở lại `WebDavViewModel.kt`, xóa bỏ các properties Facade (`val deviceManagement`, `val smartTools`...).
-- Xóa bỏ luôn `WebDavViewModel` nếu nó đã hoàn toàn trống rỗng! (Vinh quang lớn nhất của Refactor là xóa được God Class).
+| # | Finding | Fix | Status |
+|---|---------|-----|--------|
+| #1 | BatchOperationWorker no isStopped check | Added `isStopped` → `Result.retry()` before progress | ✅ |
+| #2 | Batch DELETE fallback kills file on cancellation | Added `CancellationException` rethrow in MOVE catch | ✅ |
+| #3 | Single-file delete loses original path | Insert `TrashMeta(trashPath, originalPath)` after MOVE | ✅ |
+| #4 | AutoDuplicate no DELETE fallback | Add WebDAV DELETE on MOVE failure per GEMINI §10 | ✅ |
+| #5 | AutoBackupWorker cancellation → failure | Rethrow `CancellationException` + `isStopped` guard | ✅ |
+| #6 | LongRunningApiWorker no transient retry | `Result.retry()` for timeout/connect/unknownhost + `isStopped` | ✅ |
+| #7 | SmartToolsViewModel orphan GlobalUiViewModel | `attachGlobalUi()` + `private set` backing property | ✅ |
+| #8 | SmartTools thumb/status missing auth | Added `.let(WebDavManager::tagCurrentAuth)` | ✅ |
+| #10 | SocialDownload reports success before job done | Poll `/api/social/status/<job_id>` until terminal | ✅ |
+| #11 | SmartTools organize scan/execute/poll missing auth | Added `tagCurrentAuth` to all 3 endpoints | ✅ |
+| #12 | Livestream control ignores HTTP failures | `checkResponseOk(resp)` helper on all 5 endpoints, parse error body | ✅ |
+| #26 | Room migration test gap v13→v15 | Added `migrateFromVersion13To15_validatesSchema()` + updated v1→v15 | ✅ |
+| SV-1 | AutoBackupWorker still missing isStopped (caught in review) | `if (isStopped) return Result.retry()` before generic catch | ✅ |
+| SV-2 | LongRunningApiWorker same issue | Same fix | ✅ |
+| SV-3 | SmartTools `globalUi` public, no private set | Added `private set` | ✅ |
 
 ---
 
-## Open Questions (ĐÃ TRẢ LỜI)
+# Phase 2 — Hardening (pre-release)
 
-> [!IMPORTANT]
-> 1. **DI strategy**: Manual injection qua `ViewModelFactory` (giữ cách hiện tại, không thêm Hilt/Koin). Codebase đã dùng pattern này, không cần dependency mới.
-> 2. **CompositionLocal scope**: Có, dùng `LocalDomainViewModels` cho MainMenuScreen vì pass nhiều VMs xuống ~10 sub-screens. Tránh verbose tham số chain.
+Estimate: 2–3 days. Each item independently shippable.
 
-## Verification Plan
+**Status: ~50% complete.** Commits `b9f4fff0` covers Login IP, Backup error/auth, Guest persistence, helper rename. Remaining below.
 
-### Manual Verification
-- Test chạy app cơ bản cho mỗi nhóm màn hình sau khi hoàn thành.
-- Đặc biệt chú ý: Chế độ PiP của màn hình xem Video và tính năng cuộn (Scroll state) của FileBrowser có bị reset khi thay đổi ViewModel không.
+## P2-A: Livestream UI & reliability
 
-### Static Verification
-- Sau khi xong Bước 3, có thể chạy lệnh `grep -r "WebDavViewModel" app/src/main/java/com/nas/naswebdav/ui/` trên Terminal để bảo đảm không còn bất kỳ dòng code nào vương vấn God Class cũ.
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P2-24 | LivestreamMonitorWorker returns success on error | `LivestreamMonitorWorker.kt:287-314` | After repeated transient errors, worker sets `finalStatus="error"` but returns `Result.success()`. WorkManager won't retry. | P2 |
+| P2-25 | dedupeLivestreamJobsForDisplay is no-op | `LivestreamViewModel.kt:342-345` | Called in polling but returns data unchanged. Duplicate job IDs can render in UI. | P2 |
+| P2-26 | Livestream status drops terminal jobs | `LivestreamViewModel.kt:111-125` | Only keeps jobs with status `"recording"`. Completed/error jobs vanish immediately. | P2 |
+
+## P2-A: Livestream UI & reliability
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P2-24 | LivestreamMonitorWorker returns success on error | `LivestreamMonitorWorker.kt:287-314` | After repeated transient errors, worker sets `finalStatus="error"` but returns `Result.success()`. WorkManager won't retry. | P2 |
+| P2-25 | dedupeLivestreamJobsForDisplay is no-op | `LivestreamViewModel.kt:342-345` | Called in polling but returns data unchanged. Duplicate job IDs can render in UI. | P2 |
+| P2-26 | Livestream status drops terminal jobs | `LivestreamViewModel.kt:111-125` | Only keeps jobs with status `"recording"`. Completed/error jobs vanish immediately. | P2 |
+| P2-36 | **NEW** eMMC wear: guest passes file on root fs | `nas_api_server.py` | `GUEST_PASSES_FILE = "/opt/guest_passes.json"` lives on eMMC. Watcher writes every 30 s. Move to HDD mount. | P2 |
+| P2-37 | **NEW** Duplicated API error parser | `LivestreamViewModel.kt`, `SystemMonitorViewModel.kt` | Same `runCatching { JSONObject(...).optString("error") }` pattern duplicated. Extract `WebDavManager.extractApiError(resp)`. | P3 |
+
+## P2-B: Login & session UX
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P2-27 | Login auto-replaces user-typed IP every 2s | `LoginScreen.kt:135-142` | Fixed in `b9f4fff0`: only auto-fill when `ipInput.isBlank()`. | ✅ |
+| P2-28 | Guest credentials in-memory only | `nas_api_server.py:10916` | Persisted to `/opt/guest_passes.json` (chmod 600) in `b9f4fff0`. **Open follow-up**: file path is on eMMC; move to HDD `/Data N300/.naswebdav/guest_passes.json` to avoid wear. | ⚠️ Partial |
+
+## P2-C: Backup & deletion safety
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P2-29 | Backup delete treats non-404 as success | `SystemMonitorViewModel.kt:635-642` | Fixed in `b9f4fff0`: parses non-2xx, extracts error body, refreshes only on success. | ✅ |
+| P2-30 | Backup creation missing auth tagging | `SystemMonitorViewModel.kt:606-609` | Fixed in `b9f4fff0`: added `.let(WebDavManager::tagCurrentAuth)`. | ✅ |
+
+## P2-D: Python backend hardening
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P2-31 | File handle leak in api_media_fast | `nas_api_server.py:8960` | `open()` without context manager. Exception path leaks FD. | P2 |
+| P2-32 | Recent_auth_ips unbounded growth | `nas_api_server.py:986` | No eviction. Memory leak over weeks. | P2 |
+| P2-33 | _social_download_jobs unbounded growth | `nas_api_server.py:259` | Expired jobs only cleaned on new job creation. | P2 |
+| P2-34 | Duplicate functions `_target_hdd_devname` | `nas_api_server.py:1234,5588` | Same function defined twice; second silently overwrites. | P2 |
+| P2-35 | Duplicate functions `_read_io_stats` | `nas_api_server.py:4938,5603` | Same situation. | P2 |
+
+---
+
+# Phase 3 — Polish & backlog ⏳
+
+Estimate: 3–5 days. Not blocking release if Phase 1+2 complete.
+
+## P3-A: Accessibility & security UX
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P3-1 | ~30+ Icons missing contentDescription | BrowserScreen, DashboardCards, MainMenuScreen, etc. | TalkBack announces blank. Play Store requirement. | P3 |
+| P3-2 | GuestPassScreen password plaintext | `GuestPassScreen.kt` | Masked default, eye toggle, state reset (`remember(pass?.username)`), 40dp+A11y. | ✅ |
+| P3-3 | PerformanceScreen calls `System.gc()` | `PerformanceScreen.kt` | Removed `System.gc()` call; retained Coil memory cache clear. | ✅ |
+
+## P3-B: Build & CI
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P3-4 | ProGuard over-keeps entire packages | `app/proguard-rules.pro` | Refined over-broad rules; verified via `assembleRelease`. | ✅ |
+| P3-5 | CI Python 3.12 vs production 3.5 | `.github/workflows/ci.yml:28` | CI won't catch 3.6+ syntax regressions. | P3 |
+| P3-6 | Shopee detected but not in allowlist | `SocialExtractorScreen.kt:934-964` | Platform detected → blocked by SOCIAL_HOST_ALLOWLIST. | P3 |
+
+## P3-C: Test coverage gaps
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P3-7 | No tests for WebDavManager | — | HTTP/DAV operations untested. Regression risk. | P3 |
+| P3-8 | No tests for SecurePrefsHelper | — | Credential storage untested. | P3 |
+| P3-9 | No tests for DuplicateScanWorker | — | Core dedup logic untested. | P3 |
+| P3-10 | No tests for FileBrowserViewModel | — | File CRUD operations untested. | P3 |
+| P3-11 | WebDavErrorTest.kt is empty placeholder | — | Class exists but has no test methods. | P3 |
+
+## P3-D: Code quality smells (from review)
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P3-12 | Livestream checkResponseOk naming | `LivestreamViewModel.kt:185` | Renamed to `throwOnUnsuccessfulResponse` in `b9f4fff0`. | ✅ |
+| P3-13 | Duplicated Livestream HTTP pattern | `LivestreamViewModel.kt` (5 methods) | `throwOnUnsuccessfulResponse` helper extracted in `2ee4e35b`. | ✅ |
+| P3-14 | Duplicated AutoDuplicate try-catch shape | `AutoDuplicateScanWorker.kt:202-239` | MOVE and DELETE try-catch share identical request-build/execute/log shape. | P3 |
+| P3-15 | Data Clumps in AutoDuplicateScanWorker | — | `(manager, sourceUrl, user, pass)` tuple travels together. | P3 |
+
+## P3-E: Python backend maintenance
+
+| # | Finding | File(s) | Description | Priority |
+|---|---------|---------|-------------|----------|
+| P3-16 | `check_auth` uses `&` instead of `and` | `nas_api_server.py:1444` | Bitwise on booleans; works but unconventional. | P3 |
+| P3-17 | `NAS_TMP_ROOT` on /tmp (tmpfs/RAM) | `nas_api_server.py:499` | Misleading name `_make_hdd_tmp_dir`; large files eat RAM. | P3 |
+| P3-18 | Credential/config path logged at INFO | `nas_api_server.py:14095,1294` | Username + config path in systemd journal. | P3 |
+| P3-19 | `api_media_fast` file handle leak | `nas_api_server.py:8960` | No context manager on open(). | P3 |
+
+---
+
+# Verification Checklist
+
+## After Phase 1 (DONE) ✅
+- [x] `python -m py_compile nas_api_server.py` → SYNTAX OK
+- [x] `pytest` → 88 passed, 3 skipped
+- [x] `.\gradlew assembleDebug` → BUILD SUCCESSFUL
+- [x] 2-axis code review → 0 hard violations, 0 spec fails
+
+## Before Phase 2
+- [ ] Deploy updated `nas_api_server.py` to NAS and restart `nas_api.service`
+- [ ] Manual test: batch delete, single delete → restore path correct
+- [ ] Manual test: social download → poll → completion notification
+- [ ] Manual test: livestream add/remove watch → error message on failure
+- [ ] Manual test: SmartTools scan → dialog appears → auth works
+
+## After Phase 2
+- [ ] `.\gradlew assembleDebug` → BUILD SUCCESSFUL
+- [ ] `pytest` → all pass
+- [ ] 2-axis review of Phase 2 changes
+- [ ] Manual test: LivestreamMonitorWorker retry on transient error
+- [ ] Manual test: Guest credential persistence across restart
+- [ ] Manual test: Backup error messages display correctly
+- [ ] Deploy to NAS, smoke test all critical paths
+
+## Before release (Phase 3 complete)
+- [ ] Accessibility audit: TalkBack on all screens
+- [ ] ProGuard: verify release APK size reduction
+- [ ] CI: verify Python 3.5 compat check
+- [ ] Add core test coverage (WebDavManager, SecurePrefsHelper)
+- [ ] Full regression test on real NAS hardware
