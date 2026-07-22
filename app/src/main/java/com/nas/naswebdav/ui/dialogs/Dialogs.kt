@@ -308,7 +308,7 @@ fun SmartDiskDialog(
                         if (deviceVM.lastAutoSpeedTime > 0) {
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                text = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(deviceVM.lastAutoSpeedTime)),
+                                text = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(deviceVM.lastAutoSpeedTime)),
                                 fontSize = 10.sp,
                                 color = Color.Gray,
                                 fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,

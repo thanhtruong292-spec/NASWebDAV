@@ -408,7 +408,9 @@ class SystemMonitorViewModel(
                     val json = org.json.JSONObject(body)
                     withContext(Dispatchers.Main) {
                         val point = MetricsSnapshot(
-                            timestamp  = System.currentTimeMillis().toString(),
+                            // BUG FIX: dung format ISO thay vi epoch ms raw string
+                            // de pruneOldPoints() co the parse va giu diem nay dung
+                            timestamp  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
                             cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
                             cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
                             ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
@@ -488,7 +490,7 @@ class SystemMonitorViewModel(
                     withContext(Dispatchers.Main) {
                         diskHealthCurrent = DiskHealthSample(
                             ts = System.currentTimeMillis(),
-                            datetime = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
+                            datetime = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
                             score = json.optInt("score", 0),
                             smartStatus = json.optString("smart_status", "unknown"),
                             tempC = json.optInt("temperature", 0).takeIf { it > 0 },

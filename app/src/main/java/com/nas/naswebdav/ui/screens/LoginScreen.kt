@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import com.nas.naswebdav.R
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -140,16 +142,24 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         }
     }
 
+    Box(
+        Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
     Column(
         Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 24.dp, vertical = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Top
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(Icons.Default.Storage, contentDescription = "NAS", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(10.dp))
+        Image(
+            painter = painterResource(R.drawable.nas_chainedbox),
+            contentDescription = "NAS Chainedbox",
+            modifier = Modifier.size(140.dp)
+        )
+        Spacer(Modifier.height(16.dp))
         Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(18.dp))
         ExposedDropdownMenuBox(
@@ -374,6 +384,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
+    } // end Box
 
     // ── DIALOGS cho khu vuc khan cap ────────────────────────────────────────
     if (showWolDialog) {

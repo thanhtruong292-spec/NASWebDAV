@@ -151,7 +151,7 @@ import atexit
 # Ghi log ra file /var/log/nas_api.log + console, có rotation
 _log_formatter = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%d/%m/%Y %H:%M:%S"
 )
 _log_handler_console = logging.StreamHandler(sys.stdout)
 _log_handler_console.setFormatter(_log_formatter)
@@ -849,7 +849,7 @@ def ban_ip_permanently(ip):
     # Không cần g?i iptables DROP de trảnh chan nham IP Tailscale/LAN cua chảnh ch?.
     # Chi ghi log de admin biet co request ban (visibility) nhung khong thuc thi.
     try:
-        now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
+        now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         conn = sqlite3.connect(DB_PATH, timeout=20.0)
         cur = conn.cursor()
         safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
@@ -4316,7 +4316,7 @@ def _fan_rpm_for_percent(percent):
 
 def _fan_status_for_percent(percent):
     level = _fan_pwm_level(percent)
-    rpm = _fan_rpm_for_percent(level)
+    rpm = _fan_rpm_for_percent(percent)  # BUG FIX: truyen percent, khong phai level (da bi convert)
     if level == 0:
         return "Dừng"
     return "Đang chạy %d%% - Tốc độ: %d rpm" % (level, rpm)
@@ -5474,6 +5474,38 @@ def _emmc_guard():
     }
 
 
+def _target_hdd_devname():
+    try:
+        if os.path.exists("/proc/diskstats"):
+            with open("/proc/diskstats", "r") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 12:
+                        dev = parts[2]
+                        if dev.startswith("sd") and dev[-1].isalpha():
+                            return dev
+    except Exception:
+        pass
+    return "sda"
+
+
+def _read_io_stats(devname):
+    res = {"sectors_read": 0, "sectors_written": 0, "ios_in_progress": 0}
+    try:
+        if os.path.exists("/proc/diskstats"):
+            with open("/proc/diskstats", "r") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 12 and parts[2] == devname:
+                        res["sectors_read"] = int(parts[5])
+                        res["sectors_written"] = int(parts[9])
+                        res["ios_in_progress"] = int(parts[11])
+                        break
+    except Exception:
+        pass
+    return res
+
+
 def _data_flow_snapshot():
     global _DATA_FLOW_LAST_SAMPLE
     now = time.time()
@@ -5484,17 +5516,19 @@ def _data_flow_snapshot():
     except Exception:
         net = {}
     last = _DATA_FLOW_LAST_SAMPLE or {}
-    dt = max(0.001, now - float(last.get("ts") or 0))
-    last_io = last.get("io") or {}
-    last_net = last.get("net") or {}
+    last_ts = float(last.get("ts") or 0)
     read_bps = write_bps = rx_bps = tx_bps = 0
-    try:
-        read_bps = int(max(0, io.get("sectors_read", 0) - last_io.get("sectors_read", 0)) * 512 / dt)
-        write_bps = int(max(0, io.get("sectors_written", 0) - last_io.get("sectors_written", 0)) * 512 / dt)
-        rx_bps = int(max(0, net.get("bytes_recv", 0) - last_net.get("bytes_recv", 0)) / dt)
-        tx_bps = int(max(0, net.get("bytes_sent", 0) - last_net.get("bytes_sent", 0)) / dt)
-    except Exception:
-        pass
+    if last_ts > 0 and (now - last_ts) > 0:
+        dt = max(0.1, now - last_ts)
+        last_io = last.get("io") or {}
+        last_net = last.get("net") or {}
+        try:
+            read_bps = int(max(0, io.get("sectors_read", 0) - last_io.get("sectors_read", 0)) * 512 / dt)
+            write_bps = int(max(0, io.get("sectors_written", 0) - last_io.get("sectors_written", 0)) * 512 / dt)
+            rx_bps = int(max(0, net.get("bytes_recv", 0) - last_net.get("bytes_recv", 0)) / dt)
+            tx_bps = int(max(0, net.get("bytes_sent", 0) - last_net.get("bytes_sent", 0)) / dt)
+        except Exception:
+            pass
     _DATA_FLOW_LAST_SAMPLE = {"ts": now, "io": io, "net": net}
     usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
     current_tasks = []
@@ -5641,30 +5675,17 @@ def api_system_insights():
     now = time.time()
     cached = _SYSTEM_INSIGHTS_CACHE.get("data")
     cached_ts = float(_SYSTEM_INSIGHTS_CACHE.get("ts", 0) or 0)
-    if cached is not None and now - cached_ts < _SYSTEM_INSIGHTS_CACHE_TTL:
-        return jsonify(cached)
-    if cached is not None:
+    if cached is None or (now - cached_ts >= _SYSTEM_INSIGHTS_CACHE_TTL):
         if _SYSTEM_INSIGHTS_CACHE_LOCK.acquire(False):
-            threading.Thread(
-                target=_refresh_system_insights_cache_locked,
-                daemon=True,
-                name="SystemInsightsRefresh"
-            ).start()
-        return jsonify(cached)
+            try:
+                _SYSTEM_INSIGHTS_CACHE["data"] = _build_system_insights_snapshot()
+                _SYSTEM_INSIGHTS_CACHE["ts"] = now
+            finally:
+                _SYSTEM_INSIGHTS_CACHE_LOCK.release()
 
-    # First request after boot has no stale value yet, so it builds once
-    # synchronously. Later refreshes return stale data and rebuild in background.
-    if not _SYSTEM_INSIGHTS_CACHE_LOCK.acquire(False):
-        with _SYSTEM_INSIGHTS_CACHE_LOCK:
-            return jsonify(_SYSTEM_INSIGHTS_CACHE.get("data") or {})
-
-    try:
-        data = _build_system_insights_snapshot()
-        _SYSTEM_INSIGHTS_CACHE["data"] = data
-        _SYSTEM_INSIGHTS_CACHE["ts"] = now
-        return jsonify(data)
-    finally:
-        _SYSTEM_INSIGHTS_CACHE_LOCK.release()
+    res = dict(_SYSTEM_INSIGHTS_CACHE.get("data") or _build_system_insights_snapshot())
+    res["data_flow"] = _data_flow_snapshot()
+    return jsonify(res)
 
 
 def _invalidate_system_insights_cache():
@@ -8552,12 +8573,12 @@ def api_approve_ip():
                 if ip not in _lan_whitelist:
                     _lan_whitelist.add(ip)
                     _save_lan_whitelist()
-                now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
+                now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                            ("SUCCESS", "Security", "[{}] Admin da CAP QUYEN cho IP: {} va them vao whitelist.".format(now, ip)))
             else:
                 ban_ip_permanently(ip)
-                now = datetime.datetime.now().strftime("%d/%m/%y %H:%M:%S")
+                now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 cur.execute('INSERT OR REPLACE INTO banned_ips VALUES (?, ?, ?)', (ip, "Admin denied", now))
                 cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                            ("ERROR", "Security", "[{}] Admin da CHAN VINH VIEN IP: {} bang iptables.".format(now, ip)))
@@ -11525,31 +11546,25 @@ def _fan_controller_watchdog():
             if force_hot:
                 target_percent = 100
                 target_since_ts = now_ts
-            elif control_temp >= on_temp:
+            elif control_temp >= on_temp + 10.0:
                 target_percent = 100
+            elif control_temp >= on_temp + 5.0:
+                target_percent = 60
+            elif control_temp >= on_temp:
+                target_percent = 30
             elif control_temp <= off_temp:
                 target_percent = 0
             else:
-                # Vung Hysteresis (off_temp < control_temp < on_temp):
-                # Khi o mode custom: giu nguyen trang thai quat hien tai!
-                # Neu quat dang TAT (0% hoac None) va chua cham on_temp -> TIEP TUC TAT (0%).
-                # Neu quat dang BAT (100%) va chua ha xuong off_temp -> TIEP TUC BAT (100%).
                 if mode == "custom":
                     if last_applied_percent in (0, None):
                         target_percent = 0
                     else:
-                        target_percent = 100
+                        target_percent = min(last_applied_percent, 30)
                 else:
-                    # Auto mode: giu Hysteresis nghiem ngat, không bat quat neu dang Tat
                     if last_applied_percent in (0, None):
                         target_percent = 0
                     else:
-                        span = max(on_temp - off_temp, 1.0)
-                        ratio = (control_temp - off_temp) / span
-                        if ratio <= 0.25: target_percent = 25
-                        elif ratio <= 0.50: target_percent = 50
-                        elif ratio <= 0.75: target_percent = 75
-                        else: target_percent = 100
+                        target_percent = 30
 
             if mode != last_mode:
                 last_target_percent = None
@@ -11584,6 +11599,15 @@ def _fan_controller_watchdog():
             else:
                 _pwm_apply_off()
             last_applied_percent = target_percent
+            # BUG FIX (Rule 11): Cap nhat _status_cache ngay sau khi ghi PWM
+            # de /api/status tra ket qua thuc te duoi 1s, khong phai gia tri cu.
+            pct_snap = target_percent
+            rpm_snap = _fan_rpm_for_percent(pct_snap)
+            st_snap = _fan_status_for_percent(pct_snap)
+            with _cache_lock:
+                _status_cache['fan_percent'] = pct_snap
+                _status_cache['fan_rpm'] = rpm_snap
+                _status_cache['fan_status'] = st_snap
         except Exception as e:
             log.error("[FanWatchdog] Loi: %s", e)
         time.sleep(1)

@@ -140,8 +140,8 @@ fun DashboardCompactBottomSheetHandle() {
 fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
     val isRunning = percent > 0
     val safePercent = percent.coerceIn(1, 100)
-    // 100% -> 80ms (12.5 RPS fast spin), 50% -> 250ms, 25% -> 400ms
-    val durationMs = if (isRunning) (80 + ((100 - safePercent) * 3.5f).toInt()) else 9999
+    // 100% -> 450ms (Silky smooth 2.2 RPS without 5-blade stroboscopic aliasing), 50% -> 900ms, 25% -> 1350ms
+    val durationMs = if (isRunning) (450 + ((100 - safePercent) * 9.0f).toInt()) else 9999
     
     val angle = if (isRunning) {
         key(durationMs) {
@@ -1143,11 +1143,11 @@ private fun MainMenuDashboardSystemOverviewCard(
                                 } else {
                                     "Dừng"
                                 }
-                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary, modifier = Modifier.size(24.dp))
+                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else Color(0xFFEF5350), modifier = Modifier.size(24.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Column {
                                     Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else TextSecondary)
+                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else Color(0xFFEF5350))
                                 }
                             }
                              // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)

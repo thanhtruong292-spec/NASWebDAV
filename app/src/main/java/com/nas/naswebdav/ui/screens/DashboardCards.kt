@@ -316,11 +316,11 @@ internal fun DashboardSystemOverviewCard(
                                         if (fanStatusStr.contains("Đang chạy")) fanStatusStr else "Đang chạy $displayPercent%"
                                     } else "Dừng"
 
-                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) AccentGreen else TextSecondary, modifier = Modifier.size(24.dp))
+                                    FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) AccentGreen else AccentRed, modifier = Modifier.size(24.dp))
                                     Spacer(Modifier.width(AppSpacing.SM))
                                     Column {
                                         Text("Quạt tản nhiệt", style = AppTypography.BodyMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold))
-                                        Text(displayStatusStr, style = AppTypography.LabelMedium.copy(color = if (isFanDisplayRunning) AccentGreen else TextSecondary))
+                                        Text(displayStatusStr, style = AppTypography.LabelMedium.copy(color = if (isFanDisplayRunning) AccentGreen else AccentRed))
                                     }
                                 }
                                 // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)

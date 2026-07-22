@@ -519,6 +519,7 @@ class DeviceManagementViewModel(
                 val req = okhttp3.Request.Builder()
                     .url("$apiBase/api/fan/control")
                     .post(jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                    .let(WebDavManager::tagCurrentAuth)  // BUG FIX: thieu auth header -> 401 Unauthorized
                     .build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")

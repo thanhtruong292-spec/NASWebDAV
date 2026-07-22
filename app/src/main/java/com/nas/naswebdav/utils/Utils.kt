@@ -29,8 +29,8 @@ import java.util.Locale
 // ─────────────────────────────────────────────────────────────────────────────
 object FormatUtils {
     private val dateTimeFormat = object : ThreadLocal<SimpleDateFormat>() { override fun initialValue() = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()) }
-    private val shortDateTimeFormat = object : ThreadLocal<SimpleDateFormat>() { override fun initialValue() = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()) }
-    private val shortTimeFormat = object : ThreadLocal<SimpleDateFormat>() { override fun initialValue() = SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    private val shortDateTimeFormat = object : ThreadLocal<SimpleDateFormat>() { override fun initialValue() = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()) }
+    private val shortTimeFormat = object : ThreadLocal<SimpleDateFormat>() { override fun initialValue() = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()) }
 
     fun formatDateTime(timestamp: Long): String = dateTimeFormat.get()?.format(Date(timestamp)) ?: ""
     fun formatShortDateTime(timestamp: Long): String = shortDateTimeFormat.get()?.format(Date(timestamp)) ?: ""

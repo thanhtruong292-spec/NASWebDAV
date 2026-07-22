@@ -239,7 +239,7 @@ internal fun DiskProfileBottomSheet(
         else -> "Sẵn sàng theo dõi"
     }
     val installedDate = if (installedAt > 0L) {
-        java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale("vi", "VN")).format(java.util.Date(installedAt))
+        java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale("vi", "VN")).format(java.util.Date(installedAt))
     } else {
         "Chưa đặt"
     }
