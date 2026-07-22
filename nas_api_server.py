@@ -825,10 +825,25 @@ def broadcast(data):
                 clients.discard(c)
 
 class AlertWebSocket(tornado.websocket.WebSocketHandler):
-    def check_origin(self, origin): return True
+    def check_origin(self, origin):
+        return True
+
     def open(self):
+        ip = (self.request.remote_ip or "").strip()
+        token = self.get_argument("token", "")
+        is_authorized = (
+            _ip_in_whitelist(ip) or
+            (ip and ip in _refresh_authorized_ips_cache()) or
+            (token and check_auth(WEBDAV_USER, token))
+        )
+        if not is_authorized:
+            log.warning("[AlertWebSocket] Tu choi ket noi WebSocket tu IP unauthorized: %s", ip)
+            self.close(code=4001, reason="Unauthorized")
+            return
+
         with clients_lock:
             clients.add(self)
+
     def on_close(self):
         with clients_lock:
             clients.discard(self)
@@ -3832,14 +3847,27 @@ def api_process_kill():
         pid = data.get("pid")
         if not pid:
             return jsonify({"error": "Missing pid"}), 400
-        
-        # Security: Do not allow killing self or system critical PIDs (e.g., <= 100 or -1)
-        if int(pid) <= 100 or int(pid) == os.getpid() or int(pid) == -1:
+
+        try:
+            pid_int = int(pid)
+        except (ValueError, TypeError):
+            return jsonify({"error": "PID không hợp lệ"}), 400
+
+        if pid_int <= 100 or pid_int == os.getpid() or pid_int == os.getppid():
             return jsonify({"error": "Tiến trình hệ thống không thể kill"}), 403
 
+        try:
+            import psutil
+            p = psutil.Process(pid_int)
+            pname = (p.name() or "").lower()
+            if pname in ("nginx", "sshd", "systemd", "init", "bash", "sh") or "nas_api" in pname:
+                return jsonify({"error": "Tiến trình hệ thống được bảo vệ: %s" % pname}), 403
+        except Exception:
+            pass
+
         import signal
-        os.kill(int(pid), signal.SIGKILL)
-        return jsonify({"status": "success", "message": "Đã kill tiến trình %s" % pid})
+        os.kill(pid_int, signal.SIGKILL)
+        return jsonify({"status": "success", "message": "Đã kill tiến trình %d" % pid_int})
     except ProcessLookupError:
         return jsonify({"error": "Tiến trình không tồn tại"}), 404
     except PermissionError:
@@ -8037,9 +8065,11 @@ def api_torrent_control():
             return jsonify({"error": "Thiếu hash"}), 400
 
         qbt_base = "http://127.0.0.1:8080/api/v2"
+        qbt_user = os.environ.get("QBT_USER", "admin")
+        qbt_pass = os.environ.get("QBT_PASS", "adminadmin")
 
-        # Stệp 1: Login to qBittorrent to get SID cookie
-        login_data = urllib.parse.urlencode({"username": "admin", "password": "adminadmin"}).encode("utf-8")
+        # Step 1: Login to qBittorrent to get SID cookie
+        login_data = urllib.parse.urlencode({"username": qbt_user, "password": qbt_pass}).encode("utf-8")
         login_req = urllib.request.Request("%s/auth/login" % qbt_base, data=login_data)
         login_resp = urllib.request.urlopen(login_req, timeout=5)
         sid_cookie = ""

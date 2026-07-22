@@ -487,23 +487,25 @@ class SystemMonitorViewModel(
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val currentObj = json.optJSONObject("current") ?: json
                     withContext(Dispatchers.Main) {
                         diskHealthCurrent = DiskHealthSample(
                             ts = System.currentTimeMillis(),
                             datetime = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
-                            score = json.optInt("score", 0),
-                            smartStatus = json.optString("smart_status", "unknown"),
-                            tempC = json.optInt("temperature", 0).takeIf { it > 0 },
-                            powerOnHours = json.optInt("power_on_hours", 0).takeIf { it > 0 },
-                            reallocatedSectors = json.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
-                            pendingSectors = json.optJSONObject("watch_fields")?.optInt("pending_sectors"),
-                            offlineUncorrectable = json.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
-                            udmaCrcErr = json.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
-                            commandTimeout = json.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                            score = currentObj.optInt("score", 0),
+                            smartStatus = currentObj.optString("smart_status", "unknown"),
+                            tempC = currentObj.optInt("temperature", 0).takeIf { it > 0 }
+                                ?: currentObj.optInt("temp_c", 0).takeIf { it > 0 },
+                            powerOnHours = currentObj.optInt("power_on_hours", 0).takeIf { it > 0 },
+                            reallocatedSectors = currentObj.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                            pendingSectors = currentObj.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                            offlineUncorrectable = currentObj.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                            udmaCrcErr = currentObj.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                            commandTimeout = currentObj.optJSONObject("watch_fields")?.optInt("command_timeout"),
                             ext4ErrorsRecent = diskHealthCurrent?.ext4ErrorsRecent ?: 0,
                             sataResetsRecent = diskHealthCurrent?.sataResetsRecent ?: 0,
                             ioErrorsRecent = diskHealthCurrent?.ioErrorsRecent ?: 0,
-                            warnings = (json.optJSONArray("warnings")?.let { arr ->
+                            warnings = (currentObj.optJSONArray("warnings")?.let { arr ->
                                 (0 until arr.length()).mapNotNull { arr.optString(it) }
                             } ?: emptyList())
                         )
@@ -526,7 +528,12 @@ class SystemMonitorViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
-                    val arr = org.json.JSONArray(body)
+                    val arr = try {
+                        val json = org.json.JSONObject(body)
+                        json.optJSONArray("samples") ?: org.json.JSONArray()
+                    } catch (e: Exception) {
+                        org.json.JSONArray(body)
+                    }
                     withContext(Dispatchers.Main) {
                         diskHealthHistory = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             DiskHealthSample(
@@ -570,13 +577,18 @@ class SystemMonitorViewModel(
                     }
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
-                    val arr = org.json.JSONArray(body)
+                    val arr = try {
+                        val json = org.json.JSONObject(body)
+                        json.optJSONArray("backups") ?: org.json.JSONArray()
+                    } catch (e: Exception) {
+                        org.json.JSONArray(body)
+                    }
                     withContext(Dispatchers.Main) {
                         nasConfigBackups = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             NasConfigBackup(
                                 filename = it.optString("filename", ""),
                                 createdAt = it.optString("created_at", ""),
-                                sizeBytes = it.optLong("size_bytes", 0L),
+                                sizeBytes = if (it.has("size")) it.optLong("size", 0L) else it.optLong("size_bytes", 0L),
                                 sizeHuman = it.optString("size_human", "--"),
                                 mtime = it.optDouble("mtime", 0.0)
                             )

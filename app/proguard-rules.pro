@@ -69,14 +69,13 @@
 -keep class com.nas.naswebdav.AppConfig { *; }
 -keep class com.nas.naswebdav.SmartNetworkManager { *; }
 
-# ─── Application & ViewModel tổng quan ───────────────────────────────────────
+# ─── Application & ViewModels ────────────────────────────────────────────────
 -keep class com.nas.naswebdav.NasApplication { *; }
 -keep class com.nas.naswebdav.WebDavViewModel { *; }
 -keep class com.nas.naswebdav.WebDavManager { *; }
--keepclassmembers class com.nas.naswebdav.** {
-    public *;
-    internal *;
-}
+-keep class com.nas.naswebdav.**.*ViewModel { *; }
+-keep class com.nas.naswebdav.**.*Entity { *; }
+-keep class com.nas.naswebdav.data.** { *; }
 
 # ─── SMB Library (smbj) missing classes ─────────────────────────────────────
 -dontwarn org.ietf.jgss.**
