@@ -14131,7 +14131,44 @@ def _auto_resource_reclaimer_thread():
             log.warning("[ResourceReclaimer] Lỗi: %s" % str(e))
 
 
+def _get_ssl_config():
+    """P1-1: Resolves SSL certificate and key paths for HTTPS/WSS if present."""
+    cert = os.environ.get("NAS_SSL_CERT", "")
+    key = os.environ.get("NAS_SSL_KEY", "")
+    if cert and key and os.path.exists(cert) and os.path.exists(key):
+        return cert, key
+
+    default_certs = [
+        ("/etc/ssl/certs/nas_api.crt", "/etc/ssl/private/nas_api.key"),
+        ("/opt/nas_api.crt", "/opt/nas_api.key"),
+        ("/var/www/webdav/nas_api.crt", "/var/www/webdav/nas_api.key")
+    ]
+    for c, k in default_certs:
+        if os.path.exists(c) and os.path.exists(k):
+            return c, k
+    return None, None
+
+
 def run_flask():
+    cert, key = _get_ssl_config()
+    if cert and key:
+        try:
+            import ssl
+            import tornado.wsgi
+            import tornado.httpserver
+            import tornado.ioloop
+
+            ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+            ssl_ctx.load_cert_chain(certfile=cert, keyfile=key)
+            container = tornado.wsgi.WSGIContainer(app)
+            http_server = tornado.httpserver.HTTPServer(container, ssl_options=ssl_ctx)
+            http_server.listen(5050)
+            log.info("[HTTPS] Flask API Server running with SSL/TLS (Tornado WSGI) on port 5050")
+            tornado.ioloop.IOLoop.current().start()
+            return
+        except Exception as e:
+            log.warning("[HTTPS] SSL setup for Flask failed (%s), falling back to Waitress HTTP" % str(e))
+
     try:
         from waitress import serve
         serve(app, host="0.0.0.0", port=5050, threads=6, connection_limit=50)
@@ -14216,7 +14253,21 @@ if __name__ == "__main__":
     _ws_sock.bind((bind_host, 5051))
     _ws_sock.listen(128)
     _ws_sock.setblocking(False)
-    ws_server = tornado.httpserver.HTTPServer(ws_app)
+
+    cert, key = _get_ssl_config()
+    ws_ssl_opts = None
+    if cert and key:
+        try:
+            import ssl
+            ws_ssl_opts = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+            ws_ssl_opts.load_cert_chain(certfile=cert, keyfile=key)
+            log.info("[HTTPS] WebSocket Alert Server running with WSS (TLS) on port 5051")
+        except Exception as _e:
+            log.warning("[HTTPS] SSL setup for WebSocket failed: %s" % str(_e))
+            ws_ssl_opts = None
+
+    ws_server = tornado.httpserver.HTTPServer(ws_app, ssl_options=ws_ssl_opts)
     ws_server.add_socket(_ws_sock)
     log.info("Server đã khởi động thành công!")
     main_loop.start()
+

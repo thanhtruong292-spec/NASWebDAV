@@ -194,8 +194,8 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] P0-9: JsonReader wrap `.use {}`
 - [x] P0-10: Fix executor leak trong UncaughtExceptionHandler
 
-## P1 Pre-Production (Before public release) — commit `226ce7c8`
-- [ ] P1-1: HTTPS cho nas_api_server.py (Cấu hình TLS/SSL tự cấp hoặc Reverse Proxy Nginx)
+## P1 Pre-Production (Before public release) — ALL P1 ITEMS COMPLETED ✅
+- [x] P1-1: HTTPS cho nas_api_server.py (Cấu hình TLS/SSL tự cấp hoặc Reverse Proxy Nginx, fallback HTTP)
 - [x] P1-2/3: Xóa duplicate functions (`_target_hdd_devname`, `_read_io_stats`)
 - [x] P1-4/5/6/7: Eviction policies cho 4 cache dicts (`recent_auth_ips` 1h, ARP TTL, smart_organize_jobs 2h, social_jobs daemon 5m)
 - [x] P1-8/9: Context manager cho open() calls (thumbnail FD + cache_f try/finally)
