@@ -135,17 +135,17 @@ Estimate: 3–5 days. Not blocking release if Phase 1+2 complete.
 |---|---------|---------|-------------|----------|
 | P3-12 | Livestream checkResponseOk naming | `LivestreamViewModel.kt:185` | Renamed to `throwOnUnsuccessfulResponse` in `b9f4fff0`. | ✅ |
 | P3-13 | Duplicated Livestream HTTP pattern | `LivestreamViewModel.kt` (5 methods) | `throwOnUnsuccessfulResponse` helper extracted in `2ee4e35b`. | ✅ |
-| P3-14 | Duplicated AutoDuplicate try-catch shape | `AutoDuplicateScanWorker.kt:202-239` | MOVE and DELETE try-catch share identical request-build/execute/log shape. | P3 |
-| P3-15 | Data Clumps in AutoDuplicateScanWorker | — | `(manager, sourceUrl, user, pass)` tuple travels together. | P3 |
+| P3-14 | Duplicated AutoDuplicate try-catch shape | `AutoDuplicateScanWorker.kt` | Extracted `executeWebDavRequest` helper in `fd5c757a`. | ✅ |
+| P3-15 | Data Clumps in AutoDuplicateScanWorker | `AutoDuplicateScanWorker.kt` | Encapsulated into `WebDavAuthContext` in `fd5c757a`. | ✅ |
 
 ## P3-E: Python backend maintenance
 
 | # | Finding | File(s) | Description | Priority |
 |---|---------|---------|-------------|----------|
-| P3-16 | `check_auth` uses `&` instead of `and` | `nas_api_server.py:1444` | Bitwise on booleans; works but unconventional. | P3 |
-| P3-17 | `NAS_TMP_ROOT` on /tmp (tmpfs/RAM) | `nas_api_server.py:499` | Misleading name `_make_hdd_tmp_dir`; large files eat RAM. | P3 |
-| P3-18 | Credential/config path logged at INFO | `nas_api_server.py:14095,1294` | Username + config path in systemd journal. | P3 |
-| P3-19 | `api_media_fast` file handle leak | `nas_api_server.py:8960` | No context manager on open(). | P3 |
+| P3-16 | `check_auth` uses `&` instead of `and` | `nas_api_server.py` | Evaluated digests separately; combined with `and` in `fd5c757a`. | ✅ |
+| P3-17 | `NAS_TMP_ROOT` on /tmp (tmpfs/RAM) | `nas_api_server.py` | Routed temp files to HDD `.naswebdav/nas_meta_tmp` in `fd5c757a`. | ✅ |
+| P3-18 | Credential/config path logged at INFO | `nas_api_server.py` | Masked config path in warning logs in `fd5c757a`. | ✅ |
+| P3-19 | `api_media_fast` file handle leak | `nas_api_server.py` | Wrapped `open()` safely in generator in `fd5c757a`. | ✅ |
 
 ---
 
