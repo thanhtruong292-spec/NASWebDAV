@@ -637,7 +637,7 @@ class SystemMonitorViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     was404 = resp.code == 404
                     isOk = resp.isSuccessful
-                    val errStr = if (!isOk) runCatching { org.json.JSONObject(resp.body?.string() ?: "").optString("error") }.getOrNull() else null
+                    val errStr = if (!isOk) WebDavManager.extractApiError(resp) else null
                     withContext(Dispatchers.Main) {
                         nasConfigBackupMessage = when {
                             isOk -> "Đã xóa bản sao lưu $filename"

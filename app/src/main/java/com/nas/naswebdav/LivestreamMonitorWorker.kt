@@ -301,12 +301,12 @@ class LivestreamMonitorWorker(
             }
         }
 
-        // Hiện thông báo hoàn tất tùy theo kết quả
-        clearJobNotifications(applicationContext, jobId)
-
         if (isStopped) {
             return@withContext Result.retry()
         }
+
+        // Hiện thông báo hoàn tất tùy theo kết quả
+        clearJobNotifications(applicationContext, jobId)
 
         if (finalStatus == "error") {
             val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được video. Nguồn livestream rỗng hoặc yt-dlp báo lỗi."

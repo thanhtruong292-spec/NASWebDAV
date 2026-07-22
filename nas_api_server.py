@@ -10986,21 +10986,28 @@ def _get_hdd_config_dir():
                 if os.path.isdir(disk_path):
                     config_dir = os.path.join(disk_path, ".naswebdav")
                     try:
-                        os.makedirs(config_dir, mode=0o755, exist_ok=True)
+                        os.makedirs(config_dir, mode=0o700, exist_ok=True)
+                        try:
+                            os.chmod(config_dir, 0o700)
+                        except Exception:
+                            pass
                         return config_dir
                     except Exception:
                         pass
-    fallback_dir = "/var/lib/nas_api"
-    os.makedirs(fallback_dir, mode=0o755, exist_ok=True)
-    return fallback_dir
+    return None
 
-GUEST_PASSES_FILE = os.path.join(_get_hdd_config_dir(), "guest_passes.json")
+def _get_guest_passes_file():
+    hdd_dir = _get_hdd_config_dir()
+    if hdd_dir:
+        return os.path.join(hdd_dir, "guest_passes.json")
+    return None
 
 def _load_guest_passes():
     global _guest_passes
-    if os.path.exists(GUEST_PASSES_FILE):
+    file_path = _get_guest_passes_file()
+    if file_path and os.path.exists(file_path):
         try:
-            with open(GUEST_PASSES_FILE, "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
                 now = time.time()
                 valid = {}
@@ -11015,12 +11022,16 @@ def _load_guest_passes():
             log.warning("[GuestPass] Error loading guest passes: %s", e)
 
 def _save_guest_passes():
+    file_path = _get_guest_passes_file()
+    if not file_path:
+        log.warning("[GuestPass] Skip saving guest passes: No HDD partition mounted to prevent eMMC wear.")
+        return
     try:
         with _guest_lock:
             data = dict(_guest_passes)
-        with open(GUEST_PASSES_FILE, "w", encoding="utf-8") as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        os.chmod(GUEST_PASSES_FILE, 0o600)
+        os.chmod(file_path, 0o600)
     except Exception as e:
         log.warning("[GuestPass] Error saving guest passes: %s", e)
 
