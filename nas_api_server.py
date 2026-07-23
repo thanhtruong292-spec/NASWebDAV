@@ -13833,6 +13833,7 @@ def api_ytdlp_download():
             pass
 
         # Format chat luồng: uu tien mp4 HD, fallback best
+        quality = body.get("quality", "video").strip().lower()
         format_str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
         if quality == "audio":
             format_str = "bestaudio[ext=m4a]/bestaudio"

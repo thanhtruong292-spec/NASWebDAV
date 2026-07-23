@@ -89,7 +89,11 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     allSuccess = false
                 }
             }
-            if (allSuccess) Result.success() else Result.retry()
+            if (allSuccess) Result.success() else {
+                // Tránh retry vô hạn: sau 3 lần thất bại liên tiếp, báo failure hẳn
+                // thay vì để WorkManager exponential-backoff retry mãi mãi.
+                if (runAttemptCount >= 3) Result.failure() else Result.retry()
+            }
         } finally {
             setThumbnailActivity("sync", false)
         }
