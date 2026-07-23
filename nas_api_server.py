@@ -11769,17 +11769,39 @@ def _fan_controller_watchdog():
             force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
             if force_hot:
                 target_percent = 100
-            elif control_temp >= on_temp + 10.0:
-                target_percent = 100
-            elif control_temp >= on_temp + 5.0:
-                target_percent = 60
-            elif control_temp >= on_temp:
-                target_percent = 30
-            elif control_temp <= off_temp:
-                target_percent = 0
+            elif mode == "custom":
+                # Logic Chế độ Tùy Chỉnh (Custom Mode):
+                # - Đến mốc trên (>= on_temp) mới BẬT quạt.
+                # - Đến mốc dưới (<= off_temp) mới DỪNG quạt.
+                # - Ở giữa khoảng (off_temp < temp < on_temp): nếu quạt đang tắt -> KHÔNG CHẠY (0%).
+                if control_temp >= on_temp + 10.0:
+                    target_percent = 100
+                elif control_temp >= on_temp + 5.0:
+                    target_percent = 60
+                elif control_temp >= on_temp:
+                    target_percent = 30
+                elif control_temp <= off_temp:
+                    target_percent = 0
+                else:
+                    if last_applied_percent in (0, None):
+                        target_percent = 0  # Chưa chạm mốc trên -> KHÔNG CHẠY
+                    else:
+                        target_percent = last_applied_percent  # Đang chạy -> giữ nguyên cho tới khi <= off_temp
             else:
-                # Hysteresis: Giữ nguyên mức quạt trước đó khi ở vùng chết giữa off_temp và on_temp
-                target_percent = last_applied_percent if last_applied_percent is not None else 0
+                # Logic Chế độ Tự động (Auto Mode)
+                if control_temp >= on_temp + 10.0:
+                    target_percent = 100
+                elif control_temp >= on_temp + 5.0:
+                    target_percent = 60
+                elif control_temp >= on_temp:
+                    target_percent = 30
+                elif control_temp <= off_temp:
+                    target_percent = 0
+                else:
+                    if last_applied_percent in (0, None):
+                        target_percent = 0
+                    else:
+                        target_percent = min(last_applied_percent, 30)
 
             if mode != last_mode:
                 last_target_percent = None
