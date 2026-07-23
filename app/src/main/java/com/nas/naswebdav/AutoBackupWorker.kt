@@ -54,7 +54,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         // run as background work → killed by system within seconds.
         try {
             setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy..."))
-        } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             val isFatal = when {
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
                     e.javaClass.name.contains("ForegroundService") || e.javaClass.name.contains("ForegroundServiceType")
@@ -132,7 +132,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     if (!createdFolders.contains(currentPath)) {
                         try {
                             webDavManager.createFolder(currentPath)
-                        } catch (e: Exception) {
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
                             // Ignored (thư mục có thể đã tồn tại)
                         }
                         createdFolders.add(currentPath)

@@ -149,8 +149,10 @@ class DeviceManagementViewModel(
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("DeviceMgmt", "toggleSmb failed: ${e.message}")
-                isSmbEnabled = !enabled // revert
-                isLoadingSmb = false
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    isSmbEnabled = !enabled // revert
+                    isLoadingSmb = false
+                }
             }
         }
     }

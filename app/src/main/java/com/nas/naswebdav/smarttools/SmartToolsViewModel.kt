@@ -368,7 +368,7 @@ class SmartToolsViewModel(
                     .post(json).build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-            thumbRunning = false
+            withContext(Dispatchers.Main) { thumbRunning = false }
         }
     }
 

@@ -70,7 +70,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(currentUrl, user, pass))) {
             try {
                 setForeground(makeForegroundInfo(channelId, "Quét dọn hệ thống", notificationId, "Đang quét dữ liệu trùng lặp..."))
-            } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
             val webDavManager = WebDavManager
         setThumbnailActivity("sync", true)
@@ -108,7 +108,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         webDavManager.deleteFile(item.path, item.isDirectory)
                     }
                 }
-            } catch (e: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
 
             // ═══════════════════════════════════════════════════
             // BIẾN THEO DÕI TIẾN TRÌNH CHÍNH XÁC
@@ -456,7 +456,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                 lastCheckpointTime.set(now)
                                             }
                                             
-                                        } catch (e: Exception) {}
+                                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                                     }
                                 }
                             }
