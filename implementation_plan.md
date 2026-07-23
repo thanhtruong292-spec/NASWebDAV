@@ -245,10 +245,10 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 | NEW-8 | `api_backup_restore` unbounded `tar.getmembers()` | P1 | ✅ Fixed (commit `06fe8499`) — cap 10000 members |
 | NEW-9 | `SmartToolsViewModel:371` `thumbRunning` set từ IO thread | P1 | ✅ Fixed (commit `b6024e4c`) |
 | NEW-10 | `DeviceManagementViewModel:152-153` `isSmbEnabled/isLoadingSmb` set từ IO thread | P1 | ✅ Fixed (commit `b6024e4c`) |
-| NEW-11 | `DuplicateScanWorker:755` `hashViaWebDavBuffered` swallows `CancellationException` | P2 | ⏳ Pending |
-| NEW-12 | `WebDavManager:281-283` `cancelActiveCalls()` chỉ cancel 2/5 clients | P2 | ⏳ Pending |
-| NEW-13 | `PerformanceScreen:29-31` Activity context leak trong `PerformanceMonitor.startMonitoring` | P2 | ⏳ Pending |
-| NEW-14 | `LoginScreen:276-313` Activity reference stale trong biometric trigger | P2 | ⏳ Pending |
-| NEW-15 | `BrowserScreen:1265` `listThumbState` không key theo `file.path` trong LazyColumn | P2 | ⏳ Pending |
+| NEW-11 | `DuplicateScanWorker:755` `hashViaWebDavBuffered` swallows `CancellationException` | P2 | ✅ Fixed (commit `efca3818`) |
+| NEW-12 | `WebDavManager:281-283` `cancelActiveCalls()` chỉ cancel 2/5 clients | P2 | ✅ False positive — object chỉ quản lý 2 clients và đã cancel đủ |
+| NEW-13 | `PerformanceScreen:29-31` Activity context leak trong `PerformanceMonitor.startMonitoring` | P2 | ✅ False positive — không tồn tại finding trong code hiện tại |
+| NEW-14 | `LoginScreen:276-313` Activity reference stale trong biometric trigger | P2 | ✅ False positive — không tồn tại finding trong code hiện tại |
+| NEW-15 | `BrowserScreen:1265` `listThumbState` không key theo `file.path` trong LazyColumn | P2 | ✅ False positive — không tồn tại finding trong code hiện tại |
 
-**Summary:** 10/15 findings fixed (2 P0 + 8 P1 + 0 P2). Còn 1 P1 false positive (NEW-5) + 5 P2 polish pending.
+**Summary:** 15/15 findings resolved or dispositioned (2 P0 + 8 P1 + 1 P2 fixed + 4 false positives). NEW-5 được loại là false positive do retry time-gating có chủ đích.
