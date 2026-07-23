@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 15,
-    "identityHash": "9bb0ee284208de2d5ff08bd87d90a514",
+    "identityHash": "27a9a2bb6e7746eb89bca568f757c7cf",
     "entities": [
       {
         "tableName": "files_cache",
@@ -29,8 +29,7 @@
           {
             "fieldPath": "contentType",
             "columnName": "contentType",
-            "affinity": "TEXT",
-            "notNull": false
+            "affinity": "TEXT"
           },
           {
             "fieldPath": "parentPath",
@@ -53,20 +52,17 @@
           {
             "fieldPath": "partialHash",
             "columnName": "partialHash",
-            "affinity": "TEXT",
-            "notNull": false
+            "affinity": "TEXT"
           },
           {
             "fieldPath": "fullHash",
             "columnName": "fullHash",
-            "affinity": "TEXT",
-            "notNull": false
+            "affinity": "TEXT"
           },
           {
             "fieldPath": "imageFingerprint",
             "columnName": "imageFingerprint",
-            "affinity": "TEXT",
-            "notNull": false
+            "affinity": "TEXT"
           },
           {
             "fieldPath": "timestamp",
@@ -118,8 +114,7 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_files_cache_name` ON `${TABLE_NAME}` (`name`)"
           }
-        ],
-        "foreignKeys": []
+        ]
       },
       {
         "tableName": "system_logs",
@@ -161,9 +156,7 @@
           "columnNames": [
             "id"
           ]
-        },
-        "indices": [],
-        "foreignKeys": []
+        }
       },
       {
         "tableName": "scan_checkpoints",
@@ -205,9 +198,7 @@
           "columnNames": [
             "workerName"
           ]
-        },
-        "indices": [],
-        "foreignKeys": []
+        }
       },
       {
         "tableName": "thumbnail_cache",
@@ -237,9 +228,7 @@
           "columnNames": [
             "url"
           ]
-        },
-        "indices": [],
-        "foreignKeys": []
+        }
       },
       {
         "tableName": "file_fingerprints",
@@ -301,8 +290,7 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_file_fingerprints_fileName` ON `${TABLE_NAME}` (`fileName`)"
           }
-        ],
-        "foreignKeys": []
+        ]
       },
       {
         "tableName": "sync_queue",
@@ -329,8 +317,7 @@
           {
             "fieldPath": "destPath",
             "columnName": "destPath",
-            "affinity": "TEXT",
-            "notNull": false
+            "affinity": "TEXT"
           },
           {
             "fieldPath": "status",
@@ -350,9 +337,7 @@
           "columnNames": [
             "id"
           ]
-        },
-        "indices": [],
-        "foreignKeys": []
+        }
       },
       {
         "tableName": "hash_cache",
@@ -388,9 +373,7 @@
           "columnNames": [
             "path"
           ]
-        },
-        "indices": [],
-        "foreignKeys": []
+        }
       },
       {
         "tableName": "trash_meta",
@@ -421,14 +404,22 @@
             "trashPath"
           ]
         },
-        "indices": [],
-        "foreignKeys": []
+        "indices": [
+          {
+            "name": "index_trash_meta_originalPath",
+            "unique": false,
+            "columnNames": [
+              "originalPath"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_trash_meta_originalPath` ON `${TABLE_NAME}` (`originalPath`)"
+          }
+        ]
       }
     ],
-    "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9bb0ee284208de2d5ff08bd87d90a514')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '27a9a2bb6e7746eb89bca568f757c7cf')"
     ]
   }
 }
