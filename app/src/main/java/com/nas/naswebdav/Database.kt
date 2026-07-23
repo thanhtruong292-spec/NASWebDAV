@@ -319,7 +319,10 @@ interface SyncActionDao {
 }
 
 // ================= TRASH META — Lưu path gốc để restore đúng vị trí =================
-@Entity(tableName = "trash_meta")
+@Entity(
+    tableName = "trash_meta",
+    indices = [Index(value = ["originalPath"])]
+)
 data class TrashMeta(
     @PrimaryKey val trashPath: String,
     val originalPath: String,
@@ -333,6 +336,9 @@ interface TrashMetaDao {
 
     @Query("SELECT * FROM trash_meta WHERE trashPath = :trashPath LIMIT 1")
     fun findByTrashPath(trashPath: String): TrashMeta?
+
+    @Query("SELECT * FROM trash_meta WHERE originalPath = :originalPath LIMIT 1")
+    fun findByOriginalPath(originalPath: String): TrashMeta?
 
     @Query("DELETE FROM trash_meta WHERE trashPath = :trashPath")
     fun deleteByTrashPath(trashPath: String)
