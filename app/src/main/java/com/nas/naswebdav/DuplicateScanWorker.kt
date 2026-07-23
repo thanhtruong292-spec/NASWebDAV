@@ -752,7 +752,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     bufferHashCache.add(HashCache(dup.path, dup.contentLength, dup.lastModified, finalHash))
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
     }
 
 }
