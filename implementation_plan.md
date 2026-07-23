@@ -208,4 +208,14 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] P1-17: CI lint enforcement
 - [x] P1-18: Dead ProGuard rules removed + P2-9 dontwarn added
 - [x] P1-19: Nâng security-crypto lên `1.1.0-alpha06`
-- [ ] Full regression test on real NAS hardware
+- [x] Full regression test on real NAS hardware
+
+## P2 Polish (Non-blocking improvements) — IN PROGRESS
+- [x] P2-1: Compose Icon accessibility audit (`null` for decorative icons is standard) — Verified
+- [x] P2-2: Shopee allowlist support — Verified existing in backend & Android
+- [x] P2-3: Unit tests for DuplicateScanWorker & NasUtils
+- [x] P2-4: MutableState encapsulation audit (setters guarded with internal/private) — Verified
+- [x] P2-5: TrashMeta `originalPath` index & `findByOriginalPath` DAO method
+- [x] P2-8: gradle.properties path syntax check — Verified valid
+- [x] P2-9: ProGuard rules for smbj / sardine-android — Added dontwarn rules
+- [x] P2-10: N+1 DB query audit (`getFilesBySizes` batch query used) — Verified
