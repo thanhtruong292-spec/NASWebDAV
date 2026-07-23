@@ -7989,6 +7989,9 @@ def api_backup_restore():
                 file_map[arcname] = src
 
             for member in tar.getmembers():
+                if len(restored) + len(errors) > 10000:
+                    errors.append({"file": member.name, "reason": "vượt quá giới hạn 10000 file trong backup"})
+                    break
                 if member.name == "manifest.json" or not member.isfile():
                     continue
                 dest = file_map.get(member.name)
@@ -8611,7 +8614,9 @@ def api_torrent_add_file():
             return jsonify({"error": "File không có tên"}), 400
         if not fname.lower().endswith(".torrent"):
             return jsonify({"error": "File phai co duoi .torrent"}), 400
-        content = f.read()
+        content = f.read(50 * 1024 * 1024 + 1)
+        if len(content) > 50 * 1024 * 1024:
+            return jsonify({"error": "File torrent vượt quá giới hạn 50MB"}), 413
         if not content or len(content) < 64:
             return jsonify({"error": "File torrent rong hoac qua nho"}), 400
         # qBittorrent magic: torrent file bat dau bang 'd' (bencode dict)
@@ -13888,7 +13893,7 @@ def api_ytdlp_download():
                 env=_job_env_with_tmp(tmp_dir)
             )
 
-        job_id = str(int(time.time()))
+        job_id = "ytdlp_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:8])
         with _ytdlp_lock:
             _ytdlp_jobs[job_id] = {
                 "url": video_url,
