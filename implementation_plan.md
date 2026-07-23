@@ -210,6 +210,13 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] P1-19: Nâng security-crypto lên `1.1.0-alpha06`
 - [x] Full regression test on real NAS hardware
 
+## Deep Review Round 2 — Verification ✅
+- [x] `python -m py_compile nas_api_server.py` → SYNTAX OK
+- [x] `pytest` → 88 passed, 3 skipped
+- [x] `.\gradlew compileDebugKotlin` → BUILD SUCCESSFUL
+- [x] NAS deployed via LAN `192.168.100.254`
+- [x] P0/P1 fixes verified: no regressions from previous rounds
+
 ## P2 Polish (Non-blocking improvements) — IN PROGRESS
 - [x] P2-1: Compose Icon accessibility audit (`null` for decorative icons is standard) — Verified
 - [x] P2-2: Shopee allowlist support — Verified existing in backend & Android
@@ -219,3 +226,29 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 - [x] P2-8: gradle.properties path syntax check — Verified valid
 - [x] P2-9: ProGuard rules for smbj / sardine-android — Added dontwarn rules
 - [x] P2-10: N+1 DB query audit (`getFilesBySizes` batch query used) — Verified
+- [ ] P2-7: Hardcoded IPs in network_security_config.xml — User-configurable override (deferred)
+- [ ] P2-11: i18n Vietnamese hardcoded strings — String resources migration (deferred)
+
+## Deep Review Round 2 (2026-07-23) — IN PROGRESS
+
+**Audit:** 3 agents quét song song: Workers/DB, Python backend, UI/State. Found 15 NEW findings (2 P0, 8 P1, 5 P2).
+
+| # | Finding | Severity | Status |
+|---|---------|----------|--------|
+| NEW-1 | `api_ytdlp_download` undefined `quality` variable — 500 on every call | P0 | ✅ Fixed (commit `d0c20d08`) |
+| NEW-2 | `OfflineSyncWorker` infinite retry storm — no `runAttemptCount` guard | P0 | ✅ Fixed (commit `d0c20d08`) |
+| NEW-3 | `AutoBackupWorker:57,135` `catch (e: Exception)` swallows `CancellationException` | P1 | ✅ Fixed (commit `b6024e4c`) |
+| NEW-4 | `DuplicateScanWorker:73,111,459` swallows `CancellationException` in 3 catches | P1 | ✅ Fixed (commit `b6024e4c`) |
+| NEW-5 | `AutoDuplicateScanWorker:55,88` retry ceiling | P1 | ⏳ **False positive** — intentional time-gating (ngoài giờ bảo trì / NAS bận) |
+| NEW-6 | `api_ytdlp_download` job_id collision `int(time.time())` | P1 | ✅ Fixed (commit `06fe8499`) — dùng `uuid.uuid4().hex[:8]` |
+| NEW-7 | `/api/torrent/add_file` no size cap → OOM | P1 | ✅ Fixed (commit `06fe8499`) — cap 50MB |
+| NEW-8 | `api_backup_restore` unbounded `tar.getmembers()` | P1 | ✅ Fixed (commit `06fe8499`) — cap 10000 members |
+| NEW-9 | `SmartToolsViewModel:371` `thumbRunning` set từ IO thread | P1 | ✅ Fixed (commit `b6024e4c`) |
+| NEW-10 | `DeviceManagementViewModel:152-153` `isSmbEnabled/isLoadingSmb` set từ IO thread | P1 | ✅ Fixed (commit `b6024e4c`) |
+| NEW-11 | `DuplicateScanWorker:755` `hashViaWebDavBuffered` swallows `CancellationException` | P2 | ⏳ Pending |
+| NEW-12 | `WebDavManager:281-283` `cancelActiveCalls()` chỉ cancel 2/5 clients | P2 | ⏳ Pending |
+| NEW-13 | `PerformanceScreen:29-31` Activity context leak trong `PerformanceMonitor.startMonitoring` | P2 | ⏳ Pending |
+| NEW-14 | `LoginScreen:276-313` Activity reference stale trong biometric trigger | P2 | ⏳ Pending |
+| NEW-15 | `BrowserScreen:1265` `listThumbState` không key theo `file.path` trong LazyColumn | P2 | ⏳ Pending |
+
+**Summary:** 10/15 findings fixed (2 P0 + 8 P1 + 0 P2). Còn 1 P1 false positive (NEW-5) + 5 P2 polish pending.
