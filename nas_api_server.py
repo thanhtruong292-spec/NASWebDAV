@@ -45,6 +45,9 @@ try:
 except ImportError:
     ssl = None
 
+import socket
+import socket as _socket
+
 def _get_process_name(pid_int):
     if psutil is not None:
         try:
@@ -4470,10 +4473,38 @@ def _fan_status_for_percent(percent):
     return "Đang chạy %d%% - Tốc độ: %d rpm" % (level, rpm)
 
 
+def _pwm_apply_level(percent):
+    """Bật/tắt PWM an toàn theo đúng thứ tự Kernel RK3328: export -> period -> duty -> enable -> GPIO power."""
+    try:
+        pct = max(0, min(100, int(percent)))
+    except Exception:
+        pct = 0
+
+    if pct <= 0:
+        _pwm_apply_off()
+        return
+
+    _fan_power_set(True)
+    _pwm_export_if_needed()
+
+    period = 10000
+    duty = _fan_pwm_duty(pct)
+
+    try:
+        with open(os.path.join(PWM_PATH, "period")) as f:
+            cur_period = int(f.read().strip() or "0")
+    except Exception:
+        cur_period = 0
+
+    if cur_period < duty or cur_period != period:
+        _pwm_write("period", period)
+
+    _pwm_write("duty_cycle", duty)
+    _pwm_write("enable", 1)
+
+
 def _pwm_apply_off():
-    """Tất ho?n to?n PWM: duty=0 truoc, enable=0 sau de pin ve LOW va peripheral
-    ngung output. Tren rk3328 Chainedbox phai ca hai buoc nay 5V moi ngat tai
-    chan ra quat."""
+    """Tắt hoàn toàn PWM: duty=0 trước, enable=0 sau để pin về LOW và peripheral ngưng output."""
     _pwm_export_if_needed()
     _pwm_write("duty_cycle", 0)
     _pwm_write("enable", 0)
@@ -4481,20 +4512,8 @@ def _pwm_apply_off():
 
 
 def _pwm_apply_on(duty=10000, period=10000):
-    """Bắt PWM: period -> duty -> enable. Kernel yeu cau duty <= period nen phai
-    cap nhat period truoc neu can tang duty. enable=1 cuoi cung."""
-    _fan_power_set(True)
-    _pwm_export_if_needed()
-    # Đọc period hien tai; chi ghi neu nho hon duty mong muon (trảnh ghi -EINVAL).
-    try:
-        with open(os.path.join(PWM_PATH, "period")) as f:
-            cur_period = int(f.read().strip() or "0")
-    except Exception:
-        cur_period = 0
-    if cur_period < duty:
-        _pwm_write("period", period)
-    _pwm_write("duty_cycle", duty)
-    _pwm_write("enable", 1)
+    """Bật 100% PWM."""
+    _pwm_apply_level(100)
 
 
 # ============================================================================
@@ -11824,15 +11843,7 @@ def _fan_controller_watchdog():
                 time.sleep(1)
                 continue
 
-            duty = _fan_pwm_duty(target_percent)
-            if duty > 0:
-                _fan_power_set(True)
-                _pwm_write("enable", 1)
-                with open("/sys/class/pwm/pwmchip0/pwm0/duty_cycle", "w") as f:
-                    f.write(str(duty))
-            else:
-                _pwm_apply_off()
-
+            _pwm_apply_level(target_percent)
             last_applied_percent = target_percent
 
             # RULE 11: Cập nhật _status_cache thời gian thực trong khối _cache_lock
