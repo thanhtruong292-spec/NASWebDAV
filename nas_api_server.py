@@ -2284,11 +2284,6 @@ def get_fan_info():
             pass
             
         mode = settings.get("mode", "auto")
-        
-        # Kiểm tra thuc te
-        out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
-        if out == "active":
-            mode = "auto"
 
         if os.path.exists(duty_path):
             with open(duty_path) as f:
@@ -11706,13 +11701,18 @@ def _livestream_watchdog():
             _add_system_log_once("livestream_watchdog_exception", "ERROR", "Livestream", "Watchdog livestream loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
 
 def _fan_controller_watchdog():
-    """Tien trinh ngam dieu khien quat theo HDD temp cho auto/custom (Hysteresis)."""
-    stable_seconds = 4.0
-    service_check_ts = 0.0
+    """Tien trinh ngam dieu khien quat theo CPU & HDD temp (Hysteresis & Stable 1s)."""
+    stable_seconds = 1.0
     last_mode = None
     last_target_percent = None
     target_since_ts = 0.0
     last_applied_percent = None
+
+    try:
+        run_cmd(["systemctl", "stop", "fan.service"])
+    except Exception:
+        pass
+
     while True:
         try:
             settings = _load_fan_settings()
@@ -11721,8 +11721,11 @@ def _fan_controller_watchdog():
 
             if mode == "off":
                 if last_mode != mode or last_applied_percent != 0:
-                    run_cmd(["systemctl", "stop", "fan.service"])
                     _pwm_apply_off()
+                    with _cache_lock:
+                        _status_cache['fan_percent'] = 0
+                        _status_cache['fan_rpm'] = 0
+                        _status_cache['fan_status'] = "Dừng"
                 last_mode = mode
                 last_target_percent = None
                 target_since_ts = 0.0
@@ -11732,20 +11735,20 @@ def _fan_controller_watchdog():
 
             if mode == "on":
                 if last_mode != mode or last_applied_percent != 100:
-                    run_cmd(["systemctl", "stop", "fan.service"])
                     _pwm_apply_on(duty=10000, period=10000)
+                    pct_on = 100
+                    rpm_on = _fan_rpm_for_percent(pct_on)
+                    st_on = _fan_status_for_percent(pct_on)
+                    with _cache_lock:
+                        _status_cache['fan_percent'] = pct_on
+                        _status_cache['fan_rpm'] = rpm_on
+                        _status_cache['fan_status'] = st_on
                 last_mode = mode
                 last_target_percent = 100
                 target_since_ts = now_ts
                 last_applied_percent = 100
                 time.sleep(1)
                 continue
-
-            if now_ts - service_check_ts >= 30.0:
-                service_check_ts = now_ts
-                out = safe_run_cmd(["systemctl", "is-active", "fan.service"]).strip()
-                if out == "active":
-                    subprocess.run(["systemctl", "stop", "fan.service"])
 
             on_temp = float(settings.get("on_temp", FAN_DEFAULT_ON_TEMP))
             off_temp = float(settings.get("off_temp", FAN_DEFAULT_OFF_TEMP))
@@ -11754,12 +11757,18 @@ def _fan_controller_watchdog():
 
             cpu_temp = _fan_temp_value(get_cpu_temp())
             hdd_temp = _fan_temp_value(get_hdd_temp())
-            control_temp = hdd_temp if hdd_temp > 0 else cpu_temp
+            
+            # FIX QUẠT NHẤP NHÁY: control_temp = max(CPU, HDD) khi cả 2 hợp lệ
+            if hdd_temp > 0 and cpu_temp > 0:
+                control_temp = max(cpu_temp, hdd_temp)
+            elif hdd_temp > 0:
+                control_temp = hdd_temp
+            else:
+                control_temp = cpu_temp
 
             force_hot = cpu_temp >= FAN_CPU_FORCE_ON_TEMP or hdd_temp >= FAN_HDD_FORCE_ON_TEMP
             if force_hot:
                 target_percent = 100
-                target_since_ts = now_ts
             elif control_temp >= on_temp + 10.0:
                 target_percent = 100
             elif control_temp >= on_temp + 5.0:
@@ -11769,16 +11778,8 @@ def _fan_controller_watchdog():
             elif control_temp <= off_temp:
                 target_percent = 0
             else:
-                if mode == "custom":
-                    if last_applied_percent in (0, None):
-                        target_percent = 0
-                    else:
-                        target_percent = min(last_applied_percent, 30)
-                else:
-                    if last_applied_percent in (0, None):
-                        target_percent = 0
-                    else:
-                        target_percent = 30
+                # Hysteresis: Giữ nguyên mức quạt trước đó khi ở vùng chết giữa off_temp và on_temp
+                target_percent = last_applied_percent if last_applied_percent is not None else 0
 
             if mode != last_mode:
                 last_target_percent = None
@@ -11789,11 +11790,8 @@ def _fan_controller_watchdog():
             if target_percent != last_target_percent and not force_hot:
                 last_target_percent = target_percent
                 target_since_ts = now_ts
-                log.info("[FanWatchdog] Cho on dinh %.0fs truoc khi doi quat sang %s%% (mode=%s, HDD %.1fC, CPU %.1fC, on=%.1f, off=%.1f)", stable_seconds, target_percent, mode, hdd_temp, cpu_temp, on_temp, off_temp)
-                time.sleep(1)
-                continue
-            elif force_hot:
-                last_target_percent = target_percent
+                log.info("[FanWatchdog] Đổi quạt sang %s%% (mode=%s, MaxTemp=%.1fC [CPU %.1fC, HDD %.1fC], on=%.1f, off=%.1f)",
+                         target_percent, mode, control_temp, cpu_temp, hdd_temp, on_temp, off_temp)
 
             if last_applied_percent is not None and target_percent != last_applied_percent and not force_hot:
                 if now_ts - target_since_ts < stable_seconds:
@@ -11812,9 +11810,10 @@ def _fan_controller_watchdog():
                     f.write(str(duty))
             else:
                 _pwm_apply_off()
+
             last_applied_percent = target_percent
-            # BUG FIX (Rule 11): Cap nhat _status_cache ngay sau khi ghi PWM
-            # de /api/status tra ket qua thuc te duoi 1s, khong phai gia tri cu.
+
+            # RULE 11: Cập nhật _status_cache thời gian thực trong khối _cache_lock
             pct_snap = target_percent
             rpm_snap = _fan_rpm_for_percent(pct_snap)
             st_snap = _fan_status_for_percent(pct_snap)
@@ -11823,7 +11822,7 @@ def _fan_controller_watchdog():
                 _status_cache['fan_rpm'] = rpm_snap
                 _status_cache['fan_status'] = st_snap
         except Exception as e:
-            log.error("[FanWatchdog] Loi: %s", e)
+            log.error("[FanWatchdog] Lỗi: %s", e)
         time.sleep(1)
 # FIX: Khoi phuc trạng thái quat sau reboot. Kernel PWM driver mac dinh
 # enable=1 -> 5V luon co o cong ra quat ngay khi NAS bat nguon. Đọc lai
