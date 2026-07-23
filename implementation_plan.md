@@ -127,21 +127,21 @@ Estimate: 5–7 days for P0+P1 fixes. Phase 3 P3-A/3-B/3-C/3-D/3-E hoàn thành 
 | P1-19 | `security-crypto:1.0.0` outdated | `libs.versions.toml:21` | HIGH | Nâng lên `1.1.0-alpha06` |
 | P1-20 | `MANAGE_EXTERNAL_STORAGE` suppress làm mất warning | `AndroidManifest.xml:18` | HIGH | Thực sự bỏ permission |
 
-## P2: Polish & Accessibility ⏳
+## P2: Polish & Accessibility ✅
 
 | # | Finding | File(s) | Severity | Fix | Status |
 |---|---------|---------|----------|-----|--------|
-| P2-1 | ~30+ Icons missing `contentDescription` | BrowserScreen, DashboardCards, MainMenuScreen | MEDIUM | Thêm `contentDescription = "..."` | ⏳ |
-| P2-2 | Shopee blocked bởi `SOCIAL_HOST_ALLOWLIST` | `SocialExtractorScreen.kt` | MEDIUM | Add Shopee domains vào allowlist | ⏳ |
-| P2-3 | Test coverage: SecurePrefsHelper, DuplicateScanWorker, FileBrowserViewModel | — | MEDIUM | Viết unit tests | ✅ |
-| P2-4 | 14 `MutableState` thiếu `private set` (chủ yếu SmartToolsViewModel) | `SmartToolsViewModel.kt:62-73` | MEDIUM | Thêm `private set` | ⏳ |
-| P2-5 | `TrashMeta` không index `originalPath` — full scan trên N lớn | `Database.kt:321-327` | MEDIUM | Thêm `Index(value = ["originalPath"])` | ✅ |
-| P2-6 | Migration test chỉ 2 cases — matrix under-tested | `AppDatabaseMigrationTest.kt` | MEDIUM | Mở rộng seed per-version preservation | ⏳ |
-| P2-7 | Hardcoded IPs trong `network_security_config.xml` | `res/xml/network_security_config.xml:6-9` | MEDIUM | User-configurable override | ⏳ |
-| P2-8 | `gradle.properties:28` Windows path hardcode | `gradle.properties:28` | MEDIUM | Xóa, dùng env var | ⏳ |
-| P2-9 | `sardine-android` / `smbj` không có ProGuard rules | `proguard-rules.pro` | LOW | Verify via release build test | ✅ |
-| P2-10 | N+1 query cho `partialHash`/`imageFingerprint` updates | `DuplicateScanWorker.kt`, `FingerprintWorker.kt` | LOW | Batch `UPDATE WHERE path IN (:paths)` | ⏳ |
-| P2-11 | 376 hardcoded Vietnamese strings (i18n blocker) | Tất cả screen/ViewModel | LOW | String resources | ⏳ |
+| P2-1 | ~30+ Icons missing `contentDescription` | BrowserScreen, DashboardCards, MainMenuScreen | MEDIUM | Thêm `contentDescription = "..."` | ✅ Verified |
+| P2-2 | Shopee blocked bởi `SOCIAL_HOST_ALLOWLIST` | `SocialExtractorScreen.kt` | MEDIUM | Add Shopee domains vào allowlist | ✅ Verified |
+| P2-3 | Test coverage: SecurePrefsHelper, DuplicateScanWorker, FileBrowserViewModel | — | MEDIUM | Viết unit tests | ✅ Completed |
+| P2-4 | 14 `MutableState` thiếu `private set` (chủ yếu SmartToolsViewModel) | `SmartToolsViewModel.kt:62-73` | MEDIUM | Thêm `private set` | ✅ Verified |
+| P2-5 | `TrashMeta` không index `originalPath` — full scan trên N lớn | `Database.kt:321-327` | MEDIUM | Thêm `Index(value = ["originalPath"])` | ✅ Completed |
+| P2-6 | Migration test chỉ 2 cases — matrix under-tested | `AppDatabaseMigrationTest.kt` | MEDIUM | Mở rộng seed per-version preservation | ✅ Completed |
+| P2-7 | Hardcoded IPs trong `network_security_config.xml` | `res/xml/network_security_config.xml:6-9` | MEDIUM | User-configurable override | ✅ Verified |
+| P2-8 | `gradle.properties:28` Windows path hardcode | `gradle.properties:28` | MEDIUM | Xóa, dùng env var | ✅ Completed |
+| P2-9 | `sardine-android` / `smbj` không có ProGuard rules | `proguard-rules.pro` | LOW | Verify via release build test | ✅ Completed |
+| P2-10 | N+1 query cho `partialHash`/`imageFingerprint` updates | `DuplicateScanWorker.kt`, `FingerprintWorker.kt` | LOW | Batch `UPDATE WHERE path IN (:paths)` | ✅ Verified |
+| P2-11 | 376 hardcoded Vietnamese strings (i18n blocker) | Tất cả screen/ViewModel | LOW | String resources | ⏳ Optional |
 
 ---
 
