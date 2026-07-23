@@ -155,7 +155,9 @@ class StreamPipeWorker(
                 .writeTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
                 .build()
 
-            pipeClient.newCall(getRequest).execute().use { cdnResponse ->
+            try {
+                pipeClient.newCall(getRequest).execute()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }.use { cdnResponse ->
                 if (!cdnResponse.isSuccessful && cdnResponse.code != 206) {
                     throw Exception("CDN từ chối (HTTP ${cdnResponse.code})")
                 }
@@ -240,7 +242,9 @@ class StreamPipeWorker(
                     .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
 
-                nasClient.newCall(putRequest).execute().use { putResp ->
+                try {
+                    nasClient.newCall(putRequest).execute()
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }.use { putResp ->
                     if (!putResp.isSuccessful) {
                         throw Exception("WebDAV PUT thất bại (HTTP ${putResp.code})")
                     }
