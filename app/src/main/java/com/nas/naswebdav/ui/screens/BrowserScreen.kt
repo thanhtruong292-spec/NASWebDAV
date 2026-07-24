@@ -39,7 +39,9 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.nas.naswebdav.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -255,12 +257,12 @@ fun BrowserScreen(
                         )
                     }
                 } else {
-                    Text("Không thể tải nội dung tệp hoặc tệp rỗng.", color = Color.Red)
+                    Text(stringResource(R.string.error_cannot_load_file), color = Color.Red)
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null }) {
-                    Text("Đóng")
+                    Text(stringResource(R.string.action_close))
                 }
             }
         )
@@ -326,10 +328,10 @@ fun BrowserScreen(
         AlertDialog(
             onDismissRequest = { showDuplicateConfigDialog = false },
             icon = { Icon(Icons.Default.Bolt, null, tint = Color(0xFFFFC107), modifier = Modifier.size(36.dp)) },
-            title = { Text("Cấu hình quét trùng lặp", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.dialog_duplicate_config), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = Color.Gray)
+                    Text(stringResource(R.string.dialog_duplicate_config_desc), fontSize = 13.sp, color = Color.Gray)
                     
                     // Option 1: Lightning Mode
                     Row(
@@ -342,8 +344,8 @@ fun BrowserScreen(
                             colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
                         )
                         Column(modifier = Modifier.padding(start = 4.dp)) {
-                            Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else Color.White)
-                            Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                            Text(stringResource(R.string.dialog_duplicate_fast_mode), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else Color.White)
+                            Text(stringResource(R.string.dialog_duplicate_fast_desc), fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                         }
                     }
 
@@ -354,8 +356,8 @@ fun BrowserScreen(
                     ) {
                         Checkbox(checked = isForceRestartDuplicate, onCheckedChange = { isForceRestartDuplicate = it })
                         Column(modifier = Modifier.padding(start = 4.dp)) {
-                            Text("Quét lại từ đầu", fontSize = 14.sp, color = Color.White)
-                            Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = Color.Gray)
+                            Text(stringResource(R.string.dialog_duplicate_rescan), fontSize = 14.sp, color = Color.White)
+                            Text(stringResource(R.string.dialog_duplicate_rescan_desc), fontSize = 11.sp, color = Color.Gray)
                         }
                     }
 
@@ -370,8 +372,8 @@ fun BrowserScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
-                            Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                            Text(stringResource(R.string.dialog_duplicate_auto_clean), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
+                            Text(stringResource(R.string.dialog_duplicate_auto_clean_desc), fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
                         }
                         Switch(
                             checked = smartToolsVM.autoCleanEnabled,
@@ -389,11 +391,11 @@ fun BrowserScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                 ) {
-                    Text("🚀 Bắt đầu quét")
+                    Text(stringResource(R.string.dialog_start_scan))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDuplicateConfigDialog = false }) { Text("Hủy", color = Color.Gray) }
+                TextButton(onClick = { showDuplicateConfigDialog = false }) { Text(stringResource(R.string.action_cancel), color = Color.Gray) }
             }
         )
     }
@@ -426,16 +428,16 @@ fun BrowserScreen(
     if (showOrganizeDialog) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { if (!isOrganizing) showOrganizeDialog = false },
-            title = { Text("Phân loại video cũ") },
+            title = { Text(stringResource(R.string.dialog_organize_title)) },
             text = {
                 Column {
                     if (isOrganizing) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFF00897B), trackColor = Color.Transparent)
-                        Text("Đang ra lệnh cho NAS dọn dẹp nội bộ...")
+                        Text(stringResource(R.string.dialog_organize_loading))
                     } else if (organizeResult != null) {
                         Text(organizeResult!!)
                     } else {
-                        Text("Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video không phải MP4 (như mpg, flv, mkv, avi...) vào thư mục 'Other Video' không? Thao tác này giúp danh sách video gọn hơn và được xử lý trực tiếp trên NAS.")
+                        Text(stringResource(R.string.dialog_organize_confirm))
                     }
                 }
             },
@@ -490,14 +492,14 @@ fun BrowserScreen(
                                 }
                             }
                         }
-                    ) { Text("Chạy NAS") }
+                    ) { Text(stringResource(R.string.action_run_nas)) }
                 } else if (organizeResult != null) {
-                    TextButton(onClick = { showOrganizeDialog = false; organizeResult = null }) { Text("Đóng") }
+                    TextButton(onClick = { showOrganizeDialog = false; organizeResult = null }) { Text(stringResource(R.string.action_close)) }
                 }
             },
             dismissButton = {
                 if (!isOrganizing && organizeResult == null) {
-                    TextButton(onClick = { showOrganizeDialog = false }) { Text("Hủy") }
+                    TextButton(onClick = { showOrganizeDialog = false }) { Text(stringResource(R.string.action_cancel)) }
                 }
             }
         )
@@ -598,7 +600,7 @@ fun BrowserScreen(
                             )
                         }
                         IconButton(onClick = { autoBackupVM.isAutoBackupRunning = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Ẩn", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_hide), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
                 }
@@ -614,7 +616,7 @@ fun BrowserScreen(
                     TextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Tìm kiếm tệp...", color = Color.Gray) },
+                        placeholder = { Text(stringResource(R.string.label_search_placeholder), color = Color.Gray) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
@@ -632,13 +634,13 @@ fun BrowserScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { isSearching = false; searchQuery = "" }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Đóng")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_close))
                     }
                 },
                 actions = {
                     if (searchQuery.isNotEmpty()) {
                         IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Xóa")
+                            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.cd_clear))
                         }
                     }
                 }
@@ -679,12 +681,12 @@ fun BrowserScreen(
                                 checkmarkColor = Color.White
                             )
                         )
-                        Text("${selectedFiles.size} đã chọn", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.label_selected_count_with_count, selectedFiles.size), fontWeight = FontWeight.Bold)
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = { selectionMode = false; selectedFiles.clear() }) {
-                        Icon(Icons.Default.Close, contentDescription = "Đóng")
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close))
                     }
                 },
                 actions = {
@@ -704,7 +706,7 @@ fun BrowserScreen(
                         ) {
                             Icon(
                                 Icons.Default.Restore,
-                                contentDescription = "Khôi phục",
+                                contentDescription = stringResource(R.string.cd_restore),
                                 tint = if (selectedFiles.isNotEmpty()) Color(0xFF66BB6A) else Color.Gray
                             )
                         }
@@ -721,7 +723,7 @@ fun BrowserScreen(
                         ) {
                             Icon(
                                 Icons.Default.ContentCopy,
-                                contentDescription = "Sao chép",
+                                contentDescription = stringResource(R.string.cd_copy),
                                 tint = if (selectedFiles.isNotEmpty()) Color(0xFF66BB6A) else Color.Gray
                             )
                         }
@@ -737,12 +739,12 @@ fun BrowserScreen(
                         ) {
                             Icon(
                                 Icons.Default.DriveFileMove,
-                                contentDescription = "Di chuyển",
+                                contentDescription = stringResource(R.string.cd_move),
                                 tint = if (selectedFiles.isNotEmpty()) Color(0xFFFF8F00) else Color.Gray
                             )
                         }
                     }
-                    
+
                     // NÚT XÓA HÀNG LOẠT (DÙNG CHUNG)
                     IconButton(
                         onClick = {
@@ -765,7 +767,7 @@ fun BrowserScreen(
                     IconButton(onClick = {
                         if (!fileBrowserVM.goBack()) onBackToMenu()
                     }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại")
+                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                     }
                 },
                 title = {
@@ -824,14 +826,14 @@ fun BrowserScreen(
             }, actions = {
                 // Giữ lại 2 nút quan trọng nhất hiển thị trực tiếp
                 IconButton(onClick = { isSearching = true }) {
-                    Icon(Icons.Default.Search, contentDescription = "Tìm kiếm")
+                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.cd_search))
                 }
                 // Đã ẩn nút Tải lên lẻ
 
                 // Gom các nút còn lại vào Menu 3 chấm để giải phóng không gian màn hình
                 Box {
                     IconButton(onClick = { showMoreMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Tùy chọn khác")
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_more_options))
                     }
                     DropdownMenu(
                         expanded = showMoreMenu,
@@ -839,27 +841,27 @@ fun BrowserScreen(
                     ) {
                         // Đã xóa nút Đồng bộ thư mục
                         DropdownMenuItem(
-                            text = { Text("Tìm tệp trùng lặp") },
+                            text = { Text(stringResource(R.string.menu_find_duplicates)) },
                             leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
                             onClick = { showMoreMenu = false; showDuplicateConfigDialog = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Tạo thư mục") },
+                            text = { Text(stringResource(R.string.action_create_folder)) },
                             leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
                             onClick = { showMoreMenu = false; showCreateFolderDialog = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Gom video cũ") },
+                            text = { Text(stringResource(R.string.menu_organize_videos)) },
                             leadingIcon = { Icon(Icons.Default.SnippetFolder, null) },
                             onClick = { showMoreMenu = false; showOrganizeDialog = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Làm mới") },
+                            text = { Text(stringResource(R.string.action_refresh)) },
                             leadingIcon = { Icon(Icons.Default.Refresh, null) },
                             onClick = { showMoreMenu = false; fileBrowserVM.refresh() }
                         )
                         DropdownMenuItem(
-                            text = { Text("Ảnh ngẫu nhiên") },
+                            text = { Text(stringResource(R.string.menu_random_photo)) },
                             leadingIcon = { Icon(Icons.Default.Shuffle, null) },
                             onClick = {
                                 showMoreMenu = false
@@ -868,7 +870,7 @@ fun BrowserScreen(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Đăng xuất", color = Color.Red) },
+                            text = { Text(stringResource(R.string.menu_login), color = Color.Red) },
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = Color.Red) },
                             onClick = { showMoreMenu = false; onLogout() }
                         )
@@ -984,7 +986,7 @@ fun BrowserScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Sort,
-                                    contentDescription = "Sắp xếp",
+                                    contentDescription = stringResource(R.string.cd_sort),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -1043,7 +1045,7 @@ fun BrowserScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CheckBox,
-                                contentDescription = "Chọn file",
+                                contentDescription = stringResource(R.string.cd_select_file),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -1061,7 +1063,7 @@ fun BrowserScreen(
 
             // 1. Kích hoạt tải dữ liệu khi bị vuốt (Refresh Trigger)
             if (pullToRefreshState.isRefreshing) {
-                LaunchedEffect(true) {
+                LaunchedEffect(pullToRefreshState.isRefreshing) {
                     // TÍNH NĂNG 3.F: Thiết lập Haptic Feedback phản hồi vật lý
                     view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                     fileBrowserVM.refresh()
@@ -1083,7 +1085,7 @@ fun BrowserScreen(
             // TÍNH NĂNG 3.E: Lịch sử Tìm kiếm nằm ngay dưới Thanh Tìm Kiếm
             if (isSearching && searchQuery.isEmpty() && searchHistory.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    item { Text("Tìm kiếm gần đây", color = Color.Gray, modifier = Modifier.padding(10.dp)) }
+                    item { Text(stringResource(R.string.label_recent_searches), color = Color.Gray, modifier = Modifier.padding(10.dp)) }
                     items(items = searchHistory, key = { it.query }) { history ->
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; historyManager.saveQuery(history.query); focusManager.clearFocus() }.padding(16.dp),
@@ -1513,11 +1515,11 @@ fun BrowserScreen(
                     ) {
                         Icon(Icons.Default.CloudOff, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(12.dp))
-                        Text("Không thể kết nối NAS", fontWeight = FontWeight.Bold, color = Color(0xFFEF5350))
+                        Text(stringResource(R.string.error_cannot_connect_nas), fontWeight = FontWeight.Bold, color = Color(0xFFEF5350))
                         Spacer(Modifier.height(4.dp))
                         Text(currentError, color = Color.Gray, fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = { fileBrowserVM.refresh() }) { Text("Thử lại") }
+                        Button(onClick = { fileBrowserVM.refresh() }) { Text(stringResource(R.string.action_retry)) }
                     }
                 } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
                     Column(
@@ -1526,7 +1528,7 @@ fun BrowserScreen(
                     ) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("Thư mục trống", color = Color.Gray)
+                        Text(stringResource(R.string.label_folder_empty), color = Color.Gray)
                     }
                 }
             }
@@ -1622,7 +1624,7 @@ fun BrowserScreenFileItemGridCell(
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Đổi tên", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.action_rename), fontWeight = FontWeight.Bold) },
             text = {
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = newFileName,
@@ -1634,9 +1636,9 @@ fun BrowserScreenFileItemGridCell(
                 TextButton(onClick = {
                     showRenameDialog = false
                     if (newFileName.isNotBlank() && newFileName != file.name) fileBrowserVM.renameFile(context, file, newFileName)
-                }) { Text("Lưu") }
+                }) { Text(stringResource(R.string.action_save)) }
             },
-            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Hủy") } }
+            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 
@@ -1671,7 +1673,7 @@ fun BrowserScreenFileItemGridCell(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text("Tải về máy") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_download)) }, onClick = {
                 showMenu = false
                 val request = android.app.DownloadManager.Request(file.path.toUri())
                     .setTitle(file.name)
@@ -1684,7 +1686,7 @@ fun BrowserScreenFileItemGridCell(
                 commonDialogMessage = "Đã bắt đầu tải về: ${file.name}"
                 showCommonDialog = true
             })
-            DropdownMenuItem(text = { Text("Sao chép liên kết") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_copy_link)) }, onClick = {
                 showMenu = false
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
@@ -1696,7 +1698,7 @@ fun BrowserScreenFileItemGridCell(
             // Chỉ hiện nút Khôi phục nếu đang đứng trong Thùng rác
             if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác") {
                 DropdownMenuItem(
-                    text = { Text("Khôi phục") },
+                    text = { Text(stringResource(R.string.action_restore)) },
                     onClick = {
                         showMenu = false
                         fileBrowserVM.restoreFile(context, file)
@@ -1706,7 +1708,7 @@ fun BrowserScreenFileItemGridCell(
             // TÍNH NĂNG MỚI: Giải nén tại NAS
             if (file.name.lowercase().endsWith(".zip")) {
                 DropdownMenuItem(
-                    text = { Text("Giải nén tại NAS", color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_extract_nas), color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         smartToolsVM.unzipFile(file.path)
@@ -1717,7 +1719,7 @@ fun BrowserScreenFileItemGridCell(
             // Mở video bằng ứng dụng ngoài
             if (isVideo) {
                 DropdownMenuItem(
-                    text = { Text("Mở bằng ứng dụng ngoài", color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_open_external), color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         openExternalVideoPlayer(
@@ -1735,9 +1737,9 @@ fun BrowserScreenFileItemGridCell(
                 )
             }
 
-            DropdownMenuItem(text = { Text("Đổi tên") }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
-            DropdownMenuItem(text = { Text("Thuộc tính") }, onClick = { showMenu = false; showPropertiesDialog = true })
-            DropdownMenuItem(text = { Text("Xóa tệp", color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_rename)) }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_properties)) }, onClick = { showMenu = false; showPropertiesDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
         // === KHUNG HIỂN THỊ CHÍNH — SAMSUNG MY FILES STYLE ===
@@ -1851,7 +1853,7 @@ fun BrowserScreenFileItemGridCell(
                             .padding(horizontal = 3.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("${daysLeft} ngày", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                        Text(stringResource(R.string.label_days_left, daysLeft), color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
                     }
                 } else if (isNewFile) {
                     Box(

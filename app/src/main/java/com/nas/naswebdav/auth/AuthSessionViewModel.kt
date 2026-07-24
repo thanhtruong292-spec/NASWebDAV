@@ -326,6 +326,7 @@ class AuthSessionViewModel(
                     .build()
                 val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
                     .setConstraints(constraints)
+                    .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS)
                     .build()
                 androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
                     com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,

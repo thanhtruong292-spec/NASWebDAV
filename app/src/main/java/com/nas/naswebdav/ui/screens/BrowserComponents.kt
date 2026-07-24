@@ -39,7 +39,9 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.nas.naswebdav.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -190,7 +192,7 @@ fun FileItemGridCell(
     if (showRenameDialog) {
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text("Đổi tên", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.action_rename), fontWeight = FontWeight.Bold) },
             text = {
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = newFileName,
@@ -202,9 +204,9 @@ fun FileItemGridCell(
                 TextButton(onClick = {
                     showRenameDialog = false
                     if (newFileName.isNotBlank() && newFileName != file.name) fileBrowserVM.renameFile(context, file, newFileName)
-                }) { Text("Lưu") }
+                }) { Text(stringResource(R.string.action_save)) }
             },
-            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text("Hủy") } }
+            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text(stringResource(R.string.action_cancel)) } }
         )
     }
 
@@ -239,7 +241,7 @@ fun FileItemGridCell(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text("Tải về máy") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_download)) }, onClick = {
                 showMenu = false
                 val request = android.app.DownloadManager.Request(file.path.toUri())
                     .setTitle(file.name)
@@ -252,7 +254,7 @@ fun FileItemGridCell(
                 commonDialogMessage = "Đã bắt đầu tải về: ${file.name}"
                 showCommonDialog = true
             })
-            DropdownMenuItem(text = { Text("Sao chép liên kết") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_copy_link)) }, onClick = {
                 showMenu = false
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
@@ -262,19 +264,19 @@ fun FileItemGridCell(
                 showCommonDialog = true
             })
             // Chỉ hiện nút Khôi phục nếu đang ở trong Thùng rác
-            DropdownMenuItem(text = { Text("Sao chép…") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_copy)) }, onClick = {
                 showMenu = false
                 pendingTransferOperation = "COPY"
                 showTransferPickerDialog = true
             })
-            DropdownMenuItem(text = { Text("Di chuyển…") }, onClick = {
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_move)) }, onClick = {
                 showMenu = false
                 pendingTransferOperation = "MOVE"
                 showTransferPickerDialog = true
             })
             if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác") {
                 DropdownMenuItem(
-                    text = { Text("Khôi phục") },
+                    text = { Text(stringResource(R.string.action_restore)) },
                     onClick = {
                         showMenu = false
                         fileBrowserVM.restoreFile(context, file)
@@ -284,7 +286,7 @@ fun FileItemGridCell(
             // TÍNH NĂNG MỚI: Giải nén tại NAS
             if (file.name.lowercase().endsWith(".zip")) {
                 DropdownMenuItem(
-                    text = { Text("Giải nén tại NAS", color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_extract_nas), color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         smartToolsVM.unzipFile(file.path)
@@ -295,7 +297,7 @@ fun FileItemGridCell(
             // Mở video bằng ứng dụng ngoài
             if (isVideo) {
                 DropdownMenuItem(
-                    text = { Text("Mở bằng ứng dụng ngoài", color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_open_external), color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
@@ -314,9 +316,9 @@ fun FileItemGridCell(
                 )
             }
 
-            DropdownMenuItem(text = { Text("Đổi tên") }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
-            DropdownMenuItem(text = { Text("Thuộc tính") }, onClick = { showMenu = false; showPropertiesDialog = true })
-            DropdownMenuItem(text = { Text("Xóa tệp", color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_rename)) }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_properties)) }, onClick = { showMenu = false; showPropertiesDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
         // === KHUNG HIỂN THỊ CHÍNH — ĐỒNG BỘ DASHBOARD DESIGN ===
@@ -417,7 +419,7 @@ fun FileItemGridCell(
                             .padding(horizontal = 3.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("${daysLeft} ngày", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                        Text(stringResource(R.string.label_days_left, daysLeft), color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
                     }
                 } else if (isNewFile) {
                     Box(
@@ -454,14 +456,14 @@ fun FileItemGridCell(
                     if (isSelected) {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Đã chọn",
+                            contentDescription = stringResource(R.string.cd_selected),
                             tint = Color(0xFF42A5F5),
                             modifier = Modifier.size(20.dp)
                         )
                     } else {
                         Icon(
                             imageVector = Icons.Default.RadioButtonUnchecked,
-                            contentDescription = "Chưa chọn",
+                            contentDescription = stringResource(R.string.cd_not_selected),
                             tint = Color(0xFF90A4AE),
                             modifier = Modifier.size(20.dp)
                         )

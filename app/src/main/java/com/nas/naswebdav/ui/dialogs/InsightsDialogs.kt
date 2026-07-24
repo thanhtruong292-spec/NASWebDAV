@@ -200,6 +200,7 @@ fun NasInsightsDialog(
 ) {
     val sysVM = LocalSystemMonitorVM.current
     // nasInsights, isFetchingNasInsights owned by SystemMonitorVM.
+    // Kept as Unit: one-shot insights fetch when dialog opens.
     LaunchedEffect(Unit) { sysVM.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(

@@ -88,6 +88,9 @@ internal fun PanelFreshnessTag(
     // giây root + 4 child composable đều recompose (cascade). Giờ chỉ bản thân
     // PanelFreshnessTag (3 component nhỏ) recompose.
     var localNow by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
+    // Kept as Unit: this ticker is screen-scoped (lives for the duration of the
+    // composable). Re-running would just reset localNow and waste a tick. The
+    // outer `isActive` guards the coroutine against leaking past the composable.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         while (isActive) {
             kotlinx.coroutines.delay(2_000L)
@@ -283,6 +286,9 @@ fun MainMenuScreen(
     // Trước đây gọi trực tiếp → disk I/O mỗi khung hình (120Hz = 120 lần/giây).
     val sharedPrefs = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
     var realtimeNow by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
+    // Kept as Unit: this 1-second ticker is screen-scoped and intentionally
+    // runs for the lifetime of the composable. The `isActive` guard prevents
+    // leaking past recomposition.
     LaunchedEffect(Unit) {
         while (isActive) {
             realtimeNow = System.currentTimeMillis()
@@ -316,6 +322,8 @@ fun MainMenuScreen(
     var slot2Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
     var slot3Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
     var slot4Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
+    // Kept as Unit: one-shot SharedPreferences migration (runs once on first composition after
+    // this code is introduced; guarded by screen_record_quick_added flag).
     LaunchedEffect(Unit) {
         if (!sharedPrefs.getBoolean("screen_record_quick_added", false)) {
             slot4Id = "screen_record"
@@ -359,11 +367,13 @@ fun MainMenuScreen(
     var showUsbImportDialog by rememberSaveable { mutableStateOf(false) }
     var showNasInsightsDialog by rememberSaveable { mutableStateOf(false) }
     // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
+    // Kept as Unit: one-shot SharedPreferences read on screen load.
     LaunchedEffect(Unit) {
         val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
         com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = savedLimit
     }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
+    // Kept as Unit: fires once on screen open to refresh the dashboard state.
     LaunchedEffect(Unit) {
         authVM.checkSmartNetwork(mContext)
         deviceVM.fetchStorageUsage(minIntervalMs = 0L)
@@ -726,7 +736,7 @@ fun MainMenuScreen(
     }
 
     if (pullRefreshState.isRefreshing) {
-        LaunchedEffect(true) {
+        LaunchedEffect(pullRefreshState.isRefreshing) {
             authVM.checkSmartNetwork(mContext)
             deviceVM.fetchStorageUsage(minIntervalMs = 0L)
             sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
@@ -2324,6 +2334,7 @@ fun MainMenuToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Kept as Unit: one-shot status fetch when Toolbox section is composed.
                 androidx.compose.runtime.LaunchedEffect(Unit) { deviceVM.loadDockerContainers() }
                 MainMenuSettingsMenuCard(
                     title = "Docker / qBittorrent",
@@ -2406,6 +2417,7 @@ fun MainMenuToolboxDialog(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Kept as Unit: one-shot audit fetch when Toolbox section is composed.
                 androidx.compose.runtime.LaunchedEffect(Unit) { smartToolsVM.fetchThumbnailAudit() }
                 val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
                 MainMenuSettingsMenuCard(
@@ -2447,6 +2459,7 @@ fun MainMenuSystemStatusCards(
     val livestreamVM = LocalLivestreamVM.current
     val deviceVM = LocalDeviceManagementVM.current
     // 1. Thumbnail Status
+    // Kept as Unit: screen-scoped polling loop for thumbnail / USB / livestream status.
     LaunchedEffect(Unit) {
         smartToolsVM.fetchThumbStatus()
         livestreamVM.syncLivestreamStateWithServer()
@@ -2481,6 +2494,7 @@ fun MainMenuSystemStatusCards(
     
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
     val activeStreams = livestreamVM.activeLivestreams
+    // Kept as Unit: screen-scoped polling loop for livestream status.
     LaunchedEffect(Unit) {
         livestreamVM.syncLivestreamStateWithServer()
         while (isActive) {
@@ -2492,6 +2506,7 @@ fun MainMenuSystemStatusCards(
     }
     val usbImport = deviceVM.usbImportState
     val usbImportIsActive = usbImport.status == "copying" || usbImport.status == "cancelling"
+    // Kept as Unit: one-shot initial status fetch; active polling is keyed by usbImport.status below.
     LaunchedEffect(Unit) {
         deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
     }
@@ -3016,6 +3031,7 @@ fun MainMenuSectionQuickActionSelectorDialog(
 @Composable
 fun MainMenuSectionSystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
     val deviceVM = LocalDeviceManagementVM.current
+    // Kept as Unit: one-shot log load when this summary card enters composition.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         deviceVM.loadSystemLogs()
     }

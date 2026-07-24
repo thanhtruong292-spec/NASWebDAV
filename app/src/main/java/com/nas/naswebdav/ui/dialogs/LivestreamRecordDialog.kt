@@ -63,6 +63,7 @@ fun LivestreamRecordDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
+    // Kept as Unit: one-shot state sync when dialog opens.
     LaunchedEffect(Unit) { liveVM.syncLivestreamStateWithServer() }
     // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
     // giao dien gon, user chu dong bam header de xem section can xem.
@@ -79,9 +80,11 @@ fun LivestreamRecordDialog(
     val message = liveVM.livestreamMessage
     val tiktokWatchUsers = liveVM.tiktokLiveWatchUsers
 
+    // Kept as Unit: one-shot watch-list fetch when dialog opens.
     LaunchedEffect(Unit) { liveVM.fetchTikTokLiveWatch(context) }
 
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
+    // Kept as Unit: one-shot auto-paste from clipboard on dialog open.
     LaunchedEffect(Unit) {
         val clipText = clipboardManager.getText()?.text ?: ""
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {

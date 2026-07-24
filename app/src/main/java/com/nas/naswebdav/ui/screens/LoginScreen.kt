@@ -117,6 +117,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var isCheckingPings by remember { mutableStateOf(false) }
 
     // Khởi động vòng lặp ping thực tế khi LoginScreen hiển thị
+    // Kept as Unit: screen-scoped polling loop for IP ping status.
     LaunchedEffect(Unit) {
         while (isActive) {
             isCheckingPings = true
@@ -306,6 +307,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 }
             }
             // Auto-trigger 1 lan khi screen vua compose (chi khi user chua login va da co credentials)
+            // Kept as Unit: one-shot auto-trigger biometric on first composition.
             LaunchedEffect(Unit) {
                 if (!autoTriggered && !authVM.isLoading) {
                     autoTriggered = true

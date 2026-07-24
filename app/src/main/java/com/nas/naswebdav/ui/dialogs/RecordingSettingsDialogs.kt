@@ -382,6 +382,7 @@ fun SleepScheduleDialog(
 ) {
     val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
+    // Kept as Unit: one-shot schedule fetch when dialog opens.
     LaunchedEffect(Unit) { autoBackupVM.fetchSleepSchedule() }
 
     val sched = autoBackupVM.sleepSchedule

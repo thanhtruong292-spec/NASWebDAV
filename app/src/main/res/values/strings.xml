@@ -1,9 +1,207 @@
 <resources>
+    <!-- App name -->
     <string name="app_name">NAS WebDAV</string>
-    <string name="recording_overlay_initial">REC 00:00</string>
-    <string name="recording_overlay_format">REC %1$02d:%2$02d</string>
+
+    <!-- Social share -->
     <string name="social_share_target_label">Tải về NAS</string>
     <string name="social_share_invalid">Không tìm thấy link Facebook, YouTube, TikTok hoặc Instagram hợp lệ.</string>
     <string name="social_share_login_required">Hãy đăng nhập NASWebDAV một lần trước khi sử dụng Chia sẻ.</string>
     <string name="social_share_queued">Đã gửi link tới NAS. Video sẽ được tải trong nền.</string>
+
+    <!-- Recording overlay -->
+    <string name="recording_overlay_initial">REC 00:00</string>
+    <string name="recording_overlay_format">REC %1$02d:%2$02d</string>
+
+    <!-- Common action buttons -->
+    <string name="action_save">Lưu</string>
+    <string name="action_cancel">Hủy</string>
+    <string name="action_close">Đóng</string>
+    <string name="action_retry">Thử lại</string>
+    <string name="action_delete">Xóa</string>
+    <string name="action_delete_file">Xóa tệp</string>
+    <string name="action_restore">Khôi phục</string>
+    <string name="action_rename">Đổi tên</string>
+    <string name="action_download">Tải về máy</string>
+    <string name="action_copy_link">Sao chép liên kết</string>
+    <string name="action_copy">Sao chép</string>
+    <string name="action_move">Di chuyển</string>
+    <string name="action_properties">Thuộc tính</string>
+    <string name="action_open_external">Mở bằng ứng dụng ngoài</string>
+    <string name="action_extract_nas">Giải nén tại NAS</string>
+    <string name="action_save_apply">Lưu &amp; Áp dụng</string>
+    <string name="action_start_scan">Bắt đầu quét</string>
+    <string name="action_run_nas">Chạy NAS</string>
+    <string name="action_back">Quay lại</string>
+    <string name="action_skip">Bỏ qua</string>
+    <string name="action_overwrite">Ghi đè</string>
+    <string name="action_pause">Tạm dừng</string>
+    <string name="action_resume">Tiếp tục</string>
+    <string name="action_select_smart">Chọn thông minh</string>
+    <string name="action_minimize">Thu nhỏ</string>
+    <string name="action_logout">Đăng xuất</string>
+    <string name="action_refresh">Làm mới</string>
+    <string name="action_create_folder">Tạo thư mục</string>
+
+    <!-- Section / panel titles -->
+    <string name="section_system">HỆ THỐNG</string>
+    <string name="section_quick_access">TRUY CẬP NHANH</string>
+    <string name="section_system_analysis">PHÂN TÍCH HỆ THỐNG</string>
+    <string name="section_system_tools">CÔNG CỤ HỆ THỐNG</string>
+    <string name="section_background_tasks">TÁC VỤ NỀN</string>
+    <string name="section_omv">OMV</string>
+    <string name="section_tools_settings">Công cụ &amp; Cài đặt</string>
+    <string name="section_progress">TIẾN TRÌNH</string>
+    <string name="section_duplicate_detection">Phát hiện tệp trùng lặp</string>
+
+    <!-- Common error messages -->
+    <string name="error_cannot_connect_nas">Không thể kết nối NAS</string>
+    <string name="error_system_webdav">Lỗi hệ thống WebDAV</string>
+    <string name="error_cannot_delete">Không thể xóa %1$s: %2$s</string>
+    <string name="error_connection">Lỗi kết nối: %1$s</string>
+    <string name="error_share">Lỗi share: %1$s</string>
+    <string name="error_cannot_load_backup">Không tải được file backup</string>
+    <string name="error_cannot_share">Không thể chia sẻ: %1$s</string>
+    <string name="error_cannot_load_file">Không thể tải nội dung tệp hoặc tệp rỗng.</string>
+    <string name="error_notification_permission_missing">Chưa cấp quyền thông báo: vẫn tiếp tục chuẩn bị quay màn hình, nhưng thông báo nền có thể không hiển thị đầy đủ.</string>
+    <string name="error_overlay_permission_missing">Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn hoạt động.</string>
+
+    <!-- Success messages -->
+    <string name="success_deleted">Đã xóa %1$s</string>
+    <string name="success_trashed">Đã chuyển vào Thùng rác</string>
+    <string name="success_kill_process">Đã kill tiến trình PID %1$d</string>
+    <string name="success_thumbnail_scan_sent">Đã gửi lệnh quét Thumbnail vào hệ thống ngầm!</string>
+    <string name="success_thumbnail_scan_sent_missing">Đã gửi lệnh quét %1$d ảnh còn thiếu vào nền.</string>
+    <string name="success_duplicate_scan_refreshed">Đang quét nền — đã làm mới trạng thái.</string>
+    <string name="success_library_rescan">Đã kích hoạt quét tiếp phần còn lại của thư viện.</string>
+    <string name="success_no_duplicates">Xin chúc mừng! Không có dữ liệu trùng lặp nào.</string>
+    <string name="success_duplicate_complete">Hoàn tất</string>
+    <string name="success_delete_items">Xóa (%1$d) mục</string>
+    <string name="success_select_subfolder_soon">Sẽ sớm hỗ trợ chọn thư mục con!</string>
+
+    <!-- Common labels -->
+    <string name="label_folder_empty">Thư mục trống</string>
+    <string name="label_selected_count">đã chọn</string>
+    <string name="label_selected_count_with_count">%1$d đã chọn</string>
+    <string name="label_days_left">%1$d ngày</string>
+    <string name="label_recent_searches">Tìm kiếm gần đây</string>
+    <string name="label_search_placeholder">Tìm kiếm tệp…</string>
+    <string name="label_total_files">Tổng tệp</string>
+    <string name="label_duplicates">Trùng lặp</string>
+    <string name="label_time">Thời gian</string>
+    <string name="label_no_photos">Không có ảnh nào để hiển thị</string>
+    <string name="label_fan">Quạt tản nhiệt</string>
+    <string name="label_temp_settings">Cài đặt nhiệt độ</string>
+    <string name="label_hysteresis_title">Độ trễ nhiệt (Hysteresis)</string>
+    <string name="label_hysteresis_desc">Hệ thống sẽ chạy ngầm để bật quạt khi tới ‘Nhiệt độ bật’, và tắt quạt khi hạ xuống ‘Nhiệt độ tắt’.</string>
+    <string name="label_temp_on">Nhiệt độ Bật (°C)</string>
+    <string name="label_temp_off">Nhiệt độ Tắt (°C)</string>
+    <string name="label_accounts">Tài khoản:</string>
+    <string name="label_password">Mật khẩu:</string>
+    <string name="label_password_hint">(Mật khẩu của App NAS)</string>
+    <string name="label_duplicates_found">Tệp trùng lặp</string>
+    <string name="label_folders">Thư mục:</string>
+    <string name="label_processing">Đang xử lý:</string>
+    <string name="label_overall">Tổng thể</string>
+    <string name="label_phase">Giai đoạn</string>
+    <string name="label_runtime">Thời gian chạy: %1$s</string>
+    <string name="label_estimated">Ước tính: %1$s</string>
+    <string name="label_generated">Đã tạo:</string>
+    <string name="label_remaining">%1$d còn thiếu</string>
+    <string name="label_scan_duplicates">Quét trùng lặp</string>
+    <string name="label_sync_nas">Đồng Bộ NAS</string>
+    <string name="label_paused">Tạm dừng</string>
+    <string name="label_cancel_sync">Huỷ đồng bộ</string>
+    <string name="label_file_label">Tệp: %1$s</string>
+    <string name="label_from">Từ: %1$s</string>
+    <string name="label_total_progress">Tổng tiến trình: %1$d / %2$d tệp</string>
+    <string name="label_active_count">%1$d đang thực thi</string>
+    <string name="label_create_thumbnails">Tạo ảnh thu nhỏ</string>
+    <string name="label_stop_thumbnail">Dừng thumbnail</string>
+    <string name="label_stream_recording">Ghi hình livestream</string>
+    <string name="label_active_streams">Đang ghi hình (%1$d kênh)</string>
+    <string name="label_downloading">Đang tải xuống (%1$d)</string>
+    <string name="label_completed_count">Đã hoàn thành (%1$d)</string>
+    <string name="label_remove_from_list">Xóa khỏi danh sách</string>
+    <string name="label_copy_file">File đang copy</string>
+    <string name="label_total_progress_short">Tổng tiến trình</string>
+    <string name="label_file_progress">%1$d/%2$d file</string>
+    <string name="label_skip_error">Bỏ qua %1$d • Lỗi %2$d</string>
+    <string name="label_target_folder">Thư mục đích</string>
+    <string name="label_new_files_only">Chỉ file mới</string>
+    <string name="label_usb_import">USB Import</string>
+    <string name="label_auto_detect">Tự động phát hiện</string>
+    <string name="label_auto_mount">Tự mount ổ USB</string>
+    <string name="label_mount_readonly">Mount read-only</string>
+    <string name="label_resume_restart">Resume sau restart</string>
+    <string name="label_resume_desc">Copy tiếp vào cùng thư mục nếu NAS/API bị restart.</string>
+    <string name="label_sha256">Checksum SHA-256</string>
+    <string name="label_sha256_desc">Chậm hơn nhưng ghi manifest để kiểm chứng file.</string>
+    <string name="label_detected_devices">Đã phát hiện: %1$s</string>
+    <string name="label_save_config">Sao lưu cấu hình NAS</string>
+    <string name="label_onedrive">OneDrive</string>
+    <string name="label_restore_config">Khôi phục</string>
+    <string name="label_delete_config">Xoá</string>
+    <string name="label_loading_backup">Đang tải file từ NAS để share…</string>
+    <string name="label_restoring">Đang khôi phục + restart services…</string>
+    <string name="label_windows_path">Dành cho Windows:</string>
+    <string name="label_macos_path">Dành cho MacOS:</string>
+    <string name="label_copy_action">Copy</string>
+
+    <!-- Browser menu items -->
+    <string name="menu_find_duplicates">Tìm tệp trùng lặp</string>
+    <string name="menu_organize_videos">Gom video cũ</string>
+    <string name="menu_random_photo">Ảnh ngẫu nhiên</string>
+    <string name="menu_login">Đăng xuất</string>
+
+    <!-- Dialog titles -->
+    <string name="dialog_duplicate_config">Cấu hình quét trùng lặp</string>
+    <string name="dialog_duplicate_config_desc">Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.</string>
+    <string name="dialog_duplicate_fast_mode">⚡ Chế độ nhanh (Khuyến nghị)</string>
+    <string name="dialog_duplicate_fast_desc">Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.</string>
+    <string name="dialog_duplicate_fast_desc_short">Bỏ qua hash nội dung, dùng ETag. Nhanh hơn 100×, phù hợp 500k+ tệp.</string>
+    <string name="dialog_duplicate_rescan">Quét lại từ đầu</string>
+    <string name="dialog_duplicate_rescan_desc">Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.</string>
+    <string name="dialog_duplicate_rescan_desc_short">Bỏ qua lịch sử lưu tạm, thực hiện quét hoàn toàn mới.</string>
+    <string name="dialog_duplicate_resume_last">Mở lại kết quả quét gần nhất</string>
+    <string name="dialog_organize_title">Phân loại video cũ</string>
+    <string name="dialog_organize_loading">Đang ra lệnh cho NAS dọn dẹp nội bộ…</string>
+    <string name="dialog_organize_confirm">Bạn có chắc chắn muốn NAS quét và di chuyển toàn bộ video không phải MP4 (như mpg, flv, mkv, avi…) vào thư mục ‘Other Video’ không? Thao tác này giúp danh sách video gọn hơn và được xử lý trực tiếp trên NAS.</string>
+    <string name="dialog_duplicate_auto_clean">🤖 Tự động dọn dẹp (hàng tuần)</string>
+    <string name="dialog_duplicate_auto_clean_desc">Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.</string>
+    <string name="dialog_start_scan">🚀 Bắt đầu quét</string>
+
+    <!-- Power actions -->
+    <string name="power_logout">Đăng xuất</string>
+    <string name="power_restart_nas">Khởi động lại NAS</string>
+    <string name="power_sleep_nas">Ngủ NAS</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">NAS Dashboard</string>
+
+    <!-- Process labels -->
+    <string name="process_executing">đang thực thi</string>
+    <string name="process_kill_error">Lỗi kill tiến trình</string>
+
+    <!-- Content descriptions (accessibility) -->
+    <string name="cd_search">Tìm kiếm</string>
+    <string name="cd_more_options">Tùy chọn khác</string>
+    <string name="cd_sort">Sắp xếp</string>
+    <string name="cd_select_file">Chọn file</string>
+    <string name="cd_close">Đóng</string>
+    <string name="cd_back">Quay lại</string>
+    <string name="cd_restore">Khôi phục</string>
+    <string name="cd_copy">Sao chép</string>
+    <string name="cd_move">Di chuyển</string>
+    <string name="cd_selected">Đã chọn</string>
+    <string name="cd_not_selected">Chưa chọn</string>
+    <string name="cd_hide">Ẩn</string>
+    <string name="cd_clear">Xóa</string>
+    <string name="cd_slideshow">Trình chiếu</string>
+    <string name="cd_share">Chia sẻ</string>
+    <string name="cd_delete">Xóa</string>
+    <string name="cd_photo_view">Xem ảnh</string>
+    <string name="cd_photo_slideshow">Trình chiếu ảnh</string>
+    <string name="cd_stop_thumbnail">Dừng thumbnail</string>
+    <string name="cd_kill">Kill</string>
+    <string name="cd_delete_swipe">Xoá</string>
 </resources>

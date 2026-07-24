@@ -125,6 +125,7 @@ fun QuickActionSelectorDialog(
 @Composable
 fun SystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
     val viewModel = LocalDeviceManagementVM.current
+    // Kept as Unit: one-shot log load when this summary card enters composition.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.loadSystemLogs()
     }

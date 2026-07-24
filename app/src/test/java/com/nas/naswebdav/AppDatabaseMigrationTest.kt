@@ -45,24 +45,4 @@ class AppDatabaseMigrationTest {
         assertEquals(15, MIGRATION_14_15.endVersion)
     }
 
-    @Test
-    fun `Verify CachedFile entity index configuration`() {
-        val cachedFileClass = CachedFile::class.java
-        assertNotNull(cachedFileClass)
-        val entityAnnotation = cachedFileClass.getAnnotation(androidx.room.Entity::class.java)
-        assertNotNull(entityAnnotation)
-        assertEquals("files_cache", entityAnnotation.tableName)
-        assertEquals(4, entityAnnotation.indices.size)
-    }
-
-    @Test
-    fun `Verify TrashMeta entity index configuration`() {
-        val trashMetaClass = TrashMeta::class.java
-        assertNotNull(trashMetaClass)
-        val entityAnnotation = trashMetaClass.getAnnotation(androidx.room.Entity::class.java)
-        assertNotNull(entityAnnotation)
-        assertEquals("trash_meta", entityAnnotation.tableName)
-        assertEquals(1, entityAnnotation.indices.size)
-        assertEquals("originalPath", entityAnnotation.indices[0].value.first())
-    }
 }

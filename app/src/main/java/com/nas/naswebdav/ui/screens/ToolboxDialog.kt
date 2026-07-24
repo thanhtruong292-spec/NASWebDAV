@@ -112,6 +112,7 @@ fun ToolboxDialog(
             // để switch phản ánh đúng hiện trạng server thay vì giá trị mặc định/cũ.
             // Trước đây chỉ Docker fetch khi mở -> SMB/USB Import hiển thị sai cho tới khi
             // người dùng mở riêng dialog tương ứng.
+            // Kept as Unit: one-shot status refresh when Toolbox opens.
             androidx.compose.runtime.LaunchedEffect(Unit) {
                 deviceVM.fetchSmbStatus()
                 deviceVM.fetchUsbImportStatus()
@@ -246,6 +247,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
+                // Kept as Unit: one-shot Docker status refresh when this card is composed.
                 androidx.compose.runtime.LaunchedEffect(Unit) { deviceVM.checkDockerStatus() }
                 MainMenuSettingsMenuCard(
                     title = "Docker / qBittorrent",
@@ -329,6 +331,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(AppSpacing.SM))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
+                // Kept as Unit: one-shot audit fetch when this card is composed.
                 androidx.compose.runtime.LaunchedEffect(Unit) { smartToolsVM.fetchThumbnailAudit() }
                 val thumbAudit by smartToolsVM.thumbnailAudit.collectAsState()
                 val ta = thumbAudit
