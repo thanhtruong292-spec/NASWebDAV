@@ -1,6 +1,7 @@
 package com.nas.naswebdav
 
 import android.content.Context
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -80,6 +81,11 @@ class LivestreamDiscoveryWorker(
                 60, TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    30L,
+                    TimeUnit.SECONDS
+                )
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request

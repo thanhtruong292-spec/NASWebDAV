@@ -24,7 +24,17 @@ import java.net.URL
  * CoroutineScope. Pass any active scope (e.g. rememberCoroutineScope()).
  */
 
-private fun extractHost(url: String): String? = try { URL(url).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+private fun extractHost(url: String): String? {
+    val raw = url.trim()
+    if (raw.isEmpty()) return null
+    return try {
+        var host = java.net.URI(raw).host
+        if (host.isNullOrBlank() && !raw.contains("://")) {
+            host = java.net.URI("https://$raw").host
+        }
+        host?.lowercase()
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+}
 
 fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val workManager = androidx.work.WorkManager.getInstance(context)
@@ -38,7 +48,9 @@ fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
     val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
         168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints).setInputData(inputData).build()
+    ).setConstraints(constraints).setInputData(inputData)
+        .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30L, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Idle_Duplicate_Scan",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
@@ -56,7 +68,9 @@ fun scheduleIdleSpeedTest(context: Context, currentUrl: String) {
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
     val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
         30, java.util.concurrent.TimeUnit.DAYS
-    ).setConstraints(constraints).setInputData(inputData).build()
+    ).setConstraints(constraints).setInputData(inputData)
+        .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30L, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Idle_Speed_Test",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
@@ -73,7 +87,9 @@ fun scheduleFingerprintWorker(context: Context) {
         .build()
     val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
         168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints).build()
+    ).setConstraints(constraints)
+        .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30L, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Fingerprint_Worker",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
@@ -282,11 +298,7 @@ fun sendPowerCommandFromLogin(
             if (user.isNotBlank() && pass.isNotBlank()) {
                 reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
             }
-            val client = NasApplication.instance.fastApiClient.newBuilder()
-                .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
-            client.newCall(reqBuilder.build()).execute().use { resp ->
+            NasApplication.instance.fastApiClient.newCall(reqBuilder.build()).execute().use { resp ->
                 val ok = resp.isSuccessful
                 val code = resp.code
                 withContext(Dispatchers.Main) {

@@ -603,6 +603,11 @@ fun MainMenuScreen(
                         .build()
                     val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
                         .setConstraints(constraints)
+                        .setBackoffCriteria(
+                            androidx.work.BackoffPolicy.EXPONENTIAL,
+                            30L,
+                            java.util.concurrent.TimeUnit.SECONDS
+                        )
                         .addTag("com.nas.naswebdav.AutoBackupWorker")
                         .build()
                     androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
