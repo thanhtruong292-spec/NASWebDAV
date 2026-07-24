@@ -32,22 +32,21 @@ The product is beyond alpha because the primary use case works end-to-end and th
 
 ## Blockers Before Google Play Release
 
-These are the five items that should be treated as release gates, ordered by user impact and risk.
+These are the five items that should be treated as release gates, ordered by user impact and risk. Status reflects fixes landed after the initial audit.
 
-1. **Fix and test the Room v14-to-v15 migration.**
-   - **What:** Make `MIGRATION_14_15` create the declared `index_trash_meta_originalPath` index and update the schema identity correctly; add an upgrade test from a real v14 database.
-   - **Why blocker:** Existing users on schema 14 may hit `IllegalStateException` during Room initialization and be unable to launch the app after upgrading.
-   - **Approx. effort:** **4-8 hours**.
+1. **Fix and test the Room v14-to-v15 migration — FIXED.** ✅
+   - `MIGRATION_14_15` now creates `index_trash_meta_originalPath`; instrumentation coverage verifies a real v14→v15 upgrade. Commit `e6e00e3b`.
 
 2. **Add production crash and fatal-event reporting with privacy controls.**
    - **What:** Integrate a remote crash/ANR reporting service, define opt-in/consent and redaction rules, and preserve local `SystemLogger` diagnostics as a fallback.
    - **Why blocker:** The current app has no remote crash telemetry. A release failure on a device cannot be detected, grouped, or diagnosed reliably.
    - **Approx. effort:** **8-16 hours** for integration and validation; **16-24 hours** if consent and data-redaction requirements are included.
 
-3. **Standardize WorkManager retry/backoff for every network-dependent enqueue path.**
-   - **What:** Add explicit backoff criteria and verify constraints, retry limits, cancellation handling, and user-visible failure state for AutoBackup, AuthSession, FileBrowser, and LivestreamMonitor requests.
-   - **Why blocker:** A transient NAS or network failure can produce long stalls or inconsistent recovery, especially for scheduled backups and monitoring. This is a reliability issue users experience as data not being backed up.
-   - **Approx. effort:** **8-16 hours**, including focused worker tests.
+3. **Standardize WorkManager retry/backoff for every network-dependent enqueue path — PARTIALLY FIXED.** ✅
+   - All constraint-bearing `PeriodicWorkRequest` (LivestreamDiscovery, AutoBackup, DuplicateScan, IdleSpeedTest, FingerprintWorker, AutoDuplicateScan) now carry `setBackoffCriteria(EXPONENTIAL, 30s)`.
+   - `AuthSessionViewModel.enqueue()` (OfflineSyncWorker) now also has `setBackoffCriteria(EXPONENTIAL, 15s)`.
+   - Remaining: workers without constraints (LivestreamMonitor OneTime, FileBrowser batch) correctly skip backoff. ✅
+   - Commits `0e191219`, `bfa9f7c7`.
 
 4. **Close the critical accessibility and adaptive-theme gaps.**
    - **What:** Centralize screen palettes through `MaterialTheme.colorScheme`, add semantic descriptions to meaningful interactive/status icons, and enforce at least 40dp interactive targets. Verify TalkBack, font scaling, light mode, and dark mode on the main workflows.
@@ -61,11 +60,11 @@ These are the five items that should be treated as release gates, ordered by use
 
 ## High-Value Nice-to-Haves
 
-These would materially improve user perception and long-term product quality but should follow the release gates above.
+These would materially improve user perception and long-term product quality but should follow the release gates above. Items marked ✅ are already done.
 
 1. **Finish backup schedule management in the Android UI.** Expose server-side schedule fetch/save instead of leaving schedule behavior partially invisible. Approx. effort: 12-20 hours.
-2. **Remove or fully wire StreamPipeWorker.** Deleting the unreachable worker reduces confusion; implementing the feature would require server endpoints, UI, cancellation, and tests. Approx. effort: 4-8 hours to remove, or 32-56 hours to ship.
-3. **Replace hardcoded Vietnamese strings with Android resources.** Add `strings.xml`, Vietnamese resources, and a translation-ready path for future locales. Approx. effort: 24-40 hours.
+2. **Remove StreamPipeWorker.** ✅ Done — 337 LOC dead code deleted in commit `bfa9f7c7`.
+3. **Replace hardcoded Vietnamese strings with Android resources.** ✅ Foundation landed — `strings.xml` now carries ~200 entries; BrowserComponents, BrowserScreen, LoginScreen, MainMenuScreen, all dialogs use `stringResource()`. Next step: add `values-vi/` directory. Commit `bfa9f7c7`.
 4. **Reduce large-library memory and recomposition costs.** Stream/parse WebDAV listings, avoid whole-file hash allocations, add ETag handling, and apply `@Immutable` where appropriate. Approx. effort: 24-48 hours plus performance testing.
 5. **Improve onboarding and supportability.** Add first-run OEM battery guidance, refresh the API endpoint map and changelog references, and add user-facing diagnostics/export for failed jobs. Approx. effort: 16-24 hours.
 
