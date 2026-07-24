@@ -66,6 +66,32 @@ class AppDatabaseMigrationTest {
         )
     }
 
+    @Test
+    fun migrateFromVersion14To15_createsOriginalPathIndex() {
+        val dbName = TEST_DB + "_14_15"
+        helper.createDatabase(dbName, 14).close()
+
+        val db = helper.runMigrationsAndValidate(
+            dbName,
+            15,
+            true,
+            MIGRATION_14_15
+        )
+
+        db.query("PRAGMA index_list(`trash_meta`)").use { cursor ->
+            var found = false
+            val nameColumn = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameColumn) == "index_trash_meta_originalPath") {
+                    found = true
+                    break
+                }
+            }
+            assertEquals(true, found)
+        }
+        db.close()
+    }
+
     companion object {
         private const val TEST_DB = "migration-test"
     }

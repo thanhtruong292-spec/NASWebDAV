@@ -447,7 +447,8 @@ val MIGRATION_13_14 = object : androidx.room.migration.Migration(13, 14) {
 }
 val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-        // Schema unchanged (identityHash identical to v13) — no-op migration.
+        // Schema 15 adds index on trash_meta.originalPath for fast lookup during restore.
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_meta_originalPath` ON `trash_meta` (`originalPath`)")
     }
 }
 
