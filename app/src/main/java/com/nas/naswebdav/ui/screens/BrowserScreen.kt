@@ -619,7 +619,15 @@ fun BrowserScreen(
                 title = {
                     TextField(
                         value = searchQuery,
-                        onValueChange = { searchQuery = it },
+                        onValueChange = { value ->
+                            searchQuery = value
+                            if (value.length >= 2) {
+                                // Recursive NAS search chạy tự động sau debounce 300ms.
+                                fileBrowserVM.performSearch(value)
+                            } else {
+                                fileBrowserVM.clearSearch()
+                            }
+                        },
                         placeholder = { Text(stringResource(R.string.label_search_placeholder), color = MaterialTheme.colorScheme.outline) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
