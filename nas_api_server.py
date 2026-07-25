@@ -11725,8 +11725,13 @@ def _livestream_watchdog():
             _add_system_log_once("livestream_watchdog_exception", "ERROR", "Livestream", "Watchdog livestream loi: %s" % normalize_vietnamese_message(str(e))[:240], 120)
 
 def _fan_controller_watchdog():
-    """Tien trinh ngam dieu khien quat theo CPU & HDD temp (Hysteresis & Stable 1s)."""
-    stable_seconds = 1.0
+    """Tien trinh ngam dieu khien quat theo CPU & HDD temp (Hysteresis & Stable 30s).
+
+    Khi fan đang bật, không tắt ngay khi nhiệt chạm off_temp — phải đợi 30 giây
+    ổn định để tránh tắt/bật liên tục (fan fluttering) khi nhiệt dao động
+    quanh vùng ngưỡng.
+    """
+    stable_seconds = 30.0
     last_mode = None
     last_target_percent = None
     target_since_ts = 0.0
