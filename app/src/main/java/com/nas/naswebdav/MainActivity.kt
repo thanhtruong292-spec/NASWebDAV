@@ -216,33 +216,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // Yêu cầu quyền truy cập toàn bộ tập tin (All Files Access) từ Android 11+ (API 30+)
+        // AutoBackup feature (optional) requires MANAGE_EXTERNAL_STORAGE on Android 11+;
+        // we now request it lazily from AutoBackupViewModel only when the user actually
+        // enables backup — never auto-open Settings on every app start (broke UX).
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-
-            if (!android.os.Environment.isExternalStorageManager()) {
-
-                try {
-
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-
-                    intent.addCategory("android.intent.category.DEFAULT")
-
-                    intent.data = String.format("package:%s", packageName).toUri()
-
-                    startActivity(intent)
-
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-
-                    startActivity(intent)
-
-                }
-
-            }
-
-        }
         requestMediaReadPermissionsIfNeeded()
 
         screenCaptureLauncher = registerForActivityResult(
