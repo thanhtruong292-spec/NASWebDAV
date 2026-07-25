@@ -93,13 +93,19 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val authVM = LocalAuthSessionVM.current
     val globalUiVM = LocalGlobalUiVM.current
     val density = LocalDensity.current
-    val rawHistory = remember { SecurePrefsHelper.getUrlList(context) }
+    val rawHistory = remember {
+        runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() }
+    }
     var historyIps by remember {
         mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
     }
     var ipInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(historyIps.firstOrNull() ?: "") }
-    var user by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SecurePrefsHelper.getUser(context).ifEmpty { "daica" }) }
-    var pass by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(SecurePrefsHelper.getPass(context)) }
+    var user by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" }.ifEmpty { "daica" })
+    }
+    var pass by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(runCatching { SecurePrefsHelper.getPass(context) }.getOrElse { "" })
+    }
     var expanded by remember { mutableStateOf(false) }
     var ipFieldWidthPx by remember { mutableIntStateOf(0) }
 
