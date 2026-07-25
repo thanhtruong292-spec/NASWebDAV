@@ -182,6 +182,20 @@
     <string name="process_executing">đang thực thi</string>
     <string name="process_kill_error">Lỗi kill tiến trình</string>
 
+    <!-- Auto-backup schedule -->
+    <string name="backup_schedule_title">Lịch sao lưu</string>
+    <string name="backup_schedule_frequency">Tần suất</string>
+    <string name="backup_schedule_daily">Hàng ngày</string>
+    <string name="backup_schedule_weekly">Hàng tuần</string>
+    <string name="backup_schedule_monthly">Hàng tháng</string>
+    <string name="backup_schedule_hour">Giờ chạy (0–23)</string>
+    <string name="backup_schedule_hour_format">%1$02d:00</string>
+    <string name="backup_schedule_retention">Thời gian lưu trữ: %1$d ngày</string>
+    <string name="backup_schedule_retention_range">7–90 ngày</string>
+    <string name="backup_schedule_save">Lưu lịch</string>
+    <string name="backup_schedule_saved">Đã lưu lịch sao lưu</string>
+    <string name="backup_schedule_error">Lỗi lưu lịch: %1$s</string>
+
     <!-- Content descriptions (accessibility) -->
     <string name="cd_search">Tìm kiếm</string>
     <string name="cd_more_options">Tùy chọn khác</string>
@@ -214,4 +228,30 @@
     <string name="cd_seek_forward">Tua tới</string>
     <string name="cd_skip_previous">Về đầu</string>
     <string name="cd_skip_next">Tới cuối</string>
+    <string name="cd_stop_login">Dừng đăng nhập</string>
+    <string name="cd_fingerprint_login">Đăng nhập bằng vân tay</string>
+    <string name="cd_power_on_nas">Bật nguồn NAS</string>
+    <string name="cd_restart_nas">Khởi động lại NAS</string>
+    <string name="cd_realtime_status">Trạng thái thời gian thực</string>
+    <string name="cd_workload_mode">Chế độ tải hệ thống</string>
+    <string name="cd_gauge">Chỉ số hệ thống</string>
+    <string name="cd_mini_stat">Thông số</string>
+    <string name="cd_quick_action">Thao tác nhanh</string>
+    <string name="cd_menu_tile">Mở mục này</string>
+    <string name="cd_chevron_right">Xem thêm</string>
+    <string name="cd_network_info">Thông tin mạng</string>
+    <string name="cd_uptime">Thời gian hoạt động</string>
+    <string name="cd_expand">Mở rộng</string>
+    <string name="cd_collapse">Thu gọn</string>
+    <string name="cd_power_menu">Menu nguồn</string>
+    <string name="cd_logout">Đăng xuất</string>
+    <string name="cd_sleep_nas">Ngủ NAS</string>
+    <string name="cd_fan_settings">Cài đặt quạt</string>
+    <string name="cd_omv_panel">Bảng điều khiển OMV</string>
+    <string name="cd_service_status">Trạng thái dịch vụ</string>
+    <string name="cd_cloud_download">Tải xuống</string>
+    <string name="cd_completed">Hoàn thành</string>
+    <string name="cd_open_folder">Mở thư mục</string>
+    <string name="cd_tools_settings">Công cụ và cài đặt</string>
+    <string name="cd_insights">Phân tích hệ thống</string>
 </resources>

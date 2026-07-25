@@ -504,13 +504,17 @@ fun BrowserScreen(
             }
         )
     }
-    // Logic lọc danh sách file theo từ khóa tìm kiếm (bỏ qua viết hoa/viết thường)
-    // FIX BUG #4: derivedStateOf thay remember — tránh recomposition bất ổn khi fileList thay đổi
-    // NOTE: Khai báo ở đây (trước Scaffold) để TopAppBar có thể truy cập displayedFiles
+    val serverSearchResults by fileBrowserVM.searchResults.collectAsState()
+    val isServerSearchActive by fileBrowserVM.isSearchActive.collectAsState()
+
+    // Logic lọc danh sách file theo từ khóa tìm kiếm (bỏ qua viết hoa/viết thường).
+    // Current-directory filtering remains instant; completed recursive searches replace it.
     val displayedFiles by remember {
         derivedStateOf {
             val filtered = if (searchQuery.isBlank()) {
                 fileBrowserVM.fileList
+            } else if (serverSearchResults.isNotEmpty() || isServerSearchActive) {
+                serverSearchResults
             } else {
                 fileBrowserVM.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
             }
@@ -622,6 +626,9 @@ fun BrowserScreen(
                         keyboardActions = KeyboardActions(onSearch = {
                             historyManager.saveQuery(searchQuery)
                             focusManager.clearFocus()
+                            if (searchQuery.length >= 2) {
+                                fileBrowserVM.performSearch(searchQuery)
+                            }
                         }),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
@@ -633,7 +640,7 @@ fun BrowserScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = { isSearching = false; searchQuery = "" }) {
+                    IconButton(onClick = { isSearching = false; searchQuery = ""; fileBrowserVM.clearSearch() }) {
                         Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_close))
                     }
                 },

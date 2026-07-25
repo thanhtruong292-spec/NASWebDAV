@@ -137,8 +137,14 @@ object WebDavManager {
 
     fun currentAuthState(): AuthState = authState
 
+    private const val LOGIN_CALL_GROUP = "login"
+
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
+    }
+
+    private fun Request.Builder.withCallGroup(group: String): Request.Builder {
+        return tag(String::class.java, group)
     }
 
     fun tagCurrentAuth(builder: Request.Builder): Request.Builder {
@@ -278,9 +284,17 @@ object WebDavManager {
 
     }
 
-    fun cancelActiveCalls() {
-        optimizedClient.dispatcher.cancelAll()
-        sardineClient.dispatcher.cancelAll()
+    fun cancelActiveCalls(group: String = LOGIN_CALL_GROUP) {
+        fun cancelMatching(calls: List<okhttp3.Call>) {
+            calls.filter { it.request().tag(String::class.java) == group }
+                .forEach { it.cancel() }
+        }
+        cancelMatching(optimizedClient.dispatcher.queuedCalls())
+        cancelMatching(optimizedClient.dispatcher.runningCalls())
+        cancelMatching(sardineClient.dispatcher.queuedCalls())
+        cancelMatching(sardineClient.dispatcher.runningCalls())
+        cancelMatching(NasApplication.instance.sharedHttpClient.dispatcher.queuedCalls())
+        cancelMatching(NasApplication.instance.sharedHttpClient.dispatcher.runningCalls())
     }
 
 
@@ -306,8 +320,12 @@ object WebDavManager {
             var best = Long.MAX_VALUE
             repeat(if (isTailscale) 1 else 3) {
                 val requestBuilder = Request.Builder().withAuth(auth)
+                    .withCallGroup(LOGIN_CALL_GROUP)
                     .url("${auth.baseUrl.toApiBaseUrl()}/api/ping")
                     .head()
+                if (auth.user.isNotEmpty() || auth.pass.isNotEmpty()) {
+                    requestBuilder.header("Authorization", auth.authHeader)
+                }
                 if (auth.user.isNotEmpty() || auth.pass.isNotEmpty()) {
                     requestBuilder.header("Authorization", auth.authHeader)
                 }
@@ -509,7 +527,9 @@ object WebDavManager {
 
         fileUrl: String, inputStream: InputStream, totalContentLength: Long,
 
-        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
+        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
+
+        currentETag: String? = null
 
     ) = withContext(Dispatchers.IO) {
 
@@ -569,7 +589,9 @@ object WebDavManager {
 
 
 
-        val request = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody).build()
+        val requestBuilder = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
+        currentETag?.let { requestBuilder.header("If-Match", it) }
+        val request = requestBuilder.build()
 
         // OPTIMIZE: dùng thẳng optimizedClient — không tạo builder mới mỗi lần upload
         // để tái sử dụng Connection Pool, Dispatcher, Interceptors, HTTP/2 streams.
@@ -663,13 +685,20 @@ object WebDavManager {
     ) = withContext(Dispatchers.IO) {
 
         var remainingToSkip = uploadedBytes
+        val skipBuffer = ByteArray(8192)
         while (remainingToSkip > 0) {
-            val step = inputStream.skip(remainingToSkip)
+            var step = inputStream.skip(remainingToSkip)
             if (step <= 0L) {
-                if (inputStream.read() == -1) break
-                remainingToSkip--
-            } else {
+                // Some streams transiently return 0; retry once before falling back.
+                step = inputStream.skip(remainingToSkip)
+            }
+            if (step > 0L) {
                 remainingToSkip -= step
+            } else {
+                val toRead = minOf(remainingToSkip, skipBuffer.size.toLong()).toInt()
+                val read = inputStream.read(skipBuffer, 0, toRead)
+                if (read <= 0) break
+                remainingToSkip -= read
             }
         }
 
@@ -932,7 +961,7 @@ object WebDavManager {
 
         java.io.FileInputStream(file).use { inputStream ->
 
-            uploadStreamWithProgress(fileUrl, inputStream, file.length(), contentType) { _, _ -> }
+            uploadStreamWithProgress(fileUrl, inputStream, file.length(), contentType, { _, _ -> })
 
         }
 

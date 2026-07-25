@@ -43,7 +43,7 @@ interface FileDao {
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
 
-    @Query("SELECT path FROM files_cache WHERE isDirectory = 0")
+    @Query("SELECT path FROM files_cache WHERE isDirectory = 0 LIMIT 5000")
     fun getAllCachedFilePaths(): List<String>
 
     // TỐI ƯU OOM: Tránh load toàn bộ List<String> vào RAM
@@ -317,7 +317,7 @@ interface SyncActionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(action: SyncAction)
 
-    @Query("SELECT * FROM sync_queue ORDER BY timestamp ASC")
+    @Query("SELECT * FROM sync_queue ORDER BY timestamp ASC LIMIT 200")
     fun getAllPendingActions(): List<SyncAction>
 
     @Query("DELETE FROM sync_queue WHERE id = :id")

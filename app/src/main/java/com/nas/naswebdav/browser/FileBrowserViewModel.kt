@@ -17,12 +17,16 @@ import com.nas.naswebdav.ThumbnailAuditData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import java.util.Stack
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.delay
 
 /**
  * FileBrowserViewModel — Primary owner of file-browser state.
@@ -174,6 +178,94 @@ class FileBrowserViewModel(
             val results = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
             withContext(Dispatchers.Main) { fileList = results; isLoading = false }
         }
+    }
+
+    // ═══ RECURSIVE SEARCH STATE ═══
+
+    private val _searchResults = MutableStateFlow<List<NasFile>>(emptyList())
+    val searchResults: StateFlow<List<NasFile>> = _searchResults.asStateFlow()
+
+    private val _isSearchActive = MutableStateFlow(false)
+    val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    /**
+     * Perform recursive search starting from [currentUrl] with max depth 3.
+     * First filters current [fileList] for instant feedback, then recursively
+     * PROPFINDs subdirectories. Updates [searchResults] incrementally.
+     */
+    fun performSearch(query: String) {
+        searchJob?.cancel()
+        if (query.isBlank() || query.length < 2) {
+            _isSearchActive.value = false
+            _searchResults.value = emptyList()
+            return
+        }
+
+        _isSearchActive.value = true
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(300) // Debounce 300ms
+            if (!isActive) return@launch
+
+            val allResults = mutableListOf<NasFile>()
+            val seenPaths = mutableSetOf<String>()
+
+            // Instant feedback: filter current fileList
+            val instantResults = fileList.filter {
+                it.name.contains(query, ignoreCase = true)
+            }
+            for (file in instantResults) {
+                if (seenPaths.add(file.path)) {
+                    allResults.add(file)
+                }
+            }
+            withContext(Dispatchers.Main) { _searchResults.value = allResults.toList() }
+
+            // BFS recursive PROPFIND with max depth 3
+            val queue = ArrayDeque<Pair<String, Int>>() // (url, depth)
+            queue.add(currentUrl to 0)
+
+            while (queue.isNotEmpty() && isActive) {
+                val (url, depth) = queue.removeFirst()
+                if (depth > 3) continue
+
+                try {
+                    val files = WebDavManager.listFiles(url)
+                    for (file in files) {
+                        if (isActive && seenPaths.add(file.path)) {
+                            if (file.name.contains(query, ignoreCase = true)) {
+                                allResults.add(file)
+                            }
+                            if (file.isDirectory) {
+                                queue.add(file.path to depth + 1)
+                            }
+                        }
+                    }
+                    // Update results incrementally on Main thread
+                    withContext(Dispatchers.Main) {
+                        _searchResults.value = allResults.toList()
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Skip failed subfolders gracefully
+                    android.util.Log.w("RecursiveSearch", "PROPFIND failed for $url: ${e.message}")
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                _searchResults.value = allResults
+                _isSearchActive.value = false
+            }
+        }
+    }
+
+    /** Clear recursive search state and cancel any in-progress search. */
+    fun clearSearch() {
+        searchJob?.cancel()
+        _isSearchActive.value = false
+        _searchResults.value = emptyList()
     }
 
     fun showLatestPhotos() {

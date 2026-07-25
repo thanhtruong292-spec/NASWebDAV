@@ -903,7 +903,7 @@ private fun DialogsTikTokWatchStatusChip(
     }
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AutoBackupDialog(
     context: Context,
@@ -917,6 +917,27 @@ fun AutoBackupDialog(
     onCancelSync: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val autoBackupVM = LocalAutoBackupVM.current
+
+    // --- Schedule state (local copies synced with VM) ---
+    var frequencyExpanded by remember { mutableStateOf(false) }
+    val frequencyOptions = listOf("daily" to "Hàng ngày", "weekly" to "Hàng tuần", "monthly" to "Hàng tháng")
+
+    // Fetch schedule from server on first open
+    LaunchedEffect(Unit) {
+        autoBackupVM.fetchBackupSchedule()
+    }
+
+    // Observe VM state directly
+    val schedule = autoBackupVM.backupSchedule
+    val scheduleMessage = autoBackupVM.backupScheduleMessage
+
+    LaunchedEffect(scheduleMessage) {
+        if (scheduleMessage.isNotBlank()) {
+            Toast.makeText(context, scheduleMessage, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -924,7 +945,10 @@ fun AutoBackupDialog(
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Sync, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(22.dp))
@@ -1038,6 +1062,234 @@ fun AutoBackupDialog(
                     Text("LƯU", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
+
+            Spacer(Modifier.height(10.dp))
+
+            // ─── Schedule Section ───
+            androidx.compose.animation.AnimatedVisibility(visible = isAutoBackupEnabled) {
+                Column(modifier = Modifier.padding(top = 4.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(6.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Schedule, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            stringResource(id = R.string.backup_schedule_title),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (autoBackupVM.backupScheduleMessage.isNotEmpty()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                autoBackupVM.backupScheduleMessage,
+                                fontSize = 10.sp,
+                                color = if (autoBackupVM.backupScheduleMessage.startsWith("Lỗi"))
+                                    MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // ── Frequency dropdown ──
+                    Text(stringResource(id = R.string.backup_schedule_frequency), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    ExposedDropdownMenuBox(
+                        expanded = frequencyExpanded,
+                        onExpandedChange = { frequencyExpanded = !frequencyExpanded }
+                    ) {
+                        val selectedLabel = frequencyOptions.find { it.first == schedule.frequency }?.second ?: "Hàng tuần"
+                        OutlinedTextField(
+                            value = selectedLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = frequencyExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true
+                        )
+                        ExposedDropdownMenu(
+                            expanded = frequencyExpanded,
+                            onDismissRequest = { frequencyExpanded = false }
+                        ) {
+                            frequencyOptions.forEach { (value, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            label,
+                                            color = if (value == schedule.frequency) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = if (value == schedule.frequency) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 13.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        frequencyExpanded = false
+                                        autoBackupVM.saveBackupSchedule(schedule.copy(frequency = value))
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // ── Hour slider ──
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(stringResource(id = R.string.backup_schedule_hour), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            stringResource(id = R.string.backup_schedule_hour_format, schedule.hour),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    // Drag handle with local state, persist on release
+                    var hourDragValue by remember { mutableStateOf<Float?>(null) }
+                    Slider(
+                        value = hourDragValue ?: schedule.hour.toFloat(),
+                        onValueChange = { hourDragValue = it },
+                        onValueChangeFinished = {
+                            val newHour = (hourDragValue ?: schedule.hour.toFloat()).toInt().coerceIn(0, 23)
+                            hourDragValue = null
+                            if (newHour != schedule.hour) {
+                                autoBackupVM.saveBackupSchedule(schedule.copy(hour = newHour))
+                            }
+                        },
+                        valueRange = 0f..23f,
+                        steps = 22,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    // +/- buttons for precise hour control
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val newHour = (schedule.hour - 1).coerceIn(0, 23)
+                                autoBackupVM.saveBackupSchedule(schedule.copy(hour = newHour))
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(Icons.Default.Remove, "Giảm giờ", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            stringResource(id = R.string.backup_schedule_hour_format, schedule.hour),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.widthIn(min = 52.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(
+                            onClick = {
+                                val newHour = (schedule.hour + 1).coerceIn(0, 23)
+                                autoBackupVM.saveBackupSchedule(schedule.copy(hour = newHour))
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(Icons.Default.Add, "Tăng giờ", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    // ── Retention slider ──
+                    Text(
+                        stringResource(id = R.string.backup_schedule_retention, schedule.retentionCount),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(stringResource(id = R.string.backup_schedule_retention_range), fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                    Spacer(Modifier.height(2.dp))
+                    // Drag handle with local state, persist on release
+                    var retentionDragValue by remember { mutableStateOf<Float?>(null) }
+                    Slider(
+                        value = retentionDragValue ?: schedule.retentionCount.toFloat(),
+                        onValueChange = { retentionDragValue = it },
+                        onValueChangeFinished = {
+                            val newRetention = (retentionDragValue ?: schedule.retentionCount.toFloat()).toInt().coerceIn(7, 90)
+                            retentionDragValue = null
+                            if (newRetention != schedule.retentionCount) {
+                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
+                            }
+                        },
+                        valueRange = 7f..90f,
+                        steps = 82,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = MaterialTheme.colorScheme.primary,
+                            activeTrackColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                    // +/- buttons for precise retention control
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = {
+                                val newRetention = (schedule.retentionCount - 1).coerceIn(7, 90)
+                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(Icons.Default.Remove, "Giảm số ngày", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "${schedule.retentionCount} ngày",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.widthIn(min = 52.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(
+                            onClick = {
+                                val newRetention = (schedule.retentionCount + 1).coerceIn(7, 90)
+                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
+                            },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        ) {
+                            Icon(Icons.Default.Add, "Tăng số ngày", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+
             Spacer(Modifier.height(10.dp))
         }
     }

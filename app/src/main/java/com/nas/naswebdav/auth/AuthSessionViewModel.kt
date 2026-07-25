@@ -130,6 +130,7 @@ class AuthSessionViewModel(
                                 .build()
 
                             val request = okhttp3.Request.Builder()
+                                .tag(String::class.java, "login")
                                 .url("${safeUrl.toApiBaseUrl()}/api/ping")
                                 .head()
                                 .header("Authorization", okhttp3.Credentials.basic(user, pass))
