@@ -507,15 +507,19 @@ fun BrowserScreen(
     val serverSearchResults by fileBrowserVM.searchResults.collectAsState()
     val isServerSearchActive by fileBrowserVM.isSearchActive.collectAsState()
 
-    // Logic lọc danh sách file theo từ khóa tìm kiếm (bỏ qua viết hoa/viết thường).
-    // Current-directory filtering remains instant; completed recursive searches replace it.
+    // Windows-Explorer-style search display:
+    // - blank query → current folder listing
+    // - typing → show global search results as they arrive
+    // - never hide local matches while waiting for remote BFS
     val displayedFiles by remember {
         derivedStateOf {
             val filtered = if (searchQuery.isBlank()) {
                 fileBrowserVM.fileList
-            } else if (serverSearchResults.isNotEmpty() || isServerSearchActive) {
+            } else if (serverSearchResults.isNotEmpty()) {
                 serverSearchResults
             } else {
+                // Fallback: filter current folder while global search is still loading
+                // or returned nothing yet.
                 fileBrowserVM.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
             }
             // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
