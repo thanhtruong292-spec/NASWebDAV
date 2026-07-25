@@ -409,74 +409,20 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     private fun requestMediaReadPermissionsIfNeeded() {
-        // Android 14+ (SDK 34): request partial media access first
-        if (android.os.Build.VERSION.SDK_INT >= 34) {
-            val mediaPermissions = arrayOf(
+        val permissions = when {
+            android.os.Build.VERSION.SDK_INT >= 33 -> arrayOf(
                 android.Manifest.permission.READ_MEDIA_IMAGES,
-                android.Manifest.permission.READ_MEDIA_VIDEO,
-                android.Manifest.permission.READ_MEDIA_AUDIO,
-                android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+                android.Manifest.permission.READ_MEDIA_VIDEO
             )
-            val missing = mediaPermissions.filter {
-                androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            }
-            if (missing.isNotEmpty()) {
-                androidx.core.app.ActivityCompat.requestPermissions(this, missing, 4102)
-                return
-            }
-        }
-        // Android 13 (SDK 33): request media permissions
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            val mediaPermissions = arrayOf(
-                android.Manifest.permission.READ_MEDIA_IMAGES,
-                android.Manifest.permission.READ_MEDIA_VIDEO,
-                android.Manifest.permission.READ_MEDIA_AUDIO
+            else -> arrayOf(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
             )
-            val missing = mediaPermissions.filter {
-                androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            }
-            if (missing.isNotEmpty()) {
-                androidx.core.app.ActivityCompat.requestPermissions(this, missing, 4102)
-                return
-            }
         }
-        // Android 10-12 (SDK 29-32): request legacy storage
-        if (android.os.Build.VERSION.SDK_INT <= 32) {
-            val legacyPermissions = mutableListOf<String>()
-            if (android.os.Build.VERSION.SDK_INT <= 32) {
-                if (android.os.Build.VERSION.SDK_INT <= 29) {
-                    legacyPermissions.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                }
-                legacyPermissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-            val missing = legacyPermissions.filter {
-                androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            }
-            if (missing.isNotEmpty()) {
-                androidx.core.app.ActivityCompat.requestPermissions(this, missing.toTypedArray(), 4102)
-                return
-            }
+        val missing = permissions.filter {
+            androidx.core.content.ContextCompat.checkSelfPermission(this, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
         }
-        // Android 11+ (SDK 30+): request all-files access for NAS backup
-        if (android.os.Build.VERSION.SDK_INT >= 30 && !android.os.Environment.isExternalStorageManager()) {
-            try {
-                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                    setData(android.net.Uri.parse("package:$packageName"))
-                }
-                startActivity(intent)
-            } catch (e: android.content.ActivityNotFoundException) {
-                // Fallback for some devices
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    android.widget.Toast.makeText(
-                        this,
-                        "Vui lòng cấp quyền 'Tất cả tệp' trong Cài đặt để sao lưu file",
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
+        if (missing.isNotEmpty()) {
+            androidx.core.app.ActivityCompat.requestPermissions(this, missing.toTypedArray(), 4102)
         }
     }
 
