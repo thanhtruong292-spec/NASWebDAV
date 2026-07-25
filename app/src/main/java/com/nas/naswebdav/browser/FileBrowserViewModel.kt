@@ -171,15 +171,76 @@ class FileBrowserViewModel(
         return false
     }
 
+    /**
+     * Searches the local cache immediately, then walks the NAS tree from the
+     * current browser root. Cache-only search misses folders the user has not
+     * opened yet; the bounded BFS fills that gap without loading the whole NAS
+     * into memory.
+     */
     fun searchGlobal(keyword: String) {
-        if (keyword.isBlank()) return
+        val normalizedQuery = keyword.trim()
+        if (normalizedQuery.isBlank()) {
+            clearSearch()
+            return
+        }
         searchJob?.cancel()
+        val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
+        _isSearchActive.value = true
         searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(300) // Debounce
+            delay(300) // Debounce typing
             if (!isActive) return@launch
-            val results = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
+
+            val results = LinkedHashMap<String, NasFile>()
+            try {
+                repository.searchGlobal(normalizedQuery).forEach { file ->
+                    results[file.path] = file
+                }
+            } catch (_: Exception) {
+                // A stale/corrupt cache must not prevent the live search.
+            }
+            withContext(Dispatchers.Main) { _searchResults.value = results.values.toList() }
+
+            if (searchRootUrl.isNotBlank()) {
+                val queue = ArrayDeque<Pair<String, Int>>()
+                val visited = HashSet<String>()
+                queue.add(searchRootUrl to 0)
+                var foldersVisited = 0
+                val maxDepth = 8
+                val maxFolders = 1_000
+                val maxResults = 500
+
+                while (queue.isNotEmpty() && isActive && foldersVisited < maxFolders) {
+                    val (folderUrl, depth) = queue.removeFirst()
+                    val normalizedFolder = folderUrl.trimEnd('/')
+                    if (!visited.add(normalizedFolder) || depth > maxDepth) continue
+                    foldersVisited++
+                    try {
+                        WebDavManager.listFiles(folderUrl).forEach { file ->
+                            if (file.name.contains(normalizedQuery, ignoreCase = true) &&
+                                results.size < maxResults
+                            ) {
+                                results[file.path] = file
+                            }
+                            if (file.isDirectory && depth < maxDepth && queue.size < maxFolders) {
+                                queue.add(file.path to depth + 1)
+                            }
+                        }
+                        withContext(Dispatchers.Main) {
+                            _searchResults.value = results.values.toList()
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w(
+                            "GlobalSearch",
+                            "PROPFIND failed for $folderUrl: ${e.message}"
+                        )
+                    }
+                }
+            }
+
             withContext(Dispatchers.Main) {
-                _searchResults.value = results
+                _searchResults.value = results.values.toList()
                 _isSearchActive.value = false
             }
         }
