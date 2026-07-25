@@ -622,8 +622,9 @@ fun BrowserScreen(
                         onValueChange = { value ->
                             searchQuery = value
                             if (value.length >= 2) {
-                                // Recursive NAS search chạy tự động sau debounce 300ms.
-                                fileBrowserVM.performSearch(value)
+                                // Global search trên Room cache — nhanh, không timeout
+                                // khi NAS có thư mục con lớn hoặc mạng chậm.
+                                fileBrowserVM.searchGlobal(value)
                             } else {
                                 fileBrowserVM.clearSearch()
                             }
@@ -635,7 +636,7 @@ fun BrowserScreen(
                             historyManager.saveQuery(searchQuery)
                             focusManager.clearFocus()
                             if (searchQuery.length >= 2) {
-                                fileBrowserVM.performSearch(searchQuery)
+                                fileBrowserVM.searchGlobal(searchQuery)
                             }
                         }),
                         colors = TextFieldDefaults.colors(

@@ -173,10 +173,15 @@ class FileBrowserViewModel(
 
     fun searchGlobal(keyword: String) {
         if (keyword.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Tìm kiếm: $keyword"; urlStack.clear() }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(300) // Debounce
+            if (!isActive) return@launch
             val results = try { repository.searchGlobal(keyword) } catch(e: Exception) { emptyList() }
-            withContext(Dispatchers.Main) { fileList = results; isLoading = false }
+            withContext(Dispatchers.Main) {
+                _searchResults.value = results
+                _isSearchActive.value = false
+            }
         }
     }
 
