@@ -626,9 +626,8 @@ fun BrowserScreen(
                         onValueChange = { value ->
                             searchQuery = value
                             if (value.length >= 2) {
-                                // Global search trên Room cache — nhanh, không timeout
-                                // khi NAS có thư mục con lớn hoặc mạng chậm.
-                                fileBrowserVM.searchGlobal(value)
+                                // BFS recursive search từ root NAS — gõ là tìm, bấm Enter để chạy lại nếu cần
+                                fileBrowserVM.performSearch(value)
                             } else {
                                 fileBrowserVM.clearSearch()
                             }

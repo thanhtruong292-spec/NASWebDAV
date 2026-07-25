@@ -299,7 +299,9 @@ class FileBrowserViewModel(
         // FIX Bug 1: capture currentUrl on Main thread before launching IO coroutine.
         // Without this, the IO thread could read a stale or empty value, causing
         // PROPFIND on "/" or wrong path → silent BFS failure.
-        val searchRootUrl = currentUrl
+        // Fallback to WebDavManager.currentBaseUrl so search works immediately after
+        // login before user navigates anywhere.
+        val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
         if (searchRootUrl.isBlank()) {
             _isSearchActive.value = false
             _searchResults.value = emptyList()
