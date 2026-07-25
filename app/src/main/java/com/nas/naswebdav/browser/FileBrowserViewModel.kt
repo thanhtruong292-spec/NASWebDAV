@@ -203,6 +203,16 @@ class FileBrowserViewModel(
             return
         }
 
+        // FIX Bug 1: capture currentUrl on Main thread before launching IO coroutine.
+        // Without this, the IO thread could read a stale or empty value, causing
+        // PROPFIND on "/" or wrong path → silent BFS failure.
+        val searchRootUrl = currentUrl
+        if (searchRootUrl.isBlank()) {
+            _isSearchActive.value = false
+            _searchResults.value = emptyList()
+            return
+        }
+
         _isSearchActive.value = true
         searchJob = viewModelScope.launch(Dispatchers.IO) {
             delay(300) // Debounce 300ms
@@ -210,6 +220,7 @@ class FileBrowserViewModel(
 
             val allResults = mutableListOf<NasFile>()
             val seenPaths = mutableSetOf<String>()
+            var failCount = 0
 
             // Instant feedback: filter current fileList
             val instantResults = fileList.filter {
@@ -224,7 +235,7 @@ class FileBrowserViewModel(
 
             // BFS recursive PROPFIND with max depth 3
             val queue = ArrayDeque<Pair<String, Int>>() // (url, depth)
-            queue.add(currentUrl to 0)
+            queue.add(searchRootUrl to 0)
 
             while (queue.isNotEmpty() && isActive) {
                 val (url, depth) = queue.removeFirst()
@@ -249,7 +260,9 @@ class FileBrowserViewModel(
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // Skip failed subfolders gracefully
+                    // FIX Bug 4: track failures so we can warn user if search returns empty
+                    // due to widespread subfolder errors.
+                    failCount++
                     android.util.Log.w("RecursiveSearch", "PROPFIND failed for $url: ${e.message}")
                 }
             }
@@ -257,6 +270,9 @@ class FileBrowserViewModel(
             withContext(Dispatchers.Main) {
                 _searchResults.value = allResults
                 _isSearchActive.value = false
+                if (allResults.isEmpty() && failCount > 0) {
+                    errorMessage = "Không truy cập được $failCount thư mục con — NAS có thể từ chối quyền hoặc mạng chậm"
+                }
             }
         }
     }

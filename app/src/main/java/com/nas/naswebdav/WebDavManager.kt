@@ -231,6 +231,10 @@ object WebDavManager {
 
             .retryOnConnectionFailure(true)
 
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+
             .addInterceptor { chain ->
 
                 // PHASE 17 TỐI QUAN TRỌNG: Preemptive Authentication (Xác thực vượt cấp)
@@ -453,6 +457,7 @@ object WebDavManager {
                                 currentType = ""
                                 currentLength = 0L
                                 currentModTime = 0L
+                                textBuffer = "" // FIX Bug 5: reset to prevent stale data from previous response
                             } else if (name == "collection") {
                                 isDir = true
                             }
@@ -476,17 +481,18 @@ object WebDavManager {
                                     }
                                     "response" -> {
                                         if (currentHref.isNotEmpty()) {
-                                            val fullUri = if (currentHref.startsWith("http")) {
+                                            val rawUri = if (currentHref.startsWith("http", ignoreCase = true)) {
                                                 currentHref
                                             } else {
                                                 val baseUri = java.net.URI(safeUrl)
-                                                val scheme = baseUri.scheme
-                                                val host = baseUri.host
-                                                val portStr = if (baseUri.port != -1) ":${baseUri.port}" else ""
-                                                val hrefClean = if (currentHref.startsWith("/")) currentHref else "/$currentHref"
-                                                "$scheme://$host$portStr$hrefClean"
+                                                val hrefUri = java.net.URI(currentHref)
+                                                // Resolve relative hrefs against the current directory, not host root.
+                                                baseUri.resolve(hrefUri).toString()
                                             }
-                                            
+                                            // FIX Bug 2: normalize Unicode/spaces in href before reuse by BFS.
+                                            val fullUri = runCatching { java.net.URI(rawUri).toASCIIString() }
+                                                .getOrDefault(rawUri)
+
                                             if (fullUri.trimEnd('/') != safeUrl.trimEnd('/')) {
                                                 var extractedName = ""
                                                 try {
