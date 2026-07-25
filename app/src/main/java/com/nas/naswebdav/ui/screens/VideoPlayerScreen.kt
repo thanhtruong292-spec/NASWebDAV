@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.view.ViewGroup
 import android.webkit.*
 import com.nas.naswebdav.*
+import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
 import androidx.compose.animation.*
@@ -37,6 +38,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -522,9 +524,9 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                 ) {
                     IconButton(
                         onClick = onBack,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.minimumInteractiveComponentSize().size(40.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back), tint = Color.White)
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
@@ -579,25 +581,25 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.SkipPrevious, "Về đầu", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
+                            Icon(Icons.Default.SkipPrevious, stringResource(R.string.cd_skip_previous), tint = Color.White, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Replay30, "Tua lùi", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
+                            Icon(Icons.Default.Replay30, stringResource(R.string.cd_seek_backward), tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.minimumInteractiveComponentSize().size(34.dp)
                         ) {
                             Icon(
                                 if (playerIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                "Phát / tạm dừng",
+                                stringResource(if (playerIsPlaying) R.string.cd_pause else R.string.cd_play),
                                 tint = Color.White,
                                 modifier = Modifier.size(25.dp)
                             )
                         }
-                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Forward30, "Tua tới", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
+                            Icon(Icons.Default.Forward30, stringResource(R.string.cd_seek_forward), tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = {
@@ -608,7 +610,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             },
                             modifier = Modifier.size(32.dp)
                         ) {
-                            Icon(Icons.Default.SkipNext, "Tới cuối", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.SkipNext, stringResource(R.string.cd_skip_next), tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
                         Text(
                             text = "${FormatUtils.formatPlayerTime(playbackPositionMs)} / ${FormatUtils.formatPlayerTime(playbackDurationMs)}",

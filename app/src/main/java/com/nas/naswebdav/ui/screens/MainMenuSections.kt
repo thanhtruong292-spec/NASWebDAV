@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
@@ -36,6 +37,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -98,13 +100,13 @@ fun QuickActionSelectorDialog(
             AVAILABLE_QUICK_ACTIONS.forEach { action ->
                 val isSelected = currentSlots.contains(action.id)
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(12.dp)).clickable { if (!isSelected) onSelect(action.id) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).minimumInteractiveComponentSize().clip(RoundedCornerShape(12.dp)).clickable { if (!isSelected) onSelect(action.id) },
                     colors = CardDefaults.cardColors(containerColor = if (isSelected) AccentCyan.copy(alpha=0.15f) else DarkCard),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(36.dp).clip(CircleShape).background(Brush.linearGradient(action.gradientColors)), contentAlignment = Alignment.Center) {
-                            Icon(action.icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Icon(action.icon, stringResource(R.string.cd_tools), tint = Color.White, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {

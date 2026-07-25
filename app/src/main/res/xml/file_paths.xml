@@ -3,4 +3,6 @@
     <cache-path name="video_cache" path="video_temp/" />
     <!-- NAS config backups downloaded for share-to-OneDrive flow -->
     <cache-path name="nas_backups" path="nas_backups/" />
+    <!-- LOCAL CRASH EXPORT: allows FileProvider to serve crash-export-*.txt from cache root -->
+    <cache-path name="crash_logs" path="." />
 </paths>

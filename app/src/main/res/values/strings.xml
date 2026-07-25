@@ -204,4 +204,14 @@
     <string name="cd_stop_thumbnail">Dừng thumbnail</string>
     <string name="cd_kill">Kill</string>
     <string name="cd_delete_swipe">Xoá</string>
+    <string name="cd_menu">Mở menu</string>
+    <string name="cd_storage">Bộ nhớ</string>
+    <string name="cd_media">Nội dung đa phương tiện</string>
+    <string name="cd_tools">Công cụ</string>
+    <string name="cd_play">Phát</string>
+    <string name="cd_pause">Tạm dừng</string>
+    <string name="cd_seek_backward">Tua lùi</string>
+    <string name="cd_seek_forward">Tua tới</string>
+    <string name="cd_skip_previous">Về đầu</string>
+    <string name="cd_skip_next">Tới cuối</string>
 </resources>

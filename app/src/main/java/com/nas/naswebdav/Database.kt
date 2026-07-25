@@ -178,6 +178,12 @@ interface LogDao {
     @Query("SELECT * FROM system_logs WHERE module = :module ORDER BY timestamp DESC LIMIT :limit")
     fun getLogsByModule(module: String, limit: Int): List<SystemLog>
 
+    // LOCAL CRASH EXPORT: Truy vấn các log CRASH/ERROR mới nhất để chia sẻ.
+    // Chạy đồng bộ trên background thread khi user bấm "Chia sẻ log lỗi".
+    // Lưu ý: không suspend — caller chịu trách nhiệm dispatch IO.
+    @Query("SELECT * FROM system_logs WHERE type IN ('CRASH','ERROR') ORDER BY id DESC LIMIT :limit")
+    suspend fun getRecentCrashes(limit: Int): List<SystemLog>
+
     @Insert
     fun insertLog(log: SystemLog)
 

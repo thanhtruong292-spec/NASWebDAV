@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 /**
@@ -21,6 +22,11 @@ import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
  */
 
 import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.core.content.FileProvider
+import androidx.compose.ui.platform.LocalContext
+import com.nas.naswebdav.utils.CrashLogExporter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -55,6 +61,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -1064,6 +1071,8 @@ fun SystemLogDialog(
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
+    val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1083,6 +1092,38 @@ fun SystemLogDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        shareScope.launch {
+                            val path = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                CrashLogExporter.exportToFile(context, com.nas.naswebdav.NasApplication.instance.database)
+                            }
+                            if (path == null) {
+                                Toast.makeText(context, "Không thể xuất log lỗi", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val file = java.io.File(path)
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    context.packageName + ".fileprovider",
+                                    file
+                                )
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    putExtra(Intent.EXTRA_SUBJECT, "NAS WebDAV crash log")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                val chooser = Intent.createChooser(sendIntent, "Chia sẻ log lỗi").apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(chooser)
+                            }
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = "Chia sẻ log lỗi", tint = Color(0xFF00ACC1), modifier = Modifier.size(18.dp))
+                }
                 if (deviceVM.systemLogsList.isNotEmpty()) {
                     IconButton(onClick = { deviceVM.clearSystemLogs() }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935), modifier = Modifier.size(18.dp))
@@ -2058,8 +2099,8 @@ fun DialogsLivestreamRecordDialog(
                     Text("Ghi trực tiếp vào NAS HDD", color = Color(0xFF8892B0), fontSize = 12.sp)
                 }
                 if (activeLivestreams.isNotEmpty()) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Thu nhỏ", tint = Color.Gray)
+                    IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize()) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.cd_close), tint = Color.Gray)
                     }
                 }
             }
