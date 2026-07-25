@@ -67,6 +67,7 @@ data class QuickActionDef(
     val gradientColors: List<androidx.compose.ui.graphics.Color>
 )
 
+// Gradient colors are intentional brand palette constants for quick-action tile icons.
 val AVAILABLE_QUICK_ACTIONS = listOf(
     QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B))),
     QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
@@ -89,7 +90,7 @@ fun QuickActionSelectorDialog(
 ) {
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
@@ -106,7 +107,7 @@ fun QuickActionSelectorDialog(
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(36.dp).clip(CircleShape).background(Brush.linearGradient(action.gradientColors)), contentAlignment = Alignment.Center) {
-                            Icon(action.icon, stringResource(R.string.cd_tools), tint = Color.White, modifier = Modifier.size(18.dp))
+                            Icon(action.icon, stringResource(R.string.cd_tools), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -177,10 +178,10 @@ fun SystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
                     val recentLogs = viewModel.systemLogsList.take(3)
                     recentLogs.forEach { log ->
                         val logColor = when (log.type) {
-                            "SUCCESS" -> Color(0xFF43A047)
-                            "ERROR" -> Color(0xFFEF5350)
-                            "WARNING" -> Color(0xFFFFA726)
-                            else -> Color(0xFF29B6F6)
+                            "SUCCESS" -> MaterialTheme.colorScheme.tertiary
+                            "ERROR" -> MaterialTheme.colorScheme.error
+                            "WARNING" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
                         }
                         val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
                         

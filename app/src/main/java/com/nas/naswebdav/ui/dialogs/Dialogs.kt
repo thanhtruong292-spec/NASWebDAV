@@ -127,7 +127,7 @@ fun DownloadDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -138,9 +138,9 @@ fun DownloadDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.CloudDownload, null, tint = Color(0xFF26A69A), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Tải BitTorrent", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Tải BitTorrent", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -156,8 +156,8 @@ fun DownloadDialog(
                         label = { Text("$emoji $label", fontSize = 12.sp) },
                         modifier = Modifier.weight(1f).height(34.dp),
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF00897B).copy(alpha = 0.2f),
-                            selectedLabelColor = Color(0xFF00897B),
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                            selectedLabelColor = MaterialTheme.colorScheme.primary,
                         )
                     )
                 }
@@ -166,7 +166,7 @@ fun DownloadDialog(
 
             when (tabIndex) {
                 0 -> {
-                    Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                    Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(6.dp))
                     com.nas.naswebdav.ui.components.CompactTextField(
                         value = downloadLink,
@@ -179,30 +179,30 @@ fun DownloadDialog(
                         onClick = onConfirm,
                         enabled = downloadLink.isNotBlank(),
                         modifier = Modifier.fillMaxWidth().height(40.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("THÊM VÀO HÀNG ĐỢI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("THÊM VÀO HÀNG ĐỢI", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
                 1 -> {
-                    Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = Color(0xFF8892B0))
+                    Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { onPickTorrentFile() },
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         shape = RoundedCornerShape(10.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.6f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Icon(Icons.Default.UploadFile, null, tint = Color(0xFF00897B), modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.UploadFile, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("CHỌN FILE .TORRENT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(5.dp))
                     Text(
                         "Sau khi chọn, file sẽ tự upload và đóng form.",
-                        color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 11.sp
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 11.sp
                     )
                 }
             }
@@ -211,8 +211,8 @@ fun DownloadDialog(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().height(40.dp),
                 shape = RoundedCornerShape(10.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.5f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00897B))
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
             ) { Text("HỦY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             Spacer(Modifier.height(4.dp))
         }
@@ -265,7 +265,7 @@ fun SmartDiskDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.HealthAndSafety, null, tint = Color(0xFF43A047), modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.HealthAndSafety, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Chẩn đoán Ổ cứng", fontWeight = FontWeight.Bold)
             }
@@ -283,7 +283,7 @@ fun SmartDiskDialog(
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Trạng thái:", fontSize = 13.sp)
-                            Text(deviceVM.smartInfo.status, color = if (deviceVM.smartInfo.status == "PASSED") Color(0xFF43A047) else Color.Red, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(deviceVM.smartInfo.status, color = if (deviceVM.smartInfo.status == "PASSED") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -304,12 +304,12 @@ fun SmartDiskDialog(
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Ghi (Write):", fontSize = 13.sp)
-                            Text(deviceVM.speedTestResult.writeSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF8E24AA))
+                            Text(deviceVM.speedTestResult.writeSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Đọc (Read):", fontSize = 13.sp)
-                            Text(deviceVM.speedTestResult.readSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFF1E88E5))
+                            Text(deviceVM.speedTestResult.readSpeed, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
                         }
 
                         if (deviceVM.lastAutoSpeedTime > 0) {
@@ -317,7 +317,7 @@ fun SmartDiskDialog(
                             Text(
                                 text = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(deviceVM.lastAutoSpeedTime)),
                                 fontSize = 10.sp,
-                                color = Color.Gray,
+                                color = MaterialTheme.colorScheme.outline,
                                 fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                                 modifier = Modifier.align(Alignment.End)
                             )
@@ -332,7 +332,7 @@ fun SmartDiskDialog(
                                 .fillMaxWidth()
                                 .background(
                                     brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                                        colors = if (deviceVM.isTestingSpeed) listOf(Color.Gray, Color.LightGray) else listOf(Color(0xFF00897B), Color(0xFF26A69A))
+                                        colors = if (deviceVM.isTestingSpeed) listOf(MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.onSurfaceVariant) else listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary)
                                     ),
                                     shape = RoundedCornerShape(24.dp)
                                 ),
@@ -344,10 +344,10 @@ fun SmartDiskDialog(
                             Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (deviceVM.isTestingSpeed) {
-                                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                         Spacer(Modifier.width(8.dp))
                                     }
-                                    Text(if (deviceVM.isTestingSpeed) "Đang kiểm tra..." else "Bắt đầu kiểm tra", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(if (deviceVM.isTestingSpeed) "Đang kiểm tra..." else "Bắt đầu kiểm tra", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -357,7 +357,7 @@ fun SmartDiskDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Đóng", color = Color(0xFF00897B))
+                Text("Đóng", color = MaterialTheme.colorScheme.primary)
             }
         }
     )
@@ -461,7 +461,7 @@ private fun DialogsTikTokLiveWatchSection(
         )
     }
 
-    HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
     // Header clickable -> toggle list user. Hien icon expand/collapse + count.
     Row(
@@ -479,13 +479,13 @@ private fun DialogsTikTokLiveWatchSection(
         Spacer(Modifier.width(8.dp))
         Text("THEO DÕI TIKTOK LIVE", color = Color(0xFFEE1D52), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Spacer(Modifier.weight(1f))
-        Text("${users.size} người dùng", color = Color(0xFF9AA3B8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("${users.size} người dùng", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         if (users.isNotEmpty()) {
             Spacer(Modifier.width(6.dp))
             Icon(
                 if (listExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                 contentDescription = if (listExpanded) "Ẩn danh sách" else "Mở danh sách",
-                tint = Color(0xFF9AA3B8),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -496,7 +496,7 @@ private fun DialogsTikTokLiveWatchSection(
             value = newUsername,
             onValueChange = onUsernameChange,
             placeholder = "Nhập tài khoản TikTok",
-            leadingIcon = { Text("@", color = Color(0xFF9AA3B8), fontWeight = FontWeight.Bold, fontSize = 14.sp) },
+            leadingIcon = { Text("@", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 14.sp) },
             trailingIcon = {
                 if (newUsername.isNotBlank()) {
                     IconButton(
@@ -506,7 +506,7 @@ private fun DialogsTikTokLiveWatchSection(
                         Icon(
                             Icons.Default.Clear,
                             contentDescription = "Xoá nội dung nhập",
-                            tint = Color(0xFF8892B0),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -537,18 +537,18 @@ private fun DialogsTikTokLiveWatchSection(
             shape = RoundedCornerShape(10.dp),
             contentPadding = PaddingValues(horizontal = 10.dp)
         ) {
-            Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
-            Text("Thêm", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("Thêm", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
     }
     val watchError = livestreamVM.tiktokLiveWatchError ?: ""
     if (watchError.isNotEmpty()) {
         Spacer(Modifier.height(4.dp))
-        Text(watchError, color = Color(0xFFFF1744), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(watchError, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
     }
     Spacer(Modifier.height(4.dp))
-    val daemonColor = if (livestreamVM.tiktokWatchDaemonRunning) Color(0xFF43A047) else Color(0xFFFFA726)
+    val daemonColor = if (livestreamVM.tiktokWatchDaemonRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
     Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
         val checkLine = buildString {
             append(if (livestreamVM.tiktokWatchDaemonRunning) "Watcher NAS đang chạy" else "Watcher NAS chưa phản hồi")
@@ -588,9 +588,9 @@ private fun DialogsTikTokLiveWatchSection(
     if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
         Spacer(Modifier.height(4.dp))
         val (bannerBg, bannerFg, label) = when (cookiesStatus) {
-            "missing" -> Triple(Color(0x33FFA726), Color(0xFFFFA726), "Chưa có cookies.txt")
-            "expired" -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok hết hạn")
-            else -> Triple(Color(0x33FF1744), Color(0xFFFF1744), "Cookies TikTok bị thu hồi")
+            "missing" -> Triple(Color(0x33FFA726), MaterialTheme.colorScheme.error, "Chưa có cookies.txt")
+            "expired" -> Triple(Color(0x33FF1744), MaterialTheme.colorScheme.error, "Cookies TikTok hết hạn")
+            else -> Triple(Color(0x33FF1744), MaterialTheme.colorScheme.error, "Cookies TikTok bị thu hồi")
         }
         Row(
             Modifier.fillMaxWidth().background(bannerBg, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -635,7 +635,7 @@ private fun DialogsTikTokLiveWatchSection(
                         backgroundContent = {
                             val bgColor by animateColorAsState(
                                 if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
-                                    Color(0xFFFF1744).copy(alpha = 0.55f) else Color.Transparent,
+                                    MaterialTheme.colorScheme.error.copy(alpha = 0.55f) else Color.Transparent,
                                 label = "swipeBg"
                             )
                             Box(
@@ -648,7 +648,7 @@ private fun DialogsTikTokLiveWatchSection(
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "Xoá",
-                                    tint = Color.White,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -657,7 +657,7 @@ private fun DialogsTikTokLiveWatchSection(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF15151D), RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
                                 .clickable(
                                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                                     indication = null
@@ -681,7 +681,7 @@ private fun DialogsTikTokLiveWatchSection(
                             ) {
                                 Text(
                                     "@${user.username}",
-                                    color = Color(0xFFE8E8E8),
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     maxLines = 1,
@@ -698,7 +698,7 @@ private fun DialogsTikTokLiveWatchSection(
                                 Icon(
                                     if (isUserExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                                     contentDescription = if (isUserExpanded) "Thu gọn người dùng" else "Mở chi tiết người dùng",
-                                    tint = Color(0xFF6F7890),
+                                    tint = MaterialTheme.colorScheme.outline,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -710,21 +710,21 @@ private fun DialogsTikTokLiveWatchSection(
                                 }
                             }
                             if (checkLiveLine.isNotEmpty()) {
-                                Text(checkLiveLine, color = Color(0xFF6F7890), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(checkLiveLine, color = MaterialTheme.colorScheme.outline, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             androidx.compose.animation.AnimatedVisibility(visible = isUserExpanded) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(top = 8.dp)
-                                        .background(Color(0xFF1A1A24), RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text("THÔNG TIN THEO DÕI", color = Color(0xFFEE1D52), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(statusLabel, color = Color(0xFFE8E8E8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(statusLabel, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                     if (user.jobId.isNotEmpty()) {
-                                        Text("Tác vụ ghi hình: ${user.jobId}", color = Color(0xFF8892B0), fontSize = 11.sp)
+                                        Text("Tác vụ ghi hình: ${user.jobId}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                                     }
                                     if (user.lastCheck.isNotEmpty() || user.lastLive.isNotEmpty()) {
                                         Row(
@@ -735,7 +735,7 @@ private fun DialogsTikTokLiveWatchSection(
                                             if (user.lastCheck.isNotEmpty()) {
                                                 Text(
                                                     "Kiểm tra lần cuối: ${user.lastCheck}",
-                                                    color = Color(0xFF8892B0),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     fontSize = 11.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
@@ -747,7 +747,7 @@ private fun DialogsTikTokLiveWatchSection(
                                             if (user.lastLive.isNotEmpty()) {
                                                 Text(
                                                     "Phát hiện live cuối: ${user.lastLive}",
-                                                    color = Color(0xFF8892B0),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     fontSize = 11.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
@@ -758,13 +758,13 @@ private fun DialogsTikTokLiveWatchSection(
                                         }
                                     }
                                     if (displayLastError.isNotEmpty()) {
-                                        Text("CHI TIẾT LỖI", color = Color(0xFFFFA726), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        Text("CHI TIẾT LỖI", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                         androidx.compose.foundation.layout.Box(
                                             Modifier
                                                 .fillMaxWidth()
                                                 .heightIn(max = 220.dp)
                                                 .verticalScroll(rememberScrollState())
-                                                .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
                                                 .padding(8.dp)
                                         ) {
                                             androidx.compose.foundation.text.selection.SelectionContainer {
@@ -786,9 +786,9 @@ private fun DialogsTikTokLiveWatchSection(
         }
     }
     Spacer(Modifier.height(4.dp))
-    Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(4.dp))
-    HorizontalDivider(color = Color(0xFF8892B0).copy(alpha = 0.25f))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
     // Header "Thoi gian loai tru" — clickable, hien icon expand/collapse.
     // Switch tat/bat de o header de user co the bat/tat khong can mo panel.
@@ -804,8 +804,8 @@ private fun DialogsTikTokLiveWatchSection(
         Text("☾", fontSize = 18.sp, color = Color(0xFFFFCC80))
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text("Thời gian loại trừ", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text("Không kiểm tra livestream trong khoảng giờ này", color = Color(0xFF8892B0), fontSize = 11.sp)
+            Text("Thời gian loại trừ", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("Không kiểm tra livestream trong khoảng giờ này", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
         Switch(
             checked = livestreamVM.tiktokExcludeEnabled,
@@ -815,14 +815,14 @@ private fun DialogsTikTokLiveWatchSection(
         Icon(
             if (excludeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
             contentDescription = if (excludeExpanded) "Ẩn" else "Mở",
-            tint = Color(0xFF9AA3B8),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp)
         )
     }
     androidx.compose.animation.AnimatedVisibility(visible = excludeExpanded) {
         Column(modifier = Modifier.padding(top = 4.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("Từ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = livestreamVM.tiktokExcludeStart,
                     onValueChange = { if (it.length <= 5) livestreamVM.updateTikTokLiveWatchSettings(context, livestreamVM.tiktokExcludeEnabled, it, livestreamVM.tiktokExcludeEnd) },
@@ -831,8 +831,8 @@ private fun DialogsTikTokLiveWatchSection(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.width(80.dp)
                 )
-                Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
-                Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                Text("Đến", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = livestreamVM.tiktokExcludeEnd,
                     onValueChange = { if (it.length <= 5) livestreamVM.updateTikTokLiveWatchSettings(context, livestreamVM.tiktokExcludeEnabled, livestreamVM.tiktokExcludeStart, it) },
@@ -856,28 +856,28 @@ private fun DialogsTikTokWatchStatusChip(
     val normalizedStatus = status.lowercase()
     val (containerColor, borderColor, textColor) = when (normalizedStatus) {
         "recording" -> Triple(
-            Color(0xFF43A047).copy(alpha = 0.18f),
-            Color(0xFF43A047).copy(alpha = 0.45f),
-            Color(0xFF66BB6A)
+            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f),
+            MaterialTheme.colorScheme.tertiary
         )
         "recorded" -> Triple(
-            Color(0xFF00ACC1).copy(alpha = 0.18f),
-            Color(0xFF00ACC1).copy(alpha = 0.45f),
-            Color(0xFF4DD0E1)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+            MaterialTheme.colorScheme.primary
         )
         "excluded" -> Triple(
-            Color(0xFFFFA726).copy(alpha = 0.18f),
-            Color(0xFFFFA726).copy(alpha = 0.45f),
+            MaterialTheme.colorScheme.error.copy(alpha = 0.18f),
+            MaterialTheme.colorScheme.error.copy(alpha = 0.45f),
             Color(0xFFFFC067)
         )
         "error" -> Triple(
-            Color(0xFFFF1744).copy(alpha = 0.16f),
-            Color(0xFFFF1744).copy(alpha = 0.45f),
+            MaterialTheme.colorScheme.error.copy(alpha = 0.16f),
+            MaterialTheme.colorScheme.error.copy(alpha = 0.45f),
             Color(0xFFFF5C7A)
         )
         else -> Triple(
-            Color(0xFF8892B0).copy(alpha = 0.18f),
-            Color(0xFF8892B0).copy(alpha = 0.35f),
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f),
+            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
             Color(0xFFA9B3CC)
         )
     }
@@ -919,7 +919,7 @@ fun AutoBackupDialog(
 ) {
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF161616),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -927,12 +927,12 @@ fun AutoBackupDialog(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.Sync, null, tint = Color(0xFF43A047), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Sync, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sao lưu tự động", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 18.sp)
+                Text("Sao lưu tự động", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
             }
 
-            Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 12.sp, color = Color.LightGray)
+            Text("Tự động sao lưu ảnh lên NAS mỗi khi cắm sạc và có kết nối Wi-Fi.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(6.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onAutoBackupEnabledChange(!isAutoBackupEnabled) }.padding(vertical = 2.dp)) {
@@ -940,17 +940,17 @@ fun AutoBackupDialog(
                     checked = isAutoBackupEnabled,
                     onCheckedChange = onAutoBackupEnabledChange,
                     modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00897B), checkedTrackColor = Color(0xFF80CBC4), uncheckedThumbColor = Color.Gray, uncheckedTrackColor = Color.DarkGray)
+                    colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary, checkedTrackColor = Color(0xFF80CBC4), uncheckedThumbColor = MaterialTheme.colorScheme.outline, uncheckedTrackColor = MaterialTheme.colorScheme.outline)
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) Color(0xFF00897B) else Color.Gray)
+                Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
             }
 
             Spacer(Modifier.height(4.dp))
 
             OutlinedCard(
-                colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFF00897B).copy(alpha = 0.15f)),
-                border = BorderStroke(1.dp, Color(0xFF00897B).copy(alpha = 0.3f)),
+                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -964,10 +964,10 @@ fun AutoBackupDialog(
             }
 
             Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = Color.DarkGray)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             Spacer(Modifier.height(6.dp))
 
-            Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+            Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(2.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onDeleteAfterBackupChange(false) }.padding(vertical = 2.dp)) {
@@ -975,11 +975,11 @@ fun AutoBackupDialog(
                     selected = !deleteAfterBackup,
                     onClick = { onDeleteAfterBackupChange(false) },
                     modifier = Modifier.scale(0.9f),
-                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF43A047), unselectedColor = Color.Gray)
+                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.tertiary, unselectedColor = MaterialTheme.colorScheme.outline)
                 )
                 Column {
-                    Text("Chỉ Sao lưu (Copy)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (!deleteAfterBackup) Color(0xFF43A047) else Color.LightGray)
-                    Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 11.sp, color = Color.Gray)
+                    Text("Chỉ Sao lưu (Copy)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (!deleteAfterBackup) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Giữ lại ảnh gốc trên điện thoại.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 }
             }
 
@@ -990,11 +990,11 @@ fun AutoBackupDialog(
                     selected = deleteAfterBackup,
                     onClick = { onDeleteAfterBackupChange(true) },
                     modifier = Modifier.scale(0.9f),
-                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFE53935), unselectedColor = Color.Gray)
+                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.error, unselectedColor = MaterialTheme.colorScheme.outline)
                 )
                 Column {
-                    Text("Sao lưu & Giải phóng (Move)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) Color(0xFFE53935) else Color.LightGray)
-                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 11.sp, color = Color.Gray)
+                    Text("Sao lưu & Giải phóng (Move)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (deleteAfterBackup) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Tự động xóa ảnh trên điện thoại sau khi lên NAS.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                 }
             }
 
@@ -1006,13 +1006,13 @@ fun AutoBackupDialog(
                     Button(
                         onClick = onCancelSync,
                         modifier = Modifier.weight(1f).height(40.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp)
                     ) {
-                        Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                        Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.width(4.dp))
-                        Text("DỪNG", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("DỪNG", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 } else {
                     Button(
@@ -1022,20 +1022,20 @@ fun AutoBackupDialog(
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp)
                     ) {
-                        Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Sync, contentDescription = "Sync", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("ĐỒNG BỘ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("ĐỒNG BỘ", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
 
                 Button(
                     onClick = { onSaveAndSchedule(); onDismiss() },
                     modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00897B)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("LƯU", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -1077,7 +1077,7 @@ fun SystemLogDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -1088,9 +1088,9 @@ fun SystemLogDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.Assignment, null, tint = Color(0xFF00ACC1), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Assignment, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 17.sp)
+                Text("Nhật ký hệ thống", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = {
@@ -1122,17 +1122,17 @@ fun SystemLogDialog(
                     },
                     modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = "Chia sẻ log lỗi", tint = Color(0xFF00ACC1), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Share, contentDescription = "Chia sẻ log lỗi", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
                 if (deviceVM.systemLogsList.isNotEmpty()) {
                     IconButton(onClick = { deviceVM.clearSystemLogs() }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = Color(0xFFE53935), modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Delete, contentDescription = "Xóa", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                     }
                 }
             }
 
             if (deviceVM.systemLogsList.isEmpty()) {
-                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = Color.Gray, fontSize = 13.sp)
+                Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -1140,10 +1140,10 @@ fun SystemLogDialog(
                 ) {
                     items(items = deviceVM.systemLogsList, key = { it.id }) { log ->
                         val logColor = when (log.type) {
-                            "SUCCESS" -> Color(0xFF43A047)
-                            "ERROR" -> Color(0xFFE53935)
+                            "SUCCESS" -> MaterialTheme.colorScheme.tertiary
+                            "ERROR" -> MaterialTheme.colorScheme.error
                             "WARNING" -> Color(0xFFFB8C00)
-                            else -> Color(0xFF1E88E5)
+                            else -> MaterialTheme.colorScheme.primary
                         }
                         val logIcon = when (log.type) {
                             "SUCCESS" -> Icons.Default.CheckCircle
@@ -1154,7 +1154,7 @@ fun SystemLogDialog(
                         val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
 
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -1164,10 +1164,10 @@ fun SystemLogDialog(
                                 Column {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text(log.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = logColor)
-                                        Text(timeStr, fontSize = 10.sp, color = Color.Gray)
+                                        Text(timeStr, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                                     }
                                     Spacer(Modifier.height(2.dp))
-                                    Text(formatLogMessage(log.message), fontSize = 12.sp, color = Color.White.copy(alpha=0.85f))
+                                    Text(formatLogMessage(log.message), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=0.85f))
                                 }
                             }
                         }
@@ -1191,22 +1191,22 @@ fun DockerDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.ViewInAr, null, tint = Color(0xFF1E88E5), modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.ViewInAr, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Quản lý Docker", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 if (deviceVM.isFetchingDocker) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color(0xFF1E88E5), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                 } else {
                     IconButton(onClick = { deviceVM.loadDockerContainers() }, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Refresh, "Làm mới", tint = Color.Gray)
+                        Icon(Icons.Default.Refresh, "Làm mới", tint = MaterialTheme.colorScheme.outline)
                     }
                 }
             }
         },
         text = {
             if (deviceVM.dockerContainers.isEmpty() && !deviceVM.isFetchingDocker) {
-                Text("Không tìm thấy Container nào đang tồn tại.", modifier = Modifier.padding(16.dp), color = Color.Gray)
+                Text("Không tìm thấy Container nào đang tồn tại.", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.outline)
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
@@ -1227,12 +1227,12 @@ fun DockerDialog(
                                     modifier = Modifier
                                         .size(10.dp)
                                         .clip(CircleShape)
-                                        .background(if (isRunning) Color(0xFF43A047) else Color(0xFFE53935))
+                                        .background(if (isRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(container.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
-                                    Text(if (isRunning) "Đang chạy" else "Đã dừng", fontSize = 11.sp, color = if (isRunning) Color(0xFF43A047) else Color.Gray)
+                                    Text(if (isRunning) "Đang chạy" else "Đã dừng", fontSize = 11.sp, color = if (isRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline)
                                 }
 
                                 if (isRunning) {
@@ -1240,11 +1240,11 @@ fun DockerDialog(
                                         Icon(Icons.Default.RestartAlt, "Khởi động lại", tint = Color(0xFFFB8C00), modifier = Modifier.size(20.dp))
                                     }
                                     IconButton(onClick = { deviceVM.controlDockerContainer("stop", container.name) }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Default.Stop, "Dừng", tint = Color(0xFFE53935), modifier = Modifier.size(20.dp))
+                                        Icon(Icons.Default.Stop, "Dừng", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                                     }
                                 } else {
                                     IconButton(onClick = { deviceVM.controlDockerContainer("start", container.name) }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Default.PlayArrow, "Bật", tint = Color(0xFF43A047), modifier = Modifier.size(24.dp))
+                                        Icon(Icons.Default.PlayArrow, "Bật", tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
                                     }
                                 }
                             }
@@ -1255,7 +1255,7 @@ fun DockerDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Đóng", color = Color(0xFF1E88E5), fontWeight = FontWeight.Bold)
+                Text("Đóng", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             }
         },
         shape = RoundedCornerShape(16.dp)
@@ -1331,9 +1331,9 @@ fun DialogsBiometricLockScreen(activity: androidx.fragment.app.FragmentActivity,
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0A0A0A)).pointerInput(Unit) { detectTapGestures { authenticate() } }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             IconButton(onClick = authenticate, modifier = Modifier.size(140.dp)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Quét vân tay để mở khóa", modifier = Modifier.size(120.dp), tint = Color(0xFF00897B))
+                Icon(Icons.Default.Fingerprint, contentDescription = "Quét vân tay để mở khóa", modifier = Modifier.size(120.dp), tint = MaterialTheme.colorScheme.primary)
             }
-            if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = Color.Red, fontSize = 14.sp) }
+            if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = MaterialTheme.colorScheme.error, fontSize = 14.sp) }
         }
     }
 }
@@ -1368,9 +1368,9 @@ fun DialogsIpApprovalDialog(
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(0.7f, 1f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "alpha")
     val isLocal = ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")
-    val riskColor = if (isLocal) Color(0xFFFB8C00) else Color(0xFFE53935)
+    val riskColor = if (isLocal) Color(0xFFFB8C00) else MaterialTheme.colorScheme.error
     val riskLabel = if (isLocal) "Mạng nội bộ" else "IP ngoài ($countryCode)"
-    AlertDialog(onDismissRequest = {}, containerColor = Color(0xFF1A1A2E), shape = RoundedCornerShape(24.dp),
+    AlertDialog(onDismissRequest = {}, containerColor = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(24.dp),
         title = {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(64.dp).scale(pulseScale).clip(CircleShape).background(Brush.radialGradient(listOf(riskColor.copy(alpha = pulseAlpha * 0.3f), riskColor.copy(alpha = 0.05f)))), contentAlignment = Alignment.Center) {
@@ -1379,16 +1379,16 @@ fun DialogsIpApprovalDialog(
                 Spacer(Modifier.height(12.dp))
                 Text("⚠️ CẢNH BÁO BẢO MẬT", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = riskColor, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(4.dp))
-                Text("Phát hiện thiết bị lạ kết nối", fontSize = 13.sp, color = Color(0xFF8892B0), textAlign = TextAlign.Center)
+                Text("Phát hiện thiết bị lạ kết nối", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF16213E)), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("ĐỊA CHỈ IP", fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        Text("ĐỊA CHỈ IP", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(ip.ifEmpty { "Không xác định" }, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE8E8E8), textAlign = TextAlign.Center)
+                        Text(ip.ifEmpty { "Không xác định" }, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
                         Surface(color = riskColor.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) { Text(riskLabel, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = riskColor) }
                     }
@@ -1397,23 +1397,23 @@ fun DialogsIpApprovalDialog(
                 if (message.isNotBlank()) { Text(message, fontSize = 13.sp, color = Color(0xFFB0BEC5), textAlign = TextAlign.Center, lineHeight = 18.sp); Spacer(Modifier.height(12.dp)) }
                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0F3460).copy(alpha = 0.5f)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
                         Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = Color(0xFFE53935), modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
                     }
                 }
             }
         },
         confirmButton = {
             Button(onClick = { deviceVM.approveDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-                modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), RoundedCornerShape(24.dp))) {
-                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Cho phép", color = Color.White, fontWeight = FontWeight.Bold) }
+                modifier = Modifier.background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary, Color(0xFF80CBC4))), RoundedCornerShape(24.dp))) {
+                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Cho phép", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) }
             }
         },
         dismissButton = {
             Button(onClick = { deviceVM.denyDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-                modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFFE53935), Color(0xFFC62828))), RoundedCornerShape(24.dp))) {
-                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Chặn IP", color = Color.White, fontWeight = FontWeight.Bold) }
+                modifier = Modifier.background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.error, Color(0xFFC62828))), RoundedCornerShape(24.dp))) {
+                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Chặn IP", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) }
             }
         }
     )
@@ -1440,7 +1440,7 @@ fun DialogsLanWhitelistDialog(
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -1448,11 +1448,11 @@ fun DialogsLanWhitelistDialog(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).heightIn(max = 600.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Icon(Icons.Default.Wifi, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.Wifi, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Column {
-                    Text("LAN Whitelist", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("IP truy cập không cần Tailscale", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("LAN Whitelist", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("IP truy cập không cần Tailscale", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
 
@@ -1461,7 +1461,7 @@ fun DialogsLanWhitelistDialog(
                     value = newEntry,
                     onValueChange = { newEntry = it },
                     placeholder = "192.168.1.0/24",
-                    accentColor = Color(0xFF66BB6A),
+                    accentColor = MaterialTheme.colorScheme.tertiary,
                     shape = RoundedCornerShape(12.dp),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
                     modifier = Modifier.weight(1f)
@@ -1474,31 +1474,31 @@ fun DialogsLanWhitelistDialog(
                             newEntry = ""
                         }
                     },
-                    modifier = Modifier.size(40.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp)) }
+                    modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                ) { Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
             }
 
             if (statusMessage.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(statusMessage, fontSize = 12.sp, color = if (statusMessage.startsWith("✅")) Color(0xFF66BB6A) else if (statusMessage.startsWith("❌")) Color(0xFFFF1744) else Color(0xFF8892B0))
+                Text(statusMessage, fontSize = 12.sp, color = if (statusMessage.startsWith("✅")) MaterialTheme.colorScheme.tertiary else if (statusMessage.startsWith("❌")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(Modifier.height(16.dp))
 
             if (isLoading) {
                 Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFF66BB6A), modifier = Modifier.size(28.dp))
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(28.dp))
                 }
             } else if (errorMessage.isNotBlank()) {
-                Text(errorMessage, color = Color(0xFFFF1744), fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                Text(errorMessage, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             } else if (subnetList.isEmpty() && ipList.isEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f, fill = false), contentAlignment = Alignment.Center) {
-                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
                 }
             } else {
                 Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                     if (subnetList.isNotEmpty()) {
-                        Text("SUBNET", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("SUBNET", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         subnetList.forEach { subnet ->
                             key("subnet-$subnet") {
@@ -1508,10 +1508,10 @@ fun DialogsLanWhitelistDialog(
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
                                 ) {
-                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                                    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Hub, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
-                                        Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                        Text(subnet, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                                     }
                                 }
                                 Spacer(Modifier.height(3.dp))
@@ -1520,7 +1520,7 @@ fun DialogsLanWhitelistDialog(
                     }
                     if (ipList.isNotEmpty()) {
                         if (subnetList.isNotEmpty()) Spacer(Modifier.height(12.dp))
-                        Text("IP", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("IP", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         ipList.forEach { ip ->
                             key("ip-$ip") {
@@ -1530,10 +1530,10 @@ fun DialogsLanWhitelistDialog(
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
                                 ) {
-                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
+                                    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Computer, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
-                                        Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                        Text(ip, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                                     }
                                 }
                                 Spacer(Modifier.height(3.dp))
@@ -1550,7 +1550,7 @@ fun DialogsLanWhitelistDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF263238)),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("ĐÓNG", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+                Text("ĐÓNG", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -1567,7 +1567,7 @@ fun DialogsOrganizeLegacyDialog(onDismiss: () -> Unit) {
         text = {
             Column {
                 if (smartToolsVM.organizingLegacyRunning) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFF00897B), trackColor = Color.Transparent)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = MaterialTheme.colorScheme.primary, trackColor = Color.Transparent)
                     Text("Đang ra lệnh cho NAS dọn dẹp nội bộ...")
                 } else if (smartToolsVM.organizingLegacyResult != null) {
                     Text(smartToolsVM.organizingLegacyResult!!)
@@ -1607,7 +1607,7 @@ fun DialogsDuplicateConfigDialog(
         title = { Text("Cấu hình quét trùng lặp", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = Color.Gray)
+                Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
                 
                 // Option 1: Lightning Mode
                 Row(
@@ -1620,8 +1620,8 @@ fun DialogsDuplicateConfigDialog(
                         colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
                     )
                     Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else Color.White)
-                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface)
+                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
                     }
                 }
 
@@ -1632,13 +1632,13 @@ fun DialogsDuplicateConfigDialog(
                 ) {
                     Checkbox(checked = isForceRestartDuplicate, onCheckedChange = { isForceRestartDuplicate = it })
                     Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text("Quét lại từ đầu", fontSize = 14.sp, color = Color.White)
-                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = Color.Gray)
+                        Text("Quét lại từ đầu", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = Color.DarkGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.height(8.dp))
 
                 // Option 3: Tự động chạy ngầm (Auto Clean)
@@ -1649,7 +1649,7 @@ fun DialogsDuplicateConfigDialog(
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
-                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
                     }
                     Switch(
                         checked = smartToolsVM.autoCleanEnabled,
@@ -1671,7 +1671,7 @@ fun DialogsDuplicateConfigDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Hủy", color = Color.Gray) }
+            TextButton(onClick = onDismiss) { Text("Hủy", color = MaterialTheme.colorScheme.outline) }
         }
     )
 }
@@ -1682,7 +1682,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
         onDismissRequest = { onDismiss() },
         title = {
             Column {
-                Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
                 // BỔ SUNG: Hiển thị tổng số file rác phát hiện được nếu danh sách không trống
                 if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -1770,7 +1770,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                         items(items = filteredGroups, key = { it.first().contentLength }) { group ->
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.2f)),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Column(Modifier.padding(12.dp)) {
@@ -1795,7 +1795,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                                 modifier = Modifier
                                                     .width(130.dp).height(150.dp) // Kích thước Thumbnail to rõ ràng
                                                     .clip(RoundedCornerShape(8.dp))
-                                                    .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
+                                                    .background(if (isSelected) MaterialTheme.colorScheme.error.copy(alpha = 0.2f) else Color.Black)
                                                     .clickable {
                                                         if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
                                                         else smartToolsVM.selectedDuplicates.add(dupFile)
@@ -1807,12 +1807,12 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                     }
                                                 } else {
-                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
+                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.align(Alignment.Center).size(40.dp))
                                                 }
 
                                                 // 2. Lớp phủ đỏ mờ nếu đang được tick chọn xóa
                                                 if (isSelected) {
-                                                    Box(modifier = Modifier.fillMaxSize().background(Color.Red.copy(alpha = 0.4f)))
+                                                    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.error.copy(alpha = 0.4f)))
                                                 }
 
                                                 // 3. Checkbox nằm góc trên phải
@@ -1823,7 +1823,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                     },
                                                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
-                                                    colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
+                                                    colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.error, uncheckedColor = MaterialTheme.colorScheme.onSurface)
                                                 )
 
                                                 // 4. Tên file + thư mục cha đè ở dưới cùng (Để phân biệt các file)
@@ -1838,7 +1838,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         text = dupFile.name,
                                                         fontSize = 8.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
+                                                        color = MaterialTheme.colorScheme.onSurface,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
                                                         lineHeight = 10.sp
@@ -1847,7 +1847,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                                     Text(
                                                         text = "📁 $parentFolder",
                                                         fontSize = 7.sp,
-                                                        color = Color.Gray,
+                                                        color = MaterialTheme.colorScheme.outline,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -1867,7 +1867,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                 // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
                 if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
                     TextButton(onClick = { smartToolsVM.deleteSelectedDuplicates(smartToolsVM.selectedDuplicates.toList()) }) {
-                        Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                        Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                     }
                 }
                 TextButton(onClick = {
@@ -2077,7 +2077,7 @@ fun DialogsLivestreamRecordDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -2095,12 +2095,12 @@ fun DialogsLivestreamRecordDialog(
                 Text(platformIcon, fontSize = 22.sp)
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Ghi hình Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Ghi trực tiếp vào NAS HDD", color = Color(0xFF8892B0), fontSize = 12.sp)
+                    Text("Ghi hình Livestream", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Ghi trực tiếp vào NAS HDD", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
                 if (activeLivestreams.isNotEmpty()) {
                     IconButton(onClick = onDismiss, modifier = Modifier.minimumInteractiveComponentSize()) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.cd_close), tint = Color.Gray)
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = stringResource(R.string.cd_close), tint = MaterialTheme.colorScheme.outline)
                     }
                 }
             }
@@ -2150,7 +2150,7 @@ fun DialogsLivestreamRecordDialog(
                 trailingIcon = {
                     if (liveUrl.isNotEmpty()) {
                         IconButton(onClick = { liveUrl = "" }, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                         }
                     } else if (detectedPlatform.isNotEmpty()) {
                         Text(platformIcon, fontSize = 18.sp)
@@ -2172,7 +2172,7 @@ fun DialogsLivestreamRecordDialog(
                 Spacer(Modifier.height(6.dp))
             }
             
-            Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("CHẤT LƯỢNG", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
@@ -2185,10 +2185,10 @@ fun DialogsLivestreamRecordDialog(
                             selectedContainerColor = accentColor.copy(alpha = 0.2f),
                             selectedLabelColor = accentColor,
                             containerColor = Color.Transparent,
-                            labelColor = Color(0xFF8892B0)
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         border = FilterChipDefaults.filterChipBorder(
-                            borderColor = Color(0xFF8892B0).copy(alpha = 0.2f),
+                            borderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
                             selectedBorderColor = accentColor.copy(alpha = 0.5f),
                             enabled = true,
                             selected = selected
@@ -2212,7 +2212,7 @@ fun DialogsLivestreamRecordDialog(
                     livestreamVM.clearLivestreamMessage()
                 }
                 Spacer(Modifier.height(6.dp))
-                val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
+                val msgColor = if (message.startsWith("Lỗi")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 Text(
                     message, color = msgColor, fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth().clickable { livestreamVM.clearLivestreamMessage() },
@@ -2244,9 +2244,9 @@ fun DialogsLivestreamRecordDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.AddCircle, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
             }
@@ -2258,7 +2258,7 @@ fun DialogsLivestreamRecordDialog(
             // động đóng các panel khác (watchlist + exclude) thông qua DialogsLivestreamPanelState.
             val activeExpanded = DialogsLivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
-                HorizontalDivider(color = Color.DarkGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2271,17 +2271,17 @@ fun DialogsLivestreamRecordDialog(
                 ) {
                     val pulse = rememberInfiniteTransition(label = "rec_pulse")
                     val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.4f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "rec_alpha")
-                    Box(Modifier.size(8.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                    Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.error.copy(alpha = alpha), CircleShape))
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "ĐANG GHI HÌNH (${activeLivestreams.size})",
-                        color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
                         if (activeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         contentDescription = if (activeExpanded) "Ẩn" else "Mở",
-                        tint = Color(0xFF9AA3B8),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -2309,9 +2309,9 @@ fun DialogsLivestreamRecordDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val pulse = rememberInfiniteTransition(label = "pulse")
                                 val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.3f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "pulseAlpha")
-                                Box(Modifier.size(10.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                                Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.error.copy(alpha = alpha), CircleShape))
                                 Spacer(Modifier.width(8.dp))
-                                Text("GHI HÌNH", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                Text("GHI HÌNH", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 Spacer(Modifier.weight(1f))
                                 Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
@@ -2322,7 +2322,7 @@ fun DialogsLivestreamRecordDialog(
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 // Cot 1: Thoi gian chay
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    Text("Thời gian chạy", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
                                     LaunchedEffect(job.jobId, job.durationSeconds) {
                                         localSeconds = job.durationSeconds
@@ -2334,30 +2334,30 @@ fun DialogsLivestreamRecordDialog(
                                         }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
-                                    Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text(displayDur, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 2: Toc do (giua, ngang voi 2 cot kia)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Tốc độ", color = Color(0xFF8892B0), fontSize = 10.sp)
-                                    Text(job.speed.ifEmpty { "—" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("Tốc độ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                                    Text(job.speed.ifEmpty { "—" }, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 3: Dung luong (align phai)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                                    Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 10.sp)
-                                    Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("Dung lượng", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                                    Text(job.fileSize.ifEmpty { "0 B" }, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
                                 onClick = { livestreamVM.stopLivestreamRecord(job.jobId) },
                                 modifier = Modifier.fillMaxWidth().height(38.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Icon(Icons.Default.Stop, null, tint = Color.Red, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("DỪNG GHI", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("DỪNG GHI", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -2377,9 +2377,9 @@ fun DialogsLivestreamRecordDialog(
         ) { data ->
             Snackbar(
                 snackbarData = data,
-                containerColor = Color(0xFF1A1A24),
-                contentColor = Color(0xFFE8E8E8),
-                actionColor = Color(0xFF4DD0E1),
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                actionColor = MaterialTheme.colorScheme.primary,
                 shape = RoundedCornerShape(8.dp)
             )
         }
@@ -2427,7 +2427,7 @@ fun DialogsBiometricSettingsDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -2440,16 +2440,16 @@ fun DialogsBiometricSettingsDialog(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.Lock, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Khóa Sinh trắc học", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Khóa Sinh trắc học", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             // Availability badge
             val (bioColor, bioText) = when (bioStatus) {
-                "available" -> Color(0xFF66BB6A) to "Sinh trắc học sẵn sàng (vân tay/khuôn mặt đã đăng ký)"
-                "no_hardware" -> Color(0xFFEF5350) to "Thiết bị không hỗ trợ sinh trắc"
-                "hw_unavailable" -> Color(0xFFFFA726) to "Phần cứng sinh trắc tạm thời không khả dụng"
-                "none_enrolled" -> Color(0xFFFFA726) to "Chưa đăng ký vân tay/khuôn mặt nào. Vào Cài đặt → Sinh trắc để thêm."
-                else -> Color(0xFF8892B0) to "Trạng thái: $bioStatus"
+                "available" -> MaterialTheme.colorScheme.tertiary to "Sinh trắc học sẵn sàng (vân tay/khuôn mặt đã đăng ký)"
+                "no_hardware" -> MaterialTheme.colorScheme.error to "Thiết bị không hỗ trợ sinh trắc"
+                "hw_unavailable" -> MaterialTheme.colorScheme.error to "Phần cứng sinh trắc tạm thời không khả dụng"
+                "none_enrolled" -> MaterialTheme.colorScheme.error to "Chưa đăng ký vân tay/khuôn mặt nào. Vào Cài đặt → Sinh trắc để thêm."
+                else -> MaterialTheme.colorScheme.onSurfaceVariant to "Trạng thái: $bioStatus"
             }
             Row(
                 Modifier.fillMaxWidth()
@@ -2492,18 +2492,18 @@ fun DialogsBiometricSettingsDialog(
                 )
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Bật khoá sinh trắc", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Bật khoá sinh trắc", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (enabled) "Khoá khi app vào nền theo thời gian dưới"
                         else "Tắt — app không bao giờ tự khoá",
-                        color = Color(0xFF8892B0), fontSize = 11.sp
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp
                     )
                 }
             }
 
             // Delay picker
             Spacer(Modifier.height(5.dp))
-            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             val delayOptions = listOf(
                 0 to "Khoá NGAY",
@@ -2520,7 +2520,7 @@ fun DialogsBiometricSettingsDialog(
                         modifier = Modifier.fillMaxWidth()
                             .height(44.dp)
                             .background(
-                                if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
                                 RoundedCornerShape(6.dp)
                             )
                             .clickable(
@@ -2542,9 +2542,9 @@ fun DialogsBiometricSettingsDialog(
                         Text(
                             label,
                             color = when {
-                                !enabled -> Color(0xFF8892B0).copy(alpha = 0.5f)
+                                !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                 isSel -> Color(0xFF9C27B0)
-                                else -> Color(0xFFE8E8E8)
+                                else -> MaterialTheme.colorScheme.onSurface
                             },
                             fontSize = 13.sp,
                             fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
@@ -2567,7 +2567,7 @@ fun DialogsBiometricSettingsDialog(
                     modifier = Modifier.weight(1f).height(40.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0)),
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                ) { Text("LƯU", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
@@ -2589,7 +2589,7 @@ fun DialogsBiometricSettingsDialog(
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: \"Khoá NGAY\" trong delay = không có buffer khi switch app/đọc thông báo. Đề xuất 5-30 giây.",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -2623,7 +2623,7 @@ fun DialogsBandwidthThrottleDialog(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -2634,14 +2634,14 @@ fun DialogsBandwidthThrottleDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-                Icon(Icons.Default.Speed, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Speed, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Giới hạn tốc độ upload", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Giới hạn tốc độ upload", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
             Text(
                 "Áp dụng cho tất cả upload qua WebDAV (auto-backup ảnh, share file, batch ops). " +
                     "Dùng để tránh app chiếm hết băng thông Wi-Fi/LAN.",
-                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, lineHeight = 14.sp
             )
 
             Spacer(Modifier.height(6.dp))
@@ -2652,12 +2652,12 @@ fun DialogsBandwidthThrottleDialog(
                         modifier = Modifier.fillMaxWidth()
                             .height(44.dp)
                             .background(
-                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
                                 RoundedCornerShape(8.dp)
                             )
                             .border(
                                 1.dp,
-                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.6f) else Color.Transparent,
+                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else Color.Transparent,
                                 RoundedCornerShape(8.dp)
                             )
                             .clickable { selected = value }
@@ -2668,12 +2668,12 @@ fun DialogsBandwidthThrottleDialog(
                             selected = isSelected,
                             onClick = { selected = value },
                             modifier = Modifier.scale(0.7f),
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF42A5F5))
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                         )
                         Spacer(Modifier.width(2.dp))
                         Text(
                             label,
-                            color = if (isSelected) Color(0xFF42A5F5) else Color(0xFFE8E8E8),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             fontSize = 14.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -2691,13 +2691,13 @@ fun DialogsBandwidthThrottleDialog(
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 shape = RoundedCornerShape(10.dp),
-            ) { Text("ÁP DỤNG", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            ) { Text("ÁP DỤNG", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -2765,17 +2765,17 @@ fun DialogsUsbImportDialog(
     }
     val isRunning = state.status == "copying" || state.status == "cancelling"
     val statusColor = when (state.status) {
-        "copying" -> Color(0xFF42A5F5)
-        "done" -> Color(0xFF66BB6A)
-        "error" -> Color(0xFFEF5350)
-        "disabled" -> Color(0xFF8892B0)
-        else -> Color(0xFFFFA726)
+        "copying" -> MaterialTheme.colorScheme.primary
+        "done" -> MaterialTheme.colorScheme.tertiary
+        "error" -> MaterialTheme.colorScheme.error
+        "disabled" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.error
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -2787,24 +2787,24 @@ fun DialogsUsbImportDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Usb, null, tint = Color(0xFF26A69A), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Usb, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("USB Import", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("USB Import", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { deviceVM.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Refresh, "Làm mới", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 }
             }
             Text(
                 "NAS tự phát hiện ổ cứng/USB gắn qua cổng USB 3.0 và copy dữ liệu vào thư mục USB Import.",
-                color = Color(0xFF8892B0),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 11.sp,
                 lineHeight = 14.sp
             )
             Spacer(Modifier.height(8.dp))
 
             Column(
-                modifier = Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(8.dp)).padding(8.dp)
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).padding(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
@@ -2812,20 +2812,20 @@ fun DialogsUsbImportDialog(
                     Text(state.status.uppercase(), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     if (deviceVM.isUsbImportLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF42A5F5), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(state.message.ifBlank { "Đang chờ trạng thái từ NAS" }, color = Color.White, fontSize = 13.sp)
+                Text(state.message.ifBlank { "Đang chờ trạng thái từ NAS" }, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
                 if (state.detectedDevicesInfo.isNotBlank()) {
-                    Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
                 if (state.activeDevice.isNotBlank() || state.destDir.isNotBlank()) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         if (state.activeDevice.isNotBlank()) {
                             Text(
                                 state.activeDevice,
-                                color = Color(0xFF8892B0),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -2836,14 +2836,14 @@ fun DialogsUsbImportDialog(
                             Icon(
                                 Icons.Default.ArrowForward,
                                 null,
-                                tint = Color(0xFF42A5F5),
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp).padding(horizontal = 2.dp)
                             )
                         }
                         if (state.destDir.isNotBlank()) {
                             Text(
                                 state.destDir,
-                                color = Color(0xFF8892B0),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -2854,34 +2854,34 @@ fun DialogsUsbImportDialog(
                 }
                 Spacer(Modifier.height(8.dp))
                 if (state.currentFile.isNotBlank()) {
-                    Text("File đang copy", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                    Text(state.currentFile, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("File đang copy", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    Text(state.currentFile, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (state.currentSource.isNotBlank()) {
-                        Text("Từ: ${state.currentSource}", color = Color(0xFF8892B0), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Từ: ${state.currentSource}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(
                         progress = { currentFileProgress.coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(999.dp)),
-                        color = Color(0xFF26A69A),
+                        color = MaterialTheme.colorScheme.primary,
                         trackColor = Color(0xFF2A2A3E)
                     )
                     Spacer(Modifier.height(4.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(
                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesDone)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesTotal)}",
-                            color = Color(0xFFE8E8E8),
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 10.sp
                         )
                         Text(
                             "${(currentFileProgress * 100f).toInt()}%",
-                            color = Color(0xFF8892B0),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 10.sp
                         )
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                Text("Tổng tiến trình", color = Color(0xFF8892B0), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Text("Tổng tiến trình", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                 LinearProgressIndicator(
                     progress = { progress.coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)),
@@ -2890,25 +2890,25 @@ fun DialogsUsbImportDialog(
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${state.filesDone}/${state.filesTotal} file", color = Color(0xFFE8E8E8), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${state.filesDone}/${state.filesTotal} file", color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (state.bytesTotal > 0L)
                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesProcessed)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesTotal)}"
                         else com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesDone),
-                        color = Color(0xFF8892B0),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
                     )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Bỏ qua ${state.filesSkipped} • Lỗi ${state.filesFailed}", color = Color(0xFF8892B0), fontSize = 10.sp)
+                    Text("Bỏ qua ${state.filesSkipped} • Lỗi ${state.filesFailed}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                     Text(
                         "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.copySpeedBps)}/s • ETA ${usbEtaLabel(state.etaSeconds)}",
-                        color = Color(0xFF8892B0),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 10.sp
                     )
                 }
                 if (state.lastError.isNotBlank()) {
-                    Text(state.lastError, color = Color(0xFFEF5350), fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(state.lastError, color = MaterialTheme.colorScheme.error, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (state.status == "needs_action" && state.needsAction && state.pendingConflictsCount > 0) {
                     Spacer(Modifier.height(8.dp))
@@ -2929,7 +2929,7 @@ fun DialogsUsbImportDialog(
                             val newSize = com.nas.naswebdav.utils.FormatUtils.formatBytes(item.sourceSize)
                             Text(
                                 "${item.destName.ifBlank { item.rel }} • cũ $oldSize / mới $newSize",
-                                color = Color(0xFFE8E8E8),
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 10.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2944,13 +2944,13 @@ fun DialogsUsbImportDialog(
                             Button(
                                 onClick = { deviceVM.resolveUsbImportConflicts("rename") },
                                 modifier = Modifier.weight(1f).height(36.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                 shape = RoundedCornerShape(8.dp)
                             ) { Text("Đổi tên", fontSize = 11.sp) }
                             Button(
                                 onClick = { deviceVM.resolveUsbImportConflicts("overwrite") },
                                 modifier = Modifier.weight(1f).height(36.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                                 shape = RoundedCornerShape(8.dp)
                             ) { Text("Ghi đè", fontSize = 11.sp) }
                         }
@@ -2967,7 +2967,7 @@ fun DialogsUsbImportDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
                     .border(1.dp, Color(0xFF242436), RoundedCornerShape(8.dp))
             ) {
                 Row(
@@ -2979,12 +2979,12 @@ fun DialogsUsbImportDialog(
                 ) {
                     Icon(Icons.Default.Settings, null, tint = Color(0xFF26C6DA), modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Cài đặt", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Cài đặt", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(Modifier.weight(1f))
                     Icon(
                         Icons.Default.KeyboardArrowDown,
                         null,
-                        tint = Color(0xFF8892B0),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(22.dp).rotate(settingsArrowRotation)
                     )
                 }
@@ -2995,28 +2995,28 @@ fun DialogsUsbImportDialog(
                 ) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tự động phát hiện", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("Tự động phát hiện", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                             Switch(checked = enabled, onCheckedChange = { enabled = it })
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tự mount ổ USB", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("Tự mount ổ USB", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                             Switch(checked = autoMount, onCheckedChange = { autoMount = it })
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Mount read-only", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("Mount read-only", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.weight(1f))
                             Switch(checked = mountReadonly, onCheckedChange = { mountReadonly = it })
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Resume sau restart", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                Text("Resume sau restart", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                             }
                             Switch(checked = resumeEnabled, onCheckedChange = { resumeEnabled = it })
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Checksum SHA-256", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                Text("Checksum SHA-256", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                             }
                             Switch(checked = verifyChecksum, onCheckedChange = { verifyChecksum = it })
                         }
@@ -3028,12 +3028,12 @@ fun DialogsUsbImportDialog(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = Color(0xFF26A69A),
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = Color(0xFF333344),
-                                focusedLabelColor = Color(0xFF26A69A),
-                                unfocusedLabelColor = Color(0xFF8892B0)
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         )
                         Spacer(Modifier.height(8.dp))
@@ -3057,7 +3057,7 @@ fun DialogsUsbImportDialog(
 
             if (deviceVM.usbImportMessage.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
-                Text(deviceVM.usbImportMessage, color = Color(0xFF66BB6A), fontSize = 12.sp)
+                Text(deviceVM.usbImportMessage, color = MaterialTheme.colorScheme.tertiary, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(10.dp))
@@ -3078,7 +3078,7 @@ fun DialogsUsbImportDialog(
                         )
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF26A69A)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
@@ -3107,7 +3107,7 @@ fun DialogsUsbImportDialog(
                         }
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) Color(0xFFEF5350) else Color(0xFF42A5F5)),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isRunning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Icon(if (isRunning) Icons.Default.PowerSettingsNew else Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
@@ -3203,7 +3203,7 @@ fun DialogsFilePropertiesDialog(
                     "Thuộc tính",
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp,
-                    color = Color(0xFFE8E8E8)
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
             Spacer(Modifier.height(6.dp))
@@ -3239,12 +3239,12 @@ fun DialogsFilePropertiesDialog(
                     .height(40.dp)
                     .background(
                         brush = Brush.linearGradient(
-                            listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
+                            listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary, Color(0xFF80CBC4))
                         ),
                         shape = RoundedCornerShape(23.dp)
                     )
             ) {
-                Text("Đóng", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Đóng", color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -3275,7 +3275,7 @@ fun DialogsNasInsightsDialog(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -3289,27 +3289,27 @@ fun DialogsNasInsightsDialog(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.AutoGraph, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.AutoGraph, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Tổng quan hệ thống NAS", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Tổng quan hệ thống NAS", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { sysMonitorVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Refresh, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 }
             }
 
-            DialogsInsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, Color(0xFF66BB6A)) {
+            DialogsInsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, MaterialTheme.colorScheme.tertiary) {
                 DialogsInsightRow("Điểm hiện tại", "${insight.hddScore}/100")
                 val liveHddTemp = if (sysMonitorVM.systemStatus.temp.isNotBlank() && sysMonitorVM.systemStatus.temp != "--°C") sysMonitorVM.systemStatus.temp else "${insight.hddTempC}°C"
                 DialogsInsightRow("Nhiệt độ", liveHddTemp)
                 DialogsInsightRow("Thấp nhất 7 ngày", "${insight.hddMinScore}/100")
                 DialogsInsightRow("Biến động", if (insight.hddScoreDelta >= 0) "+${insight.hddScoreDelta}" else "${insight.hddScoreDelta}")
                 if (insight.hddStatusText.isNotBlank()) {
-                    Text(insight.hddStatusText, color = Color(0xFF8892B0), fontSize = 12.sp)
+                    Text(insight.hddStatusText, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
 
-            DialogsInsightSection("Bộ điều phối tải nền", Icons.Default.Tune, Color(0xFFFFA726)) {
+            DialogsInsightSection("Bộ điều phối tải nền", Icons.Default.Tune, MaterialTheme.colorScheme.error) {
                 val displayMode = when(insight.workloadMode.lowercase()) {
                     "normal" -> "BÌNH THƯỜNG"
                     "balanced" -> "CÂN BẰNG TẢI"
@@ -3318,17 +3318,17 @@ fun DialogsNasInsightsDialog(
                 }
                 DialogsInsightRow("Chế độ", displayMode)
                 DialogsInsightRow("Áp lực tải", "${insight.workloadPressure}")
-                Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = Color(0xFFE8E8E8), fontSize = 12.sp)
+                Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                 if (insight.workloadReasons.isNotEmpty()) {
-                    Text(insight.workloadReasons.joinToString(" • "), color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text(insight.workloadReasons.joinToString(" • "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
 
-            DialogsInsightSection("Bảo vệ eMMC", Icons.Default.Memory, Color(0xFF42A5F5)) {
+            DialogsInsightSection("Bảo vệ eMMC", Icons.Default.Memory, MaterialTheme.colorScheme.primary) {
                 DialogsInsightRow("Root eMMC", "${insight.emmcRootPercent}%")
                 DialogsInsightRow("Log/zram", "${insight.emmcLogPercent}%")
                 val recs = insight.emmcRecommendations.ifEmpty { listOf("eMMC đang an toàn.") }
-                recs.take(3).forEach { Text(it, color = Color(0xFF8892B0), fontSize = 12.sp) }
+                recs.take(3).forEach { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
             }
 
             DialogsInsightSection("Luồng dữ liệu thực tế", Icons.Default.SyncAlt, Color(0xFFB388FF)) {
@@ -3342,33 +3342,33 @@ fun DialogsNasInsightsDialog(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF15151D), RoundedCornerShape(7.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(7.dp))
                                 .clickable { onTaskClick(task.label) }
                                 .padding(8.dp)
                         ) {
-                            Text("${task.label} • ${task.progress}%", color = Color(0xFF00D2FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(task.file.ifBlank { "Đang xử lý" }, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(task.dest, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${task.label} • ${task.progress}%", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(task.file.ifBlank { "Đang xử lý" }, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(task.dest, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
             }
 
-            DialogsInsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
+            DialogsInsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, MaterialTheme.colorScheme.tertiary) {
                 insight.maintenanceActions.ifEmpty {
                     listOf(InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
                 }.forEach { action ->
                     val color = when (action.priority) {
-                        "high" -> Color(0xFFEF5350)
-                        "medium" -> Color(0xFFFFA726)
-                        else -> Color(0xFF66BB6A)
+                        "high" -> MaterialTheme.colorScheme.error
+                        "medium" -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.tertiary
                     }
                     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
                         Box(Modifier.size(8.dp).padding(top = 5.dp).background(color, CircleShape))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(action.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(action.detail, color = Color(0xFF8892B0), fontSize = 11.sp)
+                            Text(action.title, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(action.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
                     }
                 }
@@ -3376,7 +3376,7 @@ fun DialogsNasInsightsDialog(
 
             Text(
                 "Dữ liệu lấy từ /api/system/insights: SMART trend, tải nền, USB import, eMMC guard, luồng I/O và lịch bảo trì.",
-                color = Color(0xFF8892B0).copy(alpha = 0.75f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 fontSize = 10.sp,
                 lineHeight = 13.sp
             )
@@ -3391,7 +3391,7 @@ private fun DialogsInsightSection(title: String, icon: ImageVector, color: Color
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(7.dp))
         content()
@@ -3401,8 +3401,8 @@ private fun DialogsInsightSection(title: String, icon: ImageVector, color: Color
 @Composable
 private fun DialogsInsightRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Color(0xFF8892B0), fontSize = 12.sp)
-        Text(value, color = Color(0xFFE8E8E8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -3420,7 +3420,7 @@ private fun DialogsPropertyRow(
         Text(
             label,
             fontSize = 11.sp,
-            color = Color(0xFF8892B0),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.Medium
         )
         Spacer(Modifier.height(1.dp))
@@ -3428,12 +3428,12 @@ private fun DialogsPropertyRow(
             androidx.compose.ui.text.TextStyle(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 fontSize = 13.sp,
-                color = Color(0xFFE8E8E8)
+                color = MaterialTheme.colorScheme.onSurface
             )
         } else {
             androidx.compose.ui.text.TextStyle(
                 fontSize = 13.sp,
-                color = Color(0xFFE8E8E8),
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -3489,7 +3489,7 @@ fun DialogsNasConfigBackupDialog(
 
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DialogsCompactBottomSheetHandle() }
     ) {
@@ -3499,14 +3499,14 @@ fun DialogsNasConfigBackupDialog(
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.SettingsBackupRestore, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.SettingsBackupRestore, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sao lưu cấu hình NAS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Sao lưu cấu hình NAS", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
             Text(
                 "Backup toàn bộ cấu hình NAS (nas_api server, watcher TikTok, fan, cookies, nginx, OMV WebDAV, ...) " +
                     "thành 1 file .tar.gz lưu trên eMMC. Có thể tải về điện thoại hoặc đẩy lên OneDrive để dự phòng.",
-                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, lineHeight = 14.sp
             )
             Spacer(Modifier.height(6.dp))
 
@@ -3515,15 +3515,15 @@ fun DialogsNasConfigBackupDialog(
                 onClick = { sysMonitorVM.createNasConfigBackup() },
                 enabled = !sysMonitorVM.isCreatingNasConfigBackup,
                 modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF66BB6A)),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
                 shape = RoundedCornerShape(10.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp)
             ) {
-                Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(
                     if (sysMonitorVM.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
-                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp
+                    color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp
                 )
             }
 
@@ -3531,9 +3531,9 @@ fun DialogsNasConfigBackupDialog(
             if (sysMonitorVM.nasConfigBackupMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 val msgColor = when {
-                    sysMonitorVM.nasConfigBackupMessage.startsWith("Lỗi") -> Color(0xFFEF5350)
-                    sysMonitorVM.nasConfigBackupMessage.startsWith("Đã") -> Color(0xFF66BB6A)
-                    else -> Color(0xFF8892B0)
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Lỗi") -> MaterialTheme.colorScheme.error
+                    sysMonitorVM.nasConfigBackupMessage.startsWith("Đã") -> MaterialTheme.colorScheme.tertiary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
                 Text(sysMonitorVM.nasConfigBackupMessage, color = msgColor, fontSize = 12.sp)
             }
@@ -3546,12 +3546,12 @@ fun DialogsNasConfigBackupDialog(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     "BACKUP HIỆN CÓ (${sysMonitorVM.nasConfigBackups.size})",
-                    color = Color(0xFF8892B0), fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { sysMonitorVM.fetchNasConfigBackups() }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Refresh, "Làm mới", tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Refresh, "Làm mới", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -3559,7 +3559,7 @@ fun DialogsNasConfigBackupDialog(
             if (sysMonitorVM.nasConfigBackups.isEmpty()) {
                 Text(
                     "Chưa có bản backup nào. Tạo bản đầu tiên bằng nút phía trên.",
-                    color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 12.sp,
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
             } else {
@@ -3568,14 +3568,14 @@ fun DialogsNasConfigBackupDialog(
                         key(backup.filename) {
                             Column(
                                 Modifier.fillMaxWidth()
-                                    .background(Color(0xFF15151D), RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
                                     .padding(horizontal = 8.dp, vertical = 6.dp)
                             ) {
-                                Text(backup.filename, color = Color(0xFFE8E8E8), fontSize = 13.sp,
+                                Text(backup.filename, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     "${backup.createdAt}  •  ${backup.sizeHuman}",
-                                    color = Color(0xFF8892B0), fontSize = 10.sp
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3614,9 +3614,9 @@ fun DialogsNasConfigBackupDialog(
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         modifier = Modifier.weight(1f).height(32.dp)
                                     ) {
-                                        Icon(Icons.Default.CloudUpload, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Default.CloudUpload, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("OneDrive", color = Color(0xFF42A5F5), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("OneDrive", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     TextButton(
                                         onClick = { pendingRestoreFilename = backup.filename },
@@ -3624,18 +3624,18 @@ fun DialogsNasConfigBackupDialog(
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         modifier = Modifier.weight(1f).height(32.dp)
                                     ) {
-                                        Icon(Icons.Default.Restore, null, tint = Color(0xFFFFA726), modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Default.Restore, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("Khôi phục", color = Color(0xFFFFA726), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Khôi phục", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     TextButton(
                                         onClick = { pendingDeleteFilename = backup.filename },
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         modifier = Modifier.weight(1f).height(32.dp)
                                     ) {
-                                        Icon(Icons.Default.Delete, null, tint = Color(0xFFEF5350), modifier = Modifier.size(14.dp))
+                                        Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("Xoá", color = Color(0xFFEF5350), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Xoá", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -3647,17 +3647,17 @@ fun DialogsNasConfigBackupDialog(
             if (isPreparingShare) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFF42A5F5), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
-                    Text("Đang tải file từ NAS để share...", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("Đang tải file từ NAS để share...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
             }
             if (sysMonitorVM.isRestoringNasConfigBackup) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color(0xFFFFA726), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.error, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
-                    Text("Đang khôi phục + restart services...", color = Color(0xFFFFA726), fontSize = 11.sp)
+                    Text("Đang khôi phục + restart services...", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 }
             }
 

@@ -41,7 +41,10 @@ These are the five items that should be treated as release gates, ordered by use
    - Local crash log export: CrashLogExporter utility writes recent CRASH/ERROR logs from Room to a shareable `.txt` file in app cache.
    - FileProvider configured for Android share intent.
    - Share button added in System Log dialog.
-   - Remote crash reporting (Crashlytics/Sentry) still not integrated — requires Firebase project setup. Effort now reduced to 8-12h once Firebase config is available.
+   - Privacy-safe redaction: CrashLogExporter redacts URL userinfo, labeled secrets (`password=…`, `token=…`), and Authorization headers before writing the export file. Covered by unit tests.
+   - Bounded retention: pruneOldExports retains max 3 crash-export files (oldest deleted first). Covered by unit tests.
+   - Setup guide: `docs/CRASH_REPORTING_SETUP.md` documents current fallback, privacy rules, and how to add Crashlytics/Sentry later (no Firebase dependency added yet).
+   - Remote crash reporting (Crashlytics/Sentry) still not integrated — requires Firebase/Sentry project setup. Effort now reduced to 8-12h once config is available.
    - **What:** Integrate a remote crash/ANR reporting service, define opt-in/consent and redaction rules, and preserve local `SystemLogger` diagnostics as a fallback.
    - **Why blocker:** The current app has no remote crash telemetry. A release failure on a device cannot be detected, grouped, or diagnosed reliably.
    - **Approx. effort:** **8-16 hours** for integration and validation; **16-24 hours** if consent and data-redaction requirements are included.

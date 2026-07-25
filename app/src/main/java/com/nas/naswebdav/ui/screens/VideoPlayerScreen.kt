@@ -526,12 +526,12 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                         onClick = onBack,
                         modifier = Modifier.minimumInteractiveComponentSize().size(40.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back), tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back), tint = MaterialTheme.colorScheme.onSurface)
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
                         text = fileName,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         maxLines = 1,
@@ -564,9 +564,9 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                     },
                     valueRange = 0f..playbackDurationMs.coerceAtLeast(1L).toFloat(),
                     colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
+                        thumbColor = MaterialTheme.colorScheme.onSurface,
                         activeTrackColor = Color(0xFFFFC7B2),
-                        inactiveTrackColor = Color.White.copy(alpha = 0.42f)
+                        inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.42f)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -582,10 +582,10 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
-                            Icon(Icons.Default.SkipPrevious, stringResource(R.string.cd_skip_previous), tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.SkipPrevious, stringResource(R.string.cd_skip_previous), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
-                            Icon(Icons.Default.Replay30, stringResource(R.string.cd_seek_backward), tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Replay30, stringResource(R.string.cd_seek_backward), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
@@ -594,12 +594,12 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             Icon(
                                 if (playerIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 stringResource(if (playerIsPlaying) R.string.cd_pause else R.string.cd_play),
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(25.dp)
                             )
                         }
                         IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.minimumInteractiveComponentSize().size(32.dp)) {
-                            Icon(Icons.Default.Forward30, stringResource(R.string.cd_seek_forward), tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Forward30, stringResource(R.string.cd_seek_forward), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = {
@@ -610,11 +610,11 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             },
                             modifier = Modifier.size(32.dp)
                         ) {
-                            Icon(Icons.Default.SkipNext, stringResource(R.string.cd_skip_next), tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.SkipNext, stringResource(R.string.cd_skip_next), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
                         Text(
                             text = "${FormatUtils.formatPlayerTime(playbackPositionMs)} / ${FormatUtils.formatPlayerTime(playbackDurationMs)}",
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -630,7 +630,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             Icon(
                                 if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
                                 "Âm lượng",
-                                tint = if (isMuted) Color(0xFFFF8A80) else Color.White,
+                                tint = if (isMuted) Color(0xFFFF8A80) else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -638,12 +638,12 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             Icon(
                                 Icons.Default.Repeat,
                                 "Lặp lại",
-                                tint = if (isRepeat) Color(0xFF00E676) else Color.White,
+                                tint = if (isRepeat) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = {
@@ -658,10 +658,10 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             },
                             modifier = Modifier.size(32.dp)
                         ) {
-                            Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Delete, "Xóa video", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                         }
                     }
                 }

@@ -217,7 +217,7 @@ fun FanSpeedIcon(percent: Int, color: Color, modifier: Modifier = Modifier) {
             // Center Hub - Metallic Orb
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color.White, Color(0xFFB0BEC5), Color(0xFF455A64)),
+                    colors = listOf(Color.White, Color(0xFFB0BEC5), Color(0xFF455A64)),  // metallic orb gradient: fixed (intentional visual detail)
                     center = Offset(cx - R * 0.08f, cy - R * 0.08f),
                     radius = R * 0.35f
                 ),
@@ -483,9 +483,9 @@ fun MainMenuScreen(
     if (showDuplicateScanDialog) {
         AlertDialog(
             onDismissRequest = { showDuplicateScanDialog = false },
-            icon = { Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(36.dp)) },
+            icon = { Icon(Icons.Default.ContentCopy, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) },
             title = { Text("Quét tệp trùng lặp", fontWeight = FontWeight.Bold, color = TextPrimary) },
-            containerColor = Color(0xFF1A1A2E),
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
             textContentColor = TextPrimary,
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -494,7 +494,7 @@ fun MainMenuScreen(
                     // Option 1: Lightning Mode
                     Surface(
                         modifier = Modifier.fillMaxWidth().clickable { dupScanLightningMode = !dupScanLightningMode },
-                        color = if (dupScanLightningMode) Color(0xFFFFC107).copy(alpha = 0.1f) else Color(0xFF222233),
+                        color = if (dupScanLightningMode) Color(0xFFFFC107).copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -514,18 +514,18 @@ fun MainMenuScreen(
                     // Option 2: Force Restart
                     Surface(
                         modifier = Modifier.fillMaxWidth().clickable { dupScanForceRestart = !dupScanForceRestart },
-                        color = if (dupScanForceRestart) Color(0xFFEF5350).copy(alpha = 0.1f) else Color(0xFF222233),
+                        color = if (dupScanForceRestart) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant,
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
                                 checked = dupScanForceRestart,
                                 onCheckedChange = { dupScanForceRestart = it },
-                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFFEF5350))
+                                colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.error)
                             )
                             Column(Modifier.padding(start = 6.dp)) {
                                 Text("Quét lại từ đầu", fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                    color = if (dupScanForceRestart) Color(0xFFEF5350) else TextPrimary)
+                                    color = if (dupScanForceRestart) MaterialTheme.colorScheme.error else TextPrimary)
                                 Text("Bỏ qua lịch sử lưu tạm, thực hiện quét hoàn toàn mới.", fontSize = 11.sp, color = TextSecondary, lineHeight = 14.sp)
                             }
                         }
@@ -539,9 +539,9 @@ fun MainMenuScreen(
                         },
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                     ) {
-                        Icon(Icons.Default.History, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Mở lại kết quả quét gần nhất", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+                        Text("Mở lại kết quả quét gần nhất", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
                     }
                 }
             },
@@ -552,7 +552,7 @@ fun MainMenuScreen(
                         smartToolsVM.startBackgroundDuplicateScan(mContext, forceRestart = dupScanForceRestart, lightningMode = dupScanLightningMode)
                         smartToolsVM.isScanningDuplicates = true
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF29B6F6))
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Icon(Icons.Default.Search, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
@@ -937,7 +937,7 @@ private fun MainMenuDashboardHeader(
                     Text(
                         if (isOnlineStatus) "Online" else "Offline",
                         style = AppTypography.LabelMedium.copy(
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold
                         ),
                         maxLines = 1,
@@ -972,21 +972,21 @@ private fun MainMenuDashboardHeader(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (deviceVM.isOnLan) Color(0xFF00E676).copy(alpha = 0.15f) else Color(0xFF29B6F6).copy(alpha = 0.15f))
+                        .background(if (deviceVM.isOnLan) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
                         contentDescription = null,
-                        tint = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6),
+                        tint = if (deviceVM.isOnLan) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(12.dp)
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(
                         if (deviceVM.isOnLan) "LAN" else "Tailscale",
                         fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                        color = if (deviceVM.isOnLan) Color(0xFF00E676) else Color(0xFF29B6F6)
+                        color = if (deviceVM.isOnLan) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
                     )
                 }
                 val ut = sysMonitorVM.systemStatus.uptime
@@ -1001,7 +1001,7 @@ private fun MainMenuDashboardHeader(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFAB47BC).copy(alpha = 0.25f))
+                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1104,7 +1104,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                         title = "HDD", value = "${hddDisk.used} / $fmtTotal",
                         subValue = "${hddDisk.percent}%",
                         icon = Icons.Default.Storage,
-                        gradientColors = listOf(Color(0xFFFFA726), Color(0xFFF57C00)),
+                        gradientColors = listOf(MaterialTheme.colorScheme.error, Color(0xFFF57C00)),
                         modifier = Modifier.weight(1f),
                         overridePercent = hddDisk.percent,
                         onClick = onOpenNewDiskProfile
@@ -1118,9 +1118,9 @@ private fun MainMenuDashboardSystemOverviewCard(
                 val isSmartEmmc = smartStatusText.contains("EMMC")
                 
                 val smartColors = when {
-                    isSmartOk -> listOf(Color(0xFF00E676), Color(0xFF1DE9B6))
-                    isSmartEmmc -> listOf(Color(0xFF42A5F5), Color(0xFF1E88E5)) // Nhận diện eMMC màu Xanh Dương
-                    isSmartFailed -> listOf(Color(0xFFFF1744), Color(0xFFFF5252)) // FAILED hiển thị màu Đỏ
+                    isSmartOk -> listOf(MaterialTheme.colorScheme.tertiary, Color(0xFF1DE9B6))
+                    isSmartEmmc -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary) // Nhận diện eMMC màu Xanh Dương
+                    isSmartFailed -> listOf(MaterialTheme.colorScheme.error, Color(0xFFFF5252)) // FAILED hiển thị màu Đỏ
                     else -> listOf(Color(0xFF9E9E9E), Color(0xFFBDBDBD)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
                 }
                 val smartPercent = when {
@@ -1159,11 +1159,11 @@ private fun MainMenuDashboardSystemOverviewCard(
                                 } else {
                                     "Dừng"
                                 }
-                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) Color(0xFF00E676) else Color(0xFFEF5350), modifier = Modifier.size(24.dp))
+                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Column {
                                     Text("Quạt tản nhiệt", fontSize = 11.sp, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) Color(0xFF00E676) else Color(0xFFEF5350))
+                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
                                 }
                             }
                              // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)
@@ -1184,8 +1184,8 @@ private fun MainMenuDashboardSystemOverviewCard(
                                  else -> "Tùy chỉnh"
                              }
                              val badgeColor = when (currentMode) {
-                                 "on" -> Color(0xFF00E676)
-                                 "off" -> Color(0xFFEF5350)
+                                 "on" -> MaterialTheme.colorScheme.tertiary
+                                 "off" -> MaterialTheme.colorScheme.error
                                  else -> Color(0xFF00E5FF)
                              }
 
@@ -1240,8 +1240,8 @@ private fun MainMenuDashboardSystemOverviewCard(
                                     dismissButton = {
                                         androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
                                     },
-                                    containerColor = Color(0xFF1E1E1E),
-                                    textContentColor = Color.White
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    textContentColor = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         }
@@ -1289,7 +1289,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Dashboard, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Dashboard, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("OMV", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitleCyan, letterSpacing = PanelTitleLetterSpacing)
                             if (deviceVM.omvOverview.omvVersion.isNotBlank()) {
@@ -1299,15 +1299,15 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                             val ping = sysMonitorVM.networkPingMs
                             if (ping != null) {
                                 Spacer(Modifier.width(8.dp))
-                                val pingColor = if (ping < 50) Color(0xFF00E676) else if (ping < 150) Color(0xFFFFA726) else Color(0xFFEF5350)
+                                val pingColor = if (ping < 50) MaterialTheme.colorScheme.tertiary else if (ping < 150) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.error
                                 Text("${ping}ms", fontSize = 10.sp, color = pingColor, fontWeight = FontWeight.Bold)
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             // Tải xuống / Tải lên inline ngay header
-                            Text("↓ ${sysMonitorVM.systemStatus.netRx}", fontSize = 9.sp, color = Color(0xFF42A5F5), fontWeight = FontWeight.Bold)
+                            Text("↓ ${sysMonitorVM.systemStatus.netRx}", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(8.dp))
-                            Text("↑ ${sysMonitorVM.systemStatus.netTx}", fontSize = 9.sp, color = Color(0xFFAB47BC), fontWeight = FontWeight.Bold)
+                            Text("↑ ${sysMonitorVM.systemStatus.netTx}", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(4.dp))
                             Icon(
                                 if (omvExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -1331,7 +1331,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                                 ) {
                                     deviceVM.omvOverview.services.forEach { svc ->
                                         val svcActive = svc.effectiveEnabled
-                                        val svcColor = if (svcActive) Color(0xFF00E676) else TextSecondary.copy(alpha = 0.45f)
+                                        val svcColor = if (svcActive) MaterialTheme.colorScheme.tertiary else TextSecondary.copy(alpha = 0.45f)
                                         val svcIcon = when (svc.name) {
                                             "ssh" -> Icons.Default.Terminal
                                             "ftp" -> Icons.Default.CloudUpload
@@ -1377,7 +1377,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                                             Text("Số sê-ri: ${hdd.serial}", fontSize = 9.sp, color = TextSecondary.copy(alpha = 0.6f))
                                             val sizeGb = (hdd.size.toLongOrNull() ?: 0L) / (1024L * 1024 * 1024)
                                             val sizeTb = if (sizeGb >= 1024) "%.1f TB".format(sizeGb / 1024f) else "$sizeGb GB"
-                                            Text(sizeTb, fontSize = 10.sp, color = Color(0xFFFFA726), fontWeight = FontWeight.Bold)
+                                            Text(sizeTb, fontSize = 10.sp, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -1475,7 +1475,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                             Spacer(Modifier.height(8.dp))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Đã hoàn thành (${completedTorrents.size})", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                         }
@@ -1568,8 +1568,8 @@ private fun MainMenuDashboardQuickAccessSection(
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MainMenuDashboardBigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(Color(0xFF7C4DFF), Color(0xFF00D2FF)), Modifier.weight(1f), onClick = onOpenLatestPhotos)
-            MainMenuDashboardBigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(Color(0xFFFF6EC7), Color(0xFFFF9100)), Modifier.weight(1f), onClick = onOpenRecentVideos)
+            MainMenuDashboardBigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(Color(0xFF7C4DFF), MaterialTheme.colorScheme.primary), Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            MainMenuDashboardBigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(Color(0xFFFF6EC7), MaterialTheme.colorScheme.error), Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {
@@ -1754,9 +1754,9 @@ fun MainMenuDashboardGaugeCard(
     } else {
         // Lay trang thai NANG HON giua phan tram va nhiet do de vong tron dong bo voi line chart.
         when (maxOf(pctRank, tempRank)) {
-            2 -> Color(0xFFEF5350) // Đỏ
-            1 -> Color(0xFFFFA726) // Vàng
-            else -> Color(0xFF66BB6A) // Xanh
+            2 -> MaterialTheme.colorScheme.error // Đỏ
+            1 -> MaterialTheme.colorScheme.error // Vàng
+            else -> MaterialTheme.colorScheme.tertiary // Xanh
         }
     }
 
@@ -1804,11 +1804,11 @@ fun MainMenuDashboardGaugeCard(
                                     val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
                                     val isDisk = title == "S.M.A.R.T" || title == "HDD"
                                     when {
-                                        isDisk && tempVal >= 55f -> Color(0xFFEF5350)
-                                        isDisk && tempVal >= 45f -> Color(0xFFFFA726)
-                                        !isDisk && tempVal >= 80f -> Color(0xFFEF5350)
-                                        !isDisk && tempVal >= 60f -> Color(0xFFFFA726) // CPU 60+ is Yellow
-                                        else -> Color(0xFF66BB6A)
+                                        isDisk && tempVal >= 55f -> MaterialTheme.colorScheme.error
+                                        isDisk && tempVal >= 45f -> MaterialTheme.colorScheme.error
+                                        !isDisk && tempVal >= 80f -> MaterialTheme.colorScheme.error
+                                        !isDisk && tempVal >= 60f -> MaterialTheme.colorScheme.error // CPU 60+ is Yellow
+                                        else -> MaterialTheme.colorScheme.tertiary
                                     }
                                 } else accentColor.copy(alpha = 0.9f),
                                 fontWeight = FontWeight.Bold,
@@ -1921,11 +1921,11 @@ fun MainMenuDashboardBigMenuTile(title: String, subtitle: String, icon: ImageVec
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
-                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
+                Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.height(4.dp))
                 Column {
-                    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(subtitle, fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f))
+                    Text(title, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text(subtitle, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                 }
             }
         }
@@ -2000,19 +2000,19 @@ fun MainMenuScreenGetStatusColor(title: String, value: String, rawPercent: Strin
         return when (title) {
             "Nhiệt độ" -> {
                 val t = extractNumber(value)
-                when { t >= 75f -> AccentRed; t >= 60f -> AccentOrange; t > 0f -> AccentGreen; else -> Color.Gray }
+                when { t >= 75f -> AccentRed; t >= 60f -> AccentOrange; t > 0f -> AccentGreen; else -> TextTertiary }
             }
             "CPU", "Ổ đĩa" -> {
                 val p = extractNumber(value)
-                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> TextTertiary }
             }
             "RAM" -> {
                 val p = if (rawPercent.isNotBlank()) extractNumber(rawPercent) else extractNumber(value)
-                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> TextTertiary }
             }
-            else -> Color.Gray
+            else -> TextTertiary
         }
-    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return Color.Gray }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return TextTertiary }
 }
 
 // Giữ lại MenuCard tương thích cho các file khác nếu cần
@@ -2047,7 +2047,7 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                 Text(
                     text = "BIỂU ĐỒ NHIỆT ĐỘ",
                     fontSize = 9.sp,
-                    color = Color.LightGray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
@@ -2056,12 +2056,12 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFFFF9800)))
                         Spacer(Modifier.width(4.dp))
-                        Text("CPU", fontSize = 9.sp, color = Color.White)
+                        Text("CPU", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0xFF03A9F4)))
                         Spacer(Modifier.width(4.dp))
-                        Text("HDD", fontSize = 9.sp, color = Color.White)
+                        Text("HDD", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
@@ -2077,16 +2077,16 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                 val maxTemp = 100f
                 val range = maxTemp - minTemp
                 
-                // Đường lưới đứt nét ngang (Grid Lines)
+                // Đường lưới đứt nét ngang (Grid Lines) — fixed chart palette (intentional, not theme-driven)
                 val gridPaint = androidx.compose.ui.graphics.Paint().apply {
-                    color = Color.DarkGray
+                    color = Color(0xFF333333)
                     strokeWidth = 1f
                     pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
                 }
                 for (i in 0..4) {
                     val y = height - (i * (height / 4))
                     drawLine(
-                        color = Color.DarkGray.copy(alpha = 0.5f),
+                        color = Color(0xFF333333).copy(alpha = 0.5f),
                         start = androidx.compose.ui.geometry.Offset(0f, y),
                         end = androidx.compose.ui.geometry.Offset(width, y),
                         strokeWidth = 1f,
@@ -2159,11 +2159,11 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                 
                 val lastCpuY = height - ((lastPoint.first.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
                 drawCircle(color = Color(0xFFFF9800), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
-                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
-                
+                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))  // chart endpoint: fixed color
+
                 val lastHddY = height - ((lastPoint.second.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
                 drawCircle(color = Color(0xFF03A9F4), radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
-                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
+                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))  // chart endpoint: fixed color
                 
                 // Vẽ chữ hiển thị thông số tại thời điểm đo
                 val paint = android.graphics.Paint().apply {
@@ -2242,7 +2242,7 @@ fun MainMenuToolboxDialog(
                     title = "Thùng Rác",
                     subtitle = "Khôi phục tệp bị xoá",
                     icon = Icons.Default.Delete,
-                    color = Color(0xFFEF5350),
+                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); onOpenTrash() }
                 )
@@ -2289,7 +2289,7 @@ fun MainMenuToolboxDialog(
                     title = "USB Import",
                     subtitle = "Auto copy từ USB gắn ngoài",
                     icon = Icons.Default.Usb,
-                    color = Color(0xFF66BB6A),
+                    color = MaterialTheme.colorScheme.tertiary,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showUsbImportDialog() }
                 )
@@ -2300,7 +2300,7 @@ fun MainMenuToolboxDialog(
                     title = "USB Import",
                     subtitle = "Tự copy ổ USB 3.0",
                     icon = Icons.Default.Usb,
-                    color = Color(0xFF26A69A),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     checked = deviceVM.usbImportState.settings.enabled,
                     onClick = { onDismiss(); showUsbImportDialog() }
@@ -2309,7 +2309,7 @@ fun MainMenuToolboxDialog(
                     title = "Sức khoẻ ổ cứng",
                     subtitle = "SMART + dmesg + điểm",
                     icon = Icons.Default.HealthAndSafety,
-                    color = Color(0xFFFFA726),
+                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showDiskHealthDialog() }
                 )
@@ -2328,7 +2328,7 @@ fun MainMenuToolboxDialog(
                     title = "Giới hạn upload",
                     subtitle = "Tránh nghẽn mạng",
                     icon = Icons.Default.Speed,
-                    color = Color(0xFF42A5F5),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showBandwidthDialog() }
                 )
@@ -2341,7 +2341,7 @@ fun MainMenuToolboxDialog(
                     title = "Docker / qBittorrent",
                     subtitle = if (deviceVM.isTogglingDocker) "Đang xử lý..." else if (deviceVM.isDockerRunning) "Đang thực thi" else "Đã ngắt",
                     icon = Icons.Default.ViewInAr,
-                    color = Color(0xFF1E88E5),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { deviceVM.toggleDockerPower(if (deviceVM.isDockerRunning) "stop" else "start") }
                 )
@@ -2349,7 +2349,7 @@ fun MainMenuToolboxDialog(
                     title = "Tải BitTorrent",
                     subtitle = "Magnet, URL, tệp .torrent",
                     icon = Icons.Default.CloudDownload,
-                    color = Color(0xFF26A69A),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showDownloadDialog() }
                 )
@@ -2372,7 +2372,7 @@ fun MainMenuToolboxDialog(
                     title = "Quét trùng lặp",
                     subtitle = "Dọn dẹp không gian",
                     icon = Icons.Default.ContentCopy,
-                    color = Color(0xFF29B6F6),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showDuplicateScanDialog() }
                 )
@@ -2383,7 +2383,7 @@ fun MainMenuToolboxDialog(
                     title = "LAN Whitelist",
                     subtitle = "IP LAN truy cập thẳng",
                     icon = Icons.Default.Wifi,
-                    color = Color(0xFF66BB6A),
+                    color = MaterialTheme.colorScheme.tertiary,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); showLanWhitelistDialog() }
                 )
@@ -2402,7 +2402,7 @@ fun MainMenuToolboxDialog(
                     title = "Dọn thùng rác",
                     subtitle = "Xoá rác cũ hơn 30 ngày",
                     icon = Icons.Default.DeleteSweep,
-                    color = Color(0xFFEF5350),
+                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
                     onClick = { onDismiss(); deviceVM.cleanTrashOnDemand(context, maxAgeDays = 30) }
                 )
@@ -2427,7 +2427,7 @@ fun MainMenuToolboxDialog(
                         if (audit.running) "Đang quét..." else "Thiếu ${audit.missing} / Tổng ${audit.total}"
                     } ?: "Thống kê & Quét",
                     icon = Icons.Default.PhotoLibrary,
-                    color = Color(0xFFAB47BC),
+                    color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.weight(1f),
                     onClick = {
                         val canStart = thumbAudit?.let { !it.running && it.missing > 0 } ?: true
@@ -2591,8 +2591,8 @@ fun MainMenuSystemStatusCards(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(Modifier.size(38.dp).background(Color(0xFFAB47BC).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.PhotoLibrary, null, tint = Color(0xFFAB47BC), modifier = Modifier.size(18.dp))
+                                Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.PhotoLibrary, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
@@ -2606,9 +2606,9 @@ fun MainMenuSystemStatusCards(
                                         },
                                         fontSize = 11.sp,
                                         color = when {
-                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> Color(0xFF66BB6A)
-                                            smartToolsVM.thumbPaused -> Color(0xFFFFA726)
-                                            smartToolsVM.thumbRunning -> Color(0xFF66BB6A)
+                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> MaterialTheme.colorScheme.tertiary
+                                            smartToolsVM.thumbPaused -> MaterialTheme.colorScheme.error
+                                            smartToolsVM.thumbRunning -> MaterialTheme.colorScheme.tertiary
                                             else -> TextSecondary
                                         }
                                     )
@@ -2618,7 +2618,7 @@ fun MainMenuSystemStatusCards(
                                         Icon(
                                             if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                             null,
-                                            tint = if (smartToolsVM.thumbPaused) Color(0xFF66BB6A) else Color(0xFFFFA726),
+                                            tint = if (smartToolsVM.thumbPaused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
@@ -2632,7 +2632,7 @@ fun MainMenuSystemStatusCards(
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     "Tệp: " + smartToolsVM.thumbLastFile.substringAfterLast("/"),
-                                    fontSize = 10.sp, color = Color(0xFFAB47BC).copy(alpha = 0.85f),
+                                    fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(start = 50.dp)
                                 )
@@ -2641,21 +2641,21 @@ fun MainMenuSystemStatusCards(
                             LinearProgressIndicator(
                                 progress = { (thumbPercent / 100f).coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFFAB47BC), trackColor = Color(0xFF161616)
+                                color = MaterialTheme.colorScheme.secondary, trackColor = MaterialTheme.colorScheme.surface
                             )
                             Spacer(Modifier.height(6.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 // Số thumbnail đã tạo / tổng
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text("✓ Đã tạo:", fontSize = 10.sp, color = TextSecondary)
-                                    Text("${smartToolsVM.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                    Text("${smartToolsVM.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                                     Text("/ ${smartToolsVM.thumbTotal}", fontSize = 10.sp, color = TextSecondary)
                                     val thumbMissing = smartToolsVM.thumbTotal - smartToolsVM.thumbGenerated
                                     if (thumbMissing > 0) {
-                                        Text("• Còn ${thumbMissing} thiếu", fontSize = 10.sp, color = Color(0xFFFFA726))
+                                        Text("• Còn ${thumbMissing} thiếu", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
                                     }
                                 }
-                                Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFAB47BC))
+                                Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
                             }
                         }
 
@@ -2674,8 +2674,8 @@ fun MainMenuSystemStatusCards(
                                 return "%02d:%02d".format(m, sec)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).background(Color(0xFF29B6F6).copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Default.ContentCopy, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(18.dp))
+                                Box(Modifier.size(38.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.ContentCopy, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
@@ -2688,17 +2688,17 @@ fun MainMenuSystemStatusCards(
                                     }
                                     val dupStatusColor = when {
                                         smartToolsVM.duplicateFilesList.isNotEmpty() -> Color(0xFF64B5F6) // Xanh dương
-                                        dupIsPaused -> Color(0xFFFFA726) // Cam
-                                        else -> Color(0xFF66BB6A) // Xanh lá
+                                        dupIsPaused -> MaterialTheme.colorScheme.error // Cam
+                                        else -> MaterialTheme.colorScheme.tertiary // Xanh lá
                                     }
                                     Text(dupStatusLabel, fontSize = 11.sp, color = dupStatusColor)
                                 }
                                 if (dupIsRunning || dupIsPaused) {
                                     IconButton(onClick = { smartToolsVM.togglePauseDuplicateScan() }, modifier = Modifier.size(32.dp)) {
-                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) Color(0xFF66BB6A) else Color(0xFFFFA726), modifier = Modifier.size(18.dp))
+                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                     }
                                     IconButton(onClick = { smartToolsVM.cancelDuplicateScan(mContext) }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -2706,14 +2706,14 @@ fun MainMenuSystemStatusCards(
                             if (dupStage.isNotBlank() && dupStage != "Khởi động...") {
                                 Spacer(Modifier.height(4.dp))
                                 Surface(
-                                    color = Color(0xFF29B6F6).copy(alpha = 0.1f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
                                         dupStage,
                                         fontSize = 11.sp, fontWeight = FontWeight.Medium,
-                                        color = Color(0xFF29B6F6),
+                                        color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis
                                     )
@@ -2733,27 +2733,27 @@ fun MainMenuSystemStatusCards(
                             LinearProgressIndicator(
                                 progress = { dupPercent.coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = Color(0xFF29B6F6), trackColor = Color(0xFF161616)
+                                color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.surface
                             )
                             Spacer(Modifier.height(6.dp))
                             // Hàng thống kê: số tệp + trùng + thời gian
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("$dupScanned", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                                        Text("$dupScanned", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                         Text("Tổng tệp", fontSize = 9.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text("$dupFound", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF5350))
+                                        Text("$dupFound", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                                         Text("Trùng lặp", fontSize = 9.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(fmtMs(dupElapsed), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                        Text(fmtMs(dupElapsed), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                                         Text("Thời gian", fontSize = 9.sp, color = TextSecondary)
                                     }
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
-                                    Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF29B6F6))
+                                    Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     if (dupEta >= 0) {
                                         Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = Color(0xFF4FC3F7))
                                     }
@@ -2776,10 +2776,10 @@ fun MainMenuSystemStatusCards(
                                 verticalAlignment = Alignment.Top
                             ) {
                                 Box(
-                                    Modifier.size(38.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), CircleShape),
+                                    Modifier.size(38.dp).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f), CircleShape),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Default.Sync, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Sync, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
@@ -2794,7 +2794,7 @@ fun MainMenuSystemStatusCards(
 
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        Text(speed, fontSize = 11.sp, color = Color(0xFF66BB6A), modifier = Modifier.padding(start = 4.dp))
+                                        Text(speed, fontSize = 11.sp, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(start = 4.dp))
                                     }
 
                                     if (autoBackupVM.autoBackupSourcePath.isNotEmpty()) {
@@ -2810,14 +2810,14 @@ fun MainMenuSystemStatusCards(
                                     LinearProgressIndicator(
                                         progress = { autoBackupVM.autoBackupProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                        color = Color(0xFF66BB6A), trackColor = Color(0xFF161616)
+                                        color = MaterialTheme.colorScheme.tertiary, trackColor = MaterialTheme.colorScheme.surface
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text("Tổng tiến trình: ${autoBackupVM.autoBackupProcessedCount} / ${autoBackupVM.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
                                         val totalPercent = if(autoBackupVM.autoBackupTotalCount > 0) (autoBackupVM.autoBackupProcessedCount * 100f / autoBackupVM.autoBackupTotalCount) else 0f
-                                        Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF66BB6A))
+                                        Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
                                     }
                                 }
                             }
@@ -2837,10 +2837,10 @@ fun MainMenuSystemStatusCards(
                                 verticalAlignment = Alignment.Top
                             ) {
                                 Box(
-                                    Modifier.size(38.dp).background(Color(0xFF26A69A).copy(alpha = 0.15f), CircleShape),
+                                    Modifier.size(38.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Default.Usb, null, tint = Color(0xFF26A69A), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Usb, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
@@ -2848,7 +2848,7 @@ fun MainMenuSystemStatusCards(
                                     Text(
                                         if (usbImport.status == "cancelling") "Đang hủy copy USB" else "Đang copy từ ${usbImport.detectedDevicesInfo.ifBlank { usbImport.activeDevice.ifBlank { "ổ USB" } }}",
                                         fontSize = 11.sp,
-                                        color = Color(0xFF26A69A)
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                     if (usbImport.currentFile.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
@@ -2864,8 +2864,8 @@ fun MainMenuSystemStatusCards(
                                     LinearProgressIndicator(
                                         progress = { usbImportProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                        color = Color(0xFF26A69A),
-                                        trackColor = Color(0xFF161616)
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.surface
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2879,12 +2879,12 @@ fun MainMenuSystemStatusCards(
                                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(usbImport.copySpeedBps)}/s • ETA ${usbImportEtaLabel(usbImport.etaSeconds)}",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF26A69A)
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                 }
                                 IconButton(onClick = { deviceVM.cancelUsbImport() }, modifier = Modifier.size(32.dp)) {
-                                    Icon(Icons.Default.Stop, null, tint = Color(0xFFEF5350), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -2994,7 +2994,7 @@ fun MainMenuSectionQuickActionSelectorDialog(
 ) {
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F0F0F),
+        containerColor = MaterialTheme.colorScheme.surface,
         scrimColor = Color.Black.copy(alpha = 0.6f),
         dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
@@ -3011,7 +3011,7 @@ fun MainMenuSectionQuickActionSelectorDialog(
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(36.dp).clip(CircleShape).background(Brush.linearGradient(action.gradientColors)), contentAlignment = Alignment.Center) {
-                            Icon(action.icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Icon(action.icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -3084,10 +3084,10 @@ fun MainMenuSectionSystemLogsSummaryCard(realtimeNow: Long = System.currentTimeM
                     val recentLogs = deviceVM.systemLogsList.take(3)
                     recentLogs.forEach { log ->
                         val logColor = when (log.type) {
-                            "SUCCESS" -> Color(0xFF43A047)
-                            "ERROR" -> Color(0xFFEF5350)
-                            "WARNING" -> Color(0xFFFFA726)
-                            else -> Color(0xFF29B6F6)
+                            "SUCCESS" -> MaterialTheme.colorScheme.tertiary
+                            "ERROR" -> MaterialTheme.colorScheme.error
+                            "WARNING" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
                         }
                         val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
                         
@@ -3163,7 +3163,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
                     text = "Tiến Trình (Theo ${if (sortBy == "cpu") "CPU" else "RAM"})",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -3205,11 +3205,11 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                     val proc = displayProcesses[index]
                     val isSysEntry = proc.isSystem || proc.pid <= 0
                     val statusColor = when {
-                        isSysEntry -> Color(0xFF29B6F6)
-                        proc.status == "running" -> Color(0xFF66BB6A)
+                        isSysEntry -> MaterialTheme.colorScheme.primary
+                        proc.status == "running" -> MaterialTheme.colorScheme.tertiary
                         proc.status == "sleeping" -> Color(0xFF9E9E9E)
-                        proc.status == "disk-sleep" -> Color(0xFFFFA726)
-                        proc.status in listOf("zombie", "dead") -> Color(0xFFEF5350)
+                        proc.status == "disk-sleep" -> MaterialTheme.colorScheme.error
+                        proc.status in listOf("zombie", "dead") -> MaterialTheme.colorScheme.error
                         else -> Color(0xFF9E9E9E)
                     }
                     val statusChar = when {
@@ -3237,7 +3237,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(if (isSysEntry) Color(0xFF15232D) else Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .background(if (isSysEntry) Color(0xFF15232D) else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
                             .clickable(enabled = !isSysEntry, onClick = { showKillConfirm = true })
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -3251,7 +3251,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                         }
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(proc.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(proc.name, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(if (isSysEntry) "Hệ điều hành OS" else "${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
                         }
                         val displayValue = if (sortBy == "cpu") "${proc.cpu}%" else "${proc.mem}%"
@@ -3261,7 +3261,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                             androidx.compose.material3.Icon(
                                 androidx.compose.material.icons.Icons.Default.Close,
                                 contentDescription = "Kill",
-                                tint = Color(0xFFEF5350).copy(alpha = 0.7f),
+                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
                                 modifier = Modifier.size(16.dp)
                             )
                         } else {
@@ -3303,14 +3303,14 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
                     "Thông tin S.M.A.R.T",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
                 val statusColor = when {
-                    smartInfo.status.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
-                    smartInfo.status.uppercase().contains("FAILED") -> Color(0xFFEF5350)
-                    else -> Color(0xFFFFA726)
+                    smartInfo.status.uppercase().contains("PASSED") -> MaterialTheme.colorScheme.tertiary
+                    smartInfo.status.uppercase().contains("FAILED") -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.error
                 }
                 Text(
                     smartInfo.status.uppercase(),
@@ -3338,19 +3338,19 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
                     // Màu sắc theo trạng thái
                     val valueColor = when {
                         rawLabel == "Trang thai OMV" -> when {
-                            rawValue.uppercase().contains("GOOD") || rawValue.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
-                            rawValue.uppercase().contains("BAD") || rawValue.uppercase().contains("FAILED") -> Color(0xFFEF5350)
-                            else -> Color(0xFFFFA726)
+                            rawValue.uppercase().contains("GOOD") || rawValue.uppercase().contains("PASSED") -> MaterialTheme.colorScheme.tertiary
+                            rawValue.uppercase().contains("BAD") || rawValue.uppercase().contains("FAILED") -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.error
                         }
                         rawLabel == "Nhiet do" -> {
                             val temp = rawValue.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
                             when {
-                                temp >= 55 -> Color(0xFFEF5350)  // Nóng - Đỏ
-                                temp >= 45 -> Color(0xFFFFA726)  // Ấm - Vàng
-                                else -> Color(0xFF66BB6A)         // Mát - Xanh
+                                temp >= 55 -> MaterialTheme.colorScheme.error  // Nóng - Đỏ
+                                temp >= 45 -> MaterialTheme.colorScheme.error  // Ấm - Vàng
+                                else -> MaterialTheme.colorScheme.tertiary         // Mát - Xanh
                             }
                         }
-                        else -> Color.White
+                        else -> MaterialTheme.colorScheme.onSurface
                     }
                     
                     Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
@@ -3388,8 +3388,8 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
                         // Highlight attributes that may indicate problems
                         val rawNumber = raw.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() ?: 0L
                         val isCritical = id in listOf("5", "187", "197", "198", "10") && rawNumber > 0L
-                        val rowColor = if (isCritical) Color(0xFFEF5350).copy(alpha = 0.15f) else Color(0xFF1E1E1E)
-                        val textColor = if (isCritical) Color(0xFFEF5350) else Color.White
+                        val rowColor = if (isCritical) MaterialTheme.colorScheme.error.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
+                        val textColor = if (isCritical) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
 
                         Row(
                             modifier = Modifier.fillMaxWidth()
@@ -3439,7 +3439,7 @@ fun MainMenuBottomSheetSmbBottomSheet(
                         "Ổ Đĩa Mạng (SMB)",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         "Map Network Drive cho PC",
@@ -3461,10 +3461,10 @@ fun MainMenuBottomSheetSmbBottomSheet(
                             deviceVM.toggleSmb(context, isChecked)
                         },
                         colors = androidx.compose.material3.SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
+                            checkedThumbColor = MaterialTheme.colorScheme.onSurface,
                             checkedTrackColor = AccentCyan,
-                            uncheckedThumbColor = Color.LightGray,
-                            uncheckedTrackColor = Color.Gray
+                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.outline
                         )
                     )
                 }
@@ -3483,12 +3483,12 @@ fun MainMenuBottomSheetSmbBottomSheet(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text("Dành cho Windows:", color = TextSecondary, fontSize = 11.sp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("\\\\192.168.100.254\\NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("\\\\192.168.100.254\\NAS_Data", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                             IconButton(onClick = { 
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("\\\\192.168.100.254\\NAS_Data"))
                             }, modifier = Modifier.size(24.dp)) {
@@ -3498,7 +3498,7 @@ fun MainMenuBottomSheetSmbBottomSheet(
                         Spacer(Modifier.height(8.dp))
                         Text("Dành cho MacOS:", color = TextSecondary, fontSize = 11.sp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("smb://192.168.100.254/NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("smb://192.168.100.254/NAS_Data", color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                             IconButton(onClick = { 
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("smb://192.168.100.254/NAS_Data"))
                             }, modifier = Modifier.size(24.dp)) {
@@ -3512,21 +3512,21 @@ fun MainMenuBottomSheetSmbBottomSheet(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Person, contentDescription = "User", tint = TextSecondary, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Tài khoản:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
-                            Text("daica", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("daica", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Lock, contentDescription = "Password", tint = TextSecondary, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Mật khẩu:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
-                            Text("(Mật khẩu của App NAS)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("(Mật khẩu của App NAS)", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -3558,7 +3558,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
             // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
             onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
-            containerColor = Color(0xFF0F0F0F),
+            containerColor = MaterialTheme.colorScheme.surface,
             scrimColor = Color.Black.copy(alpha = 0.6f),
             dragHandle = {
                 Box(
@@ -3584,15 +3584,15 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
             ) {
                 // Header
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                    Icon(Icons.Default.FindReplace, contentDescription = null, tint = Color(0xFF1E88E5), modifier = Modifier.size(24.dp))
+                    Icon(Icons.Default.FindReplace, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Phát hiện tệp trùng lặp", color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Phát hiện tệp trùng lặp", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 }
                 Column(Modifier.fillMaxWidth()) {
                     // ═══ GIAI ĐOẠN HIỆN TẠI ═══
                     val stage = smartToolsVM.scanDuplicatesStage
                     val stageColor = when {
-                        stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> Color(0xFF1E88E5) // Xanh dương
+                        stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> MaterialTheme.colorScheme.primary // Xanh dương
                         stage.contains("Phân tích") -> Color(0xFFF57C00) // Cam
                         stage.contains("Hash") || stage.contains("Xác minh") -> Color(0xFF7B1FA2) // Tím
                         stage.contains("Hoàn tất") -> Color(0xFF2E7D32) // Xanh lá
@@ -3623,7 +3623,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Folder, contentDescription = null, tint = Color(0xFF5C6BC0), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Thư mục:", fontSize = 11.sp, color = Color.Gray)
+                        Text("Thư mục:", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                     }
                     Text(
                         text = smartToolsVM.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
@@ -3638,7 +3638,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color(0xFFEF6C00), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Đang xử lý:", fontSize = 11.sp, color = Color.Gray)
+                        Text("Đang xử lý:", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                     }
                     Text(
                         text = smartToolsVM.scanDuplicatesCurrentItemName.ifEmpty { "..." },
@@ -3664,7 +3664,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                     Column(Modifier.fillMaxWidth()) {
                         // Thanh 1: TỔNG QUÁT (Bao trùm toàn bộ tiến trình lớn)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tổng thể", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(60.dp))
+                            Text("Tổng thể", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.width(60.dp))
                             Spacer(Modifier.width(8.dp))
                             LinearProgressIndicator(
                                 progress = { progressValue.coerceIn(0f, 1f) },
@@ -3684,7 +3684,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
 
                         // Thanh 2: HIỆN TẠI (Theo từng giai đoạn)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Giai đoạn", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(60.dp))
+                            Text("Giai đoạn", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.width(60.dp))
                             Spacer(Modifier.width(8.dp))
                             LinearProgressIndicator(
                                 progress = { stageProgressValue.coerceIn(0f, 1f) },
@@ -3718,14 +3718,14 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                         Text(
                             "${(stageProgressValue * 100).toInt()}% giai đoạn",
                             fontSize = 10.sp,
-                            color = Color.Gray
+                            color = MaterialTheme.colorScheme.outline
                         )
                     }
                     if (smartToolsVM.scanDuplicatesStageDescription.isNotEmpty()) {
                         Text(
                             smartToolsVM.scanDuplicatesStageDescription,
                             fontSize = 10.sp,
-                            color = Color.Gray.copy(alpha = 0.8f),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.8f),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp)
@@ -3742,19 +3742,19 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                         val elapsed = smartToolsVM.scanDuplicatesElapsedTime
                         val etr = smartToolsVM.scanDuplicatesEstimatedTimeRemaining
 
-                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
+                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                         Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
                     }
 
                     // ═══ THỐNG KÊ RÕ RÀNG ═══
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
-                            Text("Tổng tệp", fontSize = 10.sp, color = Color.Gray)
+                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("Tổng tệp", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
-                            Text("Trùng lặp", fontSize = 10.sp, color = Color.Gray)
+                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                            Text("Trùng lặp", fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 }
@@ -3776,15 +3776,15 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                         Button(
                             onClick = { smartToolsVM.isScanningDuplicates = false },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
-                        ) { Text("Thu nhỏ", color = Color.White, fontWeight = FontWeight.Bold) }
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) { Text("Thu nhỏ", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) }
                     }
                 } else {
                     Button(
                         onClick = { smartToolsVM.isScanningDuplicates = false },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-                    ) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold) }
+                    ) { Text("Đóng", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold) }
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -3812,7 +3812,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
             ) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                        Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
                         if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                             Text(
                                 text = "Phát hiện ${smartToolsVM.duplicateFilesList.size} tệp trùng lặp",
@@ -3829,7 +3829,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                     } else {
                         if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
                             TextButton(onClick = { smartToolsVM.deleteSelectedDuplicates(smartToolsVM.duplicateFilesList) }) {
-                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -3906,7 +3906,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                             items(items = filteredGroups, key = { it.first().partialHash ?: "${it.first().contentLength}_${it.first().name}" }) { group ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.2f)),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Column(Modifier.padding(12.dp)) {
@@ -3931,7 +3931,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                     modifier = Modifier
                                                         .width(130.dp).height(150.dp) // Kích thước Thumbnail to rõ ràng
                                                         .clip(RoundedCornerShape(8.dp))
-                                                        .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
+                                                        .background(if (isSelected) MaterialTheme.colorScheme.error.copy(alpha = 0.2f) else Color.Black)
                                                         .clickable {
                                                             if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
                                                             else smartToolsVM.selectedDuplicates.add(dupFile)
@@ -3943,12 +3943,12 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                             WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                         }
                                                     } else {
-                                                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
+                                                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.align(Alignment.Center).size(40.dp))
                                                     }
 
                                                     // 2. Lớp phủ đỏ mờ nếu đang được tick chọn xóa
                                                     if (isSelected) {
-                                                        Box(modifier = Modifier.fillMaxSize().background(Color.Red.copy(alpha = 0.4f)))
+                                                        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.error.copy(alpha = 0.4f)))
                                                     }
 
                                                     // 3. Checkbox nằm góc trên phải
@@ -3959,7 +3959,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                             else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                         },
                                                         modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
-                                                        colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
+                                                        colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.error, uncheckedColor = MaterialTheme.colorScheme.onSurface)
                                                     )
 
                                                     // 4. Tên file + thư mục cha đè ở dưới cùng (Để phân biệt các file)
@@ -3974,7 +3974,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                             text = dupFile.name,
                                                             fontSize = 8.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = Color.White,
+                                                            color = MaterialTheme.colorScheme.onSurface,
                                                             maxLines = 2,
                                                             overflow = TextOverflow.Ellipsis,
                                                             lineHeight = 10.sp
@@ -3984,7 +3984,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                         Text(
                                                             text = "📁 $parentFolder",
                                                             fontSize = 7.sp,
-                                                            color = Color.Gray,
+                                                            color = MaterialTheme.colorScheme.outline,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
