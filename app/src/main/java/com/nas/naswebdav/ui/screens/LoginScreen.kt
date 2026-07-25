@@ -266,9 +266,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
         val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
         val hasSavedCreds = remember {
-            SecurePrefsHelper.getUser(context).isNotEmpty() &&
-                SecurePrefsHelper.getPass(context).isNotEmpty() &&
-                SecurePrefsHelper.getUrlList(context).isNotEmpty()
+            runCatching {
+                SecurePrefsHelper.getUser(context).isNotEmpty() &&
+                    SecurePrefsHelper.getPass(context).isNotEmpty() &&
+                    SecurePrefsHelper.getUrlList(context).isNotEmpty()
+            }.getOrElse { false }
         }
         val biometricAvailable = remember {
             try {
@@ -289,9 +291,9 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
                             override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
                                 super.onAuthenticationSucceeded(result)
-                                val urlList = SecurePrefsHelper.getUrlList(context)
-                                val u = SecurePrefsHelper.getUser(context)
-                                val p = SecurePrefsHelper.getPass(context)
+                                val urlList = runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() }
+                                val u = runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" }
+                                val p = runCatching { SecurePrefsHelper.getPass(context) }.getOrElse { "" }
                                 authVM.connect(urlList, u, p, onSuccess = {
                                     com.nas.naswebdav.scheduleIdleDuplicateScan(context, urlList.firstOrNull() ?: "")
                                     com.nas.naswebdav.scheduleIdleSpeedTest(context, urlList.firstOrNull() ?: "")
