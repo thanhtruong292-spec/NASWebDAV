@@ -11887,7 +11887,7 @@ def _fan_controller_watchdog():
     ổn định để tránh tắt/bật liên tục (fan fluttering) khi nhiệt dao động
     quanh vùng ngưỡng.
     """
-    stable_seconds = 30.0
+    stable_seconds = 1.0
     last_mode = None
     last_target_percent = None
     target_since_ts = 0.0
@@ -11943,10 +11943,10 @@ def _fan_controller_watchdog():
             cpu_temp = _fan_temp_value(get_cpu_temp())
             hdd_temp = _fan_temp_value(get_hdd_temp())
             
-            # FIX QUẠT NHẤP NHÁY: control_temp = max(CPU, HDD) khi cả 2 hợp lệ
-            if hdd_temp > 0 and cpu_temp > 0:
-                control_temp = max(cpu_temp, hdd_temp)
-            elif hdd_temp > 0:
+            # FIX NGUYÊN NHÂN BẬT QUẠT SỚM:
+            # Dùng nhiệt độ HDD làm mốc điều khiển chính cho mốc người dùng tùy chỉnh.
+            # Tránh việc CPU (thường cao hơn HDD 5-10 độ) làm quạt bật khi HDD mới 42°C.
+            if hdd_temp > 0:
                 control_temp = hdd_temp
             else:
                 control_temp = cpu_temp
