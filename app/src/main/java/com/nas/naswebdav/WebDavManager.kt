@@ -80,6 +80,28 @@ internal fun encodeWebDavSegment(segment: String): String {
     return java.net.URLEncoder.encode(decodeWebDavSegment(segment), "UTF-8").replace("+", "%20")
 }
 
+internal fun toValidUrl(rawUrl: String): String {
+    if (rawUrl.isBlank()) return rawUrl
+    val safe = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
+    return runCatching {
+        val uri = java.net.URI(safe)
+        if (uri.isAbsolute && uri.host != null && !safe.contains(" ")) {
+            uri.toASCIIString()
+        } else throw IllegalArgumentException("Need manual encode")
+    }.getOrElse {
+        try {
+            val schemeAndHost = if (safe.contains("/webdav")) safe.substringBefore("/webdav") else ""
+            val relativePath = if (schemeAndHost.isNotEmpty()) safe.substringAfter("/webdav") else safe
+            val encodedPath = relativePath.split("/").joinToString("/") { segment ->
+                if (segment.isEmpty()) "" else encodeWebDavSegment(segment)
+            }
+            if (schemeAndHost.isNotEmpty()) "$schemeAndHost/webdav$encodedPath" else encodedPath
+        } catch (_: Exception) {
+            safe.replace(" ", "%20")
+        }
+    }
+}
+
 internal fun buildWebDavTrashTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
     val normalizedBase = baseUrl.trimEnd('/')
     val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
@@ -397,7 +419,7 @@ object WebDavManager {
 
     suspend fun listFiles(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
-        val safeUrl = if (url.endsWith("/")) url else "$url/"
+        val safeUrl = toValidUrl(if (url.endsWith("/")) url else "$url/")
 
         
 
@@ -1127,9 +1149,20 @@ class WebDavRepository(
 
 
     suspend fun searchGlobal(keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-
         database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+    }
 
+    suspend fun getAllFilesForMap(): List<NasFile> = withContext(Dispatchers.IO) {
+        database.fileDao().getAllFilesForMap().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+    }
+
+    suspend fun saveDiscoveredFiles(files: List<NasFile>, parentUrl: String) = withContext(Dispatchers.IO) {
+        if (files.isEmpty()) return@withContext
+        try {
+            database.fileDao().insertFiles(files.map {
+                CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = parentUrl, contentLength = it.contentLength, lastModified = it.lastModified)
+            })
+        } catch (_: Exception) {}
     }
 
 

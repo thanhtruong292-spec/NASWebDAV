@@ -26,7 +26,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import java.util.Stack
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * FileBrowserViewModel — Primary owner of file-browser state.
@@ -183,94 +187,233 @@ class FileBrowserViewModel(
      */
     fun searchGlobal(keyword: String) {
         val normalizedQuery = keyword.trim()
-        if (normalizedQuery.isBlank() || normalizedQuery.length < 2) {
+        if (normalizedQuery.isBlank()) {
             clearSearch()
             return
         }
         searchJob?.cancel()
-        // Always start from NAS root so search covers all subdirectories
-        // (not just the currently open folder).
-        val searchRootUrl = WebDavManager.currentBaseUrl.ifBlank { currentUrl }
+        val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
         if (searchRootUrl.isBlank()) {
             clearSearch()
             return
         }
         _isSearchActive.value = true
         searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(250) // Debounce typing
+            delay(80) // Debounce cực ngắn giúp phản hồi ngay lập tức
             if (!isActive) return@launch
 
-            val results = LinkedHashMap<String, NasFile>()
+            val results = ConcurrentHashMap<String, NasFile>()
+            val normalizedSearchRoot = if (searchRootUrl.endsWith("/")) searchRootUrl else "$searchRootUrl/"
+            val relativeRoot = if (searchRootUrl.startsWith(WebDavManager.currentBaseUrl)) {
+                searchRootUrl.removePrefix(WebDavManager.currentBaseUrl).trim('/')
+            } else ""
 
-            // Pass 1: Room cache — instant results for already-browsed folders
+            // Pass 0: Gọi Server API /api/search quét siêu tốc trực tiếp trong phạm vi thư mục hiện tại
             try {
-                repository.searchGlobal(normalizedQuery).forEach { file ->
-                    results[file.path] = file
+                val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                if (apiBaseUrl.isNotBlank()) {
+                    val encodedQ = java.net.URLEncoder.encode(normalizedQuery, "UTF-8")
+                    val encodedRoot = java.net.URLEncoder.encode(relativeRoot, "UTF-8")
+                    val searchApiUrl = "$apiBaseUrl/api/search?q=$encodedQ&root=$encodedRoot"
+                    val request = okhttp3.Request.Builder()
+                        .url(searchApiUrl)
+                        .header("Authorization", WebDavManager.currentAuthHeader())
+                        .get()
+                        .build()
+                    NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val jsonStr = response.body?.string()
+                            if (!jsonStr.isNullOrEmpty()) {
+                                val jsonObj = org.json.JSONObject(jsonStr)
+                                if (jsonObj.optBoolean("success", false)) {
+                                    val arr = jsonObj.optJSONArray("results")
+                                    if (arr != null && arr.length() > 0) {
+                                        val apiFiles = mutableListOf<NasFile>()
+                                        for (i in 0 until arr.length()) {
+                                            val obj = arr.getJSONObject(i)
+                                            val file = NasFile(
+                                                name = obj.getString("name"),
+                                                path = obj.getString("path"),
+                                                isDirectory = obj.getBoolean("isDirectory"),
+                                                contentType = obj.optString("contentType", ""),
+                                                contentLength = obj.optLong("contentLength", 0L),
+                                                lastModified = obj.optLong("lastModified", 0L)
+                                            )
+                                            results[file.path] = file
+                                            apiFiles.add(file)
+                                        }
+                                        repository.saveDiscoveredFiles(apiFiles, searchRootUrl)
+                                        val apiList = results.values.toList()
+                                        withContext(Dispatchers.Main) {
+                                            _searchResults.value = apiList
+                                            _isSearchActive.value = false
+                                        }
+                                        return@launch // Đã có kết quả chính xác 100% trong thư mục hiện tại!
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            } catch (_: Exception) { /* ignore corrupt cache */ }
-            withContext(Dispatchers.Main) {
-                _searchResults.value = results.values.toList()
+            } catch (_: Exception) {}
+
+            // Pass 1: Room Cache Map — lọc các file trong thư mục hiện tại đã lưu SQLite (<10ms)
+            try {
+                repository.getAllFilesForMap().forEach { file ->
+                    if (file.path.startsWith(normalizedSearchRoot) && matchesQuery(file.name, normalizedQuery)) {
+                        results[file.path] = file
+                    }
+                }
+            } catch (_: Exception) {}
+            if (results.isNotEmpty()) {
+                val cachedList = results.values.toList()
+                withContext(Dispatchers.Main) { _searchResults.value = cachedList }
             }
 
-            // Pass 2: BFS walk of the live NAS tree from root
-            val queue = ArrayDeque<Pair<String, Int>>()
-            val visited = HashSet<String>()
-            // Ensure trailing slash so listFiles treats it as a directory
-            val root = if (searchRootUrl.endsWith("/")) searchRootUrl else "$searchRootUrl/"
+            // Pass 2: Quét đa luồng nhẹ nhàng (3 workers + delay 35ms) để không gây treo hay hao phí tài nguyên NAS
+            val queue = ConcurrentLinkedQueue<Pair<String, Int>>()
+            val visited = ConcurrentHashMap.newKeySet<String>()
+            val root = com.nas.naswebdav.toValidUrl(if (searchRootUrl.endsWith("/")) searchRootUrl else "$searchRootUrl/")
             queue.add(root to 0)
-            var foldersVisited = 0
-            val maxDepth = 8
-            val maxFolders = 1_000
-            val maxResults = 500
 
-            while (queue.isNotEmpty() && isActive && foldersVisited < maxFolders) {
-                val (folderUrl, depth) = queue.removeFirst()
-                val normalizedFolder = folderUrl.trimEnd('/').lowercase()
-                if (!visited.add(normalizedFolder) || depth > maxDepth) continue
-                foldersVisited++
-                try {
-                    val children = WebDavManager.listFiles(folderUrl)
-                    android.util.Log.d(
-                        "GlobalSearch",
-                        "depth=$depth folder=$folderUrl children=${children.size}"
-                    )
-                    for (file in children) {
-                        // Match files AND folders by name (Windows Explorer style)
-                        if (file.name.contains(normalizedQuery, ignoreCase = true) &&
-                            results.size < maxResults
-                        ) {
-                            results[file.path] = file
-                        }
-                        // Enqueue subdirectories for deeper search
-                        if (file.isDirectory && depth < maxDepth && queue.size < maxFolders) {
-                            // Ensure trailing slash for next PROPFIND
-                            val dirPath = if (file.path.endsWith("/")) file.path else "${file.path}/"
-                            queue.add(dirPath to depth + 1)
+            val activeWorkers = java.util.concurrent.atomic.AtomicInteger(0)
+            val foldersVisited = java.util.concurrent.atomic.AtomicInteger(0)
+            val maxDepth = 6
+            val maxFolders = 400
+            val maxResults = 300
+            val workerCount = 3 // 3 luồng vừa phải tránh gây áp lực CPU NAS
+
+            val updateMutex = Mutex()
+
+            coroutineScope {
+                repeat(workerCount) {
+                    launch(Dispatchers.IO) {
+                        while (isActive && foldersVisited.get() < maxFolders && results.size < maxResults) {
+                            val item = queue.poll()
+                            if (item == null) {
+                                if (activeWorkers.get() == 0 && queue.isEmpty()) break
+                                delay(15)
+                                continue
+                            }
+
+                            val (folderUrl, depth) = item
+                            val normalizedFolder = folderUrl.trimEnd('/').lowercase()
+
+                            // Bỏ qua tuyệt đối các thư mục rác / hệ thống / cache để không phí tài nguyên
+                            if (normalizedFolder.contains("/.trash") ||
+                                normalizedFolder.contains("/@eadir") ||
+                                normalizedFolder.contains("/#recycle") ||
+                                normalizedFolder.contains("/.thumbnails") ||
+                                normalizedFolder.contains("/.git") ||
+                                normalizedFolder.contains("/.cache") ||
+                                normalizedFolder.contains("/\$recycle.bin") ||
+                                normalizedFolder.contains("/system volume information") ||
+                                normalizedFolder.contains("/android/data") ||
+                                normalizedFolder.contains("/android/obb")
+                            ) continue
+
+                            if (!visited.add(normalizedFolder) || depth > maxDepth) continue
+
+                            activeWorkers.incrementAndGet()
+                            foldersVisited.incrementAndGet()
+
+                            try {
+                                delay(35) // Tạm dừng 35ms giữa mỗi folder để duy trì CPU NAS < 5%
+                                val children = WebDavManager.listFiles(folderUrl)
+                                repository.saveDiscoveredFiles(children, folderUrl) // Lưu bản đồ SQLite ngầm
+                                var hasNewMatch = false
+                                for (file in children) {
+                                    if (matchesQuery(file.name, normalizedQuery) && results.size < maxResults) {
+                                        results[file.path] = file
+                                        hasNewMatch = true
+                                    }
+                                    if (file.isDirectory && depth < maxDepth && !file.name.startsWith(".")) {
+                                        val dirPath = com.nas.naswebdav.toValidUrl(if (file.path.endsWith("/")) file.path else "${file.path}/")
+                                        queue.add(dirPath to depth + 1)
+                                    }
+                                }
+
+                                if (hasNewMatch && isActive) {
+                                    val currentMatches = results.values.toList()
+                                    updateMutex.withLock {
+                                        withContext(Dispatchers.Main) {
+                                            _searchResults.value = currentMatches
+                                        }
+                                    }
+                                }
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                            } finally {
+                                activeWorkers.decrementAndGet()
+                            }
                         }
                     }
-                    // Publish intermediate results so UI updates while searching
-                    withContext(Dispatchers.Main) {
-                        _searchResults.value = results.values.toList()
-                    }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    android.util.Log.w(
-                        "GlobalSearch",
-                        "PROPFIND failed depth=$depth folder=$folderUrl: ${e.message}"
-                    )
                 }
             }
 
             withContext(Dispatchers.Main) {
                 _searchResults.value = results.values.toList()
                 _isSearchActive.value = false
-                android.util.Log.d(
-                    "GlobalSearch",
-                    "done results=${results.size} foldersVisited=$foldersVisited"
-                )
             }
         }
+    }
+
+    fun searchFiles(query: String) {
+        searchGlobal(query)
+    }
+
+    fun matchesQuery(name: String, query: String): Boolean {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return true
+        val n = name.lowercase()
+
+        // 1. Chuỗi con trực tiếp (có phân biệt/không phân biệt chữ hoa thường)
+        if (n.contains(q)) return true
+
+        // 2. Chuỗi con tiếng Việt không dấu
+        val normName = removeDiacritics(n)
+        val normQuery = removeDiacritics(q)
+        if (normName.contains(normQuery)) return true
+
+        // 3. Khớp đa từ (Tất cả từ trong câu truy vấn phải xuất hiện trong tên)
+        val tokens = normQuery.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size > 1 && tokens.all { normName.contains(it) }) return true
+
+        // 4. Khớp chữ cái đầu từng từ (Acronym/Word-boundary match)
+        val words = normName.split(Regex("[\\s._\\-]+")).filter { it.isNotBlank() }
+        if (words.size >= q.length) {
+            val acronym = words.mapNotNull { it.firstOrNull() }.joinToString("")
+            if (acronym.contains(q)) return true
+        }
+
+        return false
+    }
+
+    fun calculateRelevanceScore(name: String, query: String): Int {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return 0
+        val n = name.lowercase()
+        val normName = removeDiacritics(n)
+        val normQuery = removeDiacritics(q)
+
+        var score = 0
+        if (n == q || normName == normQuery) score += 1000
+        else if (n.startsWith(q) || normName.startsWith(normQuery)) score += 500
+        else if (n.contains(q) || normName.contains(normQuery)) score += 200
+        else {
+            val tokens = normQuery.split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (tokens.size > 1 && tokens.all { normName.contains(it) }) score += 100
+            else score += 50
+        }
+        return score
+    }
+
+    private fun removeDiacritics(str: String): String {
+        val nfdNormalized = java.text.Normalizer.normalize(str, java.text.Normalizer.Form.NFD)
+        val diacriticalRegex = Regex("\\p{InCombiningDiacriticalMarks}+")
+        return diacriticalRegex.replace(nfdNormalized, "")
+            .replace('đ', 'd').replace('Đ', 'd')
     }
 
     // ═══ RECURSIVE SEARCH STATE ═══

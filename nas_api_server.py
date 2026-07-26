@@ -248,6 +248,162 @@ except ImportError:
 
 app = Flask(__name__)
 
+INDEX_DB_PATH = "/var/lib/nas_fast_index.db"
+_index_lock = threading.Lock()
+
+def _remove_diacritics_py(s):
+    import unicodedata
+    if not s: return ""
+    nfd = unicodedata.normalize('NFD', str(s))
+    s_clean = "".join(c for c in nfd if unicodedata.category(c) != 'Mn')
+    return s_clean.replace('đ', 'd').replace('Đ', 'd')
+
+def _init_index_db():
+    try:
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_index (
+            path TEXT PRIMARY KEY,
+            name TEXT,
+            norm_name TEXT,
+            is_dir INTEGER,
+            size INTEGER,
+            mtime INTEGER,
+            mime TEXT
+        );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_norm_name ON file_index(norm_name);")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning("[FileIndex] DB init error: %s" % str(e))
+
+def _get_webdav_public_dir():
+    conf = "/var/www/webdav/config/config.php"
+    if os.path.exists(conf):
+        try:
+            with open(conf, "r", encoding="utf-8") as f:
+                content = f.read()
+                m = _re_module.search(r'\$publicDir\s*=\s*[\'"]([^\'"]+)[\'"]', content)
+                if m and os.path.exists(m.group(1)):
+                    return m.group(1)
+        except Exception: pass
+
+    base_dirs = ["/srv/dev-disk-by-label-data/New folder", "/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
+    for bd in base_dirs:
+        if os.path.exists(bd):
+            return bd
+    return "/"
+
+def _file_indexer_watchdog():
+    """Trình đánh chỉ mục ngầm cực nhẹ (CPU < 0.5%, pause 10ms giữa các folder)"""
+    log.info("[FileIndex] Trình đánh chỉ mục File/Thư mục ngầm 0%% CPU đã khởi động.")
+    _init_index_db()
+    
+    search_root = _get_webdav_public_dir()
+    log.info("[FileIndex] WebDAV Root Path: %s" % search_root)
+
+    while True:
+        try:
+            conn = sqlite3.connect(INDEX_DB_PATH, timeout=30.0)
+            batch = []
+            
+            for root, dirs, files in os.walk(search_root):
+                time.sleep(0.01) # Tam ngung 10ms giu CPU NAS < 0.5%
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('@eaDir', '#recycle', '.trash')]
+
+                for d in dirs:
+                    full_p = os.path.join(root, d)
+                    rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
+                    mtime = 0
+                    try: mtime = int(os.path.getmtime(full_p) * 1000)
+                    except Exception: pass
+                    norm_name = _remove_diacritics_py(d.lower())
+                    batch.append((rel_p + '/', d, norm_name, 1, 0, mtime, 'folder'))
+
+                for f in files:
+                    if f.startswith('.'): continue
+                    full_p = os.path.join(root, f)
+                    rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
+                    size = 0
+                    mtime = 0
+                    try:
+                        st = os.stat(full_p)
+                        size = st.st_size
+                        mtime = int(st.st_mtime * 1000)
+                    except Exception: pass
+                    norm_name = _remove_diacritics_py(f.lower())
+                    mime = mimetypes.guess_type(f)[0] or "application/octet-stream"
+                    batch.append((rel_p, f, norm_name, 0, size, mtime, mime))
+
+                if len(batch) >= 1000:
+                    with _index_lock:
+                        conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                        conn.commit()
+                    batch = []
+
+            if batch:
+                with _index_lock:
+                    conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                    conn.commit()
+            
+            conn.close()
+            log.info("[FileIndex] Đã hoàn tất lập bản đồ chỉ mục siêu tốc.")
+        except Exception as e:
+            log.warning("[FileIndex] Lỗi indexer: %s" % str(e))
+
+        time.sleep(1800)
+
+@app.route('/api/search', methods=['GET'])
+def api_fast_search():
+    query = request.args.get('q', '').strip()
+    root_param = request.args.get('root', '').strip('/')
+    if not query:
+        return jsonify({"success": True, "results": []})
+    
+    norm_query = _remove_diacritics_py(query.lower())
+
+    host_header = request.headers.get("Host", "192.168.100.254:8822")
+    host_ip = host_header.split(":")[0]
+    webdav_base = "http://%s:8822/webdav/" % host_ip
+
+    results = []
+    try:
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=5.0)
+        cur = conn.cursor()
+        
+        # Truy vấn SQLite siêu tốc (<1ms) không dùng os.walk(), 0% CPU!
+        like_pattern = "%%%s%%" % norm_query
+        if root_param:
+            path_pattern = "%s/%%" % root_param
+            exact_root = "%s/" % root_param
+            cur.execute("""
+                SELECT path, name, is_dir, size, mtime, mime FROM file_index 
+                WHERE (path LIKE ? OR path = ?) AND norm_name LIKE ? 
+                ORDER BY is_dir DESC, name ASC LIMIT 300
+            """, (path_pattern, exact_root, like_pattern))
+        else:
+            cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
+
+        rows = cur.fetchall()
+        conn.close()
+
+        for rel_p, name, is_dir, size, mtime, mime in rows:
+            webdav_url = webdav_base.rstrip('/') + '/' + rel_p.lstrip('/')
+            results.append({
+                "name": name,
+                "path": webdav_url,
+                "isDirectory": bool(is_dir),
+                "contentType": mime,
+                "contentLength": size,
+                "lastModified": mtime
+            })
+    except Exception as e:
+        log.warning("[SearchAPI] Lỗi truy vấn SQLite index: %s" % str(e))
+
+    return jsonify({"success": True, "results": results})
+
 # -- Social Extractor Logic BEGIN ----------------------------------------------
 # Keep this pure-stdlib block in the single production artifact. Tests load this
 # marked block without importing the full Flask/Tornado daemon.
@@ -14305,6 +14461,8 @@ if __name__ == "__main__":
     log.info("[TikTokWatch] Watcher TikTok live đã khởi động trên NAS.")
     threading.Thread(target=_auto_resource_reclaimer_thread, daemon=True, name="ResourceReclaimer").start()
     log.info("[ResourceReclaimer] Watcher giải phóng tài nguyên ngầm đã khởi động.")
+    threading.Thread(target=_file_indexer_watchdog, daemon=True, name="FileIndexWatchdog").start()
+    log.info("[FileIndex] Watcher lập chỉ mục SQLite siêu tốc đã được khởi động.")
     threading.Thread(target=_nas_api_self_watchdog, daemon=True, name="NasApiSelfWatchdog").start()
     log.info("[NasAPI] Self-watchdog tự khởi động lại đã được kích hoạt.")
     

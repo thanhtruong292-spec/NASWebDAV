@@ -156,6 +156,7 @@ fun BrowserScreen(
     val globalUiVM  = LocalGlobalUiVM.current
     // Trạng thái thanh tìm kiếm
     var isSearching by remember { mutableStateOf(false) }
+    var wasInSearchMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     
     val context = LocalContext.current
@@ -222,9 +223,13 @@ fun BrowserScreen(
         if (selectionMode) {
             selectionMode = false
             selectedFiles.clear()
-        } else if (isSearching) {
+        } else if (isSearching || wasInSearchMode) {
+            // A search Back press only closes search; it must never navigate
+            // out of BrowserScreen to the main menu.
             isSearching = false
+            wasInSearchMode = false
             searchQuery = ""
+            fileBrowserVM.clearSearch()
         } else {
             // Trong mọi chế độ (Bình thường hay isSpecialMode), thử lùi cấu trúc cây thư mục trước
             // Nếu urlStack cạn (nghĩa là đã về gốc của chế độ đó), thì mới thoát ra Menu Chính
@@ -506,6 +511,11 @@ fun BrowserScreen(
     }
     val serverSearchResults by fileBrowserVM.searchResults.collectAsState()
     val isServerSearchActive by fileBrowserVM.isSearchActive.collectAsState()
+    // Track when we enter search mode so first Back press only closes search,
+    // not navigate away from BrowserScreen.
+    LaunchedEffect(isSearching) {
+        if (isSearching) wasInSearchMode = true
+    }
 
     // Windows-Explorer-style search display:
     // - blank query → current folder listing
@@ -520,23 +530,30 @@ fun BrowserScreen(
             } else {
                 // Fallback: filter current folder while global search is still loading
                 // or returned nothing yet.
-                fileBrowserVM.fileList.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                fileBrowserVM.fileList.filter { fileBrowserVM.matchesQuery(it.name, searchQuery) }
             }
-            // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
-            val folders = filtered.filter { it.isDirectory }
-            val files = filtered.filter { !it.isDirectory }
-            val sortFn: (NasFile) -> Comparable<*> = when (sortMode) {
-                "name_desc", "name_asc" -> { f -> f.name.lowercase() }
-                "date_desc", "date_asc" -> { f -> f.lastModified }
-                "size_desc", "size_asc" -> { f -> f.contentLength }
-                else -> { f -> f.name.lowercase() }
+            if (searchQuery.isNotBlank()) {
+                // TÌM KIẾM: Sắp xếp theo điểm gần khớp nhất (Relevance Score) đưa kết quả sát nhất lên đầu
+                val folders = filtered.filter { it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
+                val files = filtered.filter { !it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
+                folders + files
+            } else {
+                // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
+                val folders = filtered.filter { it.isDirectory }
+                val files = filtered.filter { !it.isDirectory }
+                val sortFn: (NasFile) -> Comparable<*> = when (sortMode) {
+                    "name_desc", "name_asc" -> { f -> f.name.lowercase() }
+                    "date_desc", "date_asc" -> { f -> f.lastModified }
+                    "size_desc", "size_asc" -> { f -> f.contentLength }
+                    else -> { f -> f.name.lowercase() }
+                }
+                val descending = sortMode.endsWith("_desc")
+                @Suppress("UNCHECKED_CAST")
+                val cmp = compareBy<NasFile> { sortFn(it) as Comparable<Any> }
+                val orderedFolders = if (descending) folders.sortedWith(cmp.reversed()) else folders.sortedWith(cmp)
+                val orderedFiles = if (descending) files.sortedWith(cmp.reversed()) else files.sortedWith(cmp)
+                orderedFolders + orderedFiles
             }
-            val descending = sortMode.endsWith("_desc")
-            @Suppress("UNCHECKED_CAST")
-            val cmp = compareBy<NasFile> { sortFn(it) as Comparable<Any> }
-            val orderedFolders = if (descending) folders.sortedWith(cmp.reversed()) else folders.sortedWith(cmp)
-            val orderedFiles = if (descending) files.sortedWith(cmp.reversed()) else files.sortedWith(cmp)
-            orderedFolders + orderedFiles
         }
     }
 
@@ -625,9 +642,8 @@ fun BrowserScreen(
                         value = searchQuery,
                         onValueChange = { value ->
                             searchQuery = value
-                            if (value.length >= 2) {
-                                // BFS recursive search từ root NAS — gõ là tìm, bấm Enter để chạy lại nếu cần
-                                fileBrowserVM.performSearch(value)
+                            if (value.isNotBlank()) {
+                                fileBrowserVM.searchFiles(value)
                             } else {
                                 fileBrowserVM.clearSearch()
                             }
@@ -638,8 +654,8 @@ fun BrowserScreen(
                         keyboardActions = KeyboardActions(onSearch = {
                             historyManager.saveQuery(searchQuery)
                             focusManager.clearFocus()
-                            if (searchQuery.length >= 2) {
-                                fileBrowserVM.searchGlobal(searchQuery)
+                            if (searchQuery.isNotBlank()) {
+                                fileBrowserVM.searchFiles(searchQuery)
                             }
                         }),
                         colors = TextFieldDefaults.colors(
@@ -955,9 +971,10 @@ fun BrowserScreen(
                         }
                     }
                     
-                    // Phải: Thống kê + Nút Chọn
-                    val folders = fileBrowserVM.fileList.count { it.isDirectory }
-                    val files = fileBrowserVM.fileList.count { !it.isDirectory }
+                    // Phải: Thống kê động theo danh sách đang hiển thị (cả tìm kiếm và duyệt thư mục)
+                    val targetList = displayedFiles
+                    val folders = targetList.count { it.isDirectory }
+                    val files = targetList.count { !it.isDirectory }
                     val statsText = buildList {
                         if (folders > 0) add("$folders thư mục")
                         if (files > 0) add("$files tệp")
@@ -1119,6 +1136,13 @@ fun BrowserScreen(
 
             // SỬA LỖI: Sử dụng trực tiếp nestedScroll() sau khi đã import
             Box(Modifier.fillMaxSize().nestedScroll(pullToRefreshState.nestedScrollConnection)) {
+                if (isSearching && searchQuery.isNotEmpty() && isServerSearchActive) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
                 
                 // Grouping logic for Trash
                 val isTrashMode = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
@@ -1151,7 +1175,17 @@ fun BrowserScreen(
                             selectedFiles.add(file)
                         }
                     } else {
-                        if (file.isDirectory) fileBrowserVM.openFolder(file)
+                        if (isSearching && searchQuery.isNotBlank()) {
+                            historyManager.saveQuery(searchQuery)
+                        }
+                        if (file.isDirectory) {
+                            if (isSearching) {
+                                isSearching = false
+                                searchQuery = ""
+                                fileBrowserVM.clearSearch()
+                            }
+                            fileBrowserVM.openFolder(file)
+                        }
                         else if (com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)) onVideo(file.path)
                         else if (file.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }) onImage(file.path)
                         else if (file.name.lowercase().run { endsWith(".txt") || endsWith(".md") || endsWith(".py") || endsWith(".log") || endsWith(".json") || endsWith(".xml") || endsWith(".kt") || endsWith(".java") }) {
@@ -1545,9 +1579,15 @@ fun BrowserScreen(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(stringResource(R.string.label_folder_empty), color = MaterialTheme.colorScheme.outline)
+                        if (isSearching && searchQuery.isNotEmpty()) {
+                            Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+                        } else {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(stringResource(R.string.label_folder_empty), color = MaterialTheme.colorScheme.outline)
+                        }
                     }
                 }
             }

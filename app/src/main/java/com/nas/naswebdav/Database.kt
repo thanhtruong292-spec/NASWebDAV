@@ -77,6 +77,9 @@ interface FileDao {
     @Query("SELECT * FROM files_cache WHERE name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFiles(keyword: String): List<CachedFile>
 
+    @Query("SELECT * FROM files_cache LIMIT 25000")
+    fun getAllFilesForMap(): List<CachedFile>
+
     // FIX FALSE POSITIVES & PHASE 8: Nhóm theo contentLength VÀ name riêng biệt (tránh collision chuỗi nối)
     // PHASE 8: Loại bỏ thư mục và các file vụn vặt rác < 4KB (4096 bytes) để tăng tốc quét tối đa
     // TỐI ƯU PHASE 15: Dùng CTE (Common Table Expression) thay vì subquery lồng

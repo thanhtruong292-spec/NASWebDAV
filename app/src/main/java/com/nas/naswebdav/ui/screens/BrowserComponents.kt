@@ -655,6 +655,8 @@ fun WebDavCachedThumbnail(
             AsyncImage(
                 model = coil.request.ImageRequest.Builder(LocalContext.current)
                     .data(safeUrl)
+                    .memoryCacheKey(safeUrl)
+                    .diskCacheKey(safeUrl)
                     .addHeader("Authorization", auth)
                     .crossfade(true)
                     .size(coil.size.Size(300, 300))

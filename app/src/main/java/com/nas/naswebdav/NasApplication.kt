@@ -73,16 +73,16 @@ class NasApplication : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.15)
+                    .maxSizePercent(0.35) // Tăng RAM cache từ 15% lên 35%
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizePercent(0.02)
+                    .maxSizeBytes(500L * 1024 * 1024) // 500MB Disk Cache vĩnh viễn (thay vì 2% ~10MB)
                     .build()
             }
-            // VideoFrameDecoder: trích frame từ MP4/MKV/WebM — coil-video extension
+            .respectCacheHeaders(false) // Cố định cache trên máy, không bắt load lại từ mạng
             .components { add(VideoFrameDecoder.Factory()) }
             .callFactory { request -> fastApiClient.newCall(request) }
             .build()
