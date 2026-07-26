@@ -964,7 +964,12 @@ fun AutoBackupDialog(
                     checked = isAutoBackupEnabled,
                     onCheckedChange = onAutoBackupEnabledChange,
                     modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.primary, checkedTrackColor = Color(0xFF80CBC4), uncheckedThumbColor = MaterialTheme.colorScheme.outline, uncheckedTrackColor = MaterialTheme.colorScheme.outline)
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        uncheckedThumbColor = Color.LightGray,
+                        uncheckedTrackColor = Color(0xFF2C2C2C)
+                    )
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(if (isAutoBackupEnabled) "Đã bật" else "Đã tắt", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (isAutoBackupEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
@@ -1219,71 +1224,21 @@ fun AutoBackupDialog(
                     }
                     Spacer(Modifier.height(8.dp))
 
-                    // ── Retention slider ──
-                    Text(
-                        stringResource(id = R.string.backup_schedule_retention, schedule.retentionCount),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(stringResource(id = R.string.backup_schedule_retention_range), fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
-                    Spacer(Modifier.height(2.dp))
-                    // Drag handle with local state, persist on release
-                    var retentionDragValue by remember { mutableStateOf<Float?>(null) }
-                    Slider(
-                        value = retentionDragValue ?: schedule.retentionCount.toFloat(),
-                        onValueChange = { retentionDragValue = it },
-                        onValueChangeFinished = {
-                            val newRetention = (retentionDragValue ?: schedule.retentionCount.toFloat()).toInt().coerceIn(7, 90)
-                            retentionDragValue = null
-                            if (newRetention != schedule.retentionCount) {
-                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
-                            }
-                        },
-                        valueRange = 7f..90f,
-                        steps = 82,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = MaterialTheme.colorScheme.primary,
-                            activeTrackColor = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                    // +/- buttons for precise retention control
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
+                    // ── Retention: Vĩnh viễn (Lưu an toàn trên NAS) ──
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                     ) {
-                        IconButton(
-                            onClick = {
-                                val newRetention = (schedule.retentionCount - 1).coerceIn(7, 90)
-                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
-                            },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Remove, "Giảm số ngày", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "${schedule.retentionCount} ngày",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.widthIn(min = 52.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        IconButton(
-                            onClick = {
-                                val newRetention = (schedule.retentionCount + 1).coerceIn(7, 90)
-                                autoBackupVM.saveBackupSchedule(schedule.copy(retentionCount = newRetention))
-                            },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                        ) {
-                            Icon(Icons.Default.Add, "Tăng số ngày", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.Default.AllInclusive, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text("Thời gian lưu trữ: Vĩnh viễn", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Text("Dữ liệu sao lưu được bảo quản vĩnh viễn trên ổ cứng NAS", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                            }
                         }
                     }
                     Spacer(Modifier.height(4.dp))
