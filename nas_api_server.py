@@ -5824,22 +5824,47 @@ def _data_flow_snapshot():
     _DATA_FLOW_LAST_SAMPLE = {"ts": now, "io": io, "net": net}
     usb = _usb_import_public_state() if "_usb_import_public_state" in globals() else {}
     current_tasks = []
+    active_task_write_bps = 0
+
     if str(usb.get("status", "")).lower() == "copying":
+        usb_speed = usb.get("copy_speed_bps", 0) or 0
+        active_task_write_bps += usb_speed
         current_tasks.append({
             "type": "usb_import", "label": "USB Import",
             "file": usb.get("current_file", ""), "source": usb.get("current_source", ""),
-            "dest": usb.get("current_dest", ""), "speed_bps": usb.get("copy_speed_bps", 0),
+            "dest": usb.get("current_dest", ""), "speed_bps": usb_speed,
             "progress": int((usb.get("bytes_processed", 0) or 0) * 100 / max(1, usb.get("bytes_total", 0) or 0)),
         })
     try:
         with _livestream_lock:
             for job_id, job in list(_livestream_jobs.items())[:5]:
                 if job.get("status") == "recording":
+                    cur_size = 0
+                    out_file = job.get("output_file") or ""
+                    out_dir = job.get("output_dir") or _LIVESTREAM_DIR
+                    try:
+                        if out_file and os.path.exists(os.path.join(out_dir, out_file)):
+                            cur_size = os.path.getsize(os.path.join(out_dir, out_file))
+                        elif os.path.isdir(out_dir):
+                            ls_files = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if not f.endswith('.log')]
+                            if ls_files:
+                                cur_size = os.path.getsize(max(ls_files, key=os.path.getmtime))
+                    except Exception: pass
+
+                    last_job_size = job.get("last_calc_size", 0)
+                    last_job_ts = job.get("last_calc_ts", 0)
+                    job_speed = 0
+                    if last_job_ts > 0 and now > last_job_ts and cur_size >= last_job_size:
+                        job_speed = int((cur_size - last_job_size) / max(0.1, now - last_job_ts))
+                    job["last_calc_size"] = cur_size
+                    job["last_calc_ts"] = now
+                    active_task_write_bps += job_speed
+
                     current_tasks.append({
                         "type": "livestream", "label": "Livestream",
-                        "file": job.get("filename") or job.get("output") or job_id,
-                        "source": job.get("url", ""), "dest": job.get("output", ""),
-                        "speed_bps": 0, "progress": 0,
+                        "file": job.get("output_file") or job.get("filename") or job.get("output") or job_id,
+                        "source": job.get("url", ""), "dest": job.get("output_file", ""),
+                        "speed_bps": job_speed, "progress": 0,
                     })
     except Exception:
         pass
@@ -5859,6 +5884,10 @@ def _data_flow_snapshot():
                 })
     except Exception:
         pass
+
+    if active_task_write_bps > write_bps:
+        write_bps = active_task_write_bps
+
     return {
         "ts": int(now), "device": "/dev/%s" % devname,
         "disk_read_bps": read_bps, "disk_write_bps": write_bps,
