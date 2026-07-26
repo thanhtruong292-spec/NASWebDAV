@@ -261,21 +261,23 @@ def _remove_diacritics_py(s):
 def _init_index_db():
     try:
         conn = sqlite3.connect(INDEX_DB_PATH, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS file_index (
-            path TEXT PRIMARY KEY,
-            name TEXT,
-            norm_name TEXT,
-            is_dir INTEGER,
-            size INTEGER,
-            mtime INTEGER,
-            mime TEXT
-        );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_norm_name ON file_index(norm_name);")
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS file_index (
+                path TEXT PRIMARY KEY,
+                name TEXT,
+                norm_name TEXT,
+                is_dir INTEGER,
+                size INTEGER,
+                mtime INTEGER,
+                mime TEXT
+            );
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_norm_name ON file_index(norm_name);")
+            conn.commit()
+        finally:
+            conn.close()
     except Exception as e:
         log.warning("[FileIndex] DB init error: %s" % str(e))
 
@@ -308,47 +310,49 @@ def _file_indexer_watchdog():
         try:
             conn = sqlite3.connect(INDEX_DB_PATH, timeout=30.0)
             batch = []
-            
-            for root, dirs, files in os.walk(search_root):
-                time.sleep(0.01) # Tam ngung 10ms giu CPU NAS < 0.5%
-                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('@eaDir', '#recycle', '.trash')]
+            try:
+                for root, dirs, files in os.walk(search_root):
+                    time.sleep(0.01) # Tạm ngưng 10ms giữ CPU NAS < 0.5%
+                    dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('@eaDir', '#recycle', '.trash')]
 
-                for d in dirs:
-                    full_p = os.path.join(root, d)
-                    rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
-                    mtime = 0
-                    try: mtime = int(os.path.getmtime(full_p) * 1000)
-                    except Exception: pass
-                    norm_name = _remove_diacritics_py(d.lower())
-                    batch.append((rel_p + '/', d, norm_name, 1, 0, mtime, 'folder'))
+                    for d in dirs:
+                        full_p = os.path.join(root, d)
+                        rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
+                        if rel_p == "." or rel_p.startswith(".."): continue
+                        mtime = 0
+                        try: mtime = int(os.path.getmtime(full_p) * 1000)
+                        except Exception: pass
+                        norm_name = _remove_diacritics_py(d.lower())
+                        batch.append((rel_p + '/', d, norm_name, 1, 0, mtime, 'folder'))
 
-                for f in files:
-                    if f.startswith('.'): continue
-                    full_p = os.path.join(root, f)
-                    rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
-                    size = 0
-                    mtime = 0
-                    try:
-                        st = os.stat(full_p)
-                        size = st.st_size
-                        mtime = int(st.st_mtime * 1000)
-                    except Exception: pass
-                    norm_name = _remove_diacritics_py(f.lower())
-                    mime = mimetypes.guess_type(f)[0] or "application/octet-stream"
-                    batch.append((rel_p, f, norm_name, 0, size, mtime, mime))
+                    for f in files:
+                        if f.startswith('.'): continue
+                        full_p = os.path.join(root, f)
+                        rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
+                        if rel_p == "." or rel_p.startswith(".."): continue
+                        size = 0
+                        mtime = 0
+                        try:
+                            st = os.stat(full_p)
+                            size = st.st_size
+                            mtime = int(st.st_mtime * 1000)
+                        except Exception: pass
+                        norm_name = _remove_diacritics_py(f.lower())
+                        mime = mimetypes.guess_type(f)[0] or "application/octet-stream"
+                        batch.append((rel_p, f, norm_name, 0, size, mtime, mime))
 
-                if len(batch) >= 1000:
+                    if len(batch) >= 1000:
+                        with _index_lock:
+                            conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                            conn.commit()
+                        batch = []
+
+                if batch:
                     with _index_lock:
                         conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
                         conn.commit()
-                    batch = []
-
-            if batch:
-                with _index_lock:
-                    conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    conn.commit()
-            
-            conn.close()
+            finally:
+                conn.close()
             log.info("[FileIndex] Đã hoàn tất lập bản đồ chỉ mục siêu tốc.")
         except Exception as e:
             log.warning("[FileIndex] Lỗi indexer: %s" % str(e))
@@ -371,23 +375,23 @@ def api_fast_search():
     results = []
     try:
         conn = sqlite3.connect(INDEX_DB_PATH, timeout=5.0)
-        cur = conn.cursor()
-        
-        # Truy vấn SQLite siêu tốc (<1ms) không dùng os.walk(), 0% CPU!
-        like_pattern = "%%%s%%" % norm_query
-        if root_param:
-            path_pattern = "%s/%%" % root_param
-            exact_root = "%s/" % root_param
-            cur.execute("""
-                SELECT path, name, is_dir, size, mtime, mime FROM file_index 
-                WHERE (path LIKE ? OR path = ?) AND norm_name LIKE ? 
-                ORDER BY is_dir DESC, name ASC LIMIT 300
-            """, (path_pattern, exact_root, like_pattern))
-        else:
-            cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
+        try:
+            cur = conn.cursor()
+            like_pattern = "%%%s%%" % norm_query
+            if root_param:
+                path_pattern = "%s/%%" % root_param
+                exact_root = "%s/" % root_param
+                cur.execute("""
+                    SELECT path, name, is_dir, size, mtime, mime FROM file_index 
+                    WHERE (path LIKE ? OR path = ?) AND norm_name LIKE ? 
+                    ORDER BY is_dir DESC, name ASC LIMIT 300
+                """, (path_pattern, exact_root, like_pattern))
+            else:
+                cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
 
-        rows = cur.fetchall()
-        conn.close()
+            rows = cur.fetchall()
+        finally:
+            conn.close()
 
         for rel_p, name, is_dir, size, mtime, mime in rows:
             webdav_url = webdav_base.rstrip('/') + '/' + rel_p.lstrip('/')

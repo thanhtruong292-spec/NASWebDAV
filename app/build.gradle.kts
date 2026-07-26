@@ -55,8 +55,8 @@ fun runGit(vararg args: String): String = try {
 val gitCommitCount: Int = runGit("rev-list", "--count", "HEAD").toIntOrNull() ?: 1
 val gitShortSha: String = runGit("rev-parse", "--short", "HEAD").ifBlank { "nogit" }
 val buildStamp: String = SimpleDateFormat("yyMMdd.HHmm").format(Date())
-// Đánh dấu build từ code CHƯA COMMIT (bản test thủ công) để không nhầm với bản chính thức.
-val gitDirtySuffix: String = if (runGit("status", "--porcelain").isNotBlank()) "+test" else ""
+// Đã bỏ nhãn +test theo yêu cầu người dùng
+val gitDirtySuffix: String = ""
 val baseVersionName = "1.0"
 
 android {
