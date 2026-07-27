@@ -10847,18 +10847,36 @@ def _thumbnail_generator():
             except Exception as e:
                 log.warning("[Thumbnail] Scan error on %s: %s", root, e)
 
+    # FIX-PLACEHOLDER-STALE: real thumbnails are >= 2KB; old error placeholders
+    # created by _create_placeholder_thumb() are ~700 bytes (320x180 JPEG, quality 60,
+    # solid color + red X). Treat anything <= 1200 bytes as stale placeholder and retry.
+    _PLACEHOLDER_MAX_SIZE = 1200
+
     def _needs_thumb(real_path):
-        """Return True if the thumbnail is missing or zero-byte."""
+        """Return True if the thumbnail is missing, zero-byte, or a stale placeholder."""
         try:
             base = get_webdav_root()
             tp = _get_thumb_path(base, real_path)
             if not os.path.exists(tp):
                 return True
-            return os.path.getsize(tp) == 0
+            sz = os.path.getsize(tp)
+            if sz == 0:
+                return True
+            # Placeholder detection: real thumbnail JPEG at quality 80 is always >= 2KB.
+            # Old error placeholders (_create_placeholder_thumb) are ~700 bytes.
+            if sz <= _PLACEHOLDER_MAX_SIZE:
+                return True
+            return False
         except Exception:
             return True
 
     log.info("[Thumbnail] Background daemon starting (24/7 idle worker).")
+
+    # FIX-PLACEHOLDER-STALE: on first startup, delete all old error placeholders
+    # so _needs_thumb() triggers retry for every file that previously failed.
+    # Placeholders are ~700 bytes (320x180 JPEG at quality 60); real thumbnails are >= 2KB.
+    _cleaned_placeholders = False
+
     # FIX-THUMB-INIT: first scan runs IMMEDIATELY (last_full_scan = far in past).
     # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
     # which caused5 minutes of dead sleep before the first scan could run.
@@ -10893,6 +10911,29 @@ def _thumbnail_generator():
                 os.makedirs(thumb_dir, exist_ok=True)
             except Exception:
                 pass
+
+            # FIX-PLACEHOLDER-STALE: clean up old error placeholders once at startup
+            # so files previously marked "failed" get a fresh attempt.
+            if not _cleaned_placeholders:
+                _cleaned_placeholders = True
+                try:
+                    removed = 0
+                    for name in os.listdir(thumb_dir):
+                        try:
+                            full = os.path.join(thumb_dir, name)
+                            if not os.path.isfile(full):
+                                continue
+                            if os.path.getsize(full) <= _PLACEHOLDER_MAX_SIZE:
+                                os.remove(full)
+                                removed += 1
+                                if removed % 200 == 0:
+                                    log.info("[Thumbnail] Cleaned %d stale placeholders so far ...", removed)
+                        except Exception:
+                            continue
+                    if removed:
+                        log.warning("[Thumbnail] Cleaned %d stale placeholder files; daemon will retry them.", removed)
+                except Exception as e:
+                    log.warning("[Thumbnail] Placeholder cleanup failed: %s", e)
 
             # Single-pass: walk + generate in one pass. Walking 847K files twice
             # on the RK3328 HDD takes >20 minutes; single-pass cuts that in half.
