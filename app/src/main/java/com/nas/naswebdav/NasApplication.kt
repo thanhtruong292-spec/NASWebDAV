@@ -84,7 +84,10 @@ class NasApplication : Application(), ImageLoaderFactory {
             }
             .respectCacheHeaders(false) // Cố định cache trên máy, không bắt load lại từ mạng
             .components { add(VideoFrameDecoder.Factory()) }
-            .callFactory { request -> fastApiClient.newCall(request) }
+            // FIX-COIL-TIMEOUT: use thumbnailApiClient (60s read timeout) instead of
+            // fastApiClient (30s). Slow NAS thumb endpoint on RK3328 should not show
+            // infinite spinner — give Coil enough time before falling through to ERROR.
+            .callFactory { request -> thumbnailApiClient.newCall(request) }
             .build()
     }
 

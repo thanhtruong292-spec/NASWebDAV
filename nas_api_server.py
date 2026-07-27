@@ -10568,6 +10568,10 @@ def _get_thumb_path(base_dir, file_path):
     return os.path.join(base_dir_real, THUMB_DIR_NAME, safe_hash + ".jpg")
 
 def _generate_image_thumb(src_path, dst_path):
+    # Debian 9/Python 3.5 on this NAS has no libheif in Pillow or ffmpeg.
+    # Do not create a placeholder for HEIC: that would suppress future retries.
+    if os.path.splitext(src_path)[1].lower() in ('.heic', '.heif'):
+        return False
     try:
         from PIL import Image
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
