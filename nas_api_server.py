@@ -10761,11 +10761,10 @@ def _process_one_thumb(args):
         86400
     )
 
-    # Nếu thất bại (ngoại lệ hoặc hàm trả về False), tạo placeholder icon LỖI
-    try:
-        _create_placeholder_thumb(thumb_path)
-    except Exception:
-        pass
+    # FIX-RETRY-STORM: Background daemon KHONG tao placeholder khi generation fail.
+    # _needs_thumb() kiem tra "exists && size>0" => placeholder bi coi la DONE vinh vien,
+    # nen ffmpeg/Pillow sua loi (codec update, libheif, ...) se khong bao gio retry.
+    # Placeholder chi nen ghi khi nguoi dung goi /api/thumb on-demand, khong phai tu daemon.
     return False
 
 def _thumbnail_generator():
