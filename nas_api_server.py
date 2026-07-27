@@ -10493,9 +10493,22 @@ _thumb_paused.set()  # Mac dinh: CHAY
 _thumb_gate_lock = threading.Lock()
 _thumb_manual_paused = False
 _thumb_auto_block_reasons = set()
+_thumb_block_timestamps = {}             # {reason: time_when_blocked} — để auto-expire stale activity blocks
+_THUMB_ACTIVITY_BLOCK_MAX_AGE_S = 600    # 10 phút: block từ /api/thumb/activity phải heartbeat mỗi 3 phút
 
 def _apply_thumbnail_gate_locked():
-    """?p dùng trạng thái pause/resume tu manual pause + cac tac vu nen n?ng."""
+    """?p dùng trạng thái pause/resume tu manual pause + cac tac vu nen n?ng.
+    FIX: auto-expire activity blocks (from /api/thumb/activity) whose TTL has
+    elapsed if the sending app died without sending active=false."""
+    now = time.time()
+    stale = [
+        reason for reason, expires in _thumb_block_timestamps.items()
+        if reason in _thumb_auto_block_reasons and now >= expires
+    ]
+    for reason in stale:
+        _thumb_auto_block_reasons.discard(reason)
+        _thumb_block_timestamps.pop(reason, None)
+        log.warning("[Thumbnail] Auto-cleared stale activity gate: %s", reason)
     should_pause = _thumb_manual_paused or bool(_thumb_auto_block_reasons)
     if should_pause:
         _thumb_paused.clear()
@@ -10509,8 +10522,14 @@ def _apply_thumbnail_gate_locked():
             if _thumb_auto_block_reasons:
                 _thumb_stats["last_file"] = "Tạm dừng: " + ", ".join(sorted(_thumb_auto_block_reasons))
 
-def _set_thumbnail_auto_block(reason, active):
-    """Chan thumbnail khi livestream/ytdlp/sync dang chay; bo chan khi da xong."""
+_THUMB_ACTIVITY_BLOCK_MAX_AGE_S = 600  # 10 phút: block từ /api/thumb/activity phải heartbeat mỗi 3 phút
+
+def _set_thumbnail_auto_block(reason, active, ttl_seconds=None):
+    """Chan thumbnail khi livestream/ytdlp/sync dang chay; bo chan khi da xong.
+    ttl_seconds: if set, block auto-expires after this many seconds.
+    Internal callers (livestream, USB, screen record) pass ttl=None (no expiry).
+    External callers (/api/thumb/activity) pass ttl_seconds=600 (10 min) so that
+    if the sending app is killed, the block auto-clears."""
     reason = str(reason or "").strip()
     if not reason:
         return
@@ -10518,9 +10537,16 @@ def _set_thumbnail_auto_block(reason, active):
         changed = False
         if active and reason not in _thumb_auto_block_reasons:
             _thumb_auto_block_reasons.add(reason)
+            if ttl_seconds is not None:
+                _thumb_block_timestamps[reason] = time.time() + ttl_seconds
             changed = True
+        elif active and reason in _thumb_auto_block_reasons:
+            # Heartbeat: refresh TTL for activity blocks
+            if ttl_seconds is not None:
+                _thumb_block_timestamps[reason] = time.time() + ttl_seconds
         elif (not active) and reason in _thumb_auto_block_reasons:
             _thumb_auto_block_reasons.discard(reason)
+            _thumb_block_timestamps.pop(reason, None)
             changed = True
         _apply_thumbnail_gate_locked()
     if changed:
@@ -10811,6 +10837,10 @@ def _thumbnail_generator():
     while True:
         try:
             now = time.time()
+            # Re-evaluate TTL even while paused. Without this, a crashed app's
+            # stale activity block would never expire because the worker only slept.
+            with _thumb_gate_lock:
+                _apply_thumbnail_gate_locked()
             # Gate check FIRST (so pause takes effect immediately, not5 min later).
             if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
                 with _thumb_stats_lock:
@@ -11040,7 +11070,7 @@ def api_thumb_activity():
     active = bool(body.get("active", False))
     if len(source) > 48:
         source = source[:48]
-    _set_thumbnail_auto_block(source, active)
+    _set_thumbnail_auto_block(source, active, ttl_seconds=_THUMB_ACTIVITY_BLOCK_MAX_AGE_S)
     return jsonify({
         "result": "ok",
         "paused": not _thumb_paused.is_set(),
