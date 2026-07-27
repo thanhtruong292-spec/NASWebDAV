@@ -10578,6 +10578,13 @@ def _generate_image_thumb(src_path, dst_path):
     try:
         from PIL import Image
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        # FIX-RETRY-STORM: remove any stale output so the success check below
+        # can't accidentally pass on a leftover file from a previous attempt.
+        if os.path.exists(dst_path):
+            try:
+                os.remove(dst_path)
+            except Exception:
+                pass
         img = Image.open(src_path)
         img.thumbnail((THUMB_MAX_SIZE, THUMB_MAX_SIZE), Image.LANCZOS)
         if img.mode in ('RGBA', 'P', 'LA'):
@@ -10585,12 +10592,10 @@ def _generate_image_thumb(src_path, dst_path):
         img.save(dst_path, 'JPEG', quality=THUMB_QUALITY)
         return True
     except Exception:
-        # File corrupt hoac không ph?i ảnh that -> tao placeholder
-        try:
-            _create_placeholder_thumb(dst_path)
-            return True
-        except Exception:
-            return False
+        # FIX-RETRY-STORM: callers (background daemon, /api/thumb on-demand)
+        # decide whether to write a placeholder. Returning False here keeps the
+        # _needs_thumb() gate open for the daemon to retry on the next scan.
+        return False
 
 def _frame_brightness(jpg_path):
     """Do sang trung binh cua JPEG (0-255). Frame den = 0-15."""
@@ -10677,8 +10682,25 @@ def _generate_video_thumb(src_path, dst_path):
                     "-an",  # bo audio cho nhanh
                     dst_path,
                 ]
+                # FIX-RETRY-STORM: xoa file output cu de khong bi stale file gia
+                # thanh cong khi ffmpeg that ra fail (returncode != 0).
                 try:
-                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=ffmpeg_timeout)
+                    if os.path.exists(dst_path):
+                        os.remove(dst_path)
+                except Exception:
+                    pass
+                try:
+                    proc = subprocess.run(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        timeout=ffmpeg_timeout
+                    )
+                    if proc.returncode != 0:
+                        # Capture stderr cuoi dong de biet codec that bai
+                        stderr_tail = (proc.stderr or b"")[-400:].decode("utf-8", errors="ignore").strip()
+                        log.warning(
+                            "[Thumb] ffmpeg rc=%d ss=%s %s | %s",
+                            proc.returncode, ss_arg, os.path.basename(src_path), stderr_tail
+                        )
                 except subprocess.TimeoutExpired:
                     log.warning("[Thumb] ffmpeg timeout (%ds) ss=%s: %s", ffmpeg_timeout, ss_arg, os.path.basename(src_path))
                 except Exception as e:
@@ -10703,12 +10725,9 @@ def _generate_video_thumb(src_path, dst_path):
     except Exception as e:
         log.warning("[Thumb] unexpected error %s: %s", os.path.basename(src_path), e)
 
-    # Het cach -> tao placeholder de UI khong trong tron, nhung tr? v? False
-    # de _thumb_stats track thất bại va co the retry o vong sau.
-    try:
-        _create_placeholder_thumb(dst_path)
-    except Exception:
-        pass
+    # FIX-RETRY-STORM: Generator KHONG ghi placeholder. Caller quyet dinh:
+    #  - Background daemon: khong ghi -> _needs_thumb() giu True, retry o scan sau.
+    #  - /api/thumb on-demand (line 11045-11055): ghi placeholder de UI co feedback.
     return False
 
 def _create_placeholder_thumb(dst_path):
