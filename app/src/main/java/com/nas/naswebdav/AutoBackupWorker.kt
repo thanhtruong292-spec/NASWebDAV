@@ -338,7 +338,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         val rawStream = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
                                             ?: error("Không đọc được file $fileName (ContentResolver trả null)")
                                         rawStream.use { input2 ->
-                                            val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType, fileSize)
+                                            val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
                                             val uploadCall: suspend (
                                                 String, java.io.InputStream, Long, String,
                                                 (Long, Long) -> Unit

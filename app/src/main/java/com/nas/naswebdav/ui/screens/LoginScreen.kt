@@ -162,7 +162,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         verticalArrangement = Arrangement.Center
     ) {
         Image(
-            painter = painterResource(R.drawable.nas_chainedbox),
+            painter = painterResource(R.drawable.ic_launcher_foreground),
             contentDescription = "NAS Chainedbox",
             modifier = Modifier.size(140.dp)
         )
