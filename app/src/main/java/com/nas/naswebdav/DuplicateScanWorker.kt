@@ -135,6 +135,12 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 val startTime = System.currentTimeMillis()
                 var ticks = 0
                 while (isUiUpdating.get() && isActive) {
+                    ticks++
+                    // FIX-THUMB-STUCK: heartbeat mỗi 3 phút — nếu app alive, server giữ block.
+                    // Nếu app die, server auto-clear block sau 10 phút (TTL).
+                    if (ticks % 180 == 0) {
+                        setThumbnailActivity("sync", true)
+                    }
                     val now = System.currentTimeMillis()
                     val elapsedMs = now - startTime
                     DuplicateProgressState.elapsedTime.value = elapsedMs

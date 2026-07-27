@@ -69,6 +69,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         }
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
+        // FIX-THUMB-DELEGATION: own gate key "autobackup" so it doesn't collide with
+        // DuplicateScan/OfflineSync "sync" — each worker manages its own block.
+        setThumbnailActivity("autobackup", true)
         // FIX #23: Giảm WakeLock từ 3 tiếng xuống 60 phút — backup tối đa 1 giờ là hợp lý
         // Nếu upload bị trẾ (server không phản hồi), thiết bị ko bị hao pin đến 3 tiếng
         wakeLock.acquire(60 * 60 * 1000L)
@@ -254,147 +257,153 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             var lastSpeedCalcBytes = 0L
                             var currentSpeedBps = 0L
 
-                            applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input ->
-                                // ── SMB upload with WebDAV fallback ──
-                                // SMB remote path: strip WebDAV base + "AutoBackup/" prefix to get share-relative path
-                                val smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
-                                val smbUploadOk = if (smbEnabled && smbHost.isNotBlank()) {
-                                    com.nas.naswebdav.SmbManager.uploadFile(
-                                        host = smbHost,
-                                        user = smbUser,
-                                        pass = smbPass,
-                                        share = smbShare,
-                                        remotePath = smbRemotePath,
-                                        inputStream = input,
-                                        totalSize = fileSize
-                                    ) { bytesWritten, totalBytes ->
-                                        // FIX: Check isStopped inside the upload callback
-                                        // so a WorkManager cancellation actually halts SMB upload.
-                                        if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
-                                        val now = System.currentTimeMillis()
-                                        val dt = (now - lastSpeedCalcTime) / 1000.0
-                                        if (dt >= 0.4 || bytesWritten == totalBytes) {
-                                            if (dt > 0) currentSpeedBps = ((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L)
-                                            lastSpeedCalcTime = now
-                                            lastSpeedCalcBytes = bytesWritten
+                            // ── Upload: SMB (with retry) → WebDAV fallback (with retry) ──
+                            var smbUploadOk = false
+                            val smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
+                            if (smbEnabled && smbHost.isNotBlank()) {
+                                // FIX-LARGE-FILE-SMB: retry ở caller — mỗi lượt mở InputStream mới.
+                                // SmbManager.uploadFile throw exception khi fail → catch ở đây, fallback WebDAV.
+                                for (smbAttempt in 1..3) {
+                                    try {
+                                        val smbInput = applicationContext.contentResolver.openInputStream(
+                                            ContentUris.withAppendedId(mediaUri, id)
+                                        ) ?: error("ContentResolver trả null cho $fileName")
+                                        smbUploadOk = smbInput.use { input ->
+                                            com.nas.naswebdav.SmbManager.uploadFile(
+                                                host = smbHost,
+                                                user = smbUser,
+                                                pass = smbPass,
+                                                share = smbShare,
+                                                remotePath = smbRemotePath,
+                                                inputStream = input,
+                                                totalSize = fileSize
+                                            ) { bytesWritten, totalBytes ->
+                                                if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
+                                                val now = System.currentTimeMillis()
+                                                val dt = (now - lastSpeedCalcTime) / 1000.0
+                                                if (dt >= 0.4 || bytesWritten == totalBytes) {
+                                                    if (dt > 0) currentSpeedBps = ((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L)
+                                                    lastSpeedCalcTime = now
+                                                    lastSpeedCalcBytes = bytesWritten
+                                                }
+                                                if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                                    lastProgressTime = now
+                                                    val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                                    val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
+                                                    setProgressAsync(workDataOf(
+                                                        "fileName" to safeWorkerText(fileName, 180),
+                                                        "sourcePath" to safeWorkerText(dataPath, 220),
+                                                        "destPath" to safeWorkerText(targetFileNasPath, 220),
+                                                        "progress" to percent,
+                                                        "processedCount" to processedFilesCount,
+                                                        "totalCount" to totalFilesToProcess,
+                                                        "elapsedTime" to (now - startTime),
+                                                        "bytesWritten" to bytesWritten,
+                                                        "bytesTotal" to totalBytes,
+                                                        "uploadSpeedBps" to currentSpeedBps
+                                                    ))
+                                                    try {
+                                                        val progressInt = (percent * 100).toInt()
+                                                        val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
+                                                        val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                                                            .setSmallIcon(android.R.drawable.ic_menu_upload)
+                                                            .setContentTitle("Đang sao lưu lên NAS (SMB): $progressInt%$speedNotice")
+                                                            .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
+                                                            .setProgress(100, progressInt, false)
+                                                            .setOnlyAlertOnce(true)
+                                                            .setSilent(true)
+                                                            .setOngoing(true)
+                                                        androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
+                                                    } catch (_: Exception) {}
+                                                }
+                                            }
                                         }
-                                        if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
-                                            lastProgressTime = now
-                                            val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
-                                            val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
-                                            setProgressAsync(workDataOf(
-                                                "fileName" to safeWorkerText(fileName, 180),
-                                                "sourcePath" to safeWorkerText(dataPath, 220),
-                                                "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                                "progress" to percent,
-                                                "processedCount" to processedFilesCount,
-                                                "totalCount" to totalFilesToProcess,
-                                                "elapsedTime" to (now - startTime),
-                                                "bytesWritten" to bytesWritten,
-                                                "bytesTotal" to totalBytes,
-                                                "uploadSpeedBps" to currentSpeedBps
-                                            ))
-                                            try {
-                                                val progressInt = (percent * 100).toInt()
-                                                val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
-                                                val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
-                                                    .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                    .setContentTitle("Đang sao lưu lên NAS (SMB): $progressInt%$speedNotice")
-                                                    .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
-                                                    .setProgress(100, progressInt, false)
-                                                    .setOnlyAlertOnce(true)
-                                                    .setSilent(true)
-                                                    .setOngoing(true)
-                                                androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
-                                            } catch (_: Exception) {}
-                                        }
+                                        if (smbUploadOk) break
+                                    } catch (e: Exception) {
+                                        android.util.Log.w("AutoBackup", "SMB attempt $smbAttempt failed for $fileName: ${e.message}")
                                     }
-                                } else false
+                                }
+                            }
 
-                                if (!smbUploadOk) {
-                                    // SMB FALLBACK BYPASS FIX: nếu user bấm Hủy (isStopped=true), KHÔNG fallback WebDAV
-                                    // mà phải dừng hoàn toàn. Nếu không thì app sẽ "ngoan cố" upload tiếp dù user đã cancel.
-                                    if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
-                                    if (smbEnabled && smbHost.isNotBlank()) {
-                                        android.util.Log.w("AutoBackup", "SMB upload failed for $fileName — falling back to WebDAV")
-                                    }
-                                    // Reopen stream for WebDAV (SMB may have consumed it)
-                                    applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))?.use { input2 ->
-                                        // Route text-like files (json, xml, html, csv) through gzip-compressed upload
-                                        // to save 60-80% bandwidth. Media files (jpg/mp4/heic) are already compressed
-                                        // and would only grow if gzip'd, so pass them through unchanged.
-                                        val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
-                                        val uploadCall: suspend (
-                                            String, java.io.InputStream, Long, String,
-                                            (Long, Long) -> Unit
-                                        ) -> Unit = if (useCompression)
-                                            webDavManager::uploadCompressedStream else webDavManager::uploadStreamWithProgress
-                                        uploadCall(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
-                                            // FIX: Check isStopped inside the upload callback
-                                            // so a WorkManager cancellation actually halts WebDAV upload.
-                                            if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
-                                            val now = System.currentTimeMillis()
-                                            val dt = (now - lastSpeedCalcTime) / 1000.0
-                                            if (dt >= 0.4 || bytesWritten == totalBytes) {
-                                                if (dt > 0) currentSpeedBps = ((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L)
-                                                lastSpeedCalcTime = now
-                                                lastSpeedCalcBytes = bytesWritten
+                            if (!smbUploadOk) {
+                                if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
+                                if (smbEnabled && smbHost.isNotBlank()) {
+                                    android.util.Log.w("AutoBackup", "SMB upload failed for $fileName — falling back to WebDAV")
+                                }
+                                // FIX-LARGE-FILE-2: retry WebDAV upload lên đến 3 lần khi gặp lỗi 500/502/503.
+                                // Mỗi lần retry cần mở lại InputStream vì stream cũ đã bị consume.
+                                var lastWebDavException: Exception? = null
+                                for (webDavAttempt in 1..3) {
+                                    try {
+                                        val rawStream = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
+                                            ?: error("Không đọc được file $fileName (ContentResolver trả null)")
+                                        rawStream.use { input2 ->
+                                            val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType, fileSize)
+                                            val uploadCall: suspend (
+                                                String, java.io.InputStream, Long, String,
+                                                (Long, Long) -> Unit
+                                            ) -> Unit = if (useCompression)
+                                                webDavManager::uploadCompressedStream else webDavManager::uploadStreamWithProgress
+                                            uploadCall(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
+                                                if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
+                                                val now = System.currentTimeMillis()
+                                                val dt = (now - lastSpeedCalcTime) / 1000.0
+                                                if (dt >= 0.4 || bytesWritten == totalBytes) {
+                                                    if (dt > 0) currentSpeedBps = ((bytesWritten - lastSpeedCalcBytes) / dt).toLong().coerceAtLeast(0L)
+                                                    lastSpeedCalcTime = now
+                                                    lastSpeedCalcBytes = bytesWritten
+                                                }
+                                                if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
+                                                    lastProgressTime = now
+                                                    val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
+                                                    val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
+                                                    setProgressAsync(workDataOf(
+                                                        "fileName" to safeWorkerText(fileName, 180),
+                                                        "sourcePath" to safeWorkerText(dataPath, 220),
+                                                        "destPath" to safeWorkerText(targetFileNasPath, 220),
+                                                        "progress" to percent,
+                                                        "processedCount" to processedFilesCount,
+                                                        "totalCount" to totalFilesToProcess,
+                                                        "elapsedTime" to (now - startTime),
+                                                        "bytesWritten" to bytesWritten,
+                                                        "bytesTotal" to totalBytes,
+                                                        "uploadSpeedBps" to currentSpeedBps
+                                                    ))
+                                                    try {
+                                                        val progressInt = (percent * 100).toInt()
+                                                        val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
+                                                        val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                                                            .setSmallIcon(android.R.drawable.ic_menu_upload)
+                                                            .setContentTitle("Đang sao lưu lên NAS: $progressInt%$speedNotice")
+                                                            .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
+                                                            .setProgress(100, progressInt, false)
+                                                            .setOnlyAlertOnce(true)
+                                                            .setSilent(true)
+                                                            .setOngoing(true)
+                                                        androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
+                                                    } catch (_: Exception) {}
+                                                }
                                             }
-                                            if (now - lastProgressTime > 200 || bytesWritten == totalBytes) {
-                                                lastProgressTime = now
-                                                val percent = if (totalBytes > 0) bytesWritten.toFloat() / totalBytes else 0f
-                                                val formattedSpeed = com.nas.naswebdav.utils.FormatUtils.formatBytes(currentSpeedBps)
-                                                setProgressAsync(workDataOf(
-                                                    "fileName" to safeWorkerText(fileName, 180),
-                                                    "sourcePath" to safeWorkerText(dataPath, 220),
-                                                    "destPath" to safeWorkerText(targetFileNasPath, 220),
-                                                    "progress" to percent,
-                                                    "processedCount" to processedFilesCount,
-                                                    "totalCount" to totalFilesToProcess,
-                                                    "elapsedTime" to (now - startTime),
-                                                    "bytesWritten" to bytesWritten,
-                                                    "bytesTotal" to totalBytes,
-                                                    "uploadSpeedBps" to currentSpeedBps
-                                                ))
-                                                try {
-                                                    val progressInt = (percent * 100).toInt()
-                                                    val speedNotice = if (currentSpeedBps > 0) " ($formattedSpeed/s)" else ""
-                                                    val notificationBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
-                                                        .setSmallIcon(android.R.drawable.ic_menu_upload)
-                                                        .setContentTitle("Đang sao lưu lên NAS: $progressInt%$speedNotice")
-                                                        .setContentText(safeWorkerText("$fileName\n$parentRelativePath", 120))
-                                                        .setProgress(100, progressInt, false)
-                                                        .setOnlyAlertOnce(true)
-                                                        .setSilent(true)
-                                                        .setOngoing(true)
-                                                    androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
-                                                } catch (_: Exception) {}
-                                            }
+                                        }
+                                        break // upload thành công → thoát retry loop
+                                    } catch (e: Exception) {
+                                        lastWebDavException = e
+                                        val msg = e.message ?: ""
+                                        val isServerError = msg.contains("500") || msg.contains("502") || msg.contains("503")
+                                        if (isServerError && webDavAttempt < 3) {
+                                            android.util.Log.w("AutoBackup", "WebDAV attempt $webDavAttempt failed ($msg), retrying in ${webDavAttempt * 2}s...")
+                                            kotlinx.coroutines.delay(webDavAttempt * 2000L)
+                                        } else {
+                                            throw e
                                         }
                                     }
                                 }
                             }
 
-                            val uploadVerified = try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
-                            if (uploadVerified) {
-                                try {
-                                    val tmpFile = java.io.File(applicationContext.cacheDir, "thumb_tmp_${System.currentTimeMillis()}.${java.io.File(dataPath).extension}")
-                                    val inputSteam = applicationContext.contentResolver.openInputStream(fileUri)
-                                    inputSteam?.use { input ->
-                                        java.io.FileOutputStream(tmpFile).use { out -> input.copyTo(out) }
-                                    }
-                                    if (tmpFile.exists()) {
-                                        // P1-15: Use try/finally so tmpFile is always deleted
-                                        try {
-                                            com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(tmpFile, targetFileNasPath, SecurePrefsHelper.getPass(applicationContext))
-                                        } finally {
-                                            tmpFile.delete()
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    android.util.Log.e("AutoBackup", "Failed to generate thumbnail for $fileName", e)
-                                }
-                            }
+                            // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images for thumbnails.
+                            // NAS daemon handles ALL thumbnail generation (idle 24/7 + 5-min rescan +
+                            // on-demand /api/thumb). Phone only uploads the file and lets NAS pick it up.
+                            val uploadVerified = if (smbUploadOk) true else try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
@@ -448,7 +457,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
-            setThumbnailActivity("sync", false)
+            setThumbnailActivity("autobackup", false)
             if (wakeLock.isHeld) wakeLock.release()
             try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
         }

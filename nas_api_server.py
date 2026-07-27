@@ -10522,8 +10522,6 @@ def _apply_thumbnail_gate_locked():
             if _thumb_auto_block_reasons:
                 _thumb_stats["last_file"] = "Tạm dừng: " + ", ".join(sorted(_thumb_auto_block_reasons))
 
-_THUMB_ACTIVITY_BLOCK_MAX_AGE_S = 600  # 10 phút: block từ /api/thumb/activity phải heartbeat mỗi 3 phút
-
 def _set_thumbnail_auto_block(reason, active, ttl_seconds=None):
     """Chan thumbnail khi livestream/ytdlp/sync dang chay; bo chan khi da xong.
     ttl_seconds: if set, block auto-expires after this many seconds.

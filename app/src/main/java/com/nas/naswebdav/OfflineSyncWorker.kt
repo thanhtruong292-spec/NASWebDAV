@@ -79,7 +79,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         else encodeWebDavSegment(segment)
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
-                                    com.nas.naswebdav.ThumbnailGenerator.generateAndUploadThumbnail(file, encodedDest, pass)
+                                    // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images.
+                                    // NAS daemon handles thumbnail generation (idle 24/7 + on-demand /api/thumb).
                                 }
                             }
                         }
