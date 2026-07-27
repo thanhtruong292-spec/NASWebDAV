@@ -48,7 +48,8 @@ fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
     val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
         168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints).setInputData(inputData).build()
+    ).setConstraints(constraints).setInputData(inputData)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Idle_Duplicate_Scan",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
@@ -66,7 +67,8 @@ fun scheduleIdleSpeedTest(context: Context, currentUrl: String) {
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
     val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
         30, java.util.concurrent.TimeUnit.DAYS
-    ).setConstraints(constraints).setInputData(inputData).build()
+    ).setConstraints(constraints).setInputData(inputData)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Idle_Speed_Test",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
@@ -83,7 +85,8 @@ fun scheduleFingerprintWorker(context: Context) {
         .build()
     val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
         168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints).build()
+    ).setConstraints(constraints)
+        .build()
     workManager.enqueueUniquePeriodicWork(
         "Auto_Fingerprint_Worker",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
