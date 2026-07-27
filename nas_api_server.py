@@ -10597,6 +10597,44 @@ def _generate_image_thumb(src_path, dst_path):
         # _needs_thumb() gate open for the daemon to retry on the next scan.
         return False
 
+def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
+    """Remove settled 0-byte files from NAS roots without racing active uploads."""
+    excluded = {THUMB_DIR_NAME, ".thumbs", ".thumbnails", ".trash", ".nas_meta", ".git", ".recycle", "@eaDir", "#recycle"}
+    deadline = time.time() + max_seconds
+    removed = 0
+    scanned = 0
+    seen = set()
+    for root in roots:
+        if time.time() >= deadline or not root or not os.path.isdir(root):
+            break
+        try:
+            real_root = os.path.realpath(root)
+            if real_root in seen:
+                continue
+            seen.add(real_root)
+            for dirpath, dirnames, filenames in os.walk(real_root, topdown=True):
+                if time.time() >= deadline:
+                    break
+                dirnames[:] = [d for d in dirnames if d not in excluded and not d.startswith(".")]
+                for fname in filenames:
+                    scanned += 1
+                    if time.time() >= deadline:
+                        break
+                    path = os.path.join(dirpath, fname)
+                    try:
+                        stat = os.stat(path)
+                        if stat.st_size == 0 and time.time() - stat.st_mtime >= min_age_seconds:
+                            os.remove(path)
+                            removed += 1
+                    except (FileNotFoundError, PermissionError, OSError):
+                        continue
+        except (PermissionError, OSError):
+            continue
+    if removed:
+        log.info("[NASCleanup] Removed %d stale zero-byte files (scanned=%d)", removed, scanned)
+    return removed
+
+
 def _frame_brightness(jpg_path):
     """Do sang trung binh cua JPEG (0-255). Frame den = 0-15."""
     try:
@@ -10912,6 +10950,29 @@ def _thumbnail_generator():
             except Exception:
                 pass
 
+            # FIX-ZERO-BYTE-SCRUB: every scan pass, sweep .thumbs/ for 0-byte files
+            # and delete them. A 0-byte file is always cruft: it cannot be a real
+            # JPEG (save() always writes the SOI marker = >= 2 bytes), it cannot be
+            # a placeholder (which is ~700 bytes), and it cannot be useful as a
+            # cache entry. _needs_thumb() already treats 0-byte as 'needs retry',
+            # but sweeping them keeps the directory clean and prevents inode churn.
+            try:
+                removed_zero = 0
+                for name in os.listdir(thumb_dir):
+                    if not name.endswith(".jpg"):
+                        continue
+                    full = os.path.join(thumb_dir, name)
+                    try:
+                        if os.path.isfile(full) and os.path.getsize(full) == 0:
+                            os.remove(full)
+                            removed_zero += 1
+                    except Exception:
+                        continue
+                if removed_zero:
+                    log.info("[Thumbnail] Scrubbed %d zero-byte files from %s", removed_zero, THUMB_DIR_NAME)
+            except Exception as e:
+                log.debug("[Thumbnail] Zero-byte scrub skipped: %s", e)
+
             # FIX-PLACEHOLDER-STALE: clean up old error placeholders once at startup
             # so files previously marked "failed" get a fresh attempt.
             if not _cleaned_placeholders:
@@ -10934,6 +10995,14 @@ def _thumbnail_generator():
                         log.warning("[Thumbnail] Cleaned %d stale placeholder files; daemon will retry them.", removed)
                 except Exception as e:
                     log.warning("[Thumbnail] Placeholder cleanup failed: %s", e)
+
+            # FIX-ZERO-BYTE-SCRUB-NAS: sweep all media roots for settled 0-byte
+            # files (excluding active uploads via mtime check) each scan pass.
+            try:
+                _scrub_roots = [base_dir] + _THUMB_SMB_ROOTS
+                _scrub_stale_zero_byte_files(_scrub_roots)
+            except Exception as e:
+                log.debug("[Thumbnail] NAS zero-byte scrub skipped: %s", e)
 
             # Single-pass: walk + generate in one pass. Walking 847K files twice
             # on the RK3328 HDD takes >20 minutes; single-pass cuts that in half.
