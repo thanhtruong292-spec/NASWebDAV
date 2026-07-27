@@ -195,15 +195,17 @@ private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: j
         .header("Authorization", auth)
         .build()
     NasApplication.instance.thumbnailApiClient.newCall(apiRequest).execute().use { apiResponse ->
-        val contentLength = apiResponse.header("Content-Length")?.toLongOrNull() ?: 0L
-        if (apiResponse.isSuccessful && apiResponse.body != null) {
-            if (!isVideo && contentLength in 1L..2000L) return false
-            apiResponse.body?.byteStream()?.use { input ->
-                java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
-            } ?: return false
-            return thumbFile.length() > 0
-        }
-        return false
+        // FIX-THUMB-SPINNER: server returns application/json for errors (503 busy,
+        // 400 missing path, 404 not found). Only accept image responses — prevents
+        // writing error JSON to thumbFile which then blocks retry via exists() check.
+        val contentType = apiResponse.header("Content-Type") ?: ""
+        if (!apiResponse.isSuccessful || apiResponse.body == null) return false
+        if (!contentType.contains("image/")) return false
+
+        apiResponse.body?.byteStream()?.use { input ->
+            java.io.FileOutputStream(thumbFile).use { out -> input.copyTo(out) }
+        } ?: return false
+        return thumbFile.length() > 0
     }
 }
 
@@ -214,10 +216,18 @@ suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth:
         val webdavPath = parsedUrl?.path ?: url.substringAfter("8822", "").substringAfter("5050", "")
         val decodedPath = java.net.URLDecoder.decode(webdavPath, "UTF-8")
         val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(decodedPath, "UTF-8")}"
-        if (executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)) return@withContext true
-        if (isVideo) {
-            val forcedUrl = "$apiThumbUrl&_t=${System.currentTimeMillis()}"
-            if (executeThumbDownload(forcedUrl, auth, thumbFile, isVideo)) return@withContext true
+
+        // FIX-THUMB-SPINNER: retry up to 3 times with exponential backoff.
+        // Server may return 503 (NAS busy) while ffmpeg generates the thumbnail;
+        // first request starts generation, subsequent ones find it cached.
+        val maxAttempts = 3
+        var retryDelayMs = 2000L
+        for (attempt in 1..maxAttempts) {
+            if (executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)) return@withContext true
+            if (attempt < maxAttempts) {
+                kotlinx.coroutines.delay(retryDelayMs)
+                retryDelayMs = (retryDelayMs * 2).coerceAtMost(8000L)
+            }
         }
         false
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
