@@ -10485,6 +10485,9 @@ THUMB_QUALITY = 80
 MEDIA_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp", ".gif"}
 MEDIA_VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v"}
 MEDIA_ALL_EXTS = MEDIA_IMAGE_EXTS | MEDIA_VIDEO_EXTS
+# Debian 9/Python 3.5 NAS images do not have a HEIC decoder. Keep HEIC in
+# media discovery/status, but never enqueue it for a thumbnail retry loop.
+THUMB_UNSUPPORTED_EXTS = {".heic", ".heif"}
 
 _thumb_stats = {"generated": 0, "total_media": 0, "running": False, "last_file": "", "errors": 0, "paused": False, "block_reasons": []}
 _thumb_stats_lock = threading.Lock()
@@ -10733,6 +10736,12 @@ def _create_placeholder_thumb(dst_path):
 
 def _process_one_thumb(args):
     full_path, thumb_path, ext = args[:3]
+    # FIX-HEIC-PRESERVE: do not create a placeholder for HEIC/HEIF — the NAS has
+    # no HEIC decoder today; if we wrote a placeholder JPG here, _needs_thumb()
+    # would mark the file done forever and the daemon would never retry when the
+    # decoder is eventually available.
+    if ext in ('.heic', '.heif'):
+        return False
     try:
         if ext in MEDIA_IMAGE_EXTS:
             if _generate_image_thumb(full_path, thumb_path):
@@ -10742,7 +10751,7 @@ def _process_one_thumb(args):
                 return True
     except Exception as e:
         log.warning("[Thumb] Lỗi xử lý thumbnail cho %s: %s", os.path.basename(full_path), e)
-    
+
     # Ghi log lỗi vào hệ thống (giới hạn 1 ngày/lần/file để tránh spam)
     _add_system_log_once(
         "thumb_err:%s" % thumb_path,
@@ -10751,7 +10760,7 @@ def _process_one_thumb(args):
         "Không thể tạo ảnh thu nhỏ cho file: %s" % os.path.basename(full_path),
         86400
     )
-    
+
     # Nếu thất bại (ngoại lệ hoặc hàm trả về False), tạo placeholder icon LỖI
     try:
         _create_placeholder_thumb(thumb_path)
@@ -10895,6 +10904,10 @@ def _thumbnail_generator():
                     with _thumb_stats_lock:
                         _thumb_stats["total_media"] = total
 
+                # Skip formats the NAS cannot decode — never retry, never placeholder.
+                if ext in THUMB_UNSUPPORTED_EXTS:
+                    continue
+
                 if not _needs_thumb(real_path):
                     generated_count += 1
                     continue
@@ -10974,6 +10987,8 @@ def api_thumb():
         thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
         os.makedirs(thumb_dir, exist_ok=True)
         ext = os.path.splitext(real_path)[1].lower()
+        if ext in THUMB_UNSUPPORTED_EXTS:
+            return jsonify({"error": "NAS không hỗ trợ giải mã HEIC/HEIF"}), 415
         if ext in MEDIA_IMAGE_EXTS:
             _generate_image_thumb(real_path, thumb_path)
         elif ext in MEDIA_VIDEO_EXTS:
