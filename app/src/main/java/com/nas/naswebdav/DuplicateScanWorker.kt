@@ -729,6 +729,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             uiUpdaterJob?.join()
             // FIX D1: Thực sự cancel uiScope để giải phóng tất cả coroutine trong scope
             uiScope.cancel()
+            // FIX-THUMB-STUCK: luôn giải phóng block "sync" — DuplicateScanWorker
+            // không gọi setThumbnailActivity("sync", false) trước đây, nên NAS
+            // daemon bị pause vĩnh viễn (block_reasons={'sync'}) cho đến khi restart.
+            setThumbnailActivity("sync", false)
         }
     }
     }

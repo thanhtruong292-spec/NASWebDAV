@@ -9147,17 +9147,44 @@ def api_ai_status():
 
 
 def _resolve_webdav_request_path(webdav_path):
+    """Map WebDAV URL path → filesystem path.
+
+    FIX-SMB-PLAYBACK: Thử cả WebDAV root lẫn SMB share root.
+    Vì sao: WebDAV root = /srv/.../New folder, SMB share = /srv/...
+    File upload qua SMB sẽ ở /srv/.../<path> nhưng get_webdav_root() trỏ vào
+    /srv/.../New folder/<path> → /api/media 404 → video "không phát".
+    Fallback: nếu WebDAV root không có file, thử resolve dưới các SMB share roots.
+    """
     if not webdav_path:
         return None
     decoded = urllib.parse.unquote(webdav_path)
     if decoded.startswith("/webdav"):
         decoded = decoded[len("/webdav"):]
     decoded = decoded.lstrip("/")
-    base_dir = os.path.realpath(get_webdav_root())
-    real_path = os.path.realpath(os.path.join(base_dir, decoded))
-    if real_path != base_dir and not real_path.startswith(base_dir + os.sep):
-        return None
-    return real_path
+
+    def _safe(base_dir, rel):
+        if not base_dir:
+            return None
+        real = os.path.realpath(os.path.join(base_dir, rel))
+        if real != base_dir and not real.startswith(base_dir + os.sep):
+            return None
+        return real
+
+    # 1. Thử WebDAV root trước
+    real_path = _safe(os.path.realpath(get_webdav_root()), decoded)
+    if real_path and os.path.isfile(real_path):
+        return real_path
+
+    # 2. FIX-SMB-PLAYBACK: fallback sang SMB share roots
+    smb_roots = ["/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
+    for root in smb_roots:
+        if not os.path.isdir(root):
+            continue
+        cand = _safe(os.path.realpath(root), decoded)
+        if cand and os.path.isfile(cand):
+            return cand
+
+    return real_path  # trả về None hoặc path WebDAV gốc (để caller trả 404)
 
 
 def _media_cache_headers(real_path, file_size, mime_type):
@@ -10500,12 +10527,21 @@ def _set_thumbnail_auto_block(reason, active):
         log.info("[Thumbnail] Gate %s: %s", "BLOCK" if active else "UNBLOCK", reason)
 
 def _get_thumb_path(base_dir, file_path):
-    rel = os.path.relpath(file_path, base_dir)
-    # BẮT BUỘC: Khôi phục lại cấu trúc Hash cũ (ứng với thư mục .thumbs 3.3 GB gốc)
-    # Vì file cũ được hash với chuỗi "New folder/..." do thư mục gốc trước đây là /srv/...
-    hash_str = "New folder/" + rel if "New folder" in base_dir else rel
+    # FIX-SMB-THUMB: Thumb cache LUÔN nằm trong WebDAV root (.thumbnails/),
+    # bất kể file upload qua SMB hay WebDAV — tập trung ở 1 chỗ, không scatter.
+    base_dir_real = os.path.realpath(base_dir)
+    file_path_real = os.path.realpath(file_path)
+    if file_path_real.startswith(base_dir_real + os.sep):
+        rel = os.path.relpath(file_path_real, base_dir_real)
+        # BẮT BUỘC: Khôi phục lại cấu trúc Hash cũ (ứng với thư mục .thumbs 3.3 GB gốc)
+        # Vì file cũ được hash với chuỗi "New folder/..." do thư mục gốc trước đây là /srv/...
+        hash_str = "New folder/" + rel if "New folder" in base_dir_real else rel
+    else:
+        # FIX-SMB-THUMB: file nằm ngoài WebDAV root (upload qua SMB) → hash từ đường dẫn tuyệt đối
+        # để thumb luôn tìm được dù file ở đâu trong SMB share.
+        hash_str = file_path_real
     safe_hash = hashlib.md5(hash_str.encode('utf-8')).hexdigest()
-    return os.path.join(base_dir, THUMB_DIR_NAME, safe_hash + ".jpg")
+    return os.path.join(base_dir_real, THUMB_DIR_NAME, safe_hash + ".jpg")
 
 def _generate_image_thumb(src_path, dst_path):
     try:
@@ -10696,15 +10732,174 @@ def _process_one_thumb(args):
     return False
 
 def _thumbnail_generator():
-    """Background daemon: Da bi vo hieu hoa de Android tu tao thumbnail."""
+    """Background daemon: 24/7 bulk thumbnail generator for NAS.
+
+    Owner: NAS (RK3328) runs 24/7, so it should eat the CPU work, not the phone.
+    Scans WEBDAV_FILE_ROOT + SMB share roots, generates missing thumbnails for
+    both images and videos, respects pause/block gates, and reports progress
+    via _thumb_stats so the Android client can poll /api/thumb/status.
+
+    Concurrency: single daemon thread (already spawned at line 14512). ffmpeg
+    is capped to 1 via _ffmpeg_semaphore inside _generate_video_thumb — we
+    additionally sleep 1s between items to avoid starving the API server.
+
+    Gates honored:
+      - _thumb_paused Event (set by _apply_thumbnail_gate_locked)
+      - _background_heavy_work_allowed() (livestream, USB import, RAM>78%, load>2.5)
+
+    Two-pass scan:
+      1. First scan: walks all roots, counts media, sets total_media.
+      2. Forward sweep: skips files whose .thumbnails/<hash>.jpg already exists.
+      3. Sleep 5 minutes and re-scan to pick up new uploads.
+    """
     global _thumb_stats
-    
-    with _thumb_stats_lock:
-        _thumb_stats["running"] = False
-        _thumb_stats["paused"] = True
-        
+
+    _THUMB_EXCLUDE_DIRS = {".thumbnails", ".trash", ".nas_meta", ".git", ".recycle", "@eaDir", "#recycle"}
+    _THUMB_SMB_ROOTS = ["/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
+    _RESCAN_INTERVAL_S = 300  # 5 minutes between full re-scans
+
+    def _scan_roots():
+        """Walk all media roots, deduplicate by realpath, yield media files."""
+        seen = set()
+        roots = []
+        try:
+            roots.append(os.path.realpath(get_webdav_root()))
+        except Exception:
+            pass
+        roots.extend(_THUMB_SMB_ROOTS)
+        for root in roots:
+            if not root or not os.path.isdir(root):
+                continue
+            try:
+                for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+                    # Prune system dirs in-place so os.walk skips them
+                    dirnames[:] = [d for d in dirnames if d not in _THUMB_EXCLUDE_DIRS and not d.startswith(".")]
+                    for fname in filenames:
+                        if fname.startswith("."):
+                            continue
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext not in MEDIA_ALL_EXTS:
+                            continue
+                        full = os.path.join(dirpath, fname)
+                        try:
+                            real = os.path.realpath(full)
+                        except OSError:
+                            continue
+                        if real in seen:
+                            continue
+                        seen.add(real)
+                        yield (real, ext)
+            except Exception as e:
+                log.warning("[Thumbnail] Scan error on %s: %s", root, e)
+
+    def _needs_thumb(real_path):
+        """Return True if the thumbnail is missing or zero-byte."""
+        try:
+            base = get_webdav_root()
+            tp = _get_thumb_path(base, real_path)
+            if not os.path.exists(tp):
+                return True
+            return os.path.getsize(tp) == 0
+        except Exception:
+            return True
+
+    log.info("[Thumbnail] Background daemon starting (24/7 idle worker).")
+    # FIX-THUMB-INIT: first scan runs IMMEDIATELY (last_full_scan = far in past).
+    # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
+    # which caused5 minutes of dead sleep before the first scan could run.
+    last_full_scan = 0.0
     while True:
-        time.sleep(86400)
+        try:
+            now = time.time()
+            # Gate check FIRST (so pause takes effect immediately, not5 min later).
+            if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
+                with _thumb_stats_lock:
+                    _thumb_stats["running"] = False
+                    _thumb_stats["paused"] = True
+                log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — sleeping 5s.",
+                         _thumb_paused.is_set(), _background_heavy_work_allowed(), sorted(_thumb_auto_block_reasons))
+                time.sleep(5)
+                continue
+
+            # Full re-scan every5 minutes to pick up new uploads.
+            if now - last_full_scan < _RESCAN_INTERVAL_S:
+                time.sleep(5)
+                continue
+            last_full_scan = now
+            log.info("[Thumbnail] Starting scan pass ...")
+
+            base_dir = get_webdav_root()
+            thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
+            try:
+                os.makedirs(thumb_dir, exist_ok=True)
+            except Exception:
+                pass
+
+            # Single-pass: walk + generate in one pass. Walking 847K files twice
+            # on the RK3328 HDD takes >20 minutes; single-pass cuts that in half.
+            # total_media is updated incrementally so ETA improves as we go.
+            total = 0
+            generated_count = 0
+            error_count = 0
+            with _thumb_stats_lock:
+                _thumb_stats["generated"] = 0
+                _thumb_stats["errors"] = 0
+                _thumb_stats["running"] = True
+                _thumb_stats["paused"] = False
+                _thumb_stats["start_time"] = now
+                _thumb_stats["last_file"] = ""
+
+            for real_path, ext in _scan_roots():
+                # Re-check gates each iteration — pause may flip mid-scan
+                if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
+                    with _thumb_stats_lock:
+                        _thumb_stats["running"] = False
+                        _thumb_stats["paused"] = True
+                    log.info("[Thumbnail] Gate closed mid-scan — processed %d/%d so far.", total, _thumb_stats["total_media"])
+                    break
+                total += 1
+                # Update total_media incrementally so client ETA improves as we scan
+                if total % 500 == 0:
+                    with _thumb_stats_lock:
+                        _thumb_stats["total_media"] = total
+
+                if not _needs_thumb(real_path):
+                    generated_count += 1
+                    continue
+
+                try:
+                    thumb_path = _get_thumb_path(base_dir, real_path)
+                    ok = _process_one_thumb((real_path, thumb_path, ext))
+                    generated_count += 1
+                    with _thumb_stats_lock:
+                        _thumb_stats["generated"] = generated_count
+                        _thumb_stats["last_file"] = os.path.basename(real_path)
+                    if not ok:
+                        error_count += 1
+                        with _thumb_stats_lock:
+                            _thumb_stats["errors"] = error_count
+                except (FileNotFoundError, PermissionError, OSError):
+                    pass
+                except Exception as e:
+                    log.warning("[Thumbnail] Error on %s: %s", real_path, e)
+                    error_count += 1
+                    with _thumb_stats_lock:
+                        _thumb_stats["errors"] = error_count
+                # Yield to API server between items —1s keeps NAS responsive
+                time.sleep(1)
+
+            # Walk finished — set final total
+            with _thumb_stats_lock:
+                _thumb_stats["total_media"] = total
+                _thumb_stats["running"] = False
+            log.info("[Thumbnail] Scan pass done: generated=%d errors=%d total=%d",
+                     generated_count, error_count, total)
+        except KeyboardInterrupt:
+            log.info("[Thumbnail] Daemon interrupted, restarting loop.")
+            time.sleep(2)
+        except Exception as e:
+            log.error("[Thumbnail] Daemon loop error: %s — restarting in 10s", e)
+            time.sleep(10)
 
 
 @app.route("/api/thumb")
@@ -10719,10 +10914,13 @@ def api_thumb():
     
     if not webdav_path:
         return jsonify({"error": "Thiếu đường dẫn"}), 400
-    
+
+    # FIX-SMB-THUMB: dùng _resolve_webdav_request_path để fallback SMB share root,
+    # giống hệt /api/media — nếu không, file SMB-uploaded sẽ 404.
+    real_path = _resolve_webdav_request_path(webdav_path)
+    if not real_path:
+        return jsonify({"error": "Đường dẫn không hợp lệ"}), 400
     base_dir = get_webdav_root()
-    local_rel = webdav_path.replace("/webdav", "", 1)
-    real_path = base_dir + local_rel
     
     if not os.path.exists(real_path):
         return jsonify({"error": "Tệp không tồn tại"}), 404

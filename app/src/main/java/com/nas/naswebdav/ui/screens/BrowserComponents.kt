@@ -521,7 +521,7 @@ fun FileItemGridCell(
 
 private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(6)
 
-private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_VIDEO, CLIENT_IMAGE, ERROR }
+private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_IMAGE, ERROR }
 
 enum class ThumbState { LOADING, SUCCESS, ERROR }
 
@@ -577,41 +577,10 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // ── Strategy 3: Client-side fallback via direct MediaMetadataRetriever ──
-                    if (isVideo) {
-                        val extracted = try {
-                            kotlinx.coroutines.withTimeout(5000L) {
-                                kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
-                                    val retriever = android.media.MediaMetadataRetriever()
-                                    val headers = java.util.HashMap<String, String>()
-                                    headers["Authorization"] = auth
-                                    
-                                    // URL encode spaces to prevent invalid HTTP requests in native retriever
-                                    val safeUrl = url.replace(" ", "%20")
-                                    retriever.setDataSource(safeUrl, headers)
-                                    
-                                    val bitmap = retriever.getFrameAtTime(1000000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                                    retriever.release()
-                                    if (bitmap != null) {
-                                        val out = java.io.FileOutputStream(thumbFile)
-                                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
-                                        out.close()
-                                        true
-                                    } else false
-                                }
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { false }
-                        
-                        if (extracted) {
-                            localThumbPath = thumbFile.absolutePath
-                            runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
-                            strategy = ThumbStrategy.LOCAL
-                        } else {
-                            strategy = ThumbStrategy.ERROR
-                        }
-                    } else {
-                        strategy = ThumbStrategy.CLIENT_IMAGE
-                    }
+                    // NAS is the single thumbnail owner for video. Do not decode on the phone.
+                    // For images, fall back to Coil which loads the WebDAV URL directly
+                    // (images are decoded client-side from the cached WebDAV fetch).
+                    strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
@@ -622,7 +591,7 @@ fun WebDavCachedThumbnail(
     // Sync state to parent for icon overlay
     val mappedState = when (strategy) {
         ThumbStrategy.LOADING -> ThumbState.LOADING
-        ThumbStrategy.LOCAL, ThumbStrategy.CLIENT_VIDEO, ThumbStrategy.CLIENT_IMAGE -> ThumbState.SUCCESS
+        ThumbStrategy.LOCAL, ThumbStrategy.CLIENT_IMAGE -> ThumbState.SUCCESS
         ThumbStrategy.ERROR -> ThumbState.ERROR
     }
     LaunchedEffect(mappedState) { onStateChange(mappedState) }
@@ -646,9 +615,6 @@ fun WebDavCachedThumbnail(
                     .build(),
                 contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
             )
-        }
-        ThumbStrategy.CLIENT_VIDEO -> {
-            // Replaced by direct MediaMetadataRetriever fallback
         }
         ThumbStrategy.CLIENT_IMAGE -> {
             val safeUrl = url.replace(" ", "%20")
