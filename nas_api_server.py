@@ -11007,6 +11007,44 @@ def api_thumb():
         )
     return jsonify({"error": "Không tạo được"}), 500
 
+@app.route("/api/thumb/upload", methods=["POST"])
+@requires_auth
+def api_thumb_upload():
+    """Accept a pre-generated thumbnail from Android client.
+    POST multipart/form-data:
+      - path: WebDAV path of the source media file
+      - thumb: JPEG thumbnail image
+    Writes to .thumbs/<hash>.jpg so the daemon skips it in future scans.
+    """
+    import shutil
+    webdav_path = request.form.get("path", "")
+    if not webdav_path:
+        return jsonify({"error": "Thiếu tham số 'path'"}), 400
+    thumb_file = request.files.get("thumb")
+    if thumb_file is None or not getattr(thumb_file, "filename", None):
+        return jsonify({"error": "Thiếu file thumbnail"}), 400
+    content_type = thumb_file.content_type or ""
+    if not content_type.startswith("image/"):
+        return jsonify({"error": "Chỉ chấp nhận file image"}), 415
+    # Reuse the same path resolution as /api/thumb GET.
+    real_path = _resolve_webdav_request_path(webdav_path)
+    if not real_path:
+        return jsonify({"error": "Đường dẫn không hợp lệ"}), 400
+    base_dir = get_webdav_root()
+    thumb_path = _get_thumb_path(base_dir, real_path)
+    thumb_dir = os.path.dirname(thumb_path)
+    try:
+        os.makedirs(thumb_dir, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        with open(thumb_path, "wb") as out:
+            shutil.copyfileobj(thumb_file, out, length=4 * 1024 * 1024)
+        return jsonify({"ok": True, "thumb_path": thumb_path})
+    except Exception as e:
+        log.warning("[ThumbUpload] Lỗi ghi thumbnail: %s — %s", os.path.basename(real_path), e)
+        return jsonify({"error": "Lỗi ghi file"}), 500
+
 
 @app.route("/api/thumb/status")
 @requires_auth

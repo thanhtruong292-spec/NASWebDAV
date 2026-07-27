@@ -521,7 +521,7 @@ fun FileItemGridCell(
 
 private val thumbnailSemaphore = kotlinx.coroutines.sync.Semaphore(6)
 
-private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_IMAGE, ERROR }
+private enum class ThumbStrategy { LOADING, LOCAL, CLIENT_IMAGE, CLIENT_DECODE, ERROR }
 
 enum class ThumbState { LOADING, SUCCESS, ERROR }
 
@@ -577,10 +577,22 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // NAS is the single thumbnail owner for video. Do not decode on the phone.
-                    // For images, fall back to Coil which loads the WebDAV URL directly
-                    // (images are decoded client-side from the cached WebDAV fetch).
-                    strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
+                    // NAS couldn't deliver (not scanned yet, HEIC unsupported, busy, …).
+                    // Try phone-side on-demand generate for the currently-visible item,
+                    // then upload the result back to NAS so the daemon can reuse it.
+                    strategy = ThumbStrategy.CLIENT_DECODE
+                    val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
+                    if (generated != null) {
+                        localThumbPath = generated.absolutePath
+                        runCatching {
+                            thumbnailDao.saveThumbnail(
+                                ThumbnailCache(url, generated.absolutePath, System.currentTimeMillis())
+                            )
+                        }
+                        strategy = ThumbStrategy.LOCAL
+                    } else {
+                        strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
@@ -590,7 +602,7 @@ fun WebDavCachedThumbnail(
 
     // Sync state to parent for icon overlay
     val mappedState = when (strategy) {
-        ThumbStrategy.LOADING -> ThumbState.LOADING
+        ThumbStrategy.LOADING, ThumbStrategy.CLIENT_DECODE -> ThumbState.LOADING
         ThumbStrategy.LOCAL, ThumbStrategy.CLIENT_IMAGE -> ThumbState.SUCCESS
         ThumbStrategy.ERROR -> ThumbState.ERROR
     }
@@ -598,7 +610,7 @@ fun WebDavCachedThumbnail(
 
     // ── Render based on strategy ──────────────────────────────────────────
     when (strategy) {
-        ThumbStrategy.LOADING -> {
+        ThumbStrategy.LOADING, ThumbStrategy.CLIENT_DECODE -> {
             Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
