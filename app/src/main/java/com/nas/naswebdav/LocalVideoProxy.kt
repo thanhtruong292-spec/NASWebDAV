@@ -56,7 +56,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         val port = server.localPort
         lastActivityAtMs = System.currentTimeMillis()
 
-        Log.d(TAG, "Proxy started on port $port → $nasUrl")
+        // Redact any userinfo before logging the URL.
+        val safeUrl = nasUrl.replace(Regex("(?i)(://)([^/]+)@"), "$1***@")
+        Log.d(TAG, "Proxy started on port $port -> $safeUrl")
 
         // Thread daemon: tự kill khi app process chết
         val proxyThread = Thread(null, {

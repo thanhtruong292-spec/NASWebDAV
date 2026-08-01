@@ -310,6 +310,11 @@ private fun HiddenExtractorWebView(
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
+                    // The extractor only loads remote pages; keep local content inaccessible.
+                    allowFileAccess = false
+                    allowContentAccess = false
+                    allowFileAccessFromFileURLs = false
+                    allowUniversalAccessFromFileURLs = false
                     // User-Agent thật của Chrome Mobile để vượt bot-detection
                     userAgentString = "Mozilla/5.0 (Linux; Android 13; Pixel 7) " +
                             "AppleWebKit/537.36 (KHTML, like Gecko) " +
