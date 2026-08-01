@@ -219,17 +219,8 @@ fun ToolboxDialog(
                 )
             }
             Spacer(Modifier.height(AppSpacing.SM))
-            var showTelegram by remember { mutableStateOf(false) }
             var showRules by remember { mutableStateOf(false) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
-                MainMenuSettingsMenuCard(
-                    title = "Thông báo Telegram",
-                    subtitle = "Cảnh báo ghi live / ổ cứng",
-                    icon = Icons.Default.Notifications,
-                    color = AccentCyan,
-                    modifier = Modifier.weight(1f),
-                    onClick = { showTelegram = true }
-                )
                 MainMenuSettingsMenuCard(
                     title = "Quy tắc cảnh báo",
                     subtitle = "Ngưỡng ổ/nhiệt/RAM + hành động",
@@ -238,9 +229,6 @@ fun ToolboxDialog(
                     modifier = Modifier.weight(1f),
                     onClick = { showRules = true }
                 )
-            }
-            if (showTelegram) {
-                com.nas.naswebdav.ui.dialogs.TelegramSettingsDialog(onDismiss = { showTelegram = false })
             }
             if (showRules) {
                 com.nas.naswebdav.ui.dialogs.RulesSettingsDialog(onDismiss = { showRules = false })

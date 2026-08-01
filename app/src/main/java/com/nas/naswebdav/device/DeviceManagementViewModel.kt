@@ -33,7 +33,7 @@ import androidx.core.content.edit
  * DeviceManagementViewModel — Primary owner of device-management state.
  *
  * Quản lý: SMB server toggle, LAN whitelist, Docker, OMV, SMART info, Speedtest,
- *          Fan mode, Storage usage, System logs, USB import, Telegram config,
+ *          Fan mode, Storage usage, System logs, USB import,
  *          Rules config, Device approval.
  *
  * Constructor: (repository) — WebDavManager là singleton, dùng trực tiếp.
@@ -1069,33 +1069,6 @@ class DeviceManagementViewModel(
                 withContext(Dispatchers.Main) { isUsbImportLoading = false }
             }
         }
-    }
-
-    // ═══ TELEGRAM CONFIG (Phase 7d.3 — moved from WebDavViewModel facade) ═══
-
-    fun loadTelegramConfig(onResult: (enabled: Boolean, chatId: String, hasToken: Boolean) -> Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        val enabled = p.getBoolean("telegram_enabled", false)
-        val chatId = p.getString("telegram_chat_id", "") ?: ""
-        val token = p.getString("telegram_bot_token", "") ?: ""
-        onResult(enabled, chatId, token.isNotBlank())
-    }
-
-    fun saveTelegramConfig(
-        enabled: Boolean,
-        botToken: String,
-        chatId: String,
-        onResult: (Boolean, String) -> Unit,
-    ) {
-        val p = NasApplication.instance.applicationContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        p.edit {
-            putBoolean("telegram_enabled", enabled)
-            putString("telegram_bot_token", botToken)
-            putString("telegram_chat_id", chatId)
-        }
-        // NOTE: server chưa hỗ trợ POST /api/telegram/test — chỉ lưu config local.
-        // Khi server thêm endpoint, có thể mở rộng method này để gọi test.
-        onResult(true, "Đã lưu cấu hình Telegram")
     }
 
     // ═══ RULES CONFIG (Phase 7d.3 — moved from WebDavViewModel facade) ═══
