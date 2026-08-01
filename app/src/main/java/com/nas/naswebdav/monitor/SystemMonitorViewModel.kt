@@ -1,0 +1,879 @@
+package com.nas.naswebdav.monitor
+
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.nas.naswebdav.DailyReportData
+import com.nas.naswebdav.MetricsSnapshot
+import com.nas.naswebdav.NasApplication
+import com.nas.naswebdav.NasSystemStatus
+import com.nas.naswebdav.SystemProcess
+import com.nas.naswebdav.WebDavManager
+import com.nas.naswebdav.WebDavRepository
+import com.nas.naswebdav.DiskHealthSample
+import com.nas.naswebdav.InsightAction
+import com.nas.naswebdav.InsightFlowTask
+import com.nas.naswebdav.NasConfigBackup
+import com.nas.naswebdav.NasInsights
+import com.nas.naswebdav.toApiBaseUrl
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+
+/**
+ * SystemMonitorViewModel — Phase 4 của VM Split.
+ *
+ * Quản lý: System status, Metrics history, Daily report, Disk health, SMART,
+ *          Fan mode, Network ping, NasConfigBackups, NasInsights, System processes.
+ *
+ * Phase 4 skeleton: state declarations + placeholder methods.
+ * Function bodies sẽ được move từ facade trong Phase 4b.
+ */
+class SystemMonitorViewModel(
+    private val repository: WebDavRepository
+) : ViewModel() {
+
+    // ═══ SYSTEM STATUS ═══
+
+    var systemStatus by androidx.compose.runtime.mutableStateOf(NasSystemStatus())
+        internal set
+    var temperatureHistory = androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>()
+        internal set
+
+    // ═══ METRICS ═══
+
+    var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
+        internal set
+    var metricsHours by androidx.compose.runtime.mutableIntStateOf(1)
+        internal set
+    var metricsChartTab by androidx.compose.runtime.mutableIntStateOf(0)
+        internal set
+    var isLoadingMetrics by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var metricsError by androidx.compose.runtime.mutableStateOf<String?>(null)
+        internal set
+    var dailyReport by androidx.compose.runtime.mutableStateOf<DailyReportData?>(null)
+        internal set
+    var isDailyReportLoading by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    // ═══ SYSTEM PROCESSES ═══
+
+    var systemProcesses by androidx.compose.runtime.mutableStateOf<List<SystemProcess>>(emptyList())
+        internal set
+    var isLoadingProcesses by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    // ═══ NETWORK HEALTH ═══
+
+    var networkPingMs by androidx.compose.runtime.mutableStateOf<Long?>(null)
+        internal set
+    var lastStatusRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    var lastMetricsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    var lastStorageRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    var lastSmartRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    var lastLogsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+    var apiLatencyMs by androidx.compose.runtime.mutableStateOf<Long?>(null)
+        internal set
+    var apiFailureCount by androidx.compose.runtime.mutableIntStateOf(0)
+        internal set
+
+    // ═══ DISK HEALTH ═══
+
+    var diskHealthCurrent by androidx.compose.runtime.mutableStateOf<DiskHealthSample?>(null)
+        internal set
+    var diskHealthHistory by androidx.compose.runtime.mutableStateOf<List<DiskHealthSample>>(emptyList())
+        internal set
+    var isFetchingDiskHealth by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var lastDiskHealthRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
+        internal set
+
+    // ═══ NAS CONFIG BACKUPS ═══
+
+    var nasConfigBackups by androidx.compose.runtime.mutableStateOf<List<NasConfigBackup>>(emptyList())
+        internal set
+    var isCreatingNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var isRestoringNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var nasConfigBackupMessage by androidx.compose.runtime.mutableStateOf("")
+        internal set
+
+    // ═══ NAS INSIGHTS ═══
+
+    var nasInsights by androidx.compose.runtime.mutableStateOf(NasInsights())
+        internal set
+    var isFetchingNasInsights by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    // ═══ POLLING JOBS — cancel previous on restart ═══
+
+    private var statusPollingJob: Job? = null
+    private var metricsPollingJob: Job? = null
+
+    // ═══ WIRED METHODS — Phase 4b ═══
+
+    fun startDashboardMonitoring(resetStatusPoll: Boolean = false) {
+        statusPollingJob?.cancel()
+        statusPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            var consecutiveFails = 0
+            while (true) {
+                val ok = fetchStatusNow()
+                if (ok) { consecutiveFails = 0; delay(60_000L) }
+                else { consecutiveFails++; delay((60_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
+            }
+        }
+    }
+
+    fun triggerStatusUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchStatusNow()
+        }
+    }
+
+    internal suspend fun fetchStatusNow(): Boolean {
+        return try {
+            val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+            // Dùng /api/status thay vì /api/status/realtime vì cần full data (disk, uptime, string formats)
+            val req = okhttp3.Request.Builder().url("$apiBase/api/status").get().let(WebDavManager::tagCurrentAuth).build()
+            NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    
+                    val diskPartsArr = json.optJSONArray("disk_parts")
+                    val diskPartList = mutableListOf<com.nas.naswebdav.DiskPart>()
+                    if (diskPartsArr != null) {
+                        for (i in 0 until diskPartsArr.length()) {
+                            val dObj = diskPartsArr.getJSONObject(i)
+                            diskPartList.add(com.nas.naswebdav.DiskPart(
+                                mount = dObj.optString("mount", "/"),
+                                percent = dObj.optDouble("percent", 0.0).toFloat(),
+                                total = dObj.optString("total", "0GB"),
+                                used = dObj.optString("used", "0GB")
+                            ))
+                        }
+                    }
+
+                    val torrentsArr = json.optJSONArray("torrents")
+                    val torrentList = mutableListOf<com.nas.naswebdav.TorrentInfo>()
+                    if (torrentsArr != null) {
+                        for (i in 0 until torrentsArr.length()) {
+                            val tObj = torrentsArr.getJSONObject(i)
+                            torrentList.add(com.nas.naswebdav.TorrentInfo(
+                                name = tObj.optString("name", "Đang tải..."),
+                                progress = tObj.optDouble("progress", 0.0).toFloat(),
+                                speed = tObj.optString("speed", "0 B/s"),
+                                hash = tObj.optString("hash", ""),
+                                state = tObj.optString("state", ""),
+                                savePath = tObj.optString("save_path", "")
+                            ))
+                        }
+                    }
+
+                    val topProcsArr = json.optJSONArray("top_processes")
+                    val topProcs = mutableListOf<Pair<String, Float>>()
+                    if (topProcsArr != null) {
+                        for (i in 0 until topProcsArr.length()) {
+                            val pObj = topProcsArr.getJSONObject(i)
+                            topProcs.add(Pair(pObj.optString("name", "?"), pObj.optDouble("cpu", 0.0).toFloat()))
+                        }
+                    }
+
+                    val rawDisk = json.optString("disk", "--%|")
+                    val diskPartsStrArr = rawDisk.split("|")
+                    val diskStr = diskPartsStrArr[0]
+                    val diskCapacity = diskPartsStrArr.getOrNull(1) ?: ""
+                    
+                    val fanRpmRaw = json.opt("fan_rpm")
+                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
+
+                    val fanPctRaw = json.opt("fan_percent")
+                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Int) else null
+
+                    val newStatus = NasSystemStatus(
+                        temp = json.optString("temperature", "--°C"),
+                        cpu = json.optString("cpu", "--%"),
+                        cpuTemp = json.optString("cpu_temp", "--°C"),
+                        ram = json.optString("ram", "--"),
+                        disk = diskStr,
+                        diskCapacity = diskCapacity,
+                        netRx = json.optString("net_rx", "0 B/s"),
+                        netTx = json.optString("net_tx", "0 B/s"),
+                        uptime = json.optString("uptime", "--"),
+                        status = "Đã kết nối",
+                        ramPercent = json.optString("ram_percent", "0"),
+                        torrents = torrentList,
+                        diskParts = diskPartList,
+                        fanStatus = json.optString("fan_status", "--"),
+                        fanMode = json.optString("fan_mode", "auto"),
+                        fanOnTemp = json.optDouble("fan_on_temp", 50.0).toFloat(),
+                        fanOffTemp = json.optDouble("fan_off_temp", 40.0).toFloat(),
+                        fanRpm = fanRpm,
+                        fanPercent = fanPercent,
+                        topProcesses = topProcs
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        systemStatus = newStatus
+                        lastStatusRefreshAt = System.currentTimeMillis()
+                        appendOrUpdateLivePoint()
+                    }
+                    true
+                } else false
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("SysMonitor", "fetchStatusNow: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * ĐẢM BẢO ĐIỂM CUỐI CỦA METRICS HISTORY LUÔN LÀ DỮ LIỆU LIVE HIỆN TẠI (100% ĐỒNG BỘ VỚI VÒNG TRÒN SYSTEM)
+     */
+    fun appendOrUpdateLivePoint() {
+        val tempRaw = systemStatus.temp
+        val cpuTemp = systemStatus.cpuTemp
+        val hddVal = tempRaw.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val cpuVal = cpuTemp.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val cpuPct = systemStatus.cpu.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+        val ramPct = systemStatus.ramPercent.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+
+        fun parseKbps(s: String): Float {
+            val num = s.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+            return when {
+                s.contains("MB/s", ignoreCase = true) -> num * 1024f
+                s.contains("GB/s", ignoreCase = true) -> num * 1024f * 1024f
+                else -> num
+            }
+        }
+        val rxKbps = parseKbps(systemStatus.netRx)
+        val txKbps = parseKbps(systemStatus.netTx)
+
+        if (hddVal > 0f || cpuVal > 0f) {
+            temperatureHistory.add(Pair(cpuVal, hddVal))
+            while (temperatureHistory.size > 40) temperatureHistory.removeAt(0)
+        }
+
+        val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        val livePoint = MetricsSnapshot(
+            timestamp = timeStr,
+            cpuTemp = cpuVal,
+            cpuPercent = cpuPct,
+            ramPercent = ramPct,
+            hddTemp = hddVal,
+            netRxKbps = rxKbps,
+            netTxKbps = txKbps
+        )
+
+        if (metricsHistory.isEmpty()) {
+            metricsHistory.add(livePoint)
+        } else {
+            val last = metricsHistory.last()
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            val diffSec = try {
+                val tLast = sdf.parse(last.timestamp)?.time ?: 0L
+                val tNow = sdf.parse(timeStr)?.time ?: 0L
+                kotlin.math.abs(tNow - tLast) / 1000L
+            } catch (e: Exception) { 999L }
+
+            if (diffSec <= 15L) {
+                metricsHistory[metricsHistory.size - 1] = livePoint
+            } else {
+                metricsHistory.add(livePoint)
+            }
+        }
+        pruneOldPoints()
+        lastMetricsRefreshAt = System.currentTimeMillis()
+    }
+
+    private fun pruneOldPoints() {
+        if (metricsHistory.isEmpty()) return
+        val maxWindowMs = metricsHours * 3600 * 1000L + 120_000L
+        val sdfIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+        val sdfLocal = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+
+        fun parseMs(ts: String): Long {
+            return try {
+                if (ts.contains("T")) sdfIso.parse(ts)?.time ?: 0L
+                else sdfLocal.parse(ts)?.time ?: 0L
+            } catch (e: Exception) { 0L }
+        }
+
+        val newestMs = parseMs(metricsHistory.last().timestamp).let { if (it > 0L) it else System.currentTimeMillis() }
+
+        val iterator = metricsHistory.iterator()
+        while (iterator.hasNext()) {
+            val pt = iterator.next()
+            val ptMs = parseMs(pt.timestamp)
+            if (ptMs > 0L && (newestMs - ptMs) > maxWindowMs) {
+                iterator.remove()
+            }
+        }
+    }
+
+    fun launchMetricsPolling() {
+        metricsPollingJob?.cancel()
+        metricsPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            var consecutiveFails = 0
+            var lastSize = metricsHistory.size
+            while (true) {
+                fetchRealtimeMetricPoint()
+                val changed = metricsHistory.size > lastSize
+                lastSize = metricsHistory.size
+                if (changed) { consecutiveFails = 0; delay(30_000L) }
+                else { consecutiveFails++; delay((30_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
+            }
+        }
+    }
+
+    private var metricsFetchJob: kotlinx.coroutines.Job? = null
+
+    fun fetchMetricsHistory(hours: Int = 1) {
+        metricsHours = hours
+        metricsError = null
+        metricsFetchJob?.cancel()
+        isLoadingMetrics = true
+        metricsFetchJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/metrics/history?hours=$hours").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val timestamps = json.optJSONArray("timestamps")
+                    val cpuArr     = json.optJSONArray("cpu_percent")
+                    val ramArr     = json.optJSONArray("ram_percent")
+                    val cpuTempArr = json.optJSONArray("cpu_temp")
+                    val hddTempArr = json.optJSONArray("hdd_temp")
+                    val netRxArr   = json.optJSONArray("net_rx_kbps")
+                    val netTxArr   = json.optJSONArray("net_tx_kbps")
+                    val count = timestamps?.length() ?: 0
+                    val parsedPoints = mutableListOf<MetricsSnapshot>()
+                    for (i in 0 until count) {
+                        parsedPoints.add(MetricsSnapshot(
+                            timestamp = timestamps?.optString(i, "") ?: "",
+                            cpuTemp   = cpuTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            cpuPercent = cpuArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            ramPercent = ramArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            hddTemp    = hddTempArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            netRxKbps  = netRxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f,
+                            netTxKbps  = netTxArr?.optDouble(i, 0.0)?.toFloat() ?: 0f
+                        ))
+                    }
+                    withContext(Dispatchers.Main) {
+                        metricsHistory.clear()
+                        metricsHistory.addAll(parsedPoints)
+                        appendOrUpdateLivePoint()
+                        pruneOldPoints()
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) { metricsError = e.message }
+            } finally {
+                withContext(Dispatchers.Main) { isLoadingMetrics = false }
+            }
+        }
+    }
+
+    fun fetchRealtimeMetricPoint() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/status/realtime").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val point = MetricsSnapshot(
+                        timestamp  = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
+                        cpuTemp    = json.optDouble("cpu_temp", 0.0).toFloat(),
+                        cpuPercent = json.optDouble("cpu_percent", 0.0).toFloat(),
+                        ramPercent = json.optDouble("ram_percent", 0.0).toFloat(),
+                        hddTemp    = json.optDouble("hdd_temp", 0.0).toFloat(),
+                        netRxKbps  = json.optDouble("net_rx_kbps", 0.0).toFloat(),
+                        netTxKbps  = json.optDouble("net_tx_kbps", 0.0).toFloat()
+                    )
+                    withContext(Dispatchers.Main) {
+                        metricsHistory.add(point)
+                        if (metricsHistory.size > 1000) {
+                            metricsHistory.removeRange(0, 200)
+                        }
+                        lastMetricsRefreshAt = System.currentTimeMillis()
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* silent for realtime */ }
+        }
+    }
+
+    fun fetchDailyReport(date: String = "", minIntervalMs: Long = 30_000L) {
+        isDailyReportLoading = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val dateParam = if (date.isNotBlank()) "?date=$date" else ""
+                val req = okhttp3.Request.Builder().url("$apiBase/api/report/daily$dateParam").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val cpuObj = json.optJSONObject("cpu")
+                    val ramObj = json.optJSONObject("ram")
+                    val cpuTempObj = json.optJSONObject("cpu_temp")
+                    val hddTempObj = json.optJSONObject("hdd_temp")
+                    val netObj = json.optJSONObject("network")
+                    val alertObj = json.optJSONObject("alerts")
+
+                    val report = DailyReportData(
+                        date = json.optString("date", ""),
+                        healthScore = json.optInt("health_score", 0),
+                        cpuAvg = (cpuObj?.optDouble("avg") ?: json.optDouble("cpu_avg", 0.0)).toFloat(),
+                        cpuPeak = (cpuObj?.optDouble("peak") ?: json.optDouble("cpu_peak", 0.0)).toFloat(),
+                        ramAvg = (ramObj?.optDouble("avg") ?: json.optDouble("ram_avg", 0.0)).toFloat(),
+                        ramPeak = (ramObj?.optDouble("peak") ?: json.optDouble("ram_peak", 0.0)).toFloat(),
+                        cpuTempAvg = (cpuTempObj?.optDouble("avg") ?: json.optDouble("cpu_temp_avg", 0.0)).toFloat(),
+                        cpuTempPeak = (cpuTempObj?.optDouble("peak") ?: json.optDouble("cpu_temp_peak", 0.0)).toFloat(),
+                        hddTempAvg = (hddTempObj?.optDouble("avg") ?: json.optDouble("hdd_temp_avg", 0.0)).toFloat(),
+                        hddTempPeak = (hddTempObj?.optDouble("peak") ?: json.optDouble("hdd_temp_peak", 0.0)).toFloat(),
+                        downloadMb = (netObj?.optDouble("total_download_mb") ?: json.optDouble("download_mb", 0.0)).toFloat(),
+                        uploadMb = (netObj?.optDouble("total_upload_mb") ?: json.optDouble("upload_mb", 0.0)).toFloat(),
+                        errorCount = alertObj?.optInt("errors") ?: json.optInt("error_count", 0),
+                        warningCount = alertObj?.optInt("warnings") ?: json.optInt("warning_count", 0),
+                        samples = json.optInt("samples", 0)
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        dailyReport = report
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchDailyReport: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isDailyReportLoading = false }
+            }
+        }
+    }
+
+    fun fetchDiskHealth(minIntervalMs: Long = 30_000L) {
+        val now = System.currentTimeMillis()
+        if (now - lastDiskHealthRefreshAt < minIntervalMs) return
+        isFetchingDiskHealth = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/health").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val currentObj = json.optJSONObject("current") ?: json
+                    val sample = DiskHealthSample(
+                        ts = System.currentTimeMillis(),
+                        datetime = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date()),
+                        score = currentObj.optInt("score", 0),
+                        smartStatus = currentObj.optString("smart_status", "unknown"),
+                        tempC = currentObj.optInt("temperature", 0).takeIf { it > 0 }
+                            ?: currentObj.optInt("temp_c", 0).takeIf { it > 0 },
+                        powerOnHours = currentObj.optInt("power_on_hours", 0).takeIf { it > 0 },
+                        reallocatedSectors = currentObj.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                        pendingSectors = currentObj.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                        offlineUncorrectable = currentObj.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                        udmaCrcErr = currentObj.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                        commandTimeout = currentObj.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                        ext4ErrorsRecent = diskHealthCurrent?.ext4ErrorsRecent ?: 0,
+                        sataResetsRecent = diskHealthCurrent?.sataResetsRecent ?: 0,
+                        ioErrorsRecent = diskHealthCurrent?.ioErrorsRecent ?: 0,
+                        warnings = (currentObj.optJSONArray("warnings")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { arr.optString(it) }
+                        } ?: emptyList())
+                    )
+                    withContext(Dispatchers.Main) {
+                        diskHealthCurrent = sample
+                        lastDiskHealthRefreshAt = System.currentTimeMillis()
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchDiskHealth: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingDiskHealth = false }
+            }
+        }
+    }
+
+    fun fetchDiskHealthHistory(days: Int = 7) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/disk/health/history?days=$days").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "[]"
+                    val arr = try {
+                        val json = org.json.JSONObject(body)
+                        json.optJSONArray("samples") ?: org.json.JSONArray()
+                    } catch (e: Exception) {
+                        org.json.JSONArray(body)
+                    }
+                    val historyList = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        DiskHealthSample(
+                            ts = it.optLong("ts", 0L),
+                            datetime = it.optString("datetime", ""),
+                            score = it.optInt("score", 0),
+                            smartStatus = it.optString("smart_status", "unknown"),
+                            tempC = it.optInt("temp_c", 0).takeIf { v -> v > 0 },
+                            powerOnHours = it.optInt("power_on_hours", 0).takeIf { v -> v > 0 },
+                            reallocatedSectors = it.optJSONObject("watch_fields")?.optInt("reallocated_sectors"),
+                            pendingSectors = it.optJSONObject("watch_fields")?.optInt("pending_sectors"),
+                            offlineUncorrectable = it.optJSONObject("watch_fields")?.optInt("offline_uncorrectable"),
+                            udmaCrcErr = it.optJSONObject("watch_fields")?.optInt("udma_crc_err"),
+                            commandTimeout = it.optJSONObject("watch_fields")?.optInt("command_timeout"),
+                            ext4ErrorsRecent = it.optInt("ext4_errors_recent", 0),
+                            sataResetsRecent = it.optInt("sata_resets_recent", 0),
+                            ioErrorsRecent = it.optInt("io_errors_recent", 0),
+                            warnings = emptyList()
+                        )
+                    }
+                    withContext(Dispatchers.Main) {
+                        diskHealthHistory = historyList
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchDiskHealthHistory: ${e.message}")
+            }
+        }
+    }
+
+    fun fetchNasConfigBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/list").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (resp.code == 404) {
+                        withContext(Dispatchers.Main) {
+                            nasConfigBackups = emptyList()
+                            nasConfigBackupMessage = "Server chưa hỗ trợ quản lý backup cấu hình NAS (thiếu endpoint /api/backup/*)."
+                        }
+                        return@use
+                    }
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "[]"
+                    val arr = try {
+                        val json = org.json.JSONObject(body)
+                        json.optJSONArray("backups") ?: org.json.JSONArray()
+                    } catch (e: Exception) {
+                        org.json.JSONArray(body)
+                    }
+                    val backupList = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        NasConfigBackup(
+                            filename = it.optString("filename", ""),
+                            createdAt = it.optString("created_at", ""),
+                            sizeBytes = if (it.has("size")) it.optLong("size", 0L) else it.optLong("size_bytes", 0L),
+                            sizeHuman = it.optString("size_human", "--"),
+                            mtime = it.optDouble("mtime", 0.0)
+                        )
+                    }
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackups = backupList
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchNasConfigBackups: ${e.message}")
+            }
+        }
+    }
+
+    fun createNasConfigBackup() {
+        isCreatingNasConfigBackup = true
+        viewModelScope.launch(Dispatchers.IO) {
+            var was404 = false
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/create")
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    was404 = resp.code == 404
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = when {
+                            resp.isSuccessful -> "Đã tạo backup"
+                            resp.code == 404 -> "Server chưa hỗ trợ tạo backup cấu hình (thiếu endpoint /api/backup/create)."
+                            else -> "Lỗi tạo backup (HTTP ${resp.code})"
+                        }
+                    }
+                }
+                if (!was404) fetchNasConfigBackups()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isCreatingNasConfigBackup = false }
+            }
+        }
+    }
+
+    fun deleteNasConfigBackup(filename: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var was404 = false
+            var isOk = false
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/delete").post(body).let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    was404 = resp.code == 404
+                    isOk = resp.isSuccessful
+                    val errStr = if (!isOk) WebDavManager.extractApiError(resp) else null
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = when {
+                            isOk -> "Đã xóa bản sao lưu $filename"
+                            was404 -> "Server chưa hỗ trợ xoá backup cấu hình."
+                            !errStr.isNullOrBlank() -> errStr
+                            else -> "Xóa thất bại (HTTP ${resp.code})"
+                        }
+                    }
+                }
+                if (isOk) fetchNasConfigBackups()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "deleteNasConfigBackup: ${e.message}")
+            }
+        }
+    }
+
+    fun restoreNasConfigBackup(filename: String) {
+        isRestoringNasConfigBackup = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val body = org.json.JSONObject().put("filename", filename).toString()
+                    .toRequestBody("application/json".toMediaTypeOrNull())
+                val req = okhttp3.Request.Builder().url("$apiBase/api/backup/restore").post(body).let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    withContext(Dispatchers.Main) {
+                        nasConfigBackupMessage = when {
+                            resp.isSuccessful -> "Đã restore"
+                            resp.code == 404 -> "Server chưa hỗ trợ restore cấu hình (thiếu endpoint /api/backup/restore)."
+                            else -> "Lỗi restore (HTTP ${resp.code})"
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) { nasConfigBackupMessage = "Lỗi: ${e.message}" }
+            } finally {
+                withContext(Dispatchers.Main) { isRestoringNasConfigBackup = false }
+            }
+        }
+    }
+
+    fun fetchNasInsights(minIntervalMs: Long = 10_000L) {
+        if (isFetchingNasInsights) return
+        isFetchingNasInsights = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/system/insights").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(body)
+                    val health = json.optJSONObject("health_trend") ?: org.json.JSONObject()
+                    val workload = json.optJSONObject("workload") ?: org.json.JSONObject()
+                    val emmc = json.optJSONObject("emmc_guard") ?: org.json.JSONObject()
+                    val rootEmmc = emmc.optJSONObject("root") ?: org.json.JSONObject()
+                    val logEmmc = emmc.optJSONObject("log") ?: org.json.JSONObject()
+                    val flow = json.optJSONObject("data_flow") ?: org.json.JSONObject()
+                    
+                    val emmcWarningsList: List<String> = emmc.optJSONArray("warnings")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                    val emmcRecsList: List<String> = emmc.optJSONArray("recommendations")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+                    val workloadReasonsList: List<String> = workload.optJSONArray("reasons")?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it) } } ?: emptyList()
+
+                    val maintenanceArr = json.optJSONArray("maintenance")
+                    val parsedActions: List<InsightAction> = maintenanceArr?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            InsightAction(
+                                priority = it.optString("priority", ""),
+                                title = it.optString("title", ""),
+                                detail = it.optString("detail", "")
+                            )
+                        }
+                    } ?: emptyList()
+
+                    val tasksArr = flow.optJSONArray("tasks")
+                    val parsedTasks: List<InsightFlowTask> = tasksArr?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            InsightFlowTask(
+                                label = it.optString("label", ""),
+                                file = it.optString("file", "")
+                            )
+                        }
+                    } ?: emptyList()
+
+                    val parsedInsights = NasInsights(
+                        hddScore = health.optInt("score", 0),
+                        hddStatusText = health.optString("status_text", health.optString("smart_status", "")),
+                        hddTempC = health.optInt("temp_c", 0),
+                        hddMinScore = health.optInt("min_score", 0),
+                        hddScoreDelta = health.optInt("score_delta", 0),
+                        workloadMode = workload.optString("mode", "normal"),
+                        workloadPressure = workload.optInt("pressure", 0),
+                        workloadRecommendation = workload.optString("recommendation", ""),
+                        workloadReasons = workloadReasonsList,
+                        emmcRootPercent = rootEmmc.optInt("percent", 0),
+                        emmcLogPercent = logEmmc.optInt("percent", 0),
+                        emmcWarnings = emmcWarningsList,
+                        emmcRecommendations = emmcRecsList,
+                        diskReadBps = flow.optLong("disk_read_bps", 0L),
+                        diskWriteBps = flow.optLong("disk_write_bps", 0L),
+                        netRxBps = flow.optLong("net_rx_bps", 0L),
+                        netTxBps = flow.optLong("net_tx_bps", 0L),
+                        flowTasks = parsedTasks,
+                        maintenanceActions = parsedActions,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    withContext(Dispatchers.Main) {
+                        nasInsights = parsedInsights
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchNasInsights: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingNasInsights = false }
+            }
+        }
+    }
+
+    suspend fun downloadNasConfigBackup(context: Context, filename: String): java.io.File? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val encoded = java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
+                val url = "$base/api/backup/download?filename=$encoded"
+                val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
+                val client = NasApplication.instance.fastApiClient.newBuilder()
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val src = resp.body?.byteStream() ?: return@withContext null
+                    val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
+                    val safe = filename.replace("/", "_").replace("\\", "_")
+                    val out = java.io.File(outDir, safe)
+                    out.outputStream().use { o -> src.copyTo(o) }
+                    out
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "download err: ${e.message}")
+                null
+            }
+        }
+    }
+
+    fun fetchSystemProcesses(context: Context) {
+        isLoadingProcesses = true
+        viewModelScope.launch(Dispatchers.IO) {
+            fetchStatusNow()
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/processes").get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val body = resp.body?.string() ?: "{}"
+                    val obj = org.json.JSONObject(body)
+                    val totalCpuStr = obj.optString("total_cpu", "")
+                    val totalRamStr = obj.optString("total_ram", "")
+                    val arr = obj.optJSONArray("data") ?: org.json.JSONArray()
+                    val parsedProcesses = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                        SystemProcess(
+                            pid = it.optInt("pid", 0),
+                            name = it.optString("name", ""),
+                            user = it.optString("user", "root"),
+                            status = it.optString("status", "running"),
+                            cpu = it.optDouble("cpu", 0.0).toFloat(),
+                            mem = it.optDouble("mem", 0.0).toFloat(),
+                            isSystem = it.optBoolean("is_system", false) || it.optInt("pid", 0) <= 0
+                        )
+                    }
+                    withContext(Dispatchers.Main) {
+                        if (totalCpuStr.isNotBlank()) {
+                            systemStatus = systemStatus.copy(
+                                cpu = totalCpuStr,
+                                ramPercent = if (totalRamStr.isNotBlank()) totalRamStr.replace("%", "").trim() else systemStatus.ramPercent
+                            )
+                        }
+                        systemProcesses = parsedProcesses
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchSystemProcesses: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isLoadingProcesses = false }
+            }
+        }
+    }
+
+    fun killSystemProcess(context: Context, pid: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val json = org.json.JSONObject().put("pid", pid).toString()
+                val req = okhttp3.Request.Builder()
+                    .url("$apiBase/api/processes/kill")
+                    .post(json.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .let(WebDavManager::tagCurrentAuth)
+                    .build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: ""
+                    withContext(Dispatchers.Main) {
+                        if (resp.isSuccessful) {
+                            android.widget.Toast.makeText(context, "Đã kill tiến trình PID $pid", android.widget.Toast.LENGTH_SHORT).show()
+                            fetchSystemProcesses(context)
+                        } else {
+                            val err = org.json.JSONObject(body).optString("error", "Lỗi kill tiến trình")
+                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Lỗi kết nối: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun pingNas() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val t0 = System.currentTimeMillis()
+                val req = okhttp3.Request.Builder().url("$apiBase/api/ping").head().build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    val latency = System.currentTimeMillis() - t0
+                    withContext(Dispatchers.Main) {
+                        networkPingMs = latency
+                        apiLatencyMs = latency
+                        apiFailureCount = if (resp.isSuccessful) 0 else (apiFailureCount + 1)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    apiFailureCount++
+                    networkPingMs = null
+                }
+            }
+        }
+    }
+}
