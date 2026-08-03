@@ -3,6 +3,7 @@ package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.R
+import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
@@ -3925,7 +3926,7 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
                                                 val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                                val auth = okhttp3.WebDavManager.currentAuthState().authHeader
+                                                val auth = WebDavManager.currentAuthState().authHeader
 
                                                 Box(
                                                     modifier = Modifier

@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.browser.FileBrowserViewModel
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
@@ -116,7 +117,7 @@ fun FileItemGridCell(
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val auth = okhttp3.WebDavManager.currentAuthState().authHeader
+    val auth = WebDavManager.currentAuthState().authHeader
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
@@ -577,21 +578,28 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // NAS couldn't deliver (not scanned yet, HEIC unsupported, busy, …).
-                    // Try phone-side on-demand generate for the currently-visible item,
-                    // then upload the result back to NAS so the daemon can reuse it.
-                    strategy = ThumbStrategy.CLIENT_DECODE
-                    val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
-                    if (generated != null) {
-                        localThumbPath = generated.absolutePath
-                        runCatching {
-                            thumbnailDao.saveThumbnail(
-                                ThumbnailCache(url, generated.absolutePath, System.currentTimeMillis())
-                            )
+                    // NAS couldn't deliver (not scanned yet, HEIC/PNG unsupported, busy, …).
+                    // FIX: Skip slow on-demand download for images — go straight to
+                    // CLIENT_IMAGE (Coil loads directly from WebDAV URL, instant display).
+                    // On-demand generation is still useful for video (no CLIENT_IMAGE fallback),
+                    // so we only skip it for still images.
+                    if (isVideo) {
+                        strategy = ThumbStrategy.CLIENT_DECODE
+                        val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
+                        if (generated != null) {
+                            localThumbPath = generated.absolutePath
+                            runCatching {
+                                thumbnailDao.saveThumbnail(
+                                    ThumbnailCache(url, generated.absolutePath, System.currentTimeMillis())
+                                )
+                            }
+                            strategy = ThumbStrategy.LOCAL
+                        } else {
+                            strategy = ThumbStrategy.ERROR
                         }
-                        strategy = ThumbStrategy.LOCAL
                     } else {
-                        strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
+                        // Images: skip CLIENT_DECODE (requires full download), use CLIENT_IMAGE
+                        strategy = ThumbStrategy.CLIENT_IMAGE
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

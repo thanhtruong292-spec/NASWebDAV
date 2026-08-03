@@ -76,7 +76,7 @@
         <service
             android:name=".WolTileService"
             android:label="Bật NAS Chainedbox"
-            android:icon="@drawable/ic_launcher_foreground"
+            android:icon="@mipmap/ic_launcher_foreground"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
             android:exported="true">
             <intent-filter>

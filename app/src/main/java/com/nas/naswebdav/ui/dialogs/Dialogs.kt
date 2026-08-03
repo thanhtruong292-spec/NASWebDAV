@@ -1996,7 +1996,7 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                                             val isSelected = smartToolsVM.selectedDuplicates.contains(dupFile)
                                             val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                             val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
-                                            val auth = okhttp3.WebDavManager.currentAuthState().authHeader
+                                            val auth = WebDavManager.currentAuthState().authHeader
 
                                             Box(
                                                 modifier = Modifier
