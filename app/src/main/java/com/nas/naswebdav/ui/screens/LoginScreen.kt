@@ -102,7 +102,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     }
     var ipInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(historyIps.firstOrNull() ?: "") }
     var user by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" }.ifEmpty { "daica" })
+        mutableStateOf(runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" })
     }
     var pass by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(runCatching { SecurePrefsHelper.getPass(context) }.getOrElse { "" })
@@ -123,20 +123,27 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var ipPingStatus by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var isCheckingPings by remember { mutableStateOf(false) }
 
-    // Khởi động vòng lặp ping thực tế khi LoginScreen hiển thị
-    // Kept as Unit: screen-scoped polling loop for IP ping status.
-    LaunchedEffect(Unit) {
+    // Debounced ping: only restart when endpoint or credentials change, then refresh
+    // every 2 seconds while the same login form remains active.
+    LaunchedEffect(historyIps, ipInput, user, pass) {
+        kotlinx.coroutines.delay(600L)
         while (isActive) {
             isCheckingPings = true
             try {
                 val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
                 if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                    val results = com.nas.naswebdav.pingUrlsForDisplay(fullUrls, user, pass)
-                    ipPingStatus = results
+                    ipPingStatus = com.nas.naswebdav.pingUrlsForDisplay(fullUrls, user, pass)
+                } else {
+                    ipPingStatus = emptyMap()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-            isCheckingPings = false
-            kotlinx.coroutines.delay(2000)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                ipPingStatus = emptyMap()
+            } finally {
+                isCheckingPings = false
+            }
+            kotlinx.coroutines.delay(2000L)
         }
     }
 
@@ -164,7 +171,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     ) {
         Image(
             painter = painterResource(R.drawable.ic_nas_server),
-            contentDescription = "NAS Server",
+            contentDescription = "Máy chủ NAS",
             modifier = Modifier
                 .size(180.dp)
                 .clip(RoundedCornerShape(16.dp)),
