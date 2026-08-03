@@ -293,7 +293,7 @@ fun sendPowerCommandFromLogin(
                 .url(apiUrl)
                 .post(ByteArray(0).toRequestBody(null, 0, 0))
             if (user.isNotBlank() && pass.isNotBlank()) {
-                reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                reqBuilder.header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
             }
             NasApplication.instance.fastApiClient.newCall(reqBuilder.build()).execute().use { resp ->
                 val ok = resp.isSuccessful

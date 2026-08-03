@@ -860,7 +860,7 @@ fun DuplicateScanGlobalUI(
                                                 val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                                 val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
                                                 val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
-                                                val auth = okhttp3.Credentials.basic(authSnapshot.user, authSnapshot.pass)
+                                                val auth = WebDavManager.AuthState(user = authSnapshot.user, pass = authSnapshot.pass).authHeader
 
                                                 Box(
                                                     modifier = Modifier

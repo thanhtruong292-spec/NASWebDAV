@@ -131,7 +131,7 @@ class ScreenRecordService : Service() {
             .ifEmpty { SecurePrefsHelper.getUrl(this).toApiBaseUrl() }
         val user = SecurePrefsHelper.getUser(this)
         val pass = SecurePrefsHelper.getPass(this)
-        authHeader = okhttp3.Credentials.basic(user, pass)
+        authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
         sessionId = "screen_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         spoolDir = File(cacheDir, "screen_record_spool/$sessionId")
         spoolDir.mkdirs()

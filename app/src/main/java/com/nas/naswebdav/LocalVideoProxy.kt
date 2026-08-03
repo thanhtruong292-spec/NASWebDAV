@@ -148,7 +148,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                     // Xác thực với NAS
                     setRequestProperty(
                         "Authorization",
-                        okhttp3.Credentials.basic(user, pass)
+                        WebDavManager.AuthState(user = user, pass = pass).authHeader
                     )
 
                     // Chuyển tiếp Range header từ VLC để hỗ trợ seek

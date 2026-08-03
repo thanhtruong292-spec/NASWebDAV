@@ -112,7 +112,7 @@ class LongRunningApiWorker(
             val request = okhttp3.Request.Builder()
                 .url(apiUrl)
                 .post(requestBody)
-                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .build()
 
             // Client với timeout cực lớn cho tác vụ NAS nặng, Fix Bug #41: dùng singleton client

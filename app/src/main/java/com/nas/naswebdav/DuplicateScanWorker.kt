@@ -217,7 +217,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     val forceParam = if (forceRestart) "1" else "0"
                     val request = okhttp3.Request.Builder()
                         .url("$apiBaseUrl/api/disk/fast_index?force=$forceParam")
-                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                        .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                         .build()
                     val client = NasApplication.instance.sharedHttpClient
                     val call = client.newCall(request)
@@ -830,7 +830,7 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
             val request = okhttp3.Request.Builder()
                 .url("${url.toApiBaseUrl()}/api/thumb/activity")
                 .post(body)
-                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .build()
             NasApplication.instance.sharedHttpClient.newCall(request).execute().use { }
         } catch (_: Exception) {

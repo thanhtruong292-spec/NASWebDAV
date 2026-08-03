@@ -203,7 +203,7 @@ class LivestreamMonitorWorker(
             try {
                 val requestBuilder = Request.Builder().url(statusUrl)
                 if (user.isNotEmpty() && pass.isNotEmpty()) {
-                    val credential = okhttp3.Credentials.basic(user, pass)
+                    val credential = WebDavManager.AuthState(user = user, pass = pass).authHeader
                     requestBuilder.header("Authorization", credential)
                 }
 

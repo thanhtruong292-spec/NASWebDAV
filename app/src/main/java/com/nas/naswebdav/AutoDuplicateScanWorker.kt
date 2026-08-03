@@ -66,7 +66,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             try {
                 val idleReq = okhttp3.Request.Builder()
                     .url("$apiBaseForIdle/api/system/idle")
-                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                     .build()
                 val idleResp = NasApplication.instance.fastApiClient.newCall(idleReq).execute().use { resp ->
                     if (resp.isSuccessful) resp.body?.string() else null
@@ -102,7 +102,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 try {
                     val idleReq = okhttp3.Request.Builder()
                         .url("$apiBaseForIdle/api/system/idle")
-                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                        .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                         .build()
                     val body = NasApplication.instance.fastApiClient.newCall(idleReq).execute().use { resp ->
                         if (resp.isSuccessful) resp.body?.string() else null
@@ -131,7 +131,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // avoids DB churn (hàng triệu row xóa + chèn lại mỗi lần auto-scan).
             var totalFiles = 0
             val apiBaseUrl = url.toApiBaseUrl()
-            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", okhttp3.Credentials.basic(user, pass)).build()
+            val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/fast_index").header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader).build()
             val client = NasApplication.instance.sharedHttpClient
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful && response.body != null) {
@@ -208,7 +208,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
     }
 
     private data class WebDavAuthContext(val manager: WebDavManager, val user: String, val pass: String) {
-        val authHeader: String get() = okhttp3.Credentials.basic(user, pass)
+        val authHeader: String get() = WebDavManager.AuthState(user = user, pass = pass).authHeader
     }
 
     private fun executeWebDavRequest(url: String, method: String, authHeader: String, vararg extraHeaders: Pair<String, String>): Boolean {

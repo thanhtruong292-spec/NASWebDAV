@@ -133,7 +133,7 @@ class AuthSessionViewModel(
                                 .tag(String::class.java, "login")
                                 .url("${safeUrl.toApiBaseUrl()}/api/ping")
                                 .head()
-                                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                                 .build()
 
                             val t0 = android.os.SystemClock.elapsedRealtime()
@@ -189,7 +189,7 @@ class AuthSessionViewModel(
                     if (!host.isNullOrEmpty()) {
                         NasApplication.applicationScope.launch(Dispatchers.IO) {
                             try {
-                                val authHeader = okhttp3.Credentials.basic(user, pass)
+                                val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
                                 val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
                                     .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                                     .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
@@ -275,7 +275,7 @@ class AuthSessionViewModel(
 
                             val host = safeUrlHost(safeActive)
                             if (host.isNotEmpty()) {
-                                val authHeader = okhttp3.Credentials.basic(user, pass)
+                                val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
                                 val authRequest = okhttp3.Request.Builder()
                                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
                                     .header("Authorization", authHeader)

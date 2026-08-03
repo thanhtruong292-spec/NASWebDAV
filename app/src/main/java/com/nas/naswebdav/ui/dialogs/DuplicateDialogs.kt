@@ -249,7 +249,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                             val isImage = dupFile.name.lowercase().run { endsWith(".jpg") || endsWith(".png") || endsWith(".jpeg") || endsWith(".webp") }
                                             val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(dupFile.name)
                                             val authSnapshot = WebDavManager.currentAuthState()
-                                            val auth = okhttp3.Credentials.basic(authSnapshot.user, authSnapshot.pass)
+                                            val auth = WebDavManager.AuthState(user = authSnapshot.user, pass = authSnapshot.pass).authHeader
 
                                             Box(
                                                 modifier = Modifier

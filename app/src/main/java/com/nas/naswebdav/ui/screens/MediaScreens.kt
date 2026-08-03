@@ -237,7 +237,7 @@ fun ImageViewerScreen(
             val file = imageFiles[page]
             ZoomableImage(
                 path = file.path,
-                auth = okhttp3.Credentials.basic(user, pass),
+                auth = WebDavManager.AuthState(user = user, pass = pass).authHeader,
                 fileName = file.name,
                 onTap = { showControls = !showControls },
                 modifier = Modifier.fillMaxSize()
@@ -562,7 +562,7 @@ private fun ThumbnailStrip(
     onThumbClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val auth = okhttp3.Credentials.basic(user, pass)
+    val auth = WebDavManager.AuthState(user = user, pass = pass).authHeader
     val context = LocalContext.current
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 

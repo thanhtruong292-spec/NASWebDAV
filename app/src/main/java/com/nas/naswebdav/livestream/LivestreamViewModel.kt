@@ -104,7 +104,7 @@ class LivestreamViewModel(
                 val reqBuilder = okhttp3.Request.Builder().url("$apiBaseUrl/api/livestream/status")
                 val user = com.nas.naswebdav.SecurePrefsHelper.getUser(context)
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(context)
-                if (user.isNotEmpty() && pass.isNotEmpty()) reqBuilder.header("Authorization", okhttp3.Credentials.basic(user, pass))
+                if (user.isNotEmpty() && pass.isNotEmpty()) reqBuilder.header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 NasApplication.instance.fastApiClient.newCall(reqBuilder.build()).execute().use { response ->
                     if (!response.isSuccessful) return@use
                     val json = org.json.JSONObject(response.body?.string() ?: "{}")

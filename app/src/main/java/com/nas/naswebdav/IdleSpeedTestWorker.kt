@@ -51,7 +51,7 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
             // FIX #16: Thêm Authorization header để không bị server từ chối 401
             val request = okhttp3.Request.Builder()
                 .url("$apiBaseUrl/api/disk/speedtest")
-                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .post(ByteArray(0).toRequestBody(null, 0, 0))
                 .build()
             NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->

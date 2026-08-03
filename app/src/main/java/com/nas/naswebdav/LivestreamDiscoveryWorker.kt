@@ -39,7 +39,7 @@ class LivestreamDiscoveryWorker(
             val apiUrl = baseUrl.toApiBaseUrl() + "/api/livestream/status"
             val reqBuilder = Request.Builder().url(apiUrl)
             if (user.isNotEmpty() && pass.isNotEmpty()) {
-                reqBuilder.header("Authorization", Credentials.basic(user, pass))
+                reqBuilder.header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
             }
             val client = NasApplication.instance.fastApiClient
             val bodyStr = client.newCall(reqBuilder.build()).execute().use { resp ->

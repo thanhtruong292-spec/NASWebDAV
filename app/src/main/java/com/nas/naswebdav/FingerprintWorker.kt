@@ -57,7 +57,7 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                 try {
                     // Phone-side: tải raw image 512KB đầu tiên qua WebDAV Range,
                     // decode bitmap + tính aHash trên phone CPU — KHÔNG gọi NAS /api/thumb
-                    val authHeader = okhttp3.Credentials.basic(savedUser, savedPass)
+                    val authHeader = WebDavManager.AuthState(user = savedUser, pass = savedPass).authHeader
                     val thumbRequest = okhttp3.Request.Builder()
                         .url(file.path)
                         .header("Range", "bytes=0-524287") // 512KB — đủ cho aHash

@@ -116,7 +116,7 @@ fun FileItemGridCell(
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val auth = okhttp3.Credentials.basic(com.nas.naswebdav.WebDavManager.currentUser, com.nas.naswebdav.WebDavManager.currentPass)
+    val auth = okhttp3.WebDavManager.currentAuthState().authHeader
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
 

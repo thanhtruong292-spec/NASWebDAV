@@ -463,7 +463,7 @@ fun BrowserScreen(
                                     val request = okhttp3.Request.Builder()
                                         .url(apiUrl)
                                         .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                        .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                                        .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                                         .build()
                                         
                                     // Tăng timeout lên 5 phút vì thao tác quét và chép file toàn bộ NAS có thể lâu hơn 30s
@@ -1284,7 +1284,7 @@ fun BrowserScreen(
                                     val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
                                     val isMedia = isVideo || isImageFile
                                     val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
-                                    val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
+                                    val auth = WebDavManager.currentAuthState().authHeader
 
                                     Row(
                                         modifier = Modifier
@@ -1444,7 +1444,7 @@ fun BrowserScreen(
                                             val fmt = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.getDefault())
                                             fmt.format(java.util.Date(file.lastModified))
                                         } else ""
-                                        val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
+                                        val auth = WebDavManager.currentAuthState().authHeader
 
                                         Row(
                                             modifier = Modifier
@@ -1624,7 +1624,7 @@ fun BrowserScreenFileItemGridCell(
     // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
     val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
     val isMedia = isVideo || isImage
-    val auth = Credentials.basic(WebDavManager.currentUser, WebDavManager.currentPass)
+    val auth = WebDavManager.currentAuthState().authHeader
 
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current

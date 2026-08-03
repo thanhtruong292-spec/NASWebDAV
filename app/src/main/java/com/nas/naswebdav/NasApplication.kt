@@ -704,7 +704,7 @@ object SmartNetworkManager {
             val request = okhttp3.Request.Builder()
                 .url(apiUrl)
                 .head()
-                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .build()
 
             client.newCall(request).execute().use { it.isSuccessful }

@@ -400,7 +400,7 @@ class SmartToolsViewModel(
                 val pass = com.nas.naswebdav.SecurePrefsHelper.getPass(NasApplication.instance.applicationContext)
                 val request = okhttp3.Request.Builder()
                     .url(apiUrl)
-                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                     .build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
@@ -436,7 +436,7 @@ class SmartToolsViewModel(
                 val request = okhttp3.Request.Builder()
                     .url(apiUrl)
                     .post(body)
-                    .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                    .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                     .build()
                 NasApplication.instance.fastApiClient.newCall(request).execute().use { }
                 kotlinx.coroutines.delay(1000)
