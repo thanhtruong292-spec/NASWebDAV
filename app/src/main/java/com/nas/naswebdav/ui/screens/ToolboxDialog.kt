@@ -329,7 +329,6 @@ fun ToolboxDialog(
                     // ~15k entry/lần), không phải audit toàn bộ thư viện -> tránh hiểu nhầm
                     // "Thiếu 0" = cả NAS đã đủ thumbnail.
                     subtitle = when {
-                        ta == null -> "Thống kê & Quét"
                         ta.running -> "Đang quét nền... ${ta.thumbnailed}/${ta.total}"
                         else -> "Quét gần nhất: thiếu ${ta.missing}/${ta.total}"
                     },
@@ -340,11 +339,11 @@ fun ToolboxDialog(
                     // cửa sổ gần nhất không thiếu, vì có thể còn file ngoài cửa sổ/cursor).
                     onClick = {
                         when {
-                            ta != null && ta.running -> {
+                            ta.running -> {
                                 smartToolsVM.fetchThumbnailAudit()
                                 android.widget.Toast.makeText(context, "Đang quét nền — đã làm mới trạng thái.", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                            ta != null && ta.missing > 0 -> {
+                            ta.missing > 0 -> {
                                 smartToolsVM.triggerThumbnailScan()
                                 android.widget.Toast.makeText(context, "Đã gửi lệnh quét ${ta.missing} ảnh còn thiếu vào nền.", android.widget.Toast.LENGTH_SHORT).show()
                             }

@@ -22,3 +22,18 @@ nas_state.db
 # Generated caches
 .pytest_cache/
 __pycache__/
+
+# AI agent / tooling state
+.agent/
+.agents/
+.claude/
+.planning/
+.tools/
+.windsurf/
+
+# Scratch & temp files
+scratch/
+*.tmp
+*.log
+!gradle/wrapper/gradle-wrapper.jar
+!gradlew.bat
