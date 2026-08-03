@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.core.LinearEasing
@@ -162,9 +163,12 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         verticalArrangement = Arrangement.Center
     ) {
         Image(
-            painter = painterResource(R.drawable.ic_launcher_foreground),
-            contentDescription = "NAS Chainedbox",
-            modifier = Modifier.size(140.dp)
+            painter = painterResource(R.drawable.ic_nas_server),
+            contentDescription = "NAS Server",
+            modifier = Modifier
+                .size(180.dp)
+                .clip(RoundedCornerShape(16.dp)),
+            contentScale = ContentScale.Fit
         )
         Spacer(Modifier.height(16.dp))
         Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
