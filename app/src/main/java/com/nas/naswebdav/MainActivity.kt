@@ -784,13 +784,17 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
 
         composable("video") {
 
+            // AUTH FIX: snapshot credentials at composition time so the in-app player
+            // matches the external player path (which already snapshots tap-time auth).
+            val auth = remember { WebDavManager.currentAuthState() }
+
             com.nas.naswebdav.ui.screens.ExoPlayerScreen(
 
                 url = mediaUrl,
 
-                user = WebDavManager.currentUser,
+                user = auth.user,
 
-                pass = WebDavManager.currentPass,
+                pass = auth.pass,
 
                 onBack = { navController.popBackStack() }
 

@@ -91,6 +91,10 @@ private fun mediaWebDavBaseForActiveHost(originalUrl: String, activeBaseUrl: Str
         val active = activeBaseUrl.trimEnd('/').takeIf { it.isNotBlank() }?.let { java.net.URL(it) }
         val host = active?.host?.takeIf { it.isNotBlank() } ?: original.host
         val protocol = active?.protocol?.takeIf { it == "http" || it == "https" } ?: original.protocol
+        // Preserve the discovered/explicit WebDAV port. Never replace it with a hardcoded
+        // port: LAN and Tailscale deployments can expose WebDAV on different ports.
+        val portNumber = active?.port?.takeIf { it > 0 } ?: original.port
+        val port = if (portNumber > 0) ":$portNumber" else ""
         val path = original.path ?: ""
         val webDavRoot = "/webdav/"
         val basePath = if (path.contains(webDavRoot)) {
@@ -98,7 +102,7 @@ private fun mediaWebDavBaseForActiveHost(originalUrl: String, activeBaseUrl: Str
         } else {
             "/webdav/"
         }
-        "$protocol://$host:8822$basePath"
+        "$protocol://$host$port$basePath"
     }.getOrDefault(inferWebDavBaseUrl(originalUrl))
 }
 
@@ -261,8 +265,11 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
         // Khi dùng mạng LAN ổ NAS quay siêu nhanh, nếu ép điện thoại chép Video vào bộ nhớ Flash 
         // lúc tua (Seeking) sẽ bị thắt cổ chai vòng quay (Flash memory Write Speed quá thấp). 
         // -> Đọc thẳng luồng stream từ NAS đổ vào RAM hiển thị luôn!
+        // AUTH FIX: use the resolved credential snapshot with UTF-8 Base64. The client interceptor
+        // supplies current auth only when no explicit header is present.
+        val authHeader = WebDavManager.AuthState(user = resolvedUser, pass = resolvedPass).authHeader
         val dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(app.videoStreamingClient)
-            .setDefaultRequestProperties(mapOf("Authorization" to okhttp3.Credentials.basic(resolvedUser, resolvedPass)))
+            .setDefaultRequestProperties(mapOf("Authorization" to authHeader))
 
         // 4. EXTRACTORS - Tối ưu mạnh mẽ để quét được độ dài (00:00 bug fix)
         val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
@@ -650,7 +657,9 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                                 exoPlayer.pause()
                                 openExternalVideoPlayer(
                                     context = context,
-                                    url = effectiveUrl,
+                                    // Keep the original WebDAV URL so the external-player helper
+                                    // can apply its existing /webdav/ -> /media/ rewrite.
+                                    url = playbackUrl,
                                     user = resolvedUser,
                                     pass = resolvedPass,
                                     onError = { android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài") }

@@ -781,8 +781,11 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         // Khi dùng mạng LAN ổ NAS quay siêu nhanh, nếu ép điện thoại chép Video vào bộ nhớ Flash 
         // lúc tua (Seeking) sẽ bị thắt cổ chai vòng quay (Flash memory Write Speed quá thấp). 
         // -> Đọc thẳng luồng stream từ NAS đổ vào RAM hiển thị luôn!
+        // AUTH FIX: use UTF-8 Base64 auth header instead of ISO-8859-1 Credentials.basic().
+        // The client interceptor supplies current auth only when no explicit header is present.
+        val authHeader = WebDavManager.AuthState(user = resolvedUser, pass = resolvedPass).authHeader
         val dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(app.videoStreamingClient)
-            .setDefaultRequestProperties(mapOf("Authorization" to okhttp3.Credentials.basic(resolvedUser, resolvedPass)))
+            .setDefaultRequestProperties(mapOf("Authorization" to authHeader))
 
         // 4. EXTRACTORS - Tối ưu mạnh mẽ để quét được độ dài (00:00 bug fix)
         val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
@@ -1171,7 +1174,8 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                                 exoPlayer.pause()
                                 openExternalVideoPlayer(
                                     context = context,
-                                    url = effectiveUrl,
+                                    // Pass original WebDAV URL so external-player helper can rewrite /webdav/ → /media/.
+                                    url = url,
                                     user = resolvedUser,
                                     pass = resolvedPass,
                                     onError = { android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài") }

@@ -219,6 +219,29 @@ class NasApplication : Application(), ImageLoaderFactory {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            // AUTH FIX: Inject UTF-8 Basic Auth header theo cùng pattern fastApiClient.
+            // Trước đây caller tự gọi okhttp3.Credentials.basic() (ISO-8859-1) → password chứa
+            // dấu tiếng Việt bị corrupt → NAS 401 chỉ riêng với video. authHeader dùng
+            // Base64 UTF-8 (giống WebDavManager) để đảm bảo thống nhất với phần còn lại của app.
+            // Chỉ inject khi request CHƯA có Authorization — nếu caller explicit set header
+            // (ví dụ credential snapshot) thì giữ nguyên.
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val req = if (request.header("Authorization") != null) {
+                    // Caller explicitly provided auth — respect it (e.g., snapshot creds).
+                    request
+                } else {
+                    val authState = WebDavManager.currentAuthState()
+                    if (authState.user.isNotEmpty()) {
+                        request.newBuilder()
+                            .header("Authorization", authState.authHeader)
+                            .build()
+                    } else {
+                        request
+                    }
+                }
+                chain.proceed(req)
+            }
             .build()
     }
 
@@ -243,8 +266,11 @@ class NasApplication : Application(), ImageLoaderFactory {
         // TỐI ƯU: Dùng OkHttpDataSource thay vì DefaultHttpDataSource
         // → Tái sử dụng Connection Pool (15 kết nối, keep-alive 5 phút)
         // → Giảm latency handshake HTTP từ ~200ms xuống ~0ms cho request thứ 2+
+        // AUTH FIX: inject UTF-8 Base64 header explicitly so logout/credential-snapshot
+        // paths stay consistent with the rest of the app.
+        val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
         val okHttpDataSourceFactory = OkHttpDataSource.Factory(videoStreamingClient)
-            .setDefaultRequestProperties(mapOf("Authorization" to okhttp3.Credentials.basic(user, pass)))
+            .setDefaultRequestProperties(mapOf("Authorization" to authHeader))
 
         return CacheDataSource.Factory()
             .setCache(videoCache)

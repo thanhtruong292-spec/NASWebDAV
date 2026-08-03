@@ -83,12 +83,18 @@ fun LivestreamRecordDialog(
     // Kept as Unit: one-shot watch-list fetch when dialog opens.
     LaunchedEffect(Unit) { liveVM.fetchTikTokLiveWatch(context) }
 
+    // URL sanitizer: strip invisible Unicode (U+200B zero-width space, U+FEFF BOM,
+    // newlines, carriage returns) that social apps inject when copying links.
+    fun sanitizeUrl(raw: String): String {
+        return raw.replace(Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u200E\\u200F\\u2028\\u2029\\r\\n]"), "").trim()
+    }
+
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
     // Kept as Unit: one-shot auto-paste from clipboard on dialog open.
     LaunchedEffect(Unit) {
         val clipText = clipboardManager.getText()?.text ?: ""
         if (clipText.isNotBlank() && listOf("tiktok", "facebook", "fb.watch", "youtube", "youtu.be", "shopee").any { clipText.contains(it, true) }) {
-            liveUrl = clipText.trim()
+            liveUrl = sanitizeUrl(clipText)
             livePanelMode = "record"
             liveVM.clearLivestreamMessage()
         }
@@ -268,7 +274,7 @@ fun LivestreamRecordDialog(
             com.nas.naswebdav.ui.components.CompactTextField(
                 value = liveUrl,
                 onValueChange = {
-                    liveUrl = it
+                    liveUrl = sanitizeUrl(it)
                     liveVM.clearLivestreamMessage()
                 },
                 placeholder = "Dán link livestream — https://www.tiktok.com/@user/live",
@@ -333,9 +339,9 @@ fun LivestreamRecordDialog(
                     Text(liveVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else if (message.isNotEmpty()) {
-                // FIX: Auto-clear lỗi sau 5 giây để hiện lại nút "BẮT ĐẦU GHI"
+                // FIX: Auto-clear lỗi sau 10 giây để user kịp đọc, rồi hiện lại nút "BẮT ĐẦU GHI"
                 LaunchedEffect(message) {
-                    kotlinx.coroutines.delay(5000L)
+                    kotlinx.coroutines.delay(10000L)
                     liveVM.clearLivestreamMessage()
                 }
                 Spacer(Modifier.height(6.dp))

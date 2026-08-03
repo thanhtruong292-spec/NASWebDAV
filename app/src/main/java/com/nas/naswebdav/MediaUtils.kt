@@ -72,7 +72,7 @@ fun downloadAndPlay(
 
             val request = okhttp3.Request.Builder()
                 .url(url)
-                .header("Authorization", okhttp3.Credentials.basic(user, pass))
+                // AUTH FIX: videoStreamingClient injects UTF-8 Authorization header centrally.
                 .build()
 
             NasApplication.instance.videoStreamingClient
