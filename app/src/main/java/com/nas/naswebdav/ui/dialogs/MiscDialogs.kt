@@ -6,6 +6,7 @@ import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.components.NasAlertDialog
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -94,7 +95,7 @@ fun FolderPickerDialog(
         text = {
             Box(modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 400.dp)) {
                 if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    NasLoadingSpinner(size = 28.dp, color = AccentCyan, strokeWidth = 3.dp)
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         if (currentUrl.trimEnd('/') != WebDavManager.currentBaseUrl.trimEnd('/')) {
@@ -114,7 +115,7 @@ fun FolderPickerDialog(
                                     Spacer(Modifier.width(16.dp))
                                     Text(".. (Quay lại)", fontWeight = FontWeight.Medium)
                                 }
-                                HorizontalDivider(color = TextSecondary.copy(alpha = 0.3f))
+                                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             }
                         }
 
@@ -139,7 +140,7 @@ fun FolderPickerDialog(
                                     Spacer(Modifier.width(16.dp))
                                     Text(folder.name, fontWeight = FontWeight.Medium)
                                 }
-                                HorizontalDivider(color = TextSecondary.copy(alpha = 0.3f))
+                                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             }
                         }
                     }
@@ -407,7 +408,7 @@ fun LanWhitelistDialog(
 
             if (isLoading) {
                 Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = AccentGreen, modifier = Modifier.size(28.dp))
+                    NasLoadingSpinner(size = 28.dp, color = AccentGreen, strokeWidth = 3.dp)
                 }
             } else if (errorMessage.isNotBlank()) {
                 Text(errorMessage, color = AccentRed, fontSize = 13.sp, modifier = Modifier.padding(8.dp))

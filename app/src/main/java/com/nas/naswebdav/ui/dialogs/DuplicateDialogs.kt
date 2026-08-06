@@ -97,7 +97,7 @@ fun DuplicateConfigDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = TextTertiary)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
 
                 // Option 3: Tự động chạy ngầm (Auto Clean)

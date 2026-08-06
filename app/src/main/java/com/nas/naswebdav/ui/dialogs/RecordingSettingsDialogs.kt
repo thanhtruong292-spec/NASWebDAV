@@ -137,7 +137,7 @@ fun BiometricSettingsDialogCompat(
 
             // Enable toggle
             Spacer(Modifier.height(5.dp))
-            HorizontalDivider(color = DarkCard)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -449,7 +449,7 @@ fun SleepScheduleDialog(
 
             // Enable toggle
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = DarkCard)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localEnabled = !localEnabled }) {
                 Switch(

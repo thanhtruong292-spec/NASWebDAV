@@ -372,7 +372,7 @@ fun BrowserScreen(
                     }
 
                     Spacer(Modifier.height(8.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                     Spacer(Modifier.height(8.dp))
 
                     // Option 3: Tự động chạy ngầm (Auto Clean)

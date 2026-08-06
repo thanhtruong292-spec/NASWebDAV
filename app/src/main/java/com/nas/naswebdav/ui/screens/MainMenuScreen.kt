@@ -9,6 +9,8 @@ import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasHorizontalDivider
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
@@ -1519,7 +1521,7 @@ private fun MainMenuDashboardTorrentActivityCard(
                     if (completedTorrents.isNotEmpty()) {
                         if (downloadingTorrents.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
-                            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.1f), thickness = 0.7.dp)
+                            androidx.compose.material3.HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             Spacer(Modifier.height(8.dp))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1823,14 +1825,7 @@ fun MainMenuDashboardGaugeCard(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.size(64.dp),
-                        color = accentColor,
-                        trackColor = TextSecondary.copy(alpha = 0.15f),
-                        strokeWidth = 5.dp,
-                        strokeCap = StrokeCap.Round
-                    )
+                    NasLoadingSpinner(size = 20.dp, color = accentColor, strokeWidth = 5.dp)
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy((-3).dp)
@@ -2705,7 +2700,7 @@ fun MainMenuSystemStatusCards(
                         }
 
                         if (showThumbTask && thumbIsActive && (dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- DUPLICATE QUÉT ---
@@ -2808,7 +2803,7 @@ fun MainMenuSystemStatusCards(
                           }
 
                         if (dupIsActive && (autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- AUTO BACKUP ---
@@ -2869,7 +2864,7 @@ fun MainMenuSystemStatusCards(
                         }
 
                         if (autoBackupIsActive && (usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- USB IMPORT ---
@@ -2935,7 +2930,7 @@ fun MainMenuSystemStatusCards(
                         }
 
                         if (usbImportIsActive && activeStreams.isNotEmpty()) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- LIVESTREAM ---
@@ -3234,11 +3229,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                     fontWeight = FontWeight.Bold
                 )
                 if (systemMonitorVM.isLoadingProcesses) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = AccentCyan
-                    )
+                    NasLoadingSpinner(size = 24.dp, color = AccentCyan, strokeWidth = 2.dp)
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -3248,7 +3239,7 @@ fun MainMenuBottomSheetProcessListBottomSheet(
                 Text("TIẾN TRÌNH", style = MaterialTheme.typography.labelMedium, color = TextSecondary, modifier = Modifier.weight(1f))
                 Text(if (sortBy == "cpu") "CPU" else "RAM", style = MaterialTheme.typography.labelMedium, color = TextSecondary, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
-            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+NasHorizontalDivider(thickness = 1.dp)
 
             val displayProcesses = systemMonitorVM.systemProcesses.filter {
                 (if (sortBy == "cpu") it.cpu >= 0f else it.mem >= 0f)
@@ -3425,7 +3416,7 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
             }
 
             Spacer(Modifier.height(4.dp))
-            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+NasHorizontalDivider(thickness = 1.dp)
             Spacer(Modifier.height(4.dp))
 
             // Table header
@@ -3516,11 +3507,7 @@ fun MainMenuBottomSheetSmbBottomSheet(
                 }
 
                 if (deviceVM.isLoadingSmb) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = AccentCyan,
-                        strokeWidth = 2.dp
-                    )
+                    NasLoadingSpinner(size = 24.dp, color = AccentCyan, strokeWidth = 2.dp)
                 } else {
                     androidx.compose.material3.Switch(
                         checked = deviceVM.isSmbEnabled,

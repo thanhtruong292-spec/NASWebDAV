@@ -76,7 +76,7 @@ fun FailedUploadsDialog(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator()
+                            com.nas.naswebdav.ui.components.NasLoadingSpinner()
                         }
                     }
                     failedUploads.isEmpty() -> {

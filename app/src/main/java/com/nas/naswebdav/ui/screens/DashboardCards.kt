@@ -633,7 +633,7 @@ internal fun TorrentActivityCard(
                     if (completedTorrents.isNotEmpty()) {
                         if (downloadingTorrents.isNotEmpty()) {
                             Spacer(Modifier.height(AppSpacing.SM))
-                            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.1f), thickness = 0.7.dp)
+                            androidx.compose.material3.HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             Spacer(Modifier.height(AppSpacing.SM))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {

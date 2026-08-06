@@ -7,6 +7,7 @@ import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.components.NasAlertDialog
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import com.nas.naswebdav.ui.screens.AccentOrange
 import com.nas.naswebdav.ui.screens.AccentRed
@@ -346,7 +347,7 @@ fun SmartDiskDialog(
                                 Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         if (deviceVM.isTestingSpeed) {
-                                            CircularProgressIndicator(color = TextPrimary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            NasLoadingSpinner(size = 24.dp, color = TextPrimary, strokeWidth =  2.dp)
                                             Spacer(Modifier.width(8.dp))
                                         }
                                         Text(if (deviceVM.isTestingSpeed) "Đang kiểm tra..." else "Bắt đầu kiểm tra", color = TextPrimary, fontWeight = FontWeight.Bold)
@@ -447,7 +448,7 @@ private fun DialogsTikTokLiveWatchSection(
         )
     }
 
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
     Spacer(Modifier.height(4.dp))
     // Header clickable -> toggle list user. Hien icon expand/collapse + count.
     Row(
@@ -774,7 +775,7 @@ private fun DialogsTikTokLiveWatchSection(
     Spacer(Modifier.height(4.dp))
     Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(4.dp))
-    HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
     Spacer(Modifier.height(4.dp))
     // Header "Thoi gian loai tru" — clickable, hien icon expand/collapse.
     // Switch tat/bat de o header de user co the bat/tat khong can mo panel.
@@ -976,7 +977,7 @@ fun AutoBackupDialog(
             }
 
             Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(6.dp))
 
             Text("Chế độ sao lưu:", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -1055,7 +1056,7 @@ fun AutoBackupDialog(
             // ─── Schedule Section ───
             androidx.compose.animation.AnimatedVisibility(visible = isAutoBackupEnabled) {
                 Column(modifier = Modifier.padding(top = 4.dp)) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                     Spacer(Modifier.height(6.dp))
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1437,7 +1438,7 @@ fun SystemLogDialog(
                                     }
                                 }
                                 if (isExpanded && group.count > 1) {
-                                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.15f))
+                                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                                     group.logs.reversed().forEach { log ->
                                         val subColor = when (log.type) {
                                             "SUCCESS" -> MaterialTheme.colorScheme.tertiary
@@ -1493,7 +1494,7 @@ fun DockerDialog(
                 Text("Quản lý Docker", fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 if (deviceVM.isFetchingDocker) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                 } else {
                     IconButton(onClick = { deviceVM.loadDockerContainers() }, modifier = Modifier.minimumInteractiveComponentSize()) {
                         Icon(Icons.Default.Refresh, "Làm mới", tint = MaterialTheme.colorScheme.outline)
@@ -1781,7 +1782,7 @@ fun DialogsLanWhitelistDialog(
 
             if (isLoading) {
                 Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.minimumInteractiveComponentSize())
+                    NasLoadingSpinner(size = 24.dp, color = MaterialTheme.colorScheme.tertiary, strokeWidth = 3.dp)
                 }
             } else if (errorMessage.isNotBlank()) {
                 Text(errorMessage, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
@@ -1932,7 +1933,7 @@ fun DialogsDuplicateConfigDialog(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
 
                 // Option 3: Tự động chạy ngầm (Auto Clean)
@@ -2492,7 +2493,7 @@ fun DialogsLivestreamRecordDialog(
             if (livestreamVM.isStartingLivestream) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(livestreamVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -2539,7 +2540,7 @@ fun DialogsLivestreamRecordDialog(
             // động đóng các panel khác (watchlist + exclude) thông qua DialogsLivestreamPanelState.
             val activeExpanded = DialogsLivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2738,7 +2739,7 @@ fun DialogsBiometricSettingsDialog(
 
             // Enable toggle
             Spacer(Modifier.height(5.dp))
-            HorizontalDivider(color = DarkCard)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -3075,7 +3076,7 @@ fun DialogsUsbImportDialog(
                     Text(state.status.uppercase(), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     if (deviceVM.isUsbImportLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
+                        NasLoadingSpinner(size = 24.dp, color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                     }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -3794,7 +3795,7 @@ fun DialogsNasConfigBackupDialog(
             }
 
             Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = DarkCard)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(6.dp))
 
             // List header
@@ -3902,7 +3903,7 @@ fun DialogsNasConfigBackupDialog(
             if (isPreparingShare) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                     Text("Đang tải file từ NAS để share...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
@@ -3910,7 +3911,7 @@ fun DialogsNasConfigBackupDialog(
             if (sysMonitorVM.isRestoringNasConfigBackup) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.error, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = MaterialTheme.colorScheme.error, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                     Text("Đang khôi phục + restart services...", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
                 }

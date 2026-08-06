@@ -5,6 +5,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -334,7 +335,7 @@ fun LivestreamRecordDialog(
             if (liveVM.isStartingLivestream) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(liveVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -388,7 +389,7 @@ fun LivestreamRecordDialog(
             // động đóng các panel khác (watchlist + exclude) thông qua LivestreamPanelState.
             val activeExpanded = LivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
-                HorizontalDivider(color = TextTertiary)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

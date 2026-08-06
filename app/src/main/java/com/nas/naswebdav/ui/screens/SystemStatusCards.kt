@@ -5,6 +5,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasHorizontalDivider
 import com.nas.naswebdav.LocalSmartToolsVM
 import com.nas.naswebdav.LocalAutoBackupVM
 import com.nas.naswebdav.LocalLivestreamVM
@@ -283,7 +284,7 @@ fun DashboardSystemStatusCards(
                         }
 
                         if (showThumbTask && thumbIsActive && (dupIsActive || autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- DUPLICATE QUÉT ---
@@ -386,7 +387,7 @@ fun DashboardSystemStatusCards(
                           }
 
                         if (dupIsActive && (autoBackupIsActive || usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- AUTO BACKUP ---
@@ -497,7 +498,7 @@ fun DashboardSystemStatusCards(
                         }
 
                         if (autoBackupIsActive && (usbImportIsActive || activeStreams.isNotEmpty())) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- USB IMPORT ---
@@ -563,7 +564,7 @@ fun DashboardSystemStatusCards(
                         }
 
                         if (usbImportIsActive && activeStreams.isNotEmpty()) {
-                            HorizontalDivider(color = TextSecondary.copy(alpha=0.1f), modifier = Modifier.padding(vertical = 6.dp))
+                            NasHorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                         }
 
                         // --- LIVESTREAM ---

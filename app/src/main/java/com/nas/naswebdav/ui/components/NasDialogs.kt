@@ -2,6 +2,8 @@ package com.nas.naswebdav.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -16,6 +18,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -207,6 +210,88 @@ fun NasBottomSheetContent(
         }
 
         content()
+    }
+}
+
+/**
+ * AMOLED-consistent horizontal divider with subtle color.
+ */
+@Composable
+fun NasHorizontalDivider(
+    modifier: Modifier = Modifier,
+    thickness: Dp = 1.dp,
+) {
+    HorizontalDivider(
+        modifier = modifier,
+        color = TextTertiary.copy(alpha = 0.2f),
+        thickness = thickness,
+    )
+}
+
+/**
+ * AMOLED card wrapper using DarkCard.
+ */
+@Composable
+fun NasCard(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (onClick != null) {
+        Card(
+            onClick = onClick,
+            modifier = modifier,
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+            shape = RoundedCornerShape(10.dp),
+        ) {
+            Column(content = content)
+        }
+    } else {
+        Card(
+            modifier = modifier,
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+            shape = RoundedCornerShape(10.dp),
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+/**
+ * Standard dialog button row: primary gradient + secondary outlined.
+ */
+@Composable
+fun NasDialogButtonRow(
+    primaryText: String,
+    onPrimary: () -> Unit,
+    secondaryText: String = "Hủy",
+    onSecondary: () -> Unit = {},
+    primaryEnabled: Boolean = true,
+    primaryGradientColors: List<Color> = listOf(AccentCyan, AccentCyan, AccentGreen),
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        NasGradientButton(
+            onClick = onPrimary,
+            text = primaryText,
+            modifier = Modifier.weight(1f),
+            height = 36.dp,
+            shape = RoundedCornerShape(10.dp),
+            enabled = primaryEnabled,
+            gradientColors = primaryGradientColors,
+        )
+        OutlinedButton(
+            onClick = onSecondary,
+            modifier = Modifier.weight(1f),
+            enabled = primaryEnabled,
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        ) {
+            Text(secondaryText, color = TextSecondary, fontSize = 13.sp)
+        }
     }
 }
 

@@ -7,6 +7,7 @@ import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasHorizontalDivider
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
@@ -111,7 +112,7 @@ fun ProcessListBottomSheet(
                 Text("TIẾN TRÌNH", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.weight(1f))
                 Text(if (sortBy == "cpu") "CPU" else "RAM", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.width(50.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
             }
-            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+NasHorizontalDivider(thickness = 1.dp)
 
             val sysProcKeywords = listOf(
                 "kworker", "systemd", "rcu", "migration", "ksoftirqd", "init", "kthreadd",
@@ -291,7 +292,7 @@ fun SmartDetailBottomSheet(
             }
 
             Spacer(Modifier.height(4.dp))
-            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.2f), thickness = 1.dp)
+NasHorizontalDivider(thickness = 1.dp)
             Spacer(Modifier.height(4.dp))
 
             // Table header

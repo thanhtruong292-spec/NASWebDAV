@@ -5,6 +5,7 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
@@ -153,7 +154,7 @@ fun UsbImportDialog(
                     Text(state.status.uppercase(), color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     if (deviceVM.isUsbImportLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), color = AccentBlue, strokeWidth = 2.dp)
+                        NasLoadingSpinner(size = 14.dp, color = AccentBlue, strokeWidth = 2.dp)
                     }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -542,7 +543,7 @@ fun NasConfigBackupDialog(
             }
 
             Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = DarkCard)
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(6.dp))
 
             // List header
@@ -650,7 +651,7 @@ fun NasConfigBackupDialog(
             if (isPreparingShare) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = AccentBlue, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 14.dp, color = AccentBlue, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                     Text("Đang tải file từ NAS để share...", color = TextTertiary, fontSize = 11.sp)
                 }
@@ -658,7 +659,7 @@ fun NasConfigBackupDialog(
             if (sysMonitorVM.isRestoringNasConfigBackup) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = AccentOrange, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 16.dp, color = AccentOrange, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
                     Text("Đang khôi phục + restart services...", color = AccentOrange, fontSize = 11.sp)
                 }
