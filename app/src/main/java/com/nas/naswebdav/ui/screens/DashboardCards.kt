@@ -101,7 +101,7 @@ internal fun MainDashboardHeader(
                 ) {
                     Text(
                         if (isOnlineStatus) "Online" else "Offline",
-                        style = AppTypography.BodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                        style = AppTypography.BodyMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -159,14 +159,14 @@ internal fun MainDashboardHeader(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFAB47BC).copy(alpha = 0.25f))
+                        .background(AccentPurple.copy(alpha = 0.25f))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         "v${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
                         fontSize = 10.sp,
-                        color = Color(0xFFE040FB),
+                        color = AccentPurple,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -357,7 +357,7 @@ internal fun DashboardSystemOverviewCard(
                                             }
                                             .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XS)
                                     ) {
-                                        Text(currentLabel, style = AppTypography.LabelMedium.copy(color = Color.Black, fontWeight = FontWeight.Bold))
+                                        Text(currentLabel, style = AppTypography.LabelMedium.copy(color = DarkSurface, fontWeight = FontWeight.Bold))
                                     }
                                     if (currentMode == "custom") {
                                         IconButton(
@@ -398,7 +398,7 @@ internal fun DashboardSystemOverviewCard(
                                             androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
                                         },
                                         containerColor = DarkCardHover,
-                                        textContentColor = Color.White
+                                        textContentColor = TextPrimary
                                     )
                                 }
                             }

@@ -19,6 +19,10 @@ import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -473,7 +477,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(DarkSurface)) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -523,7 +527,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                         .align(Alignment.TopStart)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                                colors = listOf(DarkSurface.copy(alpha = 0.7f), Color.Transparent)
                             )
                         )
                         .padding(top = 24.dp, start = 16.dp, end = 16.dp, bottom = 48.dp),
@@ -553,7 +557,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f))
+                            colors = listOf(Color.Transparent, DarkSurface.copy(alpha = 0.62f))
                         )
                     )
                     .padding(start = 10.dp, end = 10.dp, bottom = 12.dp, top = 18.dp)
@@ -572,7 +576,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                     valueRange = 0f..playbackDurationMs.coerceAtLeast(1L).toFloat(),
                     colors = SliderDefaults.colors(
                         thumbColor = MaterialTheme.colorScheme.onSurface,
-                        activeTrackColor = Color(0xFFFFC7B2),
+                        activeTrackColor = AccentOrange,
                         inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.42f)
                     ),
                     modifier = Modifier
@@ -615,7 +619,7 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                                     exoPlayer.seekTo(duration)
                                 }
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.minimumInteractiveComponentSize()
                         ) {
                             Icon(Icons.Default.SkipNext, stringResource(R.string.cd_skip_next), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
@@ -633,23 +637,35 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { isMuted = !isMuted }, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = { isMuted = !isMuted },
+                            modifier = Modifier.minimumInteractiveComponentSize().semantics {
+                                stateDescription = if (isMuted) "Tắt tiếng: Bật" else "Tắt tiếng: Tắt"
+                                role = Role.Button
+                            }
+                        ) {
                             Icon(
                                 if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                "Âm lượng",
-                                tint = if (isMuted) Color(0xFFFF8A80) else MaterialTheme.colorScheme.onSurface,
+                                if (isMuted) "Đang tắt tiếng" else "Đang bật tiếng",
+                                tint = if (isMuted) AccentRed else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        IconButton(onClick = { isRepeat = !isRepeat }, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = { isRepeat = !isRepeat },
+                            modifier = Modifier.minimumInteractiveComponentSize().semantics {
+                                stateDescription = if (isRepeat) "Lặp lại: Bật" else "Lặp lại: Tắt"
+                                role = Role.Button
+                            }
+                        ) {
                             Icon(
                                 Icons.Default.Repeat,
-                                "Lặp lại",
+                                if (isRepeat) "Đang lặp lại" else "Không lặp lại",
                                 tint = if (isRepeat) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
@@ -665,11 +681,11 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                                     onError = { android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài") }
                                 )
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.minimumInteractiveComponentSize()
                         ) {
                             Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Default.Delete, "Xóa video", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                         }
                     }

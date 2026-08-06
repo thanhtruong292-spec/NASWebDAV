@@ -726,9 +726,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             return@withContext Result.success()
 
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            // Guideline: isStopped || CancellationException → Result.retry() (không nuốt cancellation)
+            if (isStopped || e is kotlinx.coroutines.CancellationException) return@withContext Result.retry()
             SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
-            return@withContext Result.failure()
+            return@withContext Result.retry()
         } finally {
             isUiUpdating.set(false)
             // Chờ UI updater tự thoát sau khi isUiUpdating = false (vòng lặp kiểm tra flag này)

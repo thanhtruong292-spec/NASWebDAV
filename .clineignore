@@ -1,0 +1,213 @@
+# ==========================================
+# FILE .clineignore TỐI ƯU HÓA TOKEN TỐI ĐA
+# ==========================================
+
+# Trọng tâm làm việc: file *.kt và nas_api_server.py
+# 1. Thư mục IDE, Git repo clone & Cấu hình cục bộ (Rất dài và không mang logic code)
+**/.git/
+**/.github/
+**/.gitmodules
+**/.svn/
+**/.idea/
+**/.gradle/
+**/.vscode/
+**/.vs/
+**/local.properties
+**/*.suo
+**/*.user
+
+# 2. Android & Kotlin (Artifacts & Code sinh tự động)
+**/build/
+**/app/build/
+**/*.apk
+**/*.aab
+**/*.jks
+**/*.keystore
+**/*~
+
+# 3. Python & Server (Cache, Môi trường ảo & Lock files)
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/venv/
+**/.venv/
+**/env/
+**/poetry.lock
+**/pip-log.txt
+
+# 4. .NET, C# & PowerShell (Thư mục biên dịch)
+**/bin/
+**/obj/
+**/TestResults/
+
+# 5. Native Binaries, GraalVM & Executables (Tuyệt đối không để LLM đọc)
+**/*.exe
+**/*.dll
+**/*.so
+**/*.class
+**/*.o
+
+# 6. Dữ liệu lớn & Media (Nguyên nhân chính gây tràn Context Window)
+# AI không thể "đọc hiểu" file nén/bảng tính thô bằng cách đọc mã nhị phân của chúng
+**/*.xlsx
+**/*.xls
+**/*.csv
+**/*.sqlite
+**/*.db
+**/*.parquet
+**/*.log
+**/*.pdf
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.svg
+**/*.ico
+**/*.mp4
+
+# 7. Frontend, Web & Node (Quản lý thư viện)
+**/node_modules/
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+**/dist/
+**/out/
+#FILE EDITING RULES:
+
+When modifying existing source files, you MUST strictly use the replace_in_file (or equivalent diff/search-and-replace) tool to target only the specific lines that need changes.
+
+DO NOT use write_to_file to output or rewrite the entire file unless you are creating a completely new file from scratch.
+
+Provide only the exact code blocks being replaced.
+# 1. NGUYÊN TẮC NGỮ CẢNH VÀ TRÍ NHỚ (QUAN TRỌNG NHẤT)
+- CẤM TUYỆT ĐỐI sử dụng trí nhớ từ các đoạn hội thoại trước đó để tự suy diễn hoặc áp dụng vào code.
+- Mọi lần thực hiện chỉnh sửa, phải coi như ĐÂY LÀ LẦN ĐẦU TIÊN đọc file đó.
+- Nếu không chắc chắn về cấu trúc file, phải yêu cầu người dùng cung cấp lại toàn bộ nội dung file hiện tại trước khi đưa ra bất kỳ dòng code nào.
+
+# 2. BẢO VỆ LOGIC HIỆN TẠI (ANTI-HALLUCINATION)
+- CHỈ tập trung giải quyết ĐÚNG vấn đề hoặc lỗi được yêu cầu. Không được phép tự ý mở rộng phạm vi.
+- KHÔNG cấu trúc lại (refactor), KHÔNG đổi tên biến, KHÔNG tối ưu hóa các hàm/logic xung quanh nếu người dùng không yêu cầu, kể cả khi bạn cho rằng nó "chưa đẹp".
+- Nếu bắt buộc phải thay đổi một logic cũ để fix bug, phải giải thích ngắn gọn rủi ro và xin phép trước khi thực thi.
+
+# 3. NGUYÊN TẮC THỰC THI (FILE EDITING)
+- Chỉ sử dụng công cụ thay thế cục bộ (replace_in_file hoặc tương đương) để nhắm đúng dòng cần sửa.
+- Không bao giờ dùng lệnh ghi đè toàn bộ file (write_to_file) trừ khi tạo file mới tinh.
+- CẤM dùng PowerShell `Set-Content`, `Out-File`, pipeline đọc toàn file rồi ghi lại toàn file, hoặc bất kỳ lệnh rewrite toàn file nào với file có tiếng Việt/UTF-8 như `nas_api_server.py`, vì dễ làm hỏng encoding/mojibake. Chỉ được dùng `apply_patch`/diff cục bộ hoặc công cụ bảo toàn byte/encoding đã kiểm chứng.
+- CẤM HOÀN TOÀN PowerShell cho mọi thao tác dự án/NAS. Không dùng PowerShell cho SSH/SCP/Git/ADB/Gradle, không dùng cho lệnh đọc, không dùng để ghi file, không dùng để bọc lệnh Linux. Mọi command phải đi qua `cmd /c` hoặc `apply_patch`.
+- Dù dùng `cmd /c`, shell tool vẫn có lớp PowerShell bên ngoài. Vì vậy CẤM ghép nhiều lệnh bằng `&&`, `|`, `>`, `$()`, `$VAR`, `$((...))` trong cùng một chuỗi command. Luôn tách thành từng lệnh `cmd /c` đơn giản, hoặc tạo script an toàn bằng `apply_patch` rồi gọi script đó qua `cmd /c`.
+- Với SSH remote command, tránh toàn bộ cú pháp dễ bị PowerShell ăn trước như `$()`, `$VAR`, backtick, pipe/redirect phức tạp. Nếu cần logic nhiều bước trên NAS, tạo script `.sh` phía repo/NAS rồi chạy script, không nhồi logic vào một dòng SSH.
+- Không tự ý thêm thư viện, module hoặc dependencies bên thứ 3 vào dự án.
+
+# 4. CHỮ KÝ XÁC NHẬN (VERIFICATION TRIGGER)
+- Khi người dùng gõ lệnh "Kiểm tra nội quy", bạn phải trả lời chính xác câu này trước khi làm bất cứ việc gì: "[HỆ THỐNG]: Đã nạp quy tắc làm việc vô cảm và bảo vệ logic tuyệt đối."
+
+# 5. NGUYÊN TẮC TỐI ƯU HÓA TOKEN VÀ PHẠM VI LÀM VIỆC
+- Thực hiện tối ưu hóa tối đa việc sử dụng token.
+- Chỉ tập trung làm việc và xử lý trên các file `*.kt` và `nas_api_server.py`.
+- Khi khởi chạy, BẮT BUỘC phải đọc và tuân thủ tuyệt đối các nguyên tắc loại trừ trong file `.cursorignore`.
+- Tuyệt đối bỏ qua, không quét hoặc đọc nội dung của các git repository được clone về (các thư mục `.git` con) để tránh lãng phí token.
+
+# 6. PHÂN VAI VÀ TRÁCH NHIỆM CỦA AI (AI PERSONA & DUTIES)
+- Định vị người dùng: Giao tiếp và hỗ trợ người dùng với tư cách là một người mới hoàn toàn, không có kiến thức về code. KHÔNG yêu cầu người dùng tự viết code, tự sửa lỗi thủ công hay cần phải hiểu các logic kỹ thuật bên dưới.
+- Tự động hóa toàn diện: AI chịu trách nhiệm tự động hóa 100% quá trình viết code, thiết lập và giải quyết vấn đề dựa trên yêu cầu bằng ngôn ngữ tự nhiên.
+- Tiêu chuẩn hệ thống: Mã nguồn sinh ra bắt buộc phải hoạt động chính xác đúng chức năng, không có lỗi ngầm, và được cấu trúc theo chuẩn production (sẵn sàng phát hành) ngay từ dòng code đầu tiên.
+- Tiêu chuẩn UI/UX: Thiết kế giao diện phải hiện đại, trực quan và thân thiện. Đảm bảo độ hoàn thiện pixel-perfect, ứng dụng chuẩn Material Design 3, tích hợp mượt mà các hiệu ứng glassmorphism và hệ thống icon custom gradient.
+
+# 7. QUẢN LÝ PHIÊN BẢN VÀ BẢO TOÀN TÍNH NĂNG (CODE INHERITANCE)
+- Bắt buộc làm việc trên base code mới nhất: Trước khi thực hiện bất kỳ chỉnh sửa nào, phải đảm bảo đang phân tích trên mã nguồn thực tế ở commit mới nhất của dự án.
+- Kế thừa và bảo vệ code cũ: Mọi thay đổi, cập nhật hoặc bổ sung tính năng mới BẮT BUỘC phải kế thừa và tích hợp liền mạch với mã nguồn hiện hành. 
+- Cấm "vẽ code" (Anti-Hallucination): Tuyệt đối không được tự ý viết lại toàn bộ file, không được tự bịa ra các logic không có thật làm ghi đè hoặc đánh mất các tính năng cũ đang hoạt động tốt. Chỉ can thiệp chính xác vào các dòng/khối code cần thiết.
+- Yêu cầu xác minh: Nếu không chắc chắn 100% về toàn bộ bối cảnh của file hiện tại, bắt buộc phải yêu cầu hệ thống/người dùng cung cấp nội dung file đầy đủ trước khi xuất ra code thay thế.
+
+# 8. NGUYÊN TẮC COMMIT MỚI NHẤT, TRIỂN KHAI VÀ ADB
+- Tất cả cuộc trò chuyện và thao tác kỹ thuật chỉ tập trung vào commit mới nhất đang làm việc; không tự ý load, đọc, quét hoặc phân tích các vùng lịch sử/nhánh/thư mục khác nếu không trực tiếp cần cho yêu cầu hiện tại.
+- CẤM TUYỆT ĐỐI sửa lung tung hoặc kéo lỗi/logic cũ từ trí nhớ ra áp dụng. Mọi sửa đổi phải dựa trên file thực tế hiện tại, trạng thái API/NAS hiện tại và commit mới nhất; trước khi sửa phải đọc đúng đoạn code đang chạy và chỉ vá nguyên nhân đã xác minh.
+- Ưu tiên tiết kiệm token tối đa: chỉ đọc đúng file, đúng đoạn, đúng dòng cần xử lý; không mở rộng phạm vi điều tra khi chưa có bằng chứng cần thiết.
+- Sau khi người dùng xác nhận tính năng đã hoạt động, AI tự tiến hành commit và đẩy lên GitHub theo nhánh hiện tại, không hỏi lại các bước lặp lại.
+- Khi cần deploy, build APK hoặc cài APK qua ADB Wi-Fi, AI tự động thực hiện đầy đủ các bước cần thiết nếu môi trường đã có cấu hình phù hợp; không hỏi lại trừ khi thiếu thông tin bắt buộc hoặc thao tác có nguy cơ phá hủy dữ liệu.
+
+# 9. NGUYÊN TẮC UI/UX CHO THÔNG SỐ KỸ THUẬT
+- Tất cả thông báo, nhãn kỹ thuật và dữ liệu hiển thị cho người dùng phải dùng tiếng Việt chuẩn, chuyên nghiệp, dễ hiểu; chỉ giữ mã/thuật ngữ kỹ thuật trong ngoặc khi thật sự cần đối chiếu.
+- Biểu đồ bắt buộc phải có tiêu đề rõ ràng, thang đo, mốc tham chiếu, chú thích ngưỡng, số liệu tóm tắt và khoảng thời gian; không được hiển thị đường biểu đồ trống ngữ cảnh.
+- Các bottom sheet/dialog có biểu đồ hoặc nội dung dài phải chừa đủ khoảng trống cuối màn hình, không để biểu đồ/chú thích bị cắt bởi mép dưới hoặc thanh điều hướng.
+- Sau khi chỉnh UI Android, phải build APK và cài lại qua ADB Wi-Fi nếu thiết bị đang kết nối.
+
+# 10. NGUYÊN TẮC GHI NHỚ YÊU CẦU NGƯỜI DÙNG VÀ HIỆU ỨNG NHẤN
+- Khi bắt đầu bất kỳ cuộc trò chuyện/công việc nào trong dự án này, AI bắt buộc phải đọc `.clineignore` trước và duy trì các nguyên tắc trong file này xuyên suốt cuộc trò chuyện.
+- Mọi yêu cầu ổn định, lặp lại của người dùng phải được ghi bổ sung vào `.clineignore` để các phiên sau không cần nhắc lại.
+- Toàn bộ ứng dụng Android không được hiển thị ripple, nền xám, vệt sáng hoặc hiệu ứng nền mặc định khi nhấn/chạm vào nút, thẻ, hàng danh sách, chip, icon hoặc vùng có thể thao tác.
+- Khi thêm hoặc sửa UI Compose, mọi `clickable`/`combinedClickable` phải dùng `interactionSource` riêng và `indication = null`; các component Material phải được đặt trong cấu hình tắt ripple toàn cục.
+- Sau khi thay đổi quy tắc UI/ripple, phải rà soát bằng tìm kiếm mã nguồn để tránh còn sót vị trí dùng hiệu ứng nhấn mặc định.
+- Tất cả Bottom Sheet phải dùng padding container chuẩn `horizontal = 8.dp, vertical = 6.dp`, drag handle gọn, không chừa khoảng trống lớn phía trên nội dung và không ép nội dung sát mép.
+- Khi bổ sung tính năng mới cho NAS Dashboard, ưu tiên tối đa tính ổn định và khả năng tương thích với cấu hình NAS hiện tại; tính năng mới phải được thiết kế dạng độc lập, không làm thay đổi hoặc ảnh hưởng luồng hiện có nếu không có yêu cầu trực tiếp.
+- Tất cả tiêu đề của thẻ, card, panel, Bottom Sheet/BottomCard trong NAS Dashboard phải thống nhất cùng kiểu chữ với tiêu đề OMV: cỡ chữ 11sp, `FontWeight.Black`, `letterSpacing = 1.5sp`; chỉ khác màu theo nhóm chức năng để phân biệt với nội dung.
+- Trạng thái kết nối NAS trên header phải hiển thị bằng chip: Online nền xanh lá chữ trắng, Offline nền đỏ chữ trắng; trạng thái cập nhật realtime đặt cùng hàng với chip kết nối.
+
+# 11. CẤU HÌNH PHẦN CỨNG NAS THỰC TẾ (HARDWARE SPEC — LẤY TỪ THIẾT BỊ, CẤM ĐOÁN MÒ)
+# Đã xác minh trực tiếp trên NAS ngày 01/06/2026 (KHÔNG phải giả định):
+- Thiết bị: Chainedbox (board pine64/rock64) — SoC **Rockchip RK3328**, kiến trúc **aarch64 (ARM 64-bit)**, **4 nhân**.
+- RAM: **chỉ ~978MB (~1GB) total** — RẤT eo hẹp (không phải 2GB). Có zram swap (~540MB) + swap 2.5GB. Mọi tối ưu phải coi RAM là tài nguyên khan hiếm nhất.
+- Ổ lưu trữ: **TOSHIBA MG04ACA400N** (Enterprise HDD, dòng MG04), **4TB**, **7200rpm**, 3.5 inch. Ổ enterprise chịu tải 24/7 và random I/O tốt — KHÔNG phải N300, KHÔNG phải 5400rpm.
+- Mount dữ liệu thật: **/sharedfolders/Data** (`/dev/sda1`, 3.6T, đang dùng ~47%, trống ~2.0T). OS chạy trên eMMC mmcblk1 7.3GB.
+- Mạng: Ethernet 1Gbps + Tailscale VPN. IP: LAN `192.168.100.254` (port 22 ổn định nhất), Tailscale `100.90.135.102` (có thể timeout tùy mạng).
+- Triển khai: file đích `/opt/nas_api_server.py`, service systemd tên `nas_api` (KHÔNG phải `nas_api_server`). Lệnh: `scp ... root@192.168.100.254:/opt/nas_api_server.py` rồi `ssh root@192.168.100.254 "systemctl restart nas_api"`.
+- Mọi đề xuất tối ưu hiệu năng/tính năng mới BẮT BUỘC dựa trên đúng thông số phần cứng trên (đặc biệt RAM ~1GB), không suy diễn cấu hình khác.
+
+# 12. CẤU HÌNH ROUTER / WIFI LAN THỰC TẾ (BẮT BUỘC TÍNH KHI TỐI ƯU GHI MÀN HÌNH)
+# Xác nhận từ giao diện router ngày 02/06/2026:
+- Router: **ASUS RT-N12**, Operation Mode: **Wireless router**, Firmware **3.0.0.4.260**, SSID `Anonymous`.
+- Mạng LAN ghi màn hình: NAS `192.168.100.254`; điện thoại test qua ADB Wi-Fi `192.168.100.93:<port>`.
+- RT-N12 là router Wi-Fi 2.4GHz chuẩn N300 đời cũ, half-duplex/shared medium; KHÔNG được tối ưu như Wi-Fi 5/6 hoặc Ethernet gigabit. Tốc độ thực tế phụ thuộc nhiễu 2.4GHz, khoảng cách, số thiết bị, channel width, và CPU router.
+- QoS trên router hiện **OFF** theo ảnh chụp. Nếu bật QoS, không dùng rule mặc định làm giảm ưu tiên "File Transfer" dung lượng lớn; phải thêm rule ưu tiên cao cho traffic NASWebDAV:
+  - Source: IP điện thoại Secure Folder / thiết bị Android đang quay.
+  - Destination: NAS `192.168.100.254`, port API `5050`, TCP, priority Highest.
+  - Nếu WebDAV/HTTP phụ trợ dùng port 80/443 thì cũng ưu tiên riêng cho NAS, tránh bị rule mặc định xếp Low khi transfer >512KB.
+- Chính sách tối ưu ghi màn hình qua Wi-Fi RT-N12:
+  - Luôn ưu tiên LAN URL `http://192.168.100.254:5050` trước Tailscale khi điện thoại cùng mạng.
+  - Bitrate khởi điểm an toàn cho screen recording LAN: **8 Mbps** ở output cạnh dài 1920px.
+  - Có thể tăng thử **10-12 Mbps** nếu test quay 5-10 phút không drop segment, không timeout upload, không làm router/NAS lag.
+  - Không mặc định vượt **12 Mbps** trên RT-N12 nếu chưa đo thực tế; bitrate quá cao có thể làm Wi-Fi bufferbloat, tăng latency, gây backlog upload và mất segment.
+  - Segment screen recording nên giữ **30 giây** để giảm số request/restart MediaRecorder nhưng vẫn giới hạn mất mát nếu mạng rớt.
+  - Overlay/app phải hiển thị rõ mode `LAN` hoặc `Tailscale`, số segment đã gửi và số segment chờ upload để phát hiện nghẽn Wi-Fi.
+- Muốn "tận dụng tối đa" router phải đo throughput thực tế, không đoán theo N300 marketing:
+  - Test quay 5 phút ở 8 Mbps, 10 Mbps, 12 Mbps.
+  - Theo dõi backlog segment, HTTP upload timeout, ping tới NAS, và log `ScreenRecordService`.
+  - Chỉ nâng bitrate khi backlog luôn 0-1 segment và NAS finalize MP4 ổn định.
+
+
+# 13. MOJIBAKE BAN (STRICT)
+- Do not introduce mojibake in app text, logs, toasts, dialogs, reports, or comments that users will read.
+- All Vietnamese UI/log strings must be written as real UTF-8 characters; never leave ASCII question-mark substitutions like `Kh?ng`, `B?`, `H?y`, `Ch?a`.
+- Before finishing any Kotlin edit, verify user-facing strings render correctly in UTF-8 and the build remains clean.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. MATTPOCOCK SKILLS — AUTO-INVOKE RULES
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills đã cài tại ~/.claude/skills/ (symlinks → /tmp/mattpocock-skills)
+# Dùng Skill("skill-name") — KHÔNG cần hỏi user trước khi gọi.
+#
+# AUTO-INVOKE TRIGGERS (gọi tự động khi phát hiện pattern):
+#
+# - /diagnosing-bugs → khi user mô tả bug: "bị lỗi", "crash", "không hoạt động",
+#   "fix này không đúng", "regression", "chậm", "throw", "fail", "không phát video"
+#   ÁP DỤNG: luôn dùng diagnosing-bugs TRƯỚC KHI đề xuất fix — build feedback loop trước.
+#
+# - /research → khi user yêu cầu tìm hiểu API/docs/thông tin từ web hoặc đọc
+#   nhiều file để tổng hợp. Spin background agent, keep working.
+#
+# - /code-review → khi user nhắc "review", "xem lại code", so sánh HEAD vs base branch.
+#   Run 2 parallel sub-agents (Standards + Spec axes).
+#
+# - /tdd → khi user nói "viết test trước", "red-green-refactor", muốn test-driven.
+#
+# - /grill-with-docs → khi user hỏi về architecture/design, muốn challenge plan trước khi code.
+#
+# - /domain-modeling → khi gặp domain terms mơ hồ, cần define/shared vocabulary.
+#
+# USER-INVOKED ONLY (disable-model-invocation: true — KHÔNG auto-invoke):
+# - /wayfinder — large multi-session planning (too heavy)
+# - /improve-codebase-architecture — architectural refactor proposals (too intrusive)
+# - /grill-me / grilling — user-facing questioning workflow
+#
+# SKILLS CÀI: diagnosing-bugs, code-review, research, tdd, grill-with-docs,
+# domain-modeling, codebase-design, implement, prototype, setup-pre-commit,
+# git-guardrails-claude-code, grill-me, grilling, handoff, obsidian-vault

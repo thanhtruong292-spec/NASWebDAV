@@ -20,6 +20,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -94,6 +96,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val authVM = LocalAuthSessionVM.current
     val globalUiVM = LocalGlobalUiVM.current
     val density = LocalDensity.current
+    val userFocusRequester = remember { FocusRequester() }
     val rawHistory = remember {
         runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() }
     }
@@ -101,6 +104,12 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
     }
     var ipInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(historyIps.firstOrNull() ?: "") }
+
+    // Auto-focus username field when screen appears for better TalkBack / keyboard UX
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(300) // wait for animation to finish
+        runCatching { userFocusRequester.requestFocus() }
+    }
     var user by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" })
     }
@@ -214,9 +223,9 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                     val fullUrl = ipToFullUrl(ipOption)
                                     val rtt = ipPingStatus[fullUrl] ?: -2L
                                     val indicatorColor = when {
-                                        rtt > 0 -> Color(0xFF00E676)      // Xanh: kết nối được
-                                        rtt == -1L -> Color(0xFFE53935)   // Đỏ: không kết nối được
-                                        else -> if (isCheckingPings) Color(0xFF8892B0) else Color(0xFF8892B0)  // Xám: checking hoặc chưa check
+                                        rtt > 0 -> AccentGreen      // Xanh: kết nối được
+                                        rtt == -1L -> AccentRed   // Đỏ: không kết nối được
+                                        else -> if (isCheckingPings) TextTertiary else TextTertiary  // Xám: checking hoặc chưa check
                                     }
                                     Box(
                                         Modifier
@@ -228,7 +237,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                     Text(ipOption, modifier = Modifier.weight(1f))
                                     // Hiển thị ping time (nếu có)
                                     if (rtt > 0) {
-                                        Text("${rtt}ms", fontSize = 11.sp, color = Color(0xFF8892B0))
+                                        Text("${rtt}ms", fontSize = 11.sp, color = TextTertiary)
                                         Spacer(Modifier.width(4.dp))
                                     }
                                 }
@@ -248,31 +257,41 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth().focusRequester(userFocusRequester), singleLine = true)
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
         Spacer(Modifier.height(14.dp))
         val interactionSource = remember { MutableInteractionSource() }
-        Button(onClick = {
+        val btnContent: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
             if (authVM.isLoading) {
-                authVM.cancelLogin()
+                Icon(Icons.Default.Stop, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Dừng đăng nhập", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             } else {
-                val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
-                val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
-                val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
-                val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
-                historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
-                authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
-                    com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrlList.first()); com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrlList.first()); com.nas.naswebdav.scheduleFingerprintWorker(context); onLoginSuccess()
-                }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
+                Text("Kết nối NAS", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
-        }, enabled = authVM.isLoading || ipInput.isNotEmpty(), interactionSource = interactionSource,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-            modifier = Modifier.fillMaxWidth().height(50.dp).background(brush = Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), shape = RoundedCornerShape(24.dp))
-        ) {
-            if (authVM.isLoading) { Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Dừng đăng nhập", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
-            else Text("Kết nối NAS", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
+        com.nas.naswebdav.ui.components.NasGradientButton(
+            onClick = {
+                if (authVM.isLoading) {
+                    authVM.cancelLogin()
+                } else {
+                    val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
+                    val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
+                    val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
+                    val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
+                    historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
+                    authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
+                        com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrlList.first()); com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrlList.first()); com.nas.naswebdav.scheduleFingerprintWorker(context); onLoginSuccess()
+                    }, onError = { errorMsg -> globalUiVM.show(DialogType.ERROR, errorMsg) })
+                }
+            },
+            text = "Kết nối NAS",
+            enabled = authVM.isLoading || ipInput.isNotEmpty(),
+            height = 50.dp,
+            interactionSource = interactionSource,
+            customContent = btnContent
+        )
 
         // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
         val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
@@ -338,10 +357,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 onClick = triggerBiometric,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(24.dp),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF9C27B0)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, AccentPurple),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
             ) {
-                Icon(Icons.Default.Fingerprint, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Fingerprint, null, tint = AccentPurple, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Đăng nhập bằng vân tay", fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
@@ -353,7 +372,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Text(
             "Điều khiển từ xa (không cần đăng nhập)",
             fontSize = 11.sp,
-            color = Color(0xFF8892B0),
+            color = TextTertiary,
             fontWeight = FontWeight.Medium
         )
         Spacer(Modifier.height(8.dp))
@@ -366,22 +385,22 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 },
                 modifier = Modifier.weight(1f).height(46.dp),
                 shape = RoundedCornerShape(22.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26A69A))
+                border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan)
             ) {
-                Icon(Icons.Default.PowerSettingsNew, null, tint = Color(0xFF26A69A), modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Bật nguồn", color = Color(0xFF26A69A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text("Bật nguồn", color = AccentCyan, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
             // NUT 2: Restart NAS — POST /api/power/reboot truc tiep voi IP + auth tu form
             OutlinedButton(
                 onClick = { showRebootConfirm = true },
                 modifier = Modifier.weight(1f).height(46.dp),
                 shape = RoundedCornerShape(22.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFB8C00))
+                border = androidx.compose.foundation.BorderStroke(1.dp, AccentOrange)
             ) {
-                Icon(Icons.Default.RestartAlt, null, tint = Color(0xFFFB8C00), modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.RestartAlt, null, tint = AccentOrange, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Khởi động lại", color = Color(0xFFFB8C00), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text("Khởi động lại", color = AccentOrange, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
         if (emergencyMsg.isNotEmpty()) {
@@ -389,7 +408,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             Text(
                 emergencyMsg,
                 fontSize = 12.sp,
-                color = if (emergencyIsError) Color(0xFFE53935) else Color(0xFF00E676),
+                color = if (emergencyIsError) AccentRed else AccentGreen,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -399,7 +418,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Text(
             "Phiên bản ${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
             fontSize = 10.sp,
-            color = Color(0xFF6B7280),
+            color = TextSecondary,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.fillMaxWidth(),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center

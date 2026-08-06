@@ -21,6 +21,32 @@
     <string name="action_refresh">Làm mới</string>
     <string name="action_restore">Khôi phục</string>
     <string name="action_retry">Thử lại</string>
+
+    <!-- Accessibility labels for icon-only controls -->
+    <string name="a11y_back">Quay lại</string>
+    <string name="a11y_close">Đóng</string>
+    <string name="a11y_menu">Mở menu</string>
+    <string name="a11y_more_options">Tùy chọn khác</string>
+    <string name="a11y_search">Tìm kiếm</string>
+    <string name="a11y_refresh">Làm mới</string>
+    <string name="a11y_delete">Xóa</string>
+    <string name="a11y_edit">Chỉnh sửa</string>
+    <string name="a11y_save">Lưu</string>
+    <string name="a11y_add">Thêm</string>
+    <string name="a11y_remove">Xóa mục</string>
+    <string name="a11y_download">Tải xuống</string>
+    <string name="a11y_upload">Tải lên</string>
+    <string name="a11y_play">Phát</string>
+    <string name="a11y_pause">Tạm dừng</string>
+    <string name="a11y_stop">Dừng</string>
+    <string name="a11y_expand">Mở rộng</string>
+    <string name="a11y_collapse">Thu gọn</string>
+    <string name="a11y_copy">Sao chép</string>
+    <string name="a11y_settings">Cài đặt</string>
+    <string name="a11y_show_password">Hiện mật khẩu</string>
+    <string name="a11y_hide_password">Ẩn mật khẩu</string>
+    <string name="a11y_mute">Tắt tiếng</string>
+    <string name="a11y_unmute">Bật tiếng</string>
     <string name="action_run_nas">Chạy trên NAS</string>
     <string name="error_cannot_connect_nas">Không thể kết nối NAS</string>
     <string name="error_cannot_load_file">Không thể tải file</string>

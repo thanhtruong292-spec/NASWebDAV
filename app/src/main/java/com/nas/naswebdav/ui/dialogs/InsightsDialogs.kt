@@ -2,6 +2,9 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -107,11 +110,9 @@ fun FilePropertiesDialog(
         }
     }
 
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF101012),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -124,7 +125,7 @@ fun FilePropertiesDialog(
                 Icon(
                     if (file.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
                     contentDescription = null,
-                    tint = if (file.isDirectory) Color(0xFFFFB74D) else Color(0xFF80CBC4),
+                    tint = if (file.isDirectory) AccentOrange else AccentGreen,
                     modifier = Modifier.size(22.dp)
                 )
                 Spacer(Modifier.width(8.dp))
@@ -132,7 +133,7 @@ fun FilePropertiesDialog(
                     "Thuộc tính",
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp,
-                    color = Color(0xFFE8E8E8)
+                    color = TextPrimary
                 )
             }
             Spacer(Modifier.height(6.dp))
@@ -168,12 +169,12 @@ fun FilePropertiesDialog(
                     .height(40.dp)
                     .background(
                         brush = Brush.linearGradient(
-                            listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))
+                            listOf(AccentCyan, AccentCyan, AccentGreen)
                         ),
                         shape = RoundedCornerShape(23.dp)
                     )
             ) {
-                Text("Đóng", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Đóng", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -203,12 +204,9 @@ fun NasInsightsDialog(
     // Kept as Unit: one-shot insights fetch when dialog opens.
     LaunchedEffect(Unit) { sysVM.fetchNasInsights(minIntervalMs = 5_000L) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         val insight = sysVM.nasInsights
         Column(
@@ -221,27 +219,27 @@ fun NasInsightsDialog(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.AutoGraph, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Tổng quan hệ thống NAS", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Tổng quan hệ thống NAS", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { sysVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Refresh, null, tint = TextTertiary, modifier = Modifier.size(18.dp))
                 }
             }
 
-            InsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, Color(0xFF66BB6A)) {
+            InsightSection("Sức khoẻ Toshiba HDD", Icons.Default.HealthAndSafety, AccentGreen) {
                 InsightRow("Điểm hiện tại", "${insight.hddScore}/100")
                 val liveHddTemp = if (sysVM.systemStatus.temp.isNotBlank() && sysVM.systemStatus.temp != "--°C") sysVM.systemStatus.temp else "${insight.hddTempC}°C"
                 InsightRow("Nhiệt độ", liveHddTemp)
                 InsightRow("Thấp nhất 7 ngày", "${insight.hddMinScore}/100")
                 InsightRow("Biến động", if (insight.hddScoreDelta >= 0) "+${insight.hddScoreDelta}" else "${insight.hddScoreDelta}")
                 if (insight.hddStatusText.isNotBlank()) {
-                    Text(insight.hddStatusText, color = Color(0xFF8892B0), fontSize = 12.sp)
+                    Text(insight.hddStatusText, color = TextTertiary, fontSize = 12.sp)
                 }
             }
 
-            InsightSection("Bộ điều phối tải nền", Icons.Default.Tune, Color(0xFFFFA726)) {
+            InsightSection("Bộ điều phối tải nền", Icons.Default.Tune, AccentOrange) {
                 val displayMode = when(insight.workloadMode.lowercase()) {
                     "normal" -> "BÌNH THƯỜNG"
                     "balanced" -> "CÂN BẰNG TẢI"
@@ -250,20 +248,20 @@ fun NasInsightsDialog(
                 }
                 InsightRow("Chế độ", displayMode)
                 InsightRow("Áp lực tải", "${insight.workloadPressure}")
-                Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = Color(0xFFE8E8E8), fontSize = 12.sp)
+                Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = TextPrimary, fontSize = 12.sp)
                 if (insight.workloadReasons.isNotEmpty()) {
-                    Text(insight.workloadReasons.joinToString(" • "), color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text(insight.workloadReasons.joinToString(" • "), color = TextTertiary, fontSize = 11.sp)
                 }
             }
 
-            InsightSection("Bảo vệ eMMC", Icons.Default.Memory, Color(0xFF42A5F5)) {
+            InsightSection("Bảo vệ eMMC", Icons.Default.Memory, AccentBlue) {
                 InsightRow("Root eMMC", "${insight.emmcRootPercent}%")
                 InsightRow("Log/zram", "${insight.emmcLogPercent}%")
                 val recs = insight.emmcRecommendations.ifEmpty { listOf("eMMC đang an toàn.") }
-                recs.take(3).forEach { Text(it, color = Color(0xFF8892B0), fontSize = 12.sp) }
+                recs.take(3).forEach { Text(it, color = TextTertiary, fontSize = 12.sp) }
             }
 
-            InsightSection("Luồng dữ liệu thực tế", Icons.Default.SyncAlt, Color(0xFFB388FF)) {
+            InsightSection("Luồng dữ liệu thực tế", Icons.Default.SyncAlt, AccentPurple) {
                 InsightRow("Ghi HDD", dialogInsightRate(insight.diskWriteBps))
                 InsightRow("Đọc HDD", dialogInsightRate(insight.diskReadBps))
                 InsightRow("LAN nhận", dialogInsightRate(insight.netRxBps))
@@ -274,33 +272,33 @@ fun NasInsightsDialog(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .background(Color(0xFF15151D), RoundedCornerShape(7.dp))
+                                .background(DarkSurface, RoundedCornerShape(7.dp))
                                 .clickable { onTaskClick(task.label) }
                                 .padding(8.dp)
                         ) {
-                            Text("${task.label} • ${task.progress}%", color = Color(0xFF00D2FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(task.file.ifBlank { "Đang xử lý" }, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(task.dest, color = Color(0xFF8892B0), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${task.label} • ${task.progress}%", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(task.file.ifBlank { "Đang xử lý" }, color = TextPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(task.dest, color = TextTertiary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
             }
 
-            InsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, Color(0xFF00E676)) {
+            InsightSection("Khuyến nghị bảo trì", Icons.Default.EventAvailable, AccentGreen) {
                 insight.maintenanceActions.ifEmpty {
                     listOf(InsightAction("low", "Ổn định", "Chưa có tác vụ bảo trì bắt buộc."))
                 }.forEach { action ->
                     val color = when (action.priority) {
-                        "high" -> Color(0xFFEF5350)
-                        "medium" -> Color(0xFFFFA726)
-                        else -> Color(0xFF66BB6A)
+                        "high" -> AccentRed
+                        "medium" -> AccentOrange
+                        else -> AccentGreen
                     }
                     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
                         Box(Modifier.size(8.dp).padding(top = 5.dp).background(color, CircleShape))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(action.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(action.detail, color = Color(0xFF8892B0), fontSize = 11.sp)
+                            Text(action.title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(action.detail, color = TextTertiary, fontSize = 11.sp)
                         }
                     }
                 }
@@ -308,7 +306,7 @@ fun NasInsightsDialog(
 
             Text(
                 "Dữ liệu lấy từ /api/system/insights: SMART trend, tải nền, USB import, eMMC guard, luồng I/O và lịch bảo trì.",
-                color = Color(0xFF8892B0).copy(alpha = 0.75f),
+                color = TextTertiary.copy(alpha = 0.75f),
                 fontSize = 10.sp,
                 lineHeight = 13.sp
             )
@@ -319,11 +317,11 @@ fun NasInsightsDialog(
 
 @Composable
 internal fun InsightSection(title: String, icon: ImageVector, color: Color, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Color(0xFF171922), RoundedCornerShape(10.dp)).padding(10.dp)) {
+    Column(Modifier.fillMaxWidth().background(DarkCard, RoundedCornerShape(10.dp)).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
-            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(7.dp))
         content()
@@ -333,8 +331,8 @@ internal fun InsightSection(title: String, icon: ImageVector, color: Color, cont
 @Composable
 internal fun InsightRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Color(0xFF8892B0), fontSize = 12.sp)
-        Text(value, color = Color(0xFFE8E8E8), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = TextTertiary, fontSize = 12.sp)
+        Text(value, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -352,7 +350,7 @@ internal fun PropertyRow(
         Text(
             label,
             fontSize = 11.sp,
-            color = Color(0xFF8892B0),
+            color = TextTertiary,
             fontWeight = FontWeight.Medium
         )
         Spacer(Modifier.height(1.dp))
@@ -360,12 +358,12 @@ internal fun PropertyRow(
             androidx.compose.ui.text.TextStyle(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 fontSize = 13.sp,
-                color = Color(0xFFE8E8E8)
+                color = TextPrimary
             )
         } else {
             androidx.compose.ui.text.TextStyle(
                 fontSize = 13.sp,
-                color = Color(0xFFE8E8E8),
+                color = TextPrimary,
                 fontWeight = FontWeight.SemiBold
             )
         }

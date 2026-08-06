@@ -40,30 +40,60 @@ import androidx.core.content.edit
 
 class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // Terminal config: thiếu URL/credentials là config bug → failure, không retry vô hạn
         val currentUrl = inputData.getString("currentUrl") ?: return@withContext Result.failure()
-        // FIX #16: Load credentials từ SecurePrefsHelper
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
         if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
 
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
-            // FIX #16: Thêm Authorization header để không bị server từ chối 401
             val request = okhttp3.Request.Builder()
                 .url("$apiBaseUrl/api/disk/speedtest")
                 .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .post(ByteArray(0).toRequestBody(null, 0, 0))
                 .build()
             NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val json = JSONObject(response.body?.string() ?: "")
-                    val prefs = applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                    prefs.edit { putString("last_speed_write", json.optString("write_speed", "Lỗi")); putString("last_speed_read", json.optString("read_speed", "Lỗi")); putString("last_speed_time", com.nas.naswebdav.utils.FormatUtils.formatDateTime(System.currentTimeMillis())) }
-                    return@withContext Result.success()
+                when {
+                    response.isSuccessful -> {
+                        val json = JSONObject(response.body?.string() ?: "")
+                        val prefs = applicationContext.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
+                        prefs.edit {
+                            putString("last_speed_write", json.optString("write_speed", "Lỗi"))
+                            putString("last_speed_read", json.optString("read_speed", "Lỗi"))
+                            putString("last_speed_time", com.nas.naswebdav.utils.FormatUtils.formatDateTime(System.currentTimeMillis()))
+                        }
+                        return@withContext Result.success()
+                    }
+                    // 408/429 = transient (timeout/rate limit) → retry
+                    response.code == 408 || response.code == 429 -> {
+                        SystemLogger.log("WARNING", "SpeedTest",
+                            "Speed test endpoint ${response.code} — sẽ retry (transient)")
+                        return@withContext Result.retry()
+                    }
+                    // 4xx khác: auth/permission/route không tồn tại → không tự hồi phục
+                    response.code in 400..499 -> {
+                        SystemLogger.log("ERROR", "SpeedTest",
+                            "Speed test endpoint trả về ${response.code} — không retry (client error)")
+                        return@withContext Result.failure()
+                    }
+                    // 5xx + IO errors: transient → retry theo backoff
+                    else -> {
+                        SystemLogger.log("WARNING", "SpeedTest",
+                            "Speed test endpoint trả về ${response.code} — sẽ retry")
+                        return@withContext Result.retry()
+                    }
                 }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("WARNING", "SpeedTest", "Không thể thực thi tiến trình chẩn đoán tốc độ ổ đĩa nền: ${e.message}") }
-        return@withContext Result.failure()
+        } catch (e: Exception) {
+            // Guideline: isStopped || CancellationException → Result.retry() (không nuốt thành success)
+            if (isStopped || e is kotlinx.coroutines.CancellationException) {
+                return@withContext Result.retry()
+            }
+            SystemLogger.log("WARNING", "SpeedTest",
+                "Không thể thực thi speed test: ${e.message} — sẽ retry")
+            return@withContext Result.retry()
+        }
     }
 }
 

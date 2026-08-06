@@ -51,8 +51,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         // FIX: đóng proxy cũ (nếu có) trước khi tạo mới để tránh leak
         // thread/socket khi caller goi start() nhieu lan tren cung instance.
         stop()
-        // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)
-        val server = ServerSocket(0).also { serverSocket = it }
+        // Mở ServerSocket chỉ trên loopback (127.0.0.1) — tránh LAN peer dùng proxy
+        // để forward NAS Basic Auth và đọc dữ liệu trái phép.
+        val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).also { serverSocket = it }
         val port = server.localPort
         lastActivityAtMs = System.currentTimeMillis()
 

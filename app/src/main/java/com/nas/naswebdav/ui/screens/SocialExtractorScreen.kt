@@ -63,16 +63,16 @@ import kotlinx.coroutines.withContext
 
 // ── Bảng màu ─────────────────────────────────────────────────────────────────
 private val SeDarkBg        = Color.Black
-private val SeDarkCard      = Color(0xFF0A0A0A)
-private val SeDarkCardAlt   = Color(0xFF0A0A0A)
-private val SeAccentGreen   = Color(0xFF00E676)
-private val SeAccentOrange  = Color(0xFFFF9100)
-private val SeAccentRed     = Color(0xFFFF1744)
-private val SeAccentCyan    = Color(0xFF00D2FF)
-private val SeAccentPink    = Color(0xFFFF6EC7)
-private val SeAccentPurple  = Color(0xFFE040FB)
-private val SeTextPrimary   = Color(0xFFE8E8E8)
-private val SeTextSecondary = Color(0xFF8892B0)
+private val SeDarkCard      = DarkSurface
+private val SeDarkCardAlt   = DarkSurface
+private val SeAccentGreen   = AccentGreen
+private val SeAccentOrange  = AccentOrange
+private val SeAccentRed     = AccentRed
+private val SeAccentCyan    = AccentCyan
+private val SeAccentPink    = AccentPink
+private val SeAccentPurple  = AccentPurple
+private val SeTextPrimary   = TextPrimary
+private val SeTextSecondary = TextTertiary
 
 /**
  * SocialExtractorScreen – Màn hình Stream Piping thực sự.
@@ -133,7 +133,11 @@ fun SocialExtractorScreen(
                 title = {
                     Column {
                         Text("Social Extractor", fontWeight = FontWeight.Bold, color = SeTextPrimary)
-                        Text("Stream Piping – 0MB điện thoại", fontSize = 11.sp, color = SeTextSecondary)
+                        // usePipeMode hard-coded false: subtitle phải phản ánh đúng trạng thái
+                        Text(
+                            if (usePipeMode) "Stream Piping – 0MB điện thoại" else "NAS tự tải qua yt-dlp",
+                            fontSize = 11.sp, color = SeTextSecondary
+                        )
                     }
                 },
                 navigationIcon = {
@@ -158,12 +162,10 @@ fun SocialExtractorScreen(
             Spacer(Modifier.height(12.dp))
 
             // ── Chuyển chế độ (chỉ để hiển thị, pipe mode đã tắt vĩnh viễn) ──
+            // onToggle = no-op: usePipeMode là const false, toggle UI chỉ để hiển thị.
             ModeSwitchRow(
                 isPipeMode = usePipeMode,
-                onToggle = {
-                    extractedVideoUrl = null
-                    webViewStatus = ""
-                }
+                onToggle = { /* usePipeMode = false (hard-coded); toggle UI is display-only */ }
             )
             Spacer(Modifier.height(12.dp))
 
@@ -590,21 +592,23 @@ private fun ModeSwitchRow(isPipeMode: Boolean, onToggle: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Truyền trực tiếp
+        // Truyền trực tiếp — disabled khi usePipeMode=false (feature chưa hỗ trợ)
         ModeTab(
             label = "⚡ Truyền trực tiếp",
             desc = "Điện thoại truyền",
             selected = isPipeMode,
+            enabled = false, // Stream piping chưa hỗ trợ server-side
             gradientColors = listOf(SeAccentPink, SeAccentPurple),
             modifier = Modifier.weight(1f),
             onClick = { if (!isPipeMode) onToggle() }
         )
-        // NAS tự tải
+        // NAS tự tải — selected (luôn chọn)
         ModeTab(
             label = "☁️ yt-dlp",
             desc = "NAS tự tải",
             selected = !isPipeMode,
-            gradientColors = listOf(SeAccentCyan, Color(0xFF0097A7)),
+            enabled = false, // Không cần toggle — chỉ có 1 chế độ khả dụng
+            gradientColors = listOf(SeAccentCyan, AccentCyan),
             modifier = Modifier.weight(1f),
             onClick = { if (isPipeMode) onToggle() }
         )
@@ -616,6 +620,7 @@ private fun ModeTab(
     label: String, desc: String, selected: Boolean,
     gradientColors: List<Color>,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Box(
@@ -631,6 +636,7 @@ private fun ModeTab(
                 shape = RoundedCornerShape(12.dp)
             )
             .clickable(
+                enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick
@@ -640,9 +646,17 @@ private fun ModeTab(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                color = if (selected) Color.White else SeTextSecondary)
+                color = when {
+                    selected && enabled -> TextPrimary
+                    enabled -> SeTextSecondary
+                    else -> SeTextSecondary.copy(0.45f) // disabled state: dimmed
+                })
             Text(desc, fontSize = 10.sp,
-                color = if (selected) Color.White.copy(0.75f) else SeTextSecondary.copy(0.6f))
+                color = when {
+                    selected && enabled -> TextPrimary.copy(0.75f)
+                    enabled -> SeTextSecondary.copy(0.6f)
+                    else -> SeTextSecondary.copy(0.35f) // disabled state: dimmed
+                })
         }
     }
 }
@@ -719,7 +733,7 @@ private fun DestFolderRow() {
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.FolderOpen, null, tint = Color(0xFFFFCA28), modifier = Modifier.size(16.dp))
+        Icon(Icons.Default.FolderOpen, null, tint = AccentOrange, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
         Column {
             Text("Lưu vào NAS:", fontSize = 10.sp, color = SeTextSecondary)
@@ -736,7 +750,7 @@ private fun DestFolderRow() {
 private fun ExtractionStatusCard(status: String, isLoading: Boolean) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E3F)),
+        colors = CardDefaults.cardColors(containerColor = DarkElevated),
         shape = RoundedCornerShape(12.dp)
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -889,7 +903,7 @@ private fun MainActionButton(
     val gradient = if (isPipeMode)
         Brush.horizontalGradient(listOf(SeAccentPink, SeAccentPurple))
     else
-        Brush.horizontalGradient(listOf(SeAccentCyan, Color(0xFF0097A7)))
+        Brush.horizontalGradient(listOf(SeAccentCyan, AccentCyan))
 
     val disabledGradient = Brush.horizontalGradient(
         listOf(SeTextSecondary.copy(0.2f), SeTextSecondary.copy(0.2f))
@@ -912,20 +926,20 @@ private fun MainActionButton(
     ) {
         if (isWorking) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                CircularProgressIndicator(color = TextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("Đang xử lý... (Nhấn để Hủy)", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Đang xử lý... (Nhấn để Hủy)", color = TextPrimary, fontWeight = FontWeight.Bold)
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     if (isPipeMode) Icons.Default.SwapHoriz else Icons.Default.CloudUpload,
-                    null, tint = Color.White, modifier = Modifier.size(22.dp)
+                    null, tint = TextPrimary, modifier = Modifier.size(22.dp)
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
                     if (isPipeMode) "⚡ Bắt đầu truyền" else "☁️ Gửi về NAS",
-                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
+                    color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp
                 )
             }
         }
@@ -976,9 +990,9 @@ private fun detectPlatform(url: String): String {
 }
 
 private fun platformColor(platform: String): Color = when (platform) {
-    "TikTok"   -> Color(0xFF69C9D0)
-    "Facebook" -> Color(0xFF1877F2)
-    "YouTube"  -> Color(0xFFFF0000)
-    "Instagram"-> Color(0xFFE1306C)
-    else       -> Color(0xFF8892B0)
+    "TikTok"   -> AccentCyan
+    "Facebook" -> AccentBlue
+    "YouTube"  -> AccentRed
+    "Instagram"-> AccentRed
+    else       -> TextTertiary
 }

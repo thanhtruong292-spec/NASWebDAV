@@ -3,6 +3,7 @@ package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -396,9 +397,9 @@ internal fun DiskProfileBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF101216),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
+        containerColor = DarkSurface,
+        scrimColor = DarkSurface.copy(alpha = 0.6f),
+        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -483,7 +484,7 @@ internal fun DiskProfileBottomSheet(
                     value = "$heavyWriteTasks tiến trình",
                     subtitle = "Ghi hình: $activeRecordings luồng • Tải xuống: $downloadTasks phiên",
                     icon = Icons.Default.VerifiedUser,
-                    color = Color(0xFF66BB6A),
+                    color = AccentGreen,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -545,7 +546,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -560,7 +561,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -618,7 +619,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -642,7 +643,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -665,7 +666,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(
@@ -719,7 +720,7 @@ private fun OperationModeChip(
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) AccentCyan.copy(alpha = 0.18f) else Color(0xFF101216))
+            .background(if (selected) AccentCyan.copy(alpha = 0.18f) else DarkSurface)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -743,7 +744,7 @@ private fun NewDiskChecklistItem(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .background(DarkCard, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -782,7 +783,7 @@ private fun HardwareMetricCell(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .background(DarkCard, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

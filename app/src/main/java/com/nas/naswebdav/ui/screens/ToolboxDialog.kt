@@ -3,6 +3,7 @@ package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 
 import android.content.Context
 import androidx.compose.runtime.collectAsState
@@ -87,8 +88,8 @@ fun ToolboxDialog(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = DarkSurface,
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
+        scrimColor = DarkSurface.copy(alpha = 0.6f),
+        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier

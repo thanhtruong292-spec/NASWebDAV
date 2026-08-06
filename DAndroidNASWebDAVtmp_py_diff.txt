@@ -1,0 +1,509 @@
+nas_api_server.py | 2607 ++++++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 2087 insertions(+), 520 deletions(-)
+
+--- Changes ---
+
+nas_api_server.py
+  @@ -16,6 +16,9 @@ import sys
+  +import gc
+  +import ctypes
+  +import mimetypes
+   import time
+   import uuid
+   import subprocess
+  @@ -291,6 +294,8 @@ def _cleanup_livestream_junk():
+  +        remuxed_orphans = 0
+  +        can_remux_orphan = not active_paths
+           
+           # Don file rac trong thu muc Livestream
+           for fname in os.listdir(_LIVESTREAM_DIR):
+  @@ -311,12 +316,15 @@ def _cleanup_livestream_junk():
+  -                    elif fsize > 1024:
+  +                    elif fsize > 1024 and can_remux_orphan and remuxed_orphans < 1:
+                           # Orphaned .ts file (sau khi restart NAS hoac bi bo quen)
+  +                        # Remux đọc/ghi rất nặng; mỗi vòng chỉ xử lý 1 file và
+  +                        # bỏ qua khi đang có recording để tránh giành I/O với HDD.
+                           mtime = os.path.getmtime(fpath)
+                           if time.time() - mtime > 60: # Khong bi sua trong 60s qua
+                               mp4_path = _remux_flv_to_mp4(fpath)
+                               if mp4_path:
+  +                                remuxed_orphans += 1
+                                   log.info("[Livestream] Remuxed orphaned file: %s", fname)
+                   except Exception:
+                       pass
+  @@ -391,6 +399,12 @@ def init_db():
+  +        try:
+  +            cur.execute("PRAGMA journal_mode=WAL")
+  +            cur.execute("PRAGMA synchronous=NORMAL")
+  +            cur.execute("PRAGMA busy_timeout=5000")
+  +        except Exception:
+  +            pass
+           cur.execute('CREATE TABLE IF NOT EXISTS banned_ips (ip TEXT PRIMARY KEY, reason TEXT, banned_at DATETIME)')
+           cur.execute('CREATE TABLE IF NOT EXISTS auth_attempts (ip TEXT PRIMARY KEY, count INTEGER)')
+           cur.execute('CREATE TABLE IF NOT EXISTS authorized_ips (ip TEXT PRIMARY KEY, added_at DATETIME)')
+  @@ -416,6 +430,39 @@ def init_db():
+  +        cur.execute('''
+  +            CREATE TABLE IF NOT EXISTS hardware_status (
+  +                key TEXT PRIMARY KEY,
+  +                payload_json TEXT NOT NULL,
+  +                updated_at INTEGER NOT NULL
+  +            )
+  +        ''')
+  +        cur.execute('''
+  +            CREATE TABLE IF NOT EXISTS disk_health_history (
+  +                id INTEGER PRIMARY KEY AUTOINCREMENT,
+  +                ts INTEGER NOT NULL,
+  +                device TEXT,
+  +                score INTEGER,
+  +                smart_status TEXT,
+  +                temp_c INTEGER,
+  +                payload_json TEXT NOT NULL
+  +            )
+  +        ''')
+  +        cur.execute('CREATE INDEX IF NOT EXISTS idx_disk_health_history_ts ON disk_health_history(ts)')
+  +        cur.execute('''
+  +            CREATE TABLE IF NOT EXISTS scheduler_state (
+  +                key TEXT PRIMARY KEY,
+  +                payload_json TEXT NOT NULL,
+  +                updated_at INTEGER NOT NULL
+  +            )
+  +        ''')
+  +        cur.execute('''
+  +            CREATE TABLE IF NOT EXISTS runtime_state (
+  +                key TEXT PRIMARY KEY,
+  +                payload_json TEXT NOT NULL,
+  +                updated_at INTEGER NOT NULL
+  +            )
+  +        ''')
+           conn.commit()
+           conn.close()
+           log.info("[init_db] DB san sang.")
+  @@ -580,6 +627,8 @@ def handle_auth_failure(ip):
+  +_ARP_LOOKUP_CACHE = {}
+  +_ARP_LOOKUP_TTL = 60
+   
+   def monitor_scanners():
+       if not os.path.exists(WEBDAV_LOG): return
+  @@ -612,12 +661,17 @@ def monitor_scanners():
+  -                            arp_out = subprocess.check_output(["arp", "-n", ip], stderr=subprocess.DEVNULL).decode('utf-8')
+  -                            match = _re_module.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', arp_out)
+  -                            if match:
+  -                                mac_address = match.group(0).upper()
+  +                            cached = _ARP_LOOKUP_CACHE.get(ip)
+  +                            if cached and time.time() - float(cached.get("ts", 0) or 0) < _ARP_LOOKUP_TTL:
+  +                                mac_address = cached.get("mac", "Không rõ")
+  +                            else:
+  +                                arp_out = subprocess.check_output(["arp", "-n", ip], stderr=subprocess.DEVNULL, timeout=1.5).decode('utf-8')
+  +                                match = _re_module.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', arp_out)
+  +                                if match:
+  +                                    mac_address = match.group(0).upper()
+  +                                _ARP_LOOKUP_CACHE[ip] = {"mac": mac_address, "ts": time.time()}
+                           except Exception:
+  -                            pass
+  +                            _ARP_LOOKUP_CACHE[ip] = {"mac": mac_address, "ts": time.time()}
+                               
+                           # B. Lọc Tên Thiết Bị từ User Agent String (Dalvik, Windows, WebDAVFS...)
+                           device_info = "Thiết bị ngoại tuyến"
+  @@ -1090,9 +1144,41 @@ def get_cpu_temp():
+  +_HDD_TEMP_CACHE = {"value": "--\u00b0C", "ts": 0}
+  +_HDD_TEMP_CACHE_TTL = 300
+  +_HDD_TEMP_REFRESH_LOCK = threading.Lock()
+  +
+  +
+  +def _cache_hdd_temp(value):
+  +    if value and value != "--\u00b0C":
+  +        _HDD_TEMP_CACHE["value"] = value
+  +        _HDD_TEMP_CACHE["ts"] = time.time()
+  +    return value
+  +
+  +
+   def get_hdd_temp():
+       """L?y nhi?t để ổ cứng — uu tien OMV RPC, fallback smartctl/sysfs."""
+       import re
+  +    try:
+  +        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+  +        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
+  +            return cached
+  +    except Exception:
+  +        pass
+  +    if not _HDD_TEMP_REFRESH_LOCK.acquire(False):
+  +        return _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+  +    try:
+  +        cached = _HDD_TEMP_CACHE.get("value", "--\u00b0C")
+  +        if cached and cached != "--\u00b0C" and time.time() - float(_HDD_TEMP_CACHE.get("ts", 0) or 0) < _HDD_TEMP_CACHE_TTL:
+  +            return cached
+  +        return _get_hdd_temp_uncached()
+  +    finally:
+  +        _HDD_TEMP_REFRESH_LOCK.release()
+  +
+  +
+  +def _get_hdd_temp_uncached():
+  +    """Refresh HDD temperature once. Caller must hold _HDD_TEMP_REFRESH_LOCK."""
+  +    import re
+       # Phuong phap 0 (uu tien): L?y tu OMV Smart enumerateDevices
+       try:
+           # Disabled for dashboard path: OMV enumerates every disk and can wedge on
+  @@ -1108,7 +1194,7 @@ def get_hdd_temp():
+  -                        return "%s\u00b0C" % temp_str
+  +                        return _cache_hdd_temp("%s\u00b0C" % temp_str)
+       except Exception:
+           pass
+       # Phuong phap 1: smartctl voi regex chinh xac
+  @@ -1131,13 +1217,13 @@ def get_hdd_temp():
+  -                            return "%d\u00b0C" % temp_val
+  +                            return _cache_hdd_temp("%d\u00b0C" % temp_val)
+                       # Fallback: l?y so hop le cuoi cung trong dong (truoc ngoac don)
+                       line_before_paren = line.split("(")[0]
+                       nums = re.findall(r'\b(\d{2})\b', line_before_paren)
+                       for n in reversed(nums):
+                           if 10 < int(n) < 100:
+  -                            return "%d\u00b0C" % int(n)
+  +                            return _cache_hdd_temp("%d\u00b0C" % int(n))
+           except Exception:
+               pass
+           # Phuong phap 2: hddtemp
+  @@ -1146,7 +1232,7 @@ def get_hdd_temp():
+  -                    return "%d\u00b0C" % temp_val
+  +                    return _cache_hdd_temp("%d\u00b0C" % temp_val)
+           except Exception:
+               pass
+       # Xong buoc lap qua cac disk
+  @@ -1157,7 +1243,7 @@ def get_hdd_temp():
+  -                    return "%d\u00b0C" % int(entry.current)
+  +                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
+       except Exception:
+           pass
+       # Phuong phap 4: Đọc truc tiep tu sysfs hwmon (không cần smartctl)
+  @@ -1176,7 +1262,7 @@ def get_hdd_temp():
+  -                    return "%d\u00b0C" % temp_c
+  +                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
+       except Exception:
+           pass
+       # Phuong phap 5: Quet tất c? hwmon devices tim drivetemp
+  @@ -1195,7 +1281,7 @@ def get_hdd_temp():
+  -                                    return "%d\u00b0C" % temp_c
+  +                                    return _cache_hdd_temp("%d\u00b0C" % temp_c)
+               except Exception:
+                   continue
+       except Exception:
+  @@ -1210,7 +1296,7 @@ def get_hdd_temp():
+  -                    return "%d\u00b0C" % int(entry.current)
+  +                    return _cache_hdd_temp("%d\u00b0C" % int(entry.current))
+       except Exception:
+           pass
+       return "--\u00b0C"
+  @@ -1432,6 +1518,32 @@ def get_storage_usage_summary():
+  +_STORAGE_USAGE_CACHE = {"ts": 0.0, "data": None}
+  +_STORAGE_USAGE_CACHE_LOCK = threading.Lock()
+  +_STORAGE_USAGE_CACHE_TTL = 300
+  +
+  +
+  +def _build_storage_usage_payload():
+  +    usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
+  +    return {
+  +        "ok": True,
+  +        "root": WEBDAV_FILE_ROOT,
+  +        "total": format_bytes(usage.total),
+  +        "used": format_bytes(usage.used),
+  +        "free": format_bytes(usage.free),
+  +        "percent": round(usage.percent, 1),
+  +        "folders": get_storage_usage_summary(),
+  +    }
+  +
+  +
+  +def _refresh_storage_usage_cache_locked():
+  +    try:
+  +        _STORAGE_USAGE_CACHE["data"] = _build_storage_usage_payload()
+  +        _STORAGE_USAGE_CACHE["ts"] = time.time()
+  +    finally:
+  +        _STORAGE_USAGE_CACHE_LOCK.release()
+  +
+  +
+   
+   def get_fan_info():
+       """Lấy thông tin quạt làm mát - Chainedbox rk3328 dùng PWM pwmchip0."""
+  @@ -1441,7 +1553,7 @@ def get_fan_info():
+  -        settings = {"mode": "auto", "on_temp": 65, "off_temp": 55}
+  +        settings = {"mode": "auto", "on_temp": FAN_DEFAULT_ON_TEMP, "off_temp": FAN_DEFAULT_OFF_TEMP}
+           try:
+               if os.path.exists("/opt/fan_custom.json"):
+                   with open("/opt/fan_custom.json", "r") as f:
+  @@ -1466,7 +1578,7 @@ def get_fan_info():
+  -            percent = int((duty * 100.0) / period)
+  +            raw_percent = int((duty * 100.0) / period)
+   
+               # FIX: Đọc th?m enable de bao cao "Tat" chinh xac khi PWM da bi cat hen
+               enable_path = os.path.join(PWM_DIR, "enable")
+  @@ -1482,17 +1594,15 @@ def get_fan_info():
+  +            percent = _fan_pwm_level(raw_percent if enable_val == 1 else 0)
+               payload = {
+  -                "rpm": None,
+  -                "percent": percent if enable_val == 1 else 0,
+  +                "rpm": _fan_rpm_for_percent(percent),
+  +                "percent": percent,
+                   "mode": mode,
+  -                "on_temp": settings.get("on_temp", 65),
+  -                "off_temp": settings.get("off_temp", 55)
+  +                "on_temp": settings.get("on_temp", FAN_DEFAULT_ON_TEMP),
+  +                "off_temp": settings.get("off_temp", FAN_DEFAULT_OFF_TEMP)
+               }
+  -            if duty == 0 or enable_val == 0:
+  -                payload["status"] = "Dừng"
+  -            else:
+  -                payload["status"] = "Đang chạy %d%%" % percent
+  +            payload["status"] = _fan_status_for_percent(percent)
+               return payload
+       except Exception:
+           pass
+  @@ -1600,7 +1710,14 @@ def _update_status_cache():
+  -                cached_hdd_temp = "--°C"
+  +                try:
+  +                    with _disk_health_lock:
+  +                        disk_temp = (_disk_health_last_sample or {}).get("temp_c")
+  +                    cached_hdd_temp = "%s°C" % disk_temp if disk_temp else "--°C"
+  +                except Exception:
+  +                    cached_hdd_temp = "--°C"
+  +                if cached_hdd_temp == "--°C":
+  +                    cached_hdd_temp = get_hdd_temp()
+   
+               data = {
+                   "temperature": cached_hdd_temp,
+  @@ -1619,10 +1736,11 @@ def _update_status_cache():
+  +                "fan_percent": cached_fan.get("percent"),
+                   "fan_status": cached_fan.get("status", "--"),
+                   "fan_mode": cached_fan.get("mode", "auto"),
+  -                "fan_on_temp": cached_fan.get("on_temp", 65),
+  -                "fan_off_temp": cached_fan.get("off_temp", 55),
+  +                "fan_on_temp": cached_fan.get("on_temp", FAN_DEFAULT_ON_TEMP),
+  +                "fan_off_temp": cached_fan.get("off_temp", FAN_DEFAULT_OFF_TEMP),
+                   "top_processes": cached_top,
+                   "torrents": cached_torrents,
+                   "disk_parts": cached_disk_parts
+  @@ -1630,6 +1748,7 @@ def _update_status_cache():
+  +                _db_set_json("hardware_status", "latest", data)
+                   _update_process_state(
+                       "hardware",
+                       cpu_percent=round(float(cpu_percent or 0), 1),
+  @@ -1816,6 +1935,9 @@ def _scan_photos_lightweight():
+  +        categories = None
+  +        ai_data = None
+  +        _release_memory_to_os()
+   
+           with _alert_state_lock:
+               _alert_states["ai_scan_running"] = False
+  @@ -1877,8 +1999,17 @@ def _background_heavy_work_allowed():
+  -        if allowed and psutil.cpu_percent(interval=0.1) > 55:
+  -            allowed = False
+  +        if allowed:
+  +            try:
+  +                # Sử dụng Load Average (1 phút) của Linux. RK3328 có 4 nhân.
+  +                # Nếu tải trung bình 1 phút vượt quá 2.5, tức là máy đang thực sự bận rộn lâu dài.
+  +                if os.getloadavg()[0] > 2.5:
+  +                    allowed = False
+  +            except AttributeError:
+  +                # Fallback nếu chạy trên Windows (không có getloadavg)
+  +                if psutil.cpu_percent(interval=1.0) > 75:
+  +                    allowed = False
+  +        
+           _background_heavy_gate_cache.update({"time": now, "allowed": allowed})
+           return allowed
+       except Exception:
+  @@ -1973,9 +2104,9 @@ def _check_torrent_completion():
+  -        temp_str = get_hdd_temp()
+  -        if temp_str and temp_str != "--\u00b0C":
+  -            val = int(temp_str.replace("\u00b0C", "").strip())
+  +        with _disk_health_lock:
+  +            val = int((_disk_health_last_sample or {}).get("temp_c") or 0)
+  +        if val > 0:
+               return val, val >= threshold
+           return 0, False
+       except Exception:
+  @@ -2360,21 +2491,79 @@ def api_status():
+  +def _metric_float(raw, default=0.0):
+  +    try:
+  +        text = str(raw or "").replace("%", "").replace("\u00b0C", "").strip()
+  +        if not text or text == "--":
+  +            return default
+  +        return float(text)
+  +    except Exception:
+  +        return default
+  +
+  +
+  +def _speed_to_kbps(raw):
+  +    try:
+  +        text = str(raw or "0 B/s").strip()
+  +        parts = text.split()
+  +        if not parts:
+  +            return 0.0
+  +        value = float(parts[0])
+  +        unit = parts[1] if len(parts) > 1 else "B/s"
+  +        if unit.startswith("GB"):
+  +            return value * 1024.0 * 1024.0
+  +        if unit.startswith("MB"):
+  +            return value * 1024.0
+  +        if unit.startswith("KB"):
+  +            return value
+  +        return value / 1024.0
+  +    except Exception:
+  +        return 0.0
+  +
+  +
+  +@app.route("/api/status/realtime")
+  +@requires_auth
+  +def api_status_realtime():
+  +    """Diem metrics realtime nhe: chi doc cache nen khong cham SMART/disk/proc."""
+  +    with _cache_lock:
+  +        snap = dict(_status_cache)
+  +    now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+  +    return jsonify({
+  +        "timestamp": now,
+  +        "cpu_percent": round(_metric_float(snap.get("cpu")), 1),
+  +        "ram_percent": round(_metric_float(snap.get("ram_percent")), 1),
+  +        "cpu_temp": round(_metric_float(snap.get("cpu_temp")), 1),
+  +        "hdd_temp": round(_metric_float(snap.get("temperature")), 1),
+  +        "net_rx_kbps": round(_speed_to_kbps(snap.get("net_rx")), 1),
+  +        "net_tx_kbps": round(_speed_to_kbps(snap.get("net_tx")), 1),
+  +        "fan_percent": snap.get("fan_percent"),
+  +        "fan_rpm": snap.get("fan_rpm"),
+  +        "status": snap.get("status", "Online")
+  +    })
+  +
+  +
+   @app.route("/api/storage/usage")
+   @requires_auth
+   def api_storage_usage():
+       """Dung lượng cac thư mục lon. Chi Đọc metadata, gioi han thoi gian quet."""
+       try:
+  -        usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
+  -        return jsonify({
+  -            "ok": True,
+  -            "root": WEBDAV_FILE_ROOT,
+  -            "total": format_bytes(usage.total),
+  -            "used": format_bytes(usage.used),
+  -            "free": format_bytes(usage.free),
+  -            "percent": round(usage.percent, 1),
+  -            "folders": get_storage_usage_summary(),
+  -        })
+  +        now = time.time()
+  +        cached = _STORAGE_USAGE_CACHE.get("data")
+  +        cached_ts = float(_STORAGE_USAGE_CACHE.get("ts", 0) or 0)
+  +        if cached is not None and now - cached_ts < _STORAGE_USAGE_CACHE_TTL:
+  +            return jsonify(cached)
+  +        if cached is not None:
+  +            if _STORAGE_USAGE_CACHE_LOCK.acquire(False):
+  +                threading.Thread(target=_refresh_storage_usage_cache_locked, daemon=True, name="StorageUsageRefresh").start()
+  +            return jsonify(cached)
+  +        if not _STORAGE_USAGE_CACHE_LOCK.acquire(False):
+  +            return jsonify(cached or {"ok": True, "root": WEBDAV_FILE_ROOT, "folders": []})
+  +        try:
+  +            data = _build_storage_usage_payload()
+  +            _STORAGE_USAGE_CACHE["data"] = data
+  +            _STORAGE_USAGE_CACHE["ts"] = now
+  +            return jsonify(data)
+  +        finally:
+  +            _STORAGE_USAGE_CACHE_LOCK.release()
+       except Exception as e:
+           return jsonify({"ok": False, "error": "Không tải được dung lượng thư mục: %s" % normalize_vietnamese_message(str(e)), "folders": []}), 500
+   
+  @@ -2610,6 +2799,26 @@ def api_smart():
+  +def _get_smb_runtime_state():
+  +    smb_active = False
+  +    try:
+  +        status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+  +        smb_active = status_out == "active"
+  +    except Exception:
+  +        pass
+  +    is_enabled = False
+  +    try:
+  +        with open("/etc/samba/smb.conf", "r") as f:
+  +            is_enabled = "# --- BEGIN NASWEBDAV SMB ---" in f.read()
+  +    except Exception:
+  +        pass
+  +    return {
+  +        "enabled": bool(is_enabled),
+  +        "active": bool(smb_active),
+  +        "running": bool(smb_active),
+  +        "effective_enabled": bool(is_enabled and smb_active)
+  +    }
+  +
+   @app.route("/api/omv/overview")
+   @requires_auth
+   def api_omv_overview():
+  @@ -2657,11 +2866,22 @@ def api_omv_overview():
+  +                name = s.get("name", "")
+  +                title = s.get("title", "")
+  +                enabled = bool(s.get("enabled", False))
+  +                running = bool(s.get("running", False))
+  +                effective_enabled = bool(enabled and running)
+  +                if name == "samba":
+  +                    smb_state = _get_smb_runtime_state()
+  +                    enabled = smb_state["enabled"]
+  +                    running = smb_state["running"]
+  +                    effective_enabled = smb_state["effective_enabled"]
+                   services.append({
+  -                    "name": s.get("name", ""),
+  -                    "title": s.get("title", ""),
+  -                    "enabled": s.get("enabled", False),
+  -                    "running": s.get("running", False)
+  +                    "name": name,
+  +                    "title": title,
+  +                    "enabled": enabled,
+  +                    "running": running,
+  +                    "effective_enabled": effective_enabled
+                   })
+               result["services"] = services
+       except Exception:
+  @@ -2902,24 +3122,15 @@ def api_processes():
+  -        smb_active = False
+  -        try:
+  -            import subprocess
+  -            status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+  -            if status_out == "active":
+  -                smb_active = True
+  -        except Exception:
+  -            pass
+  -        
+  -        is_enabled = False
+  -        try:
+  -            with open("/etc/samba/smb.conf", "r") as f:
+  -                if "# --- BEGIN NASWEBDAV SMB ---" in f.read():
+  -                    is_enabled = True
+  -        except Exception:
+  -            pass
+  -
+  -        return jsonify({"status": "success", "enabled": is_enabled, "active": smb_active, "share": "NAS_Data", "user": "daica"})
+  +        smb_state = _get_smb_runtime_state()
+  +        return jsonify({
+  +            "status": "success",
+  +            "enabled": smb_state["enabled"],
+  +            "active": smb_state["active"],
+  +            "effective_enabled": smb_state["effective_enabled"],
+  +            "share": "NAS_Data",
+  +            "user": "daica"
+  +        })
+       except Exception as e:
+           return jsonify({"error": str(e)}), 500
+   
+  @@ -2956,8 +3167,74 @@ def api_smb_toggle():
+  +        else:
+  +            subprocess.run(["systemctl", "disable", "smbd"], check=False)
+  +            subprocess.run(["systemctl", "stop", "smbd"], check=False)
+  +        with _omv_overview_lock:
+  +            _omv_overview_cache["time"] = 0.0
+  +            _omv_overview_cache["data"] = None
+               
+  -        return jsonify({"status": "success", "enabled": enable})
+  +        smb_active = False
+  +        try:
+  +            status_out = subprocess.check_output(["systemctl", "is-active", "smbd"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+  +            smb_active = status_out == "active"
+  +        except Exception:
+  +            pass
+  +        return jsonify({"status": "success", "enabled": enable, "active": smb_active, "effective_enabled": bool(enable and smb_active)})
+  +    except Exception as e:
+  +        return jsonify({"error": str(e)}), 500
+  +
+
+... (more changes truncated)
+  +291 -65
+[full diff: rtk git diff --no-compact]

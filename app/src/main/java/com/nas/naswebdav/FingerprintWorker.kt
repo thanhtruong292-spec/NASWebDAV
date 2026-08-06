@@ -51,7 +51,9 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                 .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
             val savedUser = SecurePrefsHelper.getUser(applicationContext)
             val savedPass = SecurePrefsHelper.getPass(applicationContext)
-            if (savedUrl.isEmpty() || savedUser.isEmpty()) return@withContext Result.failure()
+            if (savedUrl.isEmpty() || savedUser.isEmpty() || savedPass.isEmpty()) return@withContext Result.failure()
+            // Track IO/5xx errors riêng để quyết định retry ở cuối loop
+            var retryableErrors = 0
             for (file in filesToProcess) {
                 if (isStopped) break
                 try {
@@ -64,35 +66,96 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                         .header("Authorization", authHeader)
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(thumbRequest).execute().use { resp ->
-                        if (resp.isSuccessful || resp.code == 206) {
-                            val imageBytes = resp.body?.bytes() ?: return@use run { failCount++ }
-                            // Peek full dimensions to set inSampleSize
-                            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
-                            var sampleSize = 1
-                            while (opts.outWidth / sampleSize > 512 || opts.outHeight / sampleSize > 512) sampleSize *= 2
-                            val decodeOpts = BitmapFactory.Options().apply {
-                                inSampleSize = sampleSize
-                                inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        when {
+                            resp.isSuccessful || resp.code == 206 -> {
+                                val imageBytes = resp.body?.bytes() ?: return@use run { failCount++ }
+                                // Peek full dimensions to set inSampleSize
+                                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
+                                var sampleSize = 1
+                                while (opts.outWidth / sampleSize > 512 || opts.outHeight / sampleSize > 512) sampleSize *= 2
+                                val decodeOpts = BitmapFactory.Options().apply {
+                                    inSampleSize = sampleSize
+                                    inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                                }
+                                val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOpts)
+                                if (bitmap != null) {
+                                    try {
+                                        val aHash = ImageFingerprint.computeAHash(bitmap)
+                                        if (aHash != null) {
+                                            db.fileDao().updateImageFingerprint(file.path, aHash); successCount++
+                                        } else failCount++
+                                    } finally { bitmap.recycle() }
+                                } else failCount++
                             }
-                            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, decodeOpts)
-                            if (bitmap != null) {
-                                try {
-                                    val aHash = ImageFingerprint.computeAHash(bitmap)
-                                    if (aHash != null) {
-                                        db.fileDao().updateImageFingerprint(file.path, aHash); successCount++
-                                    } else failCount++
-                                } finally { bitmap.recycle() }
-                            } else failCount++
-                        } else {
-                            db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED"); failCount++
+                            // 5xx: transient server error — không gắn NOT_SUPPORTED, retry sau
+                            resp.code in 500..599 -> {
+                                retryableErrors++
+                                failCount++
+                            }
+                            // 408/429: transient (timeout / rate-limit) → retry, KHÔNG gắn NOT_SUPPORTED
+                            resp.code == 408 || resp.code == 429 -> {
+                                retryableErrors++
+                                failCount++
+                            }
+                            // 401/403: auth thay đổi → retry thử lại sau khi refresh credentials
+                            resp.code == 401 || resp.code == 403 -> {
+                                retryableErrors++
+                                failCount++
+                            }
+                            // 404/410: file biến mất trên NAS (race với delete) — không phải lỗi file
+                            resp.code == 404 || resp.code == 410 -> {
+                                // Không gắn NOT_SUPPORTED (file có thể quay lại), không tính retryable
+                                // → success sẽ skip file này vĩnh viễn trong pass hiện tại.
+                                failCount++
+                            }
+                            // 409 Conflict: race với concurrent write — retry
+                            resp.code == 409 -> {
+                                retryableErrors++
+                                failCount++
+                            }
+                            // 4xx khác (400/451…): terminal client error → NOT_SUPPORTED
+                            else -> {
+                                db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED"); failCount++
+                            }
                         }
                     }
                     delay(200)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { failCount++; delay(1000) }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException || isStopped) {
+                        // Guideline: CancellationException / isStopped → Result.retry() (không nuốt thành success)
+                        retryableErrors++
+                        break
+                    }
+                    // Network/IO exception = transient → count là retryable
+                    retryableErrors++
+                    failCount++
+                    delay(1000)
+                }
             }
-            SystemLogger.log("SUCCESS", "FingerprintWorker", "Hoàn tất quá trình cấp phát chữ ký số. Thành công: $successCount, Thất bại: $failCount")
-            return@withContext Result.success()
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}"); return@withContext Result.failure() }
+            // Quy tắc theo guideline repo: isStopped → retry (không success để khỏi nuốt cancellation)
+            // Log INFO tổng kết trước, decision + log kết quả thật phía dưới
+            return@withContext when {
+                isStopped -> {
+                    SystemLogger.log("WARNING", "FingerprintWorker",
+                        "Worker bị stop giữa chừng — retry pass (success=$successCount fail=$failCount retryable=$retryableErrors)")
+                    Result.retry()
+                }
+                retryableErrors > 0 -> {
+                    SystemLogger.log("WARNING", "FingerprintWorker",
+                        "Có $retryableErrors retryable error(s) — sẽ retry (success=$successCount fail=$failCount)")
+                    Result.retry()
+                }
+                else -> {
+                    SystemLogger.log("SUCCESS", "FingerprintWorker",
+                        "Hoàn tất: success=$successCount fail=$failCount (retryable=$retryableErrors)")
+                    Result.success()
+                }
+            }
+        } catch (e: Exception) {
+            if (isStopped || e is kotlinx.coroutines.CancellationException) return@withContext Result.retry()
+            SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}")
+            return@withContext Result.retry()
+        }
     }
 }

@@ -125,6 +125,123 @@ class DeviceManagementViewModel(
     var isFetchingLogs by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
+    // Failed uploads từ SyncAction table (actionType=UPLOAD_FAILED) — cho UI retry/delete
+    var failedUploads by androidx.compose.runtime.mutableStateOf<List<com.nas.naswebdav.SyncAction>>(emptyList())
+        internal set
+    var showFailedUploadsDialog by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var isLoadingFailedUploads by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    /**
+     * Tải danh sách UPLOAD_FAILED rows từ SyncAction table.
+     * Gọi khi user mở dialog hoặc pull-to-refresh.
+     */
+    fun loadFailedUploads(context: android.content.Context) {
+        isLoadingFailedUploads = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = (context.applicationContext as NasApplication).database
+                failedUploads = db.syncActionDao().getAllUploadFailed()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                    "Không tải được failed uploads: ${e.message}")
+            } finally {
+                isLoadingFailedUploads = false
+            }
+        }
+    }
+
+    /**
+     * Retry một UPLOAD_FAILED row cụ thể: enqueue OfflineSyncWorker với inputData
+     * chứa actionId. Worker sẽ ưu tiên xử lý đúng row đó trước khi đến các
+     * action khác trong queue.
+     */
+    fun retryFailedUpload(context: android.content.Context, actionId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val constraints = androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .build()
+                val inputData = androidx.work.workDataOf(
+                    com.nas.naswebdav.OfflineSyncWorker.KEY_RETRY_ACTION_ID to actionId
+                )
+                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
+                    .setConstraints(constraints)
+                    .setInputData(inputData)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
+                    )
+                    .build()
+                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
+                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    request
+                )
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Enqueue retry cho failed upload id=$actionId (priority)")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                    "Enqueue retry thất bại cho id=$actionId: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Xóa row UPLOAD_FAILED khỏi queue (user chấp nhận mất file, không muốn retry).
+     * Cũng xóa temp file nếu còn trong cacheDir.
+     */
+    fun deleteFailedUpload(context: android.content.Context, action: com.nas.naswebdav.SyncAction) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = (context.applicationContext as NasApplication).database
+                try { java.io.File(action.sourcePath).delete() } catch (_: Exception) {}
+                db.syncActionDao().deleteById(action.id)
+                failedUploads = db.syncActionDao().getAllUploadFailed()
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Đã xóa failed upload id=${action.id} (${action.sourcePath})")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                    "Xóa failed upload thất bại: ${e.message}")
+            }
+        }
+    }
+
+    /** Retry tất cả failed uploads cùng lúc */
+    fun retryAllFailedUploads(context: android.content.Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val constraints = androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .build()
+                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
+                    )
+                    .build()
+                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
+                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    request
+                )
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Enqueue retry-all failed uploads")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                    "Retry-all failed: ${e.message}")
+            }
+        }
+    }
+
     // ═══ WIRED METHODS — Phase 2b: delegation pattern ═══
 
     /**

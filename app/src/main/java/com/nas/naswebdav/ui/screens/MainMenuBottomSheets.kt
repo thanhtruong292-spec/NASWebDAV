@@ -6,6 +6,7 @@ import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -81,8 +82,8 @@ fun ProcessListBottomSheet(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF141414),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
+        containerColor = DarkSurface,
+        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -92,7 +93,7 @@ fun ProcessListBottomSheet(
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
                     text = "Tiến Trình (Theo ${if (sortBy == "cpu") "CPU" else "RAM"})",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -141,12 +142,12 @@ fun ProcessListBottomSheet(
                     val proc = displayProcesses[index]
                     val isSysEntry = proc.isSystem || proc.pid <= 0
                     val statusColor = when {
-                        isSysEntry -> Color(0xFF29B6F6)
-                        proc.status == "running" -> Color(0xFF66BB6A)
-                        proc.status == "sleeping" -> Color(0xFF9E9E9E)
-                        proc.status == "disk-sleep" -> Color(0xFFFFA726)
-                        proc.status in listOf("zombie", "dead") -> Color(0xFFEF5350)
-                        else -> Color(0xFF9E9E9E)
+                        isSysEntry -> AccentBlue
+                        proc.status == "running" -> AccentGreen
+                        proc.status == "sleeping" -> TextTertiary
+                        proc.status == "disk-sleep" -> AccentOrange
+                        proc.status in listOf("zombie", "dead") -> AccentRed
+                        else -> TextTertiary
                     }
                     val statusChar = when {
                         isSysEntry -> "OS"
@@ -173,7 +174,7 @@ fun ProcessListBottomSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(if (isSysEntry) Color(0xFF15232D) else Color(0xFF1E1E1E), RoundedCornerShape(6.dp))
+                            .background(if (isSysEntry) DarkCard else DarkCard, RoundedCornerShape(6.dp))
                             .clickable(enabled = !isSysEntry, onClick = { showKillConfirm = true })
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -187,7 +188,7 @@ fun ProcessListBottomSheet(
                         }
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(proc.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(proc.name, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${proc.user} (${proc.pid})", color = TextSecondary, fontSize = 10.sp)
                         }
                         val displayValue = if (sortBy == "cpu") "${proc.cpu}%" else "${proc.mem}%"
@@ -196,7 +197,7 @@ fun ProcessListBottomSheet(
                         androidx.compose.material3.Icon(
                             androidx.compose.material.icons.Icons.Default.Close,
                             contentDescription = "Kill",
-                            tint = Color(0xFFEF5350).copy(alpha = 0.7f),
+                            tint = AccentRed.copy(alpha = 0.7f),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -223,8 +224,8 @@ fun SmartDetailBottomSheet(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF141414),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
+        containerColor = DarkSurface,
+        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -235,14 +236,14 @@ fun SmartDetailBottomSheet(
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                 Text(
                     "Thông tin S.M.A.R.T",
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
                 val statusColor = when {
-                    smartInfo.status.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
-                    smartInfo.status.uppercase().contains("FAILED") -> Color(0xFFEF5350)
-                    else -> Color(0xFFFFA726)
+                    smartInfo.status.uppercase().contains("PASSED") -> AccentGreen
+                    smartInfo.status.uppercase().contains("FAILED") -> AccentRed
+                    else -> AccentOrange
                 }
                 Text(
                     smartInfo.status.uppercase(),
@@ -270,19 +271,19 @@ fun SmartDetailBottomSheet(
                     // Màu sắc theo trạng thái
                     val valueColor = when {
                         rawLabel == "Trang thai OMV" -> when {
-                            rawValue.uppercase().contains("GOOD") || rawValue.uppercase().contains("PASSED") -> Color(0xFF66BB6A)
-                            rawValue.uppercase().contains("BAD") || rawValue.uppercase().contains("FAILED") -> Color(0xFFEF5350)
-                            else -> Color(0xFFFFA726)
+                            rawValue.uppercase().contains("GOOD") || rawValue.uppercase().contains("PASSED") -> AccentGreen
+                            rawValue.uppercase().contains("BAD") || rawValue.uppercase().contains("FAILED") -> AccentRed
+                            else -> AccentOrange
                         }
                         rawLabel == "Nhiet do" -> {
                             val temp = rawValue.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0
                             when {
-                                temp >= 55 -> Color(0xFFEF5350)  // Nóng - Đỏ
-                                temp >= 45 -> Color(0xFFFFA726)  // Ấm - Vàng
-                                else -> Color(0xFF66BB6A)         // Mát - Xanh
+                                temp >= 55 -> AccentRed  // Nóng - Đỏ
+                                temp >= 45 -> AccentOrange  // Ấm - Vàng
+                                else -> AccentGreen         // Mát - Xanh
                             }
                         }
-                        else -> Color.White
+                        else -> TextPrimary
                     }
                     
                     Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
@@ -320,8 +321,8 @@ fun SmartDetailBottomSheet(
                         // Highlight attributes that may indicate problems
                         val rawNumber = raw.trim().split(Regex("\\s+")).firstOrNull()?.toLongOrNull() ?: 0L
                         val isCritical = id in listOf("5", "187", "197", "198", "10") && rawNumber > 0L
-                        val rowColor = if (isCritical) Color(0xFFEF5350).copy(alpha = 0.15f) else Color(0xFF1E1E1E)
-                        val textColor = if (isCritical) Color(0xFFEF5350) else Color.White
+                        val rowColor = if (isCritical) AccentRed.copy(alpha = 0.15f) else DarkCard
+                        val textColor = if (isCritical) AccentRed else TextPrimary
 
                         Row(
                             modifier = Modifier.fillMaxWidth()
@@ -350,11 +351,16 @@ fun SmbBottomSheet(
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
 
+    // Fetch thực trạng từ server mỗi khi mở dialog, để Switch luôn đúng
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        deviceVM.fetchSmbStatus()
+    }
+
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = DarkCard,
-        dragHandle = { DashboardCompactBottomSheetHandle() }
+        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -371,7 +377,7 @@ fun SmbBottomSheet(
                         "Ổ Đĩa Mạng (SMB)",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = TextPrimary
                     )
                     Text(
                         "Map Network Drive cho PC",
@@ -393,10 +399,10 @@ fun SmbBottomSheet(
                             deviceVM.toggleSmb(context, isChecked)
                         },
                         colors = androidx.compose.material3.SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
+                            checkedThumbColor = TextPrimary,
                             checkedTrackColor = AccentCyan,
-                            uncheckedThumbColor = Color.LightGray,
-                            uncheckedTrackColor = Color.Gray
+                            uncheckedThumbColor = TextSecondary,
+                            uncheckedTrackColor = TextTertiary
                         )
                     )
                 }
@@ -415,12 +421,12 @@ fun SmbBottomSheet(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = DarkCard)
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text("Dành cho Windows:", color = TextSecondary, fontSize = 11.sp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("\\\\192.168.100.254\\NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("\\\\192.168.100.254\\NAS_Data", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                             IconButton(onClick = { 
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("\\\\192.168.100.254\\NAS_Data"))
                             }, modifier = Modifier.size(24.dp)) {
@@ -430,7 +436,7 @@ fun SmbBottomSheet(
                         Spacer(Modifier.height(8.dp))
                         Text("Dành cho MacOS:", color = TextSecondary, fontSize = 11.sp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("smb://192.168.100.254/NAS_Data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            Text("smb://192.168.100.254/NAS_Data", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                             IconButton(onClick = { 
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString("smb://192.168.100.254/NAS_Data"))
                             }, modifier = Modifier.size(24.dp)) {
@@ -444,21 +450,21 @@ fun SmbBottomSheet(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = DarkCard)
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Person, contentDescription = "User", tint = TextSecondary, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Tài khoản:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
-                            Text("daica", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("daica", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                         Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Lock, contentDescription = "Password", tint = TextSecondary, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Mật khẩu:", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(70.dp))
-                            Text("(Mật khẩu của App NAS)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("(Mật khẩu của App NAS)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -492,8 +498,8 @@ fun DuplicateScanGlobalUI(
             // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
             onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
-            containerColor = Color(0xFF0F0F0F),
-            scrimColor = Color.Black.copy(alpha = 0.6f),
+            containerColor = DarkSurface,
+            scrimColor = DarkSurface.copy(alpha = 0.6f),
             dragHandle = {
                 Box(
                     modifier = Modifier
@@ -505,7 +511,7 @@ fun DuplicateScanGlobalUI(
                         modifier = Modifier
                             .width(44.dp)
                             .height(5.dp)
-                            .background(Color(0xFF6D6A75), RoundedCornerShape(50))
+                            .background(TextTertiary, RoundedCornerShape(50))
                     )
                 }
             }
@@ -518,19 +524,19 @@ fun DuplicateScanGlobalUI(
             ) {
                 // Header
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
-                    Icon(Icons.Default.FindReplace, contentDescription = null, tint = Color(0xFF1E88E5), modifier = Modifier.size(24.dp))
+                    Icon(Icons.Default.FindReplace, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(24.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Phát hiện tệp trùng lặp", color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text("Phát hiện tệp trùng lặp", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 }
                 Column(Modifier.fillMaxWidth()) {
                     // ═══ GIAI ĐOẠN HIỆN TẠI ═══
                     val stage = smartToolsVM.scanDuplicatesStage
                     val stageColor = when {
-                        stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> Color(0xFF1E88E5) // Xanh dương
-                        stage.contains("Phân tích") -> Color(0xFFF57C00) // Cam
-                        stage.contains("Hash") || stage.contains("Xác minh") -> Color(0xFF7B1FA2) // Tím
-                        stage.contains("Hoàn tất") -> Color(0xFF2E7D32) // Xanh lá
-                        else -> Color(0xFF616161) // Xám
+                        stage.contains("Thu thập") || stage.contains("nhận") || stage.contains("WebDAV") -> AccentBlue // Xanh dương
+                        stage.contains("Phân tích") -> AccentOrange // Cam
+                        stage.contains("Hash") || stage.contains("Xác minh") -> AccentPurple // Tím
+                        stage.contains("Hoàn tất") -> AccentGreen // Xanh lá
+                        else -> TextTertiary // Xám
                     }
                     Surface(
                         color = stageColor.copy(alpha = 0.12f),
@@ -555,13 +561,13 @@ fun DuplicateScanGlobalUI(
 
                     // ═══ THƯ MỤC ĐANG QUÉT ═══
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Folder, contentDescription = null, tint = Color(0xFF5C6BC0), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Thư mục:", fontSize = 11.sp, color = Color.Gray)
+                        Text("Thư mục:", fontSize = 11.sp, color = TextTertiary)
                     }
                     Text(
                         text = smartToolsVM.scanDuplicatesCurrentFolderUrl.ifEmpty { "..." },
-                        color = Color(0xFF5C6BC0), fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                        color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
                     )
@@ -570,13 +576,13 @@ fun DuplicateScanGlobalUI(
 
                     // ═══ FILE ĐANG XỬ LÝ ═══
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color(0xFFEF6C00), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = AccentOrange, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Đang xử lý:", fontSize = 11.sp, color = Color.Gray)
+                        Text("Đang xử lý:", fontSize = 11.sp, color = TextTertiary)
                     }
                     Text(
                         text = smartToolsVM.scanDuplicatesCurrentItemName.ifEmpty { "..." },
-                        color = Color(0xFFEF6C00), fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                        color = AccentOrange, fontSize = 12.sp, fontWeight = FontWeight.Medium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(start = 22.dp)
                     )
@@ -598,13 +604,13 @@ fun DuplicateScanGlobalUI(
                     Column(Modifier.fillMaxWidth()) {
                         // Thanh 1: TỔNG QUÁT (Bao trùm toàn bộ tiến trình lớn)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tổng thể", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(60.dp))
+                            Text("Tổng thể", fontSize = 11.sp, color = TextTertiary, modifier = Modifier.width(60.dp))
                             Spacer(Modifier.width(8.dp))
                             LinearProgressIndicator(
                                 progress = { progressValue.coerceIn(0f, 1f) },
                                 modifier = Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(5.dp)),
-                                color = Color(0xFF4CAF50),
-                                trackColor = Color(0xFF4CAF50).copy(alpha = 0.15f)
+                                color = AccentGreen,
+                                trackColor = AccentGreen.copy(alpha = 0.15f)
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
@@ -618,13 +624,13 @@ fun DuplicateScanGlobalUI(
 
                         // Thanh 2: HIỆN TẠI (Theo từng giai đoạn)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Giai đoạn", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(60.dp))
+                            Text("Giai đoạn", fontSize = 11.sp, color = TextTertiary, modifier = Modifier.width(60.dp))
                             Spacer(Modifier.width(8.dp))
                             LinearProgressIndicator(
                                 progress = { stageProgressValue.coerceIn(0f, 1f) },
                                 modifier = Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(5.dp)),
-                                color = Color(0xFF81C784),
-                                trackColor = Color(0xFF81C784).copy(alpha = 0.15f)
+                                color = AccentGreen,
+                                trackColor = AccentGreen.copy(alpha = 0.15f)
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
@@ -652,14 +658,14 @@ fun DuplicateScanGlobalUI(
                         Text(
                             "${(stageProgressValue * 100).toInt()}% giai đoạn",
                             fontSize = 10.sp,
-                            color = Color.Gray
+                            color = TextTertiary
                         )
                     }
                     if (smartToolsVM.scanDuplicatesStageDescription.isNotEmpty()) {
                         Text(
                             smartToolsVM.scanDuplicatesStageDescription,
                             fontSize = 10.sp,
-                            color = Color.Gray.copy(alpha = 0.8f),
+                            color = TextTertiary.copy(alpha = 0.8f),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp)
@@ -676,19 +682,19 @@ fun DuplicateScanGlobalUI(
                         val elapsed = smartToolsVM.scanDuplicatesElapsedTime
                         val etr = smartToolsVM.scanDuplicatesEstimatedTimeRemaining
 
-                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = Color.Gray)
-                        Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = Color(0xFF4FC3F7), fontWeight = FontWeight.Bold)
+                        Text("Thời gian chạy: ${FormatUtils.formatElapsedTime(elapsed)}", fontSize = 11.sp, color = TextTertiary)
+                        Text(if (etr >= 0) "Ước tính còn: ${FormatUtils.formatElapsedTime(etr)}" else "Đang tính toán...", fontSize = 11.sp, color = AccentBlue, fontWeight = FontWeight.Bold)
                     }
 
                     // ═══ THỐNG KÊ RÕ RÀNG ═══
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E88E5))
-                            Text("Tổng tệp", fontSize = 10.sp, color = Color.Gray)
+                            Text("${smartToolsVM.scanDuplicatesTotalScanned}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                            Text("Tổng tệp", fontSize = 10.sp, color = TextTertiary)
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
-                            Text("Trùng lặp", fontSize = 10.sp, color = Color.Gray)
+                            Text("${smartToolsVM.scanDuplicatesFound}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AccentRed)
+                            Text("Trùng lặp", fontSize = 10.sp, color = TextTertiary)
                         }
                     }
                 }
@@ -700,25 +706,25 @@ fun DuplicateScanGlobalUI(
                         OutlinedButton(
                             onClick = { smartToolsVM.cancelDuplicateScan(context) },
                             modifier = Modifier.weight(1f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE57373))
-                        ) { Text("Huỷ", color = Color(0xFFE57373), fontWeight = FontWeight.SemiBold) }
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
+                        ) { Text("Huỷ", color = AccentRed, fontWeight = FontWeight.SemiBold) }
                         OutlinedButton(
                             onClick = { smartToolsVM.togglePauseDuplicateScan() },
                             modifier = Modifier.weight(1f),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF64B5F6))
-                        ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = Color(0xFF64B5F6), fontWeight = FontWeight.SemiBold) }
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentBlue)
+                        ) { Text(if (isPaused) "Tiếp tục" else "Tạm dừng", color = AccentBlue, fontWeight = FontWeight.SemiBold) }
                         Button(
                             onClick = { smartToolsVM.isScanningDuplicates = false },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
-                        ) { Text("Thu nhỏ", color = Color.White, fontWeight = FontWeight.Bold) }
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                        ) { Text("Thu nhỏ", color = TextPrimary, fontWeight = FontWeight.Bold) }
                     }
                 } else {
                     Button(
                         onClick = { smartToolsVM.isScanningDuplicates = false },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
-                    ) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold) }
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                    ) { Text("Đóng", color = TextPrimary, fontWeight = FontWeight.Bold) }
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -734,8 +740,8 @@ fun DuplicateScanGlobalUI(
             onDismissRequest = { smartToolsVM.isShowingDuplicates = false },
             sheetState = sheetState,
             containerColor = DarkSurface,
-            scrimColor = Color.Black.copy(alpha = 0.6f),
-            dragHandle = { DashboardCompactBottomSheetHandle() }
+            scrimColor = DarkSurface.copy(alpha = 0.6f),
+            dragHandle = { NasBottomSheetHandle() }
         ) {
             Column(
                 modifier = Modifier
@@ -746,7 +752,7 @@ fun DuplicateScanGlobalUI(
             ) {
                 Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column {
-                        Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                        Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = AccentRed)
                         if (smartToolsVM.duplicateFilesList.isNotEmpty()) {
                             Text(
                                 text = "Phát hiện ${smartToolsVM.duplicateFilesList.size} tệp trùng lặp",
@@ -757,19 +763,19 @@ fun DuplicateScanGlobalUI(
                         }
                     }
                     if (smartToolsVM.duplicateFilesList.isEmpty()) {
-                        TextButton(onClick = { smartToolsVM.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) { 
-                            Text("Hoàn tất", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) 
+                        TextButton(onClick = { smartToolsVM.isShowingDuplicates = false; smartToolsVM.selectedDuplicates.clear() }) {
+                            Text("Hoàn tất", color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         if (smartToolsVM.selectedDuplicates.isNotEmpty()) {
                             TextButton(onClick = { smartToolsVM.deleteSelectedDuplicates(smartToolsVM.selectedDuplicates.toList()) }) {
-                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                                Text("Xóa (${smartToolsVM.selectedDuplicates.size}) mục", color = AccentRed, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
                 if (smartToolsVM.duplicateFilesList.isEmpty()) {
-                    Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
+                    Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = AccentGreen)
                 } else {
                     // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                     // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
@@ -831,16 +837,16 @@ fun DuplicateScanGlobalUI(
                             },
                             modifier = Modifier.align(Alignment.End)
                         ) {
-                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF2196F3))
+                            Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentBlue)
                             Spacer(Modifier.width(4.dp))
-                            Text("Chọn thông minh", fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                            Text("Chọn thông minh", fontWeight = FontWeight.Bold, color = AccentBlue)
                         }
 
                         androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
                             items(items = filteredGroups, key = { it.first().partialHash ?: "${it.first().contentLength}_${it.first().name}" }) { group ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.2f)),
+                                    colors = CardDefaults.cardColors(containerColor = DarkCardHover),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Column(Modifier.padding(12.dp)) {
@@ -866,7 +872,7 @@ fun DuplicateScanGlobalUI(
                                                     modifier = Modifier
                                                         .width(130.dp).height(150.dp) // Kích thước Thumbnail to rõ ràng
                                                         .clip(RoundedCornerShape(8.dp))
-                                                        .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
+                                                        .background(if (isSelected) AccentRed.copy(alpha = 0.2f) else DarkSurface)
                                                         .clickable {
                                                             if (isSelected) smartToolsVM.selectedDuplicates.remove(dupFile)
                                                             else smartToolsVM.selectedDuplicates.add(dupFile)
@@ -878,12 +884,12 @@ fun DuplicateScanGlobalUI(
                                                             WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                         }
                                                     } else {
-                                                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
+                                                        Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = TextTertiary, modifier = Modifier.align(Alignment.Center).size(40.dp))
                                                     }
 
                                                     // 2. Lớp phủ đỏ mờ nếu đang được tick chọn xóa
                                                     if (isSelected) {
-                                                        Box(modifier = Modifier.fillMaxSize().background(Color.Red.copy(alpha = 0.4f)))
+                                                        Box(modifier = Modifier.fillMaxSize().background(AccentRed.copy(alpha = 0.4f)))
                                                     }
 
                                                     // 3. Checkbox nằm góc trên phải
@@ -894,7 +900,7 @@ fun DuplicateScanGlobalUI(
                                                             else smartToolsVM.selectedDuplicates.remove(dupFile)
                                                         },
                                                         modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
-                                                        colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
+                                                        colors = CheckboxDefaults.colors(checkedColor = AccentRed, uncheckedColor = TextPrimary)
                                                     )
 
                                                     // 4. Tên file + thư mục cha đè ở dưới cùng (Để phân biệt các file)
@@ -902,14 +908,14 @@ fun DuplicateScanGlobalUI(
                                                         modifier = Modifier
                                                             .align(Alignment.BottomCenter)
                                                             .fillMaxWidth()
-                                                            .background(Color.Black.copy(alpha = 0.75f))
+                                                            .background(DarkSurface.copy(alpha = 0.75f))
                                                             .padding(horizontal = 4.dp, vertical = 3.dp)
                                                     ) {
                                                         Text(
                                                             text = dupFile.name,
                                                             fontSize = 8.sp,
                                                             fontWeight = FontWeight.Bold,
-                                                            color = Color.White,
+                                                            color = TextPrimary,
                                                             maxLines = 2,
                                                             overflow = TextOverflow.Ellipsis,
                                                             lineHeight = 10.sp
@@ -919,7 +925,7 @@ fun DuplicateScanGlobalUI(
                                                         Text(
                                                             text = "📁 $parentFolder",
                                                             fontSize = 7.sp,
-                                                            color = Color.Gray,
+                                                            color = TextTertiary,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )

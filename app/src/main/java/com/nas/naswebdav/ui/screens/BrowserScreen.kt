@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -243,18 +244,21 @@ fun BrowserScreen(
     if (showTextPreviewDialog) {
         AlertDialog(
             onDismissRequest = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null },
-            title = { Text(textPreviewName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            containerColor = DarkCard,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text(textPreviewName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = TextPrimary) },
             text = {
                 if (fileBrowserVM.isLoading && fileBrowserVM.textPreviewContent == null) {
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.padding(10.dp))
+                        CircularProgressIndicator(modifier = Modifier.padding(10.dp), color = AccentCyan)
                     }
                 } else if (!fileBrowserVM.textPreviewContent.isNullOrBlank()) {
-                    SelectionContainer { // Cấp quyền bôi đen copy đoạn Text mồi này
+                    SelectionContainer {
                         Text(
                             text = fileBrowserVM.textPreviewContent!!,
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
+                            color = TextPrimary,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = 400.dp)
@@ -262,14 +266,15 @@ fun BrowserScreen(
                         )
                     }
                 } else {
-                    Text(stringResource(R.string.error_cannot_load_file), color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.error_cannot_load_file), color = AccentRed)
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null }) {
-                    Text(stringResource(R.string.action_close))
+                Button(onClick = { showTextPreviewDialog = false; fileBrowserVM.textPreviewContent = null }, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = DarkSurface), shape = RoundedCornerShape(10.dp)) {
+                    Text(stringResource(R.string.action_close), fontWeight = FontWeight.SemiBold)
                 }
-            }
+            },
+            modifier = Modifier.padding(horizontal = 24.dp)
         )
     }
 
@@ -332,7 +337,7 @@ fun BrowserScreen(
     if (showDuplicateConfigDialog) {
         AlertDialog(
             onDismissRequest = { showDuplicateConfigDialog = false },
-            icon = { Icon(Icons.Default.Bolt, null, tint = Color(0xFFFFC107), modifier = Modifier.size(36.dp)) },
+            icon = { Icon(Icons.Default.Bolt, null, tint = AccentOrange, modifier = Modifier.size(36.dp)) },
             title = { Text(stringResource(R.string.dialog_duplicate_config), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -346,10 +351,10 @@ fun BrowserScreen(
                         Checkbox(
                             checked = isLightningMode,
                             onCheckedChange = { isLightningMode = it },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
+                            colors = CheckboxDefaults.colors(checkedColor = AccentOrange)
                         )
                         Column(modifier = Modifier.padding(start = 4.dp)) {
-                            Text(stringResource(R.string.dialog_duplicate_fast_mode), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(R.string.dialog_duplicate_fast_mode), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) AccentOrange else MaterialTheme.colorScheme.onSurface)
                             Text(stringResource(R.string.dialog_duplicate_fast_desc), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
                         }
                     }
@@ -377,13 +382,13 @@ fun BrowserScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(stringResource(R.string.dialog_duplicate_auto_clean), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
+                            Text(stringResource(R.string.dialog_duplicate_auto_clean), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
                             Text(stringResource(R.string.dialog_duplicate_auto_clean_desc), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
                         }
                         Switch(
                             checked = smartToolsVM.autoCleanEnabled,
                             onCheckedChange = { smartToolsVM.toggleAutoClean(context, it) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF4FC3F7), checkedTrackColor = Color(0xFF4FC3F7).copy(alpha = 0.5f))
+                            colors = SwitchDefaults.colors(checkedThumbColor = AccentBlue, checkedTrackColor = AccentBlue.copy(alpha = 0.5f))
                         )
                     }
                 }
@@ -394,7 +399,7 @@ fun BrowserScreen(
                         showDuplicateConfigDialog = false
                         smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = isForceRestartDuplicate, lightningMode = isLightningMode)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
                 ) {
                     Text(stringResource(R.string.dialog_start_scan))
                 }
@@ -570,7 +575,7 @@ fun BrowserScreen(
                     modifier = Modifier.fillMaxWidth(0.9f).padding(bottom = 8.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(10.dp).fillMaxWidth(),
@@ -775,7 +780,7 @@ fun BrowserScreen(
                             Icon(
                                 Icons.Default.DriveFileMove,
                                 contentDescription = stringResource(R.string.cd_move),
-                                tint = if (selectedFiles.isNotEmpty()) Color(0xFFFF8F00) else MaterialTheme.colorScheme.outline
+                                tint = if (selectedFiles.isNotEmpty()) AccentOrange else MaterialTheme.colorScheme.outline
                             )
                         }
                     }
@@ -829,7 +834,7 @@ fun BrowserScreen(
                         val chipColor = when {
                             displayStatus.contains("Chờ", ignoreCase = true) -> MaterialTheme.colorScheme.primary // Xanh dương
                             displayStatus.contains("Lỗi", ignoreCase = true) || displayStatus.contains("Mất", ignoreCase = true) -> MaterialTheme.colorScheme.error // Đỏ
-                            displayStatus.contains("Cache", ignoreCase = true) -> Color(0xFFF57C00) // Cam
+                            displayStatus.contains("Cache", ignoreCase = true) -> AccentOrange // Cam
                             else -> MaterialTheme.colorScheme.tertiary // Xanh lá
                         }
 
@@ -933,7 +938,7 @@ fun BrowserScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .background(DarkCardHover.copy(alpha = 0.5f))
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1314,7 +1319,7 @@ fun BrowserScreen(
                                                 modifier = Modifier
                                                     .size(32.dp)
                                                     .clip(RoundedCornerShape(4.dp))
-                                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                    .background(DarkCard),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 var listThumbState by remember { mutableStateOf<ThumbState?>(null) }
@@ -1338,19 +1343,19 @@ fun BrowserScreen(
                                             Icon(
                                                 imageVector = Icons.Default.Folder,
                                                 contentDescription = null,
-                                                tint = Color(0xFFFFC107),
+                                                tint = AccentOrange,
                                                 modifier = Modifier.size(32.dp)
                                             )
                                         } else {
                                             val ext = file.name.substringAfterLast('.', "").uppercase()
                                             val extColor = when {
                                                 isImageFile -> MaterialTheme.colorScheme.primary
-                                                isVideo -> Color(0xFFFF8F00)
+                                                isVideo -> AccentOrange
                                                 ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> MaterialTheme.colorScheme.error
                                                 ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> MaterialTheme.colorScheme.tertiary
                                                 ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> MaterialTheme.colorScheme.secondary
                                                 ext in listOf("MP3", "WAV", "FLAC", "M4A") -> MaterialTheme.colorScheme.primary
-                                                else -> Color(0xFF757575)
+                                                else -> TextTertiary
                                             }
                                             Icon(
                                                 imageVector = Icons.Default.InsertDriveFile,
@@ -1473,7 +1478,7 @@ fun BrowserScreen(
                                                 Icon(
                                                     imageVector = Icons.Default.Folder,
                                                     contentDescription = null,
-                                                    tint = Color(0xFFFFC107),
+                                                    tint = AccentOrange,
                                                     modifier = Modifier.size(24.dp)
                                                 )
                                             } else if (isVideo || isImageFile) {
@@ -1505,7 +1510,7 @@ fun BrowserScreen(
                                                 Icon(
                                                     imageVector = Icons.Default.InsertDriveFile,
                                                     contentDescription = null,
-                                                    tint = Color(0xFF78909C),
+                                                    tint = TextSecondary,
                                                     modifier = Modifier.size(24.dp)
                                                 )
                                             }
@@ -1575,18 +1580,24 @@ fun BrowserScreen(
                         Button(onClick = { fileBrowserVM.refresh() }) { Text(stringResource(R.string.action_retry)) }
                     }
                 } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        if (isSearching && searchQuery.isNotEmpty()) {
-                            Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
-                        } else {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text(stringResource(R.string.label_folder_empty), color = MaterialTheme.colorScheme.outline)
+                    androidx.compose.animation.Crossfade(
+                        targetState = isSearching && searchQuery.isNotEmpty(),
+                        animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
+                        label = "BrowserEmptyState"
+                    ) { showSearchEmpty ->
+                        Column(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            if (showSearchEmpty) {
+                                Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+                            } else {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text(stringResource(R.string.label_folder_empty), color = MaterialTheme.colorScheme.outline)
+                            }
                         }
                     }
                 }
@@ -1681,23 +1692,34 @@ fun BrowserScreenFileItemGridCell(
     }
 
     if (showRenameDialog) {
+        val renameFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            title = { Text(stringResource(R.string.action_rename), fontWeight = FontWeight.Bold) },
+            containerColor = DarkCard,
+            shape = RoundedCornerShape(16.dp),
+            title = { Text(stringResource(R.string.action_rename), fontWeight = FontWeight.Bold, color = TextPrimary) },
             text = {
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = newFileName,
                     onValueChange = { newFileName = it },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().focusRequester(renameFocusRequester),
+                    focusRequester = renameFocusRequester
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                Button(onClick = {
                     showRenameDialog = false
                     if (newFileName.isNotBlank() && newFileName != file.name) fileBrowserVM.renameFile(context, file, newFileName)
-                }) { Text(stringResource(R.string.action_save)) }
+                }, colors = ButtonDefaults.buttonColors(containerColor = AccentCyan, contentColor = DarkSurface), shape = RoundedCornerShape(10.dp)) {
+                    Text(stringResource(R.string.action_save), fontWeight = FontWeight.SemiBold)
+                }
             },
-            dismissButton = { TextButton(onClick = { showRenameDialog = false }) { Text(stringResource(R.string.action_cancel)) } }
+            dismissButton = {
+                OutlinedButton(onClick = { showRenameDialog = false }, colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary), shape = RoundedCornerShape(10.dp)) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+            modifier = Modifier.padding(horizontal = 24.dp)
         )
     }
 
@@ -1778,7 +1800,7 @@ fun BrowserScreenFileItemGridCell(
             // Mở video bằng ứng dụng ngoài
             if (isVideo) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_open_external), color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_open_external), color = AccentOrange, fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         openExternalVideoPlayer(
@@ -1811,8 +1833,8 @@ fun BrowserScreenFileItemGridCell(
                 .background(
                     when {
                         file.isDirectory -> Color.Transparent
-                        isMedia -> MaterialTheme.colorScheme.surfaceVariant
-                        else -> Color(0xFFF0F0F0)
+                        isMedia -> DarkCardHover
+                        else -> TextTertiary
                     }
                 )
         ) {
@@ -1839,7 +1861,7 @@ fun BrowserScreenFileItemGridCell(
                 Icon(
                     imageVector = Icons.Default.Folder,
                     contentDescription = null,
-                    tint = Color(0xFFFFC107),
+                    tint = AccentOrange,
                     modifier = Modifier.size(65.dp)
                 )
             } else {
@@ -1847,7 +1869,7 @@ fun BrowserScreenFileItemGridCell(
                 Icon(
                     imageVector = Icons.Default.InsertDriveFile,
                     contentDescription = null,
-                    tint = Color(0xFF78909C),
+                    tint = TextSecondary,
                     modifier = Modifier.size(40.dp).align(Alignment.Center)
                 )
             }
@@ -1859,12 +1881,12 @@ fun BrowserScreenFileItemGridCell(
                 // MÀU SẮC BADGE THEO LOẠI FILE
                 val extColor = when {
                     isImage -> MaterialTheme.colorScheme.primary // Xanh dương
-                    isVideo -> Color(0xFFFF8F00) // Cam
+                    isVideo -> AccentOrange // Cam
                     ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> MaterialTheme.colorScheme.error // Đỏ
                     ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> MaterialTheme.colorScheme.tertiary // Xanh lá
                     ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> MaterialTheme.colorScheme.secondary // Tím
                     ext in listOf("MP3", "WAV", "FLAC", "M4A") -> MaterialTheme.colorScheme.primary // Xanh Cyan
-                    else -> Color(0xFF757575) // Xám
+                    else -> TextTertiary // Xám
                 }
 
                 // Extension góc dưới phải
@@ -1890,7 +1912,7 @@ fun BrowserScreenFileItemGridCell(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(4.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                        .background(DarkSurface.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
                         .padding(horizontal = 3.dp, vertical = 1.dp)
                 )
             }
@@ -1933,7 +1955,7 @@ fun BrowserScreenFileItemGridCell(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0x5542A5F5))
+                            .background(AccentBlue.copy(alpha = 0.33f))
                     )
                 }
                 // Checkbox góc trái trên — luôn hiển thị khi selectionMode
@@ -1942,7 +1964,7 @@ fun BrowserScreenFileItemGridCell(
                         .align(Alignment.TopStart)
                         .padding(4.dp)
                         .size(24.dp)
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
+                        .background(TextPrimary.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
                         .clip(androidx.compose.foundation.shape.CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1957,7 +1979,7 @@ fun BrowserScreenFileItemGridCell(
                         Icon(
                             imageVector = Icons.Default.RadioButtonUnchecked,
                             contentDescription = "Chưa chọn",
-                            tint = Color(0xFF90A4AE),
+                            tint = TextSecondary,
                             modifier = Modifier.size(20.dp)
                         )
                     }

@@ -55,14 +55,14 @@ import androidx.compose.runtime.getValue
 // ============ LOCAL GUEST PASS (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
 private val GpDarkSurface   = Color.Black
-private val GpDarkCard      = Color(0xFF0F0F0F)
-private val GpAccentGreen   = Color(0xFF00E676)
-private val GpAccentOrange  = Color(0xFFFF9100)
-private val GpAccentRed     = Color(0xFFFF1744)
-private val GpAccentCyan    = Color(0xFF00D2FF)
-private val GpAccentPurple  = Color(0xFFBB86FC)
-private val GpTextPrimary   = Color(0xFFE8E8E8)
-private val GpTextSecondary = Color(0xFF8892B0)
+private val GpDarkCard      = DarkSurface
+private val GpAccentGreen   = AccentGreen
+private val GpAccentOrange  = AccentOrange
+private val GpAccentRed     = AccentRed
+private val GpAccentCyan    = AccentCyan
+private val GpAccentPurple  = AccentPurple
+private val GpTextPrimary   = TextPrimary
+private val GpTextSecondary = TextTertiary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,13 +121,13 @@ fun GuestPassScreen(onBack: () -> Unit) {
             authVM.guestPassError?.let { err -> Spacer(Modifier.height(10.dp)); Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentRed.copy(alpha = 0.1f)), shape = RoundedCornerShape(12.dp)) { Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Error, "Error icon", tint = GpAccentRed, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(err, color = GpAccentRed, fontSize = 12.sp) } } }
             Spacer(Modifier.height(14.dp))
             if (pass == null) {
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (!authVM.isGuestPassLoading) Brush.horizontalGradient(listOf(GpAccentPurple, Color(0xFF6200EA))) else Brush.horizontalGradient(listOf(GpTextSecondary.copy(alpha=0.2f), GpTextSecondary.copy(alpha=0.2f)))).clickable(
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (!authVM.isGuestPassLoading) Brush.horizontalGradient(listOf(GpAccentPurple, AccentPurple)) else Brush.horizontalGradient(listOf(GpTextSecondary.copy(alpha=0.2f), GpTextSecondary.copy(alpha=0.2f)))).clickable(
                     enabled = !authVM.isGuestPassLoading,
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { authVM.createGuestPass(durationMinutes) }.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
                     if (authVM.isGuestPassLoading) { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(color = GpTextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Đang tạo tài khoản...", color = GpTextPrimary, fontWeight = FontWeight.Bold) } }
-                    else { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PersonAdd, "Add guest pass icon", tint = Color.White, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Cấp Guest Pass ($durationMinutes phút)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
+                    else { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PersonAdd, "Add guest pass icon", tint = TextPrimary, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Cấp Guest Pass ($durationMinutes phút)", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -149,15 +149,15 @@ private fun GuestInfoRow(
 ) {
     val isCopied = copiedField == fieldKey
     val displayValue = if (isPassword && !isPasswordVisible) "••••••••" else value
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0F3460).copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold); Text(displayValue, fontSize = 14.sp, color = Color(0xFFE8E8E8), fontWeight = FontWeight.SemiBold) }
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(DarkElevated.copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = TextTertiary, fontWeight = FontWeight.Bold); Text(displayValue, fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold) }
         if (isPassword && onTogglePasswordVisible != null) {
             IconButton(onClick = onTogglePasswordVisible, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
-                Icon(if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle password visibility", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                Icon(if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle password visibility", tint = TextTertiary, modifier = Modifier.size(18.dp))
             }
         }
         IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
-            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, "Copy button", tint = if (isCopied) Color(0xFF00E676) else Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, "Copy button", tint = if (isCopied) AccentGreen else TextTertiary, modifier = Modifier.size(18.dp))
         }
     }
 }
