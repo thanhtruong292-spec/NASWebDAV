@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.nas.naswebdav.SyncAction
+import com.nas.naswebdav.ui.screens.DarkElevated
 import com.nas.naswebdav.ui.screens.TextTertiary
 import com.nas.naswebdav.utils.FormatUtils
 
@@ -158,7 +159,7 @@ private fun FailedUploadItem(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            containerColor = DarkElevated
         )
     ) {
         Row(

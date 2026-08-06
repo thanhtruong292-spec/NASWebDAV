@@ -7,6 +7,7 @@ import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -79,11 +80,9 @@ fun ProcessListBottomSheet(
         }
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -221,11 +220,9 @@ fun SmartDetailBottomSheet(
     val headerLines = lines.takeWhile { !it.startsWith("ID") && !it.startsWith("===") }
     val attrLines = lines.dropWhile { !it.startsWith("ID") }.drop(1) // Bỏ header row
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -356,11 +353,9 @@ fun SmbBottomSheet(
         deviceVM.fetchSmbStatus()
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkCard,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -490,31 +485,10 @@ fun DuplicateScanGlobalUI(
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (smartToolsVM.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        androidx.compose.material3.ModalBottomSheet(
+        NasModalBottomSheet(
             // Onclick scrim KHÔNG đóng sheet — user phải bấm nút "Thu nhỏ" / "Huỷ" explicit.
-            // Cách làm: onDismissRequest -> mặc định ban đầu đóng sheet -> ta set
-            // isScanningDuplicates = false nếu user thu nhỏ thủ công.
-            // Với behavior "không đóng khi click ngoài", dismissRequest của sheet phải
-            // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
             onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
-            containerColor = DarkSurface,
-            scrimColor = DarkSurface.copy(alpha = 0.6f),
-            dragHandle = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(44.dp)
-                            .height(5.dp)
-                            .background(TextTertiary, RoundedCornerShape(50))
-                    )
-                }
-            }
         ) {
             Column(modifier = Modifier
                 .fillMaxWidth()
@@ -736,12 +710,9 @@ fun DuplicateScanGlobalUI(
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
     if (smartToolsVM.isShowingDuplicates) {
         val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        androidx.compose.material3.ModalBottomSheet(
+        NasModalBottomSheet(
             onDismissRequest = { smartToolsVM.isShowingDuplicates = false },
             sheetState = sheetState,
-            containerColor = DarkSurface,
-            scrimColor = DarkSurface.copy(alpha = 0.6f),
-            dragHandle = { NasBottomSheetHandle() }
         ) {
             Column(
                 modifier = Modifier

@@ -7,6 +7,7 @@ import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -89,11 +90,8 @@ fun QuickActionSelectorDialog(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-        scrimColor = DarkSurface.copy(alpha = 0.6f),
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).verticalScroll(rememberScrollState())

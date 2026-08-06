@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.screens
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -395,11 +396,8 @@ internal fun DiskProfileBottomSheet(
         )
     }
 
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = DarkSurface,
-        scrimColor = DarkSurface.copy(alpha = 0.6f),
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier

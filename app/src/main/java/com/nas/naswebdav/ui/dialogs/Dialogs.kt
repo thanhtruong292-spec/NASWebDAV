@@ -5,6 +5,8 @@ import com.nas.naswebdav.*
 import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasAlertDialog
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import com.nas.naswebdav.ui.screens.AccentOrange
 import com.nas.naswebdav.ui.screens.AccentRed
@@ -70,6 +72,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -240,27 +243,22 @@ fun WolDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    AlertDialog(
+    NasAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Wake-on-LAN", fontWeight = FontWeight.Bold) },
-        text = {
-            Column {
-                Text("Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.", fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
-                com.nas.naswebdav.ui.components.CompactTextField(
-                    value = macAddress,
-                    onValueChange = onMacChange,
-                    placeholder = "VD: AA:BB:CC:DD:EE:FF",
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+        title = "Wake-on-LAN",
+        content = {
+            Text("Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.", fontSize = 13.sp, color = TextSecondary)
+            Spacer(Modifier.height(8.dp))
+            com.nas.naswebdav.ui.components.CompactTextField(
+                value = macAddress,
+                onValueChange = onMacChange,
+                placeholder = "VD: AA:BB:CC:DD:EE:FF",
+                modifier = Modifier.fillMaxWidth()
+            )
         },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Đánh thức NAS") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Hủy") }
-        }
+        confirmText = "Đánh thức NAS",
+        dismissText = "Hủy",
+        onConfirm = onConfirm,
     )
 }
 
@@ -1042,15 +1040,14 @@ fun AutoBackupDialog(
                     }
                 }
 
-                Button(
+                NasGradientButton(
                     onClick = { onSaveAndSchedule(); onDismiss() },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp)
-                ) {
-                    Text("LƯU", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
+                )
             }
 
             Spacer(Modifier.height(10.dp))
@@ -1235,6 +1232,50 @@ fun AutoBackupDialog(
     }
 }
 
+data class LogGroup(
+    val module: String,
+    val count: Int,
+    val lastType: String,
+    val firstTimestamp: Long,
+    val lastTimestamp: Long,
+    val logs: List<SystemLog>
+)
+
+fun groupConsecutiveLogs(logs: List<SystemLog>): List<LogGroup> {
+    if (logs.isEmpty()) return emptyList()
+    val groups = mutableListOf<LogGroup>()
+    var currentLogs = mutableListOf(logs.first())
+    for (i in 1 until logs.size) {
+        val log = logs[i]
+        if (log.module == currentLogs.last().module) {
+            currentLogs.add(log)
+        } else {
+            groups.add(
+                LogGroup(
+                    module = currentLogs.first().module,
+                    count = currentLogs.size,
+                    lastType = currentLogs.last().type,
+                    firstTimestamp = currentLogs.first().timestamp,
+                    lastTimestamp = currentLogs.last().timestamp,
+                    logs = currentLogs.toList()
+                )
+            )
+            currentLogs = mutableListOf(log)
+        }
+    }
+    groups.add(
+        LogGroup(
+            module = currentLogs.first().module,
+            count = currentLogs.size,
+            lastType = currentLogs.last().type,
+            firstTimestamp = currentLogs.first().timestamp,
+            lastTimestamp = currentLogs.last().timestamp,
+            logs = currentLogs.toList()
+        )
+    )
+    return groups
+}
+
 fun formatLogMessage(raw: String): String {
     if (raw.trim().startsWith("{")) {
         try {
@@ -1323,40 +1364,107 @@ fun SystemLogDialog(
             if (deviceVM.systemLogsList.isEmpty()) {
                 Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
             } else {
+                val logGroups = groupConsecutiveLogs(deviceVM.systemLogsList)
+                val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
                 androidx.compose.foundation.lazy.LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(items = deviceVM.systemLogsList, key = { it.id }) { log ->
-                        val logColor = when (log.type) {
+                    items(items = logGroups, key = { "${it.module}_${it.firstTimestamp}" }) { group ->
+                        val groupColor = when (group.lastType) {
                             "SUCCESS" -> MaterialTheme.colorScheme.tertiary
                             "ERROR" -> MaterialTheme.colorScheme.error
                             "WARNING" -> AccentOrange
                             else -> MaterialTheme.colorScheme.primary
                         }
-                        val logIcon = when (log.type) {
+                        val groupIcon = when (group.lastType) {
                             "SUCCESS" -> Icons.Default.CheckCircle
                             "ERROR" -> Icons.Default.Error
                             "WARNING" -> Icons.Default.Warning
                             else -> Icons.Default.Info
                         }
-                        val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
+                        val isExpanded = expandedGroups["${group.module}_${group.firstTimestamp}"] == true
+                        val timeRange = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(group.firstTimestamp) +
+                            if (group.count > 1) " – " + com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(group.lastTimestamp) else ""
+                        val lastMsg = formatLogMessage(group.logs.last().message)
 
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            colors = CardDefaults.cardColors(containerColor = DarkCard),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.Top) {
-                                Icon(logIcon, null, tint = logColor, modifier = Modifier.size(16.dp).padding(top = 2.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Column {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(log.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = logColor)
-                                        Text(timeStr, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                            Column(Modifier.fillMaxWidth()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth()
+                                        .clickable { expandedGroups["${group.module}_${group.firstTimestamp}"] = !isExpanded }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Icon(groupIcon, null, tint = groupColor, modifier = Modifier.size(16.dp).padding(top = 2.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(group.module, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = groupColor)
+                                                if (group.count > 1) {
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Surface(
+                                                        color = groupColor.copy(alpha = 0.15f),
+                                                        shape = RoundedCornerShape(10.dp)
+                                                    ) {
+                                                        Text(
+                                                            "(x${group.count} thông báo)",
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                                            fontSize = 9.sp,
+                                                            color = groupColor,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Text(timeRange, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                                        }
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(lastMsg, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=0.85f), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     }
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(formatLogMessage(log.message), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=0.85f))
+                                    if (group.count > 1) {
+                                        Icon(
+                                            if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = null,
+                                            tint = TextSecondary,
+                                            modifier = Modifier.size(16.dp).padding(top = 2.dp)
+                                        )
+                                    }
+                                }
+                                if (isExpanded && group.count > 1) {
+                                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.15f))
+                                    group.logs.reversed().forEach { log ->
+                                        val subColor = when (log.type) {
+                                            "SUCCESS" -> MaterialTheme.colorScheme.tertiary
+                                            "ERROR" -> MaterialTheme.colorScheme.error
+                                            "WARNING" -> AccentOrange
+                                            else -> MaterialTheme.colorScheme.primary
+                                        }
+                                        val subIcon = when (log.type) {
+                                            "SUCCESS" -> Icons.Default.CheckCircle
+                                            "ERROR" -> Icons.Default.Error
+                                            "WARNING" -> Icons.Default.Warning
+                                            else -> Icons.Default.Info
+                                        }
+                                        val subTime = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Icon(subIcon, null, tint = subColor, modifier = Modifier.size(12.dp).padding(top = 3.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Column {
+                                                Text(subTime, fontSize = 9.sp, color = MaterialTheme.colorScheme.outline)
+                                                Text(formatLogMessage(log.message), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha=0.75f))
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(4.dp))
                                 }
                             }
                         }
@@ -2077,10 +2185,10 @@ fun DialogsCreateFolderDialog(
     onDismiss: () -> Unit
 ) {
     var folderName by remember { mutableStateOf("") }
-    AlertDialog(
+    NasAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Thư mục mới") },
-        text = {
+        title = "Thư mục mới",
+        content = {
             com.nas.naswebdav.ui.components.CompactTextField(
                 value = folderName,
                 onValueChange = { folderName = it },
@@ -2088,10 +2196,9 @@ fun DialogsCreateFolderDialog(
                 modifier = Modifier.fillMaxWidth()
             )
         },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(folderName) }) { Text("Tạo") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+        confirmText = "Tạo",
+        dismissText = "Hủy",
+        onConfirm = { onConfirm(folderName) },
     )
 }
 
@@ -2715,7 +2822,7 @@ fun DialogsBiometricSettingsDialog(
 
             Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
                         sharedPrefs.edit {
                             putBoolean("biometric_enabled", enabled)
@@ -2724,10 +2831,12 @@ fun DialogsBiometricSettingsDialog(
                         deviceVM.logUserAction("Security","cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentPurple),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f), AccentCyan),
+                )
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
@@ -2839,7 +2948,7 @@ fun DialogsBandwidthThrottleDialog(
             }
 
             Spacer(Modifier.height(8.dp))
-            Button(
+            NasGradientButton(
                 onClick = {
                     sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
@@ -2847,10 +2956,10 @@ fun DialogsBandwidthThrottleDialog(
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                text = "ÁP DỤNG",
+                height = 40.dp,
                 shape = RoundedCornerShape(10.dp),
-            ) { Text("ÁP DỤNG", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            )
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
@@ -3332,11 +3441,9 @@ fun DialogsFilePropertiesDialog(
         }
     }
 
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier

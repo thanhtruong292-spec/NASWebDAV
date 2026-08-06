@@ -9,6 +9,7 @@ import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.utils.FormatUtils
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 
@@ -1136,111 +1137,162 @@ private fun MainMenuDashboardSystemOverviewCard(
                     onClick = onOpenSmartDetails
                 )
             }
-                        // Fan Control
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.fillMaxWidth().background(DarkSurface, RoundedCornerShape(6.dp)).padding(6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                val fanStatusStr = sysMonitorVM.systemStatus.fanStatus
-                                val fanPercentFromApi = sysMonitorVM.systemStatus.fanPercent
-                                val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                val rpmFromApi = sysMonitorVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
-                                val rawPercent = fanPercentFromApi ?: statusPercent ?: percentFromRpm ?: 0
 
-                                val displayPercent = if (sysMonitorVM.systemStatus.fanMode == "off") 0 else rawPercent.coerceIn(0, 100)
-                                val isFanDisplayRunning = displayPercent > 0
-                                val displayStatusStr = if (isFanDisplayRunning) {
-                                    val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
-                                    if (fanStatusStr.contains("Đang chạy")) fanStatusStr else "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
-                                } else {
-                                    "Dừng"
-                                }
-                                FanSpeedIcon(percent = displayPercent, color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text("Quạt tản nhiệt", style = MaterialTheme.typography.bodySmall, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                    Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
-                                }
-                            }
-                             // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)
-                             var showFanSettings by rememberSaveable { mutableStateOf(false) }
-                             val rawMode = sysMonitorVM.systemStatus.fanMode.lowercase()
-                             val currentMode = if (rawMode == "auto") "custom" else rawMode
-                             val isFanControlLocked = deviceVM.isFanModeUpdating
 
-                             val nextMode = when (currentMode) {
-                                 "custom" -> "on"
-                                 "on" -> "off"
-                                 "off" -> "custom"
-                                 else -> "custom"
-                             }
-                             val currentLabel = when (currentMode) {
-                                 "on" -> "Bật 100%"
-                                 "off" -> "Tắt"
-                                 else -> "Tùy chỉnh"
-                             }
-                             val badgeColor = when (currentMode) {
-                                 "on" -> MaterialTheme.colorScheme.tertiary
-                                 "off" -> MaterialTheme.colorScheme.error
-                                 else -> AccentCyan
-                             }
-
-                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                 Box(
-                                     modifier = Modifier
-                                         .clip(RoundedCornerShape(6.dp))
-                                         .background(badgeColor)
-                                         .alpha(if (isFanControlLocked) 0.5f else 1f)
-                                         .clickable(enabled = !isFanControlLocked) {
-                                             deviceVM.setFanMode(nextMode, onSuccess = { sysMonitorVM.triggerStatusUpdate() })
-                                         }
-                                         .padding(horizontal = 10.dp, vertical = 6.dp)
-                                 ) {
-                                     Text(currentLabel, style = MaterialTheme.typography.labelMedium, color = DarkSurface, fontWeight = FontWeight.Bold)
-                                 }
-                                 if (currentMode == "custom") {
-                                     IconButton(
-                                         onClick = { showFanSettings = true },
-                                         modifier = Modifier.size(24.dp)
-                                     ) {
-                                         Icon(Icons.Default.Settings, contentDescription = "Cài đặt nhiệt độ", tint = AccentCyan, modifier = Modifier.size(16.dp))
-                                     }
-                                 }
-                             }
-                            
-                            if (showFanSettings) {
-                                var onTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
-                                var offTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
-                                androidx.compose.material3.AlertDialog(
-                                    onDismissRequest = { showFanSettings = false },
-                                    title = { Text("Độ trễ nhiệt (Hysteresis)", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextPrimary) },
-                                    text = { 
-                                        Column {
-                                            Text("Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.", fontSize = 12.sp, color = TextSecondary)
-                                            Spacer(Modifier.height(12.dp))
-                                            OutlinedTextField(value = onTemp, onValueChange = { onTemp = it }, label = { Text("Nhiệt độ Bật (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                            Spacer(Modifier.height(8.dp))
-                                            OutlinedTextField(value = offTemp, onValueChange = { offTemp = it }, label = { Text("Nhiệt độ Tắt (°C)") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
-                                        }
-                                    },
-                                    confirmButton = {
-                                        val isFanControlLocked = deviceVM.isFanModeUpdating
-                                        Button(
-                                            enabled = !isFanControlLocked,
-                                            onClick = { 
-                                                deviceVM.setFanMode("custom", onTemp.toFloatOrNull() ?: 45f, offTemp.toFloatOrNull() ?: 40f, onSuccess = { sysMonitorVM.triggerStatusUpdate() })
-                                                showFanSettings = false 
-                                            }
-                                        ) { Text("Lưu & Áp dụng") }
-                                    },
-                                    dismissButton = {
-                                        androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
-                                    },
-                                    containerColor = DarkCardHover,
-                                    textContentColor = MaterialTheme.colorScheme.onSurface
-                                )
+            // Fan control expandable panel
+            Spacer(Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                val fanStatusStr = sysMonitorVM.systemStatus.fanStatus
+                val fanPercentFromApi = sysMonitorVM.systemStatus.fanPercent
+                val statusPercent = Regex("""Đang chạy\s+(\d+)%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val rpmFromApi = sysMonitorVM.systemStatus.fanRpm
+                    ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
+                val rawPercent = fanPercentFromApi ?: statusPercent ?: percentFromRpm ?: 0
+                val displayPercent = if (sysMonitorVM.systemStatus.fanMode == "off") 0 else rawPercent.coerceIn(0, 100)
+                val isFanDisplayRunning = displayPercent > 0
+                val displayStatusStr = if (isFanDisplayRunning) {
+                    val rpm = rpmFromApi ?: (4300f * displayPercent / 100f).toInt()
+                    if (fanStatusStr.contains("Đang chạy")) fanStatusStr else "Đang chạy $displayPercent% - Tốc độ: $rpm rpm"
+                } else "Dừng"
+                var fanExpanded by rememberSaveable { mutableStateOf(false) }
+                val rawMode = sysMonitorVM.systemStatus.fanMode.lowercase()
+                val currentMode = if (rawMode == "auto") "custom" else rawMode
+                val isFanControlLocked = deviceVM.isFanModeUpdating
+                val nextMode = when (currentMode) {
+                    "custom" -> "on"
+                    "on" -> "off"
+                    "off" -> "custom"
+                    else -> "custom"
+                }
+                val currentLabel = when (currentMode) {
+                    "on" -> "Bật 100%"
+                    "off" -> "Tắt"
+                    else -> "Tùy chỉnh"
+                }
+                val badgeColor = when (currentMode) {
+                    "on" -> MaterialTheme.colorScheme.tertiary
+                    "off" -> MaterialTheme.colorScheme.error
+                    else -> AccentCyan
+                }
+                Column(Modifier.padding(8.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { fanExpanded = !fanExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            FanSpeedIcon(
+                                percent = displayPercent,
+                                color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text("Quạt tản nhiệt", style = MaterialTheme.typography.bodySmall, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Text(displayStatusStr, fontSize = 9.sp, color = if (isFanDisplayRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
                             }
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(badgeColor)
+                                    .alpha(if (isFanControlLocked) 0.5f else 1f)
+                                    .clickable(enabled = !isFanControlLocked) {
+                                        deviceVM.setFanMode(nextMode, onSuccess = { sysMonitorVM.triggerStatusUpdate() })
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text(currentLabel, style = MaterialTheme.typography.labelMedium, color = DarkSurface, fontWeight = FontWeight.Bold)
+                            }
+                            Icon(
+                                if (fanExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = "Mở cài đặt quạt",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    androidx.compose.animation.AnimatedVisibility(visible = fanExpanded && currentMode == "custom") {
+                        Column(Modifier.fillMaxWidth()) {
+                            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 6.dp))
+                            Text(
+                                "Hệ thống sẽ chạy ngầm để bật quạt khi tới 'Nhiệt độ bật', và tắt quạt khi hạ xuống 'Nhiệt độ tắt'.",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            var onTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOnTemp.toInt().toString()) }
+                            var offTemp by rememberSaveable { mutableStateOf(sysMonitorVM.systemStatus.fanOffTemp.toInt().toString()) }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Bật (°C)", color = TextSecondary, fontSize = 11.sp)
+                                    Spacer(Modifier.height(2.dp))
+                                    com.nas.naswebdav.ui.components.CompactTextField(
+                                        value = onTemp,
+                                        onValueChange = { onTemp = it.filter(Char::isDigit) },
+                                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                                    )
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    Text("Tắt (°C)", color = TextSecondary, fontSize = 11.sp)
+                                    Spacer(Modifier.height(2.dp))
+                                    com.nas.naswebdav.ui.components.CompactTextField(
+                                        value = offTemp,
+                                        onValueChange = { offTemp = it.filter(Char::isDigit) },
+                                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { fanExpanded = false },
+                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    enabled = !deviceVM.isFanModeUpdating,
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) { Text("Hủy", color = TextSecondary, fontSize = 12.sp) }
+                                Button(
+                                    onClick = {
+                                        deviceVM.setFanMode(
+                                            "custom",
+                                            onTemp.toFloatOrNull() ?: 45f,
+                                            offTemp.toFloatOrNull() ?: 40f,
+                                            onSuccess = { sysMonitorVM.triggerStatusUpdate() }
+                                        )
+                                        fanExpanded = false
+                                    },
+                                    enabled = !deviceVM.isFanModeUpdating,
+                                    modifier = Modifier.weight(1f).height(36.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Text(
+                                        if (deviceVM.isFanModeUpdating) "LƯU..." else "Lưu & Áp dụng",
+                                        color = DarkSurface,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2215,12 +2267,9 @@ fun MainMenuToolboxDialog(
     var deleteAfterBackup by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        scrimColor = DarkSurface.copy(alpha = 0.6f),
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -2637,7 +2686,7 @@ fun MainMenuSystemStatusCards(
                             LinearProgressIndicator(
                                 progress = { (thumbPercent / 100f).coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = MaterialTheme.colorScheme.secondary, trackColor = MaterialTheme.colorScheme.surface
+                                color = MaterialTheme.colorScheme.secondary, trackColor = DarkCard
                             )
                             Spacer(Modifier.height(6.dp))
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2729,7 +2778,7 @@ fun MainMenuSystemStatusCards(
                             LinearProgressIndicator(
                                 progress = { dupPercent.coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                                color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.surface
+                                color = MaterialTheme.colorScheme.primary, trackColor = DarkCard
                             )
                             Spacer(Modifier.height(6.dp))
                             // Hàng thống kê: số tệp + trùng + thời gian
@@ -2806,7 +2855,7 @@ fun MainMenuSystemStatusCards(
                                     LinearProgressIndicator(
                                         progress = { autoBackupVM.autoBackupProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                        color = MaterialTheme.colorScheme.tertiary, trackColor = MaterialTheme.colorScheme.surface
+                                        color = MaterialTheme.colorScheme.tertiary, trackColor = DarkCard
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     
@@ -2861,7 +2910,7 @@ fun MainMenuSystemStatusCards(
                                         progress = { usbImportProgress.coerceIn(0f, 1f) },
                                         modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
                                         color = MaterialTheme.colorScheme.primary,
-                                        trackColor = MaterialTheme.colorScheme.surface
+                                        trackColor = DarkCard
                                     )
                                     Spacer(Modifier.height(4.dp))
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -2988,11 +3037,8 @@ fun MainMenuSectionQuickActionSelectorDialog(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-        scrimColor = DarkSurface.copy(alpha = 0.6f),
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).verticalScroll(rememberScrollState())
@@ -3075,42 +3121,54 @@ fun MainMenuSectionSystemLogsSummaryCard(realtimeNow: Long = System.currentTimeM
                     Text("Xem tất cả", color = AccentCyan, fontSize = 12.sp)
                 }
                 Spacer(Modifier.width(4.dp))
+                val hasUploadErrors = deviceVM.failedUploads.isNotEmpty()
                 TextButton(
                     onClick = { deviceVM.loadFailedUploads(context); deviceVM.showFailedUploadsDialog = true },
                     contentPadding = PaddingValues(0.dp),
                     modifier = Modifier.height(24.dp)
                 ) {
                     Icon(
-                        Icons.Default.CloudOff, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp)
+                        if (hasUploadErrors) Icons.Default.CloudOff else Icons.Default.CloudDone,
+                        contentDescription = null,
+                        tint = if (hasUploadErrors) MaterialTheme.colorScheme.error else AccentGreen,
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(Modifier.width(2.dp))
-                    Text("Upload lỗi", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Text(
+                        if (hasUploadErrors) "Upload lỗi" else "Upload OK",
+                        color = if (hasUploadErrors) MaterialTheme.colorScheme.error else AccentGreen,
+                        fontSize = 12.sp
+                    )
                 }
             }
             
             androidx.compose.animation.AnimatedVisibility(visible = isExpanded) {
                 Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    val recentLogs = deviceVM.systemLogsList.take(3)
-                    recentLogs.forEach { log ->
-                        val logColor = when (log.type) {
+                    val recentGroups = com.nas.naswebdav.ui.dialogs.groupConsecutiveLogs(deviceVM.systemLogsList).take(3)
+                    recentGroups.forEach { group ->
+                        val logColor = when (group.lastType) {
                             "SUCCESS" -> MaterialTheme.colorScheme.tertiary
                             "ERROR" -> MaterialTheme.colorScheme.error
-                            "WARNING" -> MaterialTheme.colorScheme.error
+                            "WARNING" -> AccentOrange
                             else -> MaterialTheme.colorScheme.primary
                         }
-                        val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(log.timestamp)
-                        
+                        val timeStr = com.nas.naswebdav.utils.FormatUtils.formatShortDateTime(group.lastTimestamp)
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
                             Box(Modifier.size(8.dp).clip(CircleShape).background(logColor).padding(top = 4.dp))
                             Spacer(Modifier.width(10.dp))
-                            Column {
+                            Column(Modifier.weight(1f)) {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(log.module, color = logColor, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(group.module, color = logColor, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                                        if (group.count > 1) {
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("(x${group.count} thông báo)", color = logColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                     Text(timeStr, color = TextSecondary, style = MaterialTheme.typography.labelMedium)
                                 }
                                 Text(
-                                    com.nas.naswebdav.ui.dialogs.formatLogMessage(log.message),
+                                    com.nas.naswebdav.ui.dialogs.formatLogMessage(group.logs.last().message),
                                     color = TextPrimary.copy(alpha=0.85f),
                                     fontSize = 12.sp,
                                     maxLines = 2,
@@ -3159,11 +3217,9 @@ fun MainMenuBottomSheetProcessListBottomSheet(
         }
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkCard,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -3298,11 +3354,9 @@ fun MainMenuBottomSheetSmartDetailBottomSheet(
     val headerLines = lines.takeWhile { !it.startsWith("ID") && !it.startsWith("===") }
     val attrLines = lines.dropWhile { !it.startsWith("ID") }.drop(1) // Bỏ header row
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkCard,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -3433,11 +3487,9 @@ fun MainMenuBottomSheetSmbBottomSheet(
         deviceVM.fetchSmbStatus()
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkCard,
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -3565,31 +3617,10 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
     // 2. Hộp thoại Quét Rác — TÁI THIẾT KẾ HIỂN THỊ CHÍNH XÁC
     if (smartToolsVM.isScanningDuplicates) {
         val scanSheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        androidx.compose.material3.ModalBottomSheet(
+        NasModalBottomSheet(
             // Onclick scrim KHÔNG đóng sheet — user phải bấm nút "Thu nhỏ" / "Huỷ" explicit.
-            // Cách làm: onDismissRequest -> mặc định ban đầu đóng sheet -> ta set
-            // isScanningDuplicates = false nếu user thu nhỏ thủ công.
-            // Với behavior "không đóng khi click ngoài", dismissRequest của sheet phải
-            // skip-action: chỉ log + thu nhỏ (= behavior của nút Thu nhỏ).
             onDismissRequest = { smartToolsVM.isScanningDuplicates = false },
             sheetState = scanSheetState,
-            containerColor = MaterialTheme.colorScheme.surface,
-            scrimColor = DarkSurface.copy(alpha = 0.6f),
-            dragHandle = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 4.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(44.dp)
-                            .height(5.dp)
-                            .background(TextTertiary, RoundedCornerShape(50))
-                    )
-                }
-            }
         ) {
             Column(modifier = Modifier
                 .fillMaxWidth()
@@ -3811,12 +3842,9 @@ fun MainMenuBottomSheetDuplicateScanGlobalUI(context: android.content.Context) {
 // Hộp thoại Hiển thị danh sách File Trùng Lặp
     if (smartToolsVM.isShowingDuplicates) {
         val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        androidx.compose.material3.ModalBottomSheet(
+        NasModalBottomSheet(
             onDismissRequest = { smartToolsVM.isShowingDuplicates = false },
             sheetState = sheetState,
-            containerColor = DarkSurface,
-            scrimColor = DarkSurface.copy(alpha = 0.6f),
-            dragHandle = { NasBottomSheetHandle() }
         ) {
             Column(
                 modifier = Modifier

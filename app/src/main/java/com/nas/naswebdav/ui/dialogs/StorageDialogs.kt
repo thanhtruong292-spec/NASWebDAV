@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
@@ -402,7 +403,7 @@ fun UsbImportDialog(
 
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
                         deviceVM.saveUsbImportSettings(
                             UsbImportSettings(
@@ -417,14 +418,12 @@ fun UsbImportDialog(
                             )
                         )
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentCyan),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Lưu", fontWeight = FontWeight.Bold)
-                }
+                    text = "Lưu",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
+                    shape = RoundedCornerShape(8.dp),
+                    icon = { Icon(Icons.Default.Save, null, tint = TextPrimary, modifier = Modifier.size(16.dp)) }
+                )
                 Button(
                     onClick = {
                         if (isRunning) {
@@ -520,21 +519,16 @@ fun NasConfigBackupDialog(
             Spacer(Modifier.height(6.dp))
 
             // Create button
-            Button(
+            NasGradientButton(
                 onClick = { sysMonitorVM.createNasConfigBackup() },
+                text = if (sysMonitorVM.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
                 enabled = !sysMonitorVM.isCreatingNasConfigBackup,
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                height = 40.dp,
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp)
-            ) {
-                Icon(Icons.Default.Add, null, tint = TextPrimary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (sysMonitorVM.isCreatingNasConfigBackup) "ĐANG TẠO..." else "TẠO BACKUP MỚI",
-                    color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp
-                )
-            }
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f), AccentCyan),
+                icon = { Icon(Icons.Default.Add, null, tint = TextPrimary, modifier = Modifier.size(16.dp)) }
+            )
 
             // Status message
             if (sysMonitorVM.nasConfigBackupMessage.isNotEmpty()) {

@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.screens
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import androidx.compose.runtime.collectAsState
@@ -84,12 +85,9 @@ fun ToolboxDialog(
     var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        scrimColor = DarkSurface.copy(alpha = 0.6f),
-        dragHandle = { NasBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier

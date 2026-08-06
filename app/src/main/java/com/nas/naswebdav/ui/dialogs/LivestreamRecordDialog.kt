@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -352,7 +353,7 @@ fun LivestreamRecordDialog(
                 )
             } else {
                 Spacer(Modifier.height(8.dp))
-                Button(
+                NasGradientButton(
                     onClick = {
                         if (liveUrl.isNotBlank() && !liveVM.isStartingLivestream) {
                             val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
@@ -371,15 +372,12 @@ fun LivestreamRecordDialog(
                             }
                         }
                     },
+                    text = if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI",
                     enabled = liveUrl.isNotBlank() && !isResolvingTikTokLink,
-                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.AddCircle, null, tint = TextPrimary, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
+                    height = 42.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    icon = { Icon(Icons.Default.AddCircle, null, tint = TextPrimary, modifier = Modifier.size(18.dp)) }
+                )
             }
             }
 

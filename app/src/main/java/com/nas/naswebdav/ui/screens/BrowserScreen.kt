@@ -1145,7 +1145,7 @@ fun BrowserScreen(
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                        trackColor = DarkCard
                     )
                 }
                 
@@ -1398,7 +1398,7 @@ fun BrowserScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .background(DarkCard)
                                     .padding(horizontal = 12.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1486,7 +1486,7 @@ fun BrowserScreen(
                                                     modifier = Modifier
                                                         .size(24.dp)
                                                         .clip(RoundedCornerShape(3.dp))
-                                                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                                                        .background(DarkCard),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     var detailThumbState by remember { mutableStateOf<ThumbState?>(null) }

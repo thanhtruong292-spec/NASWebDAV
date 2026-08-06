@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
@@ -157,25 +158,12 @@ fun FilePropertiesDialog(
 
             Spacer(Modifier.height(8.dp))
 
-            // Nut dong
-            val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-            Button(
+            NasGradientButton(
                 onClick = onDismiss,
-                interactionSource = interactionSource,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
-                contentPadding = PaddingValues(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .background(
-                        brush = Brush.linearGradient(
-                            listOf(AccentCyan, AccentCyan, AccentGreen)
-                        ),
-                        shape = RoundedCornerShape(23.dp)
-                    )
-            ) {
-                Text("Đóng", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            }
+                text = "Đóng",
+                height = 40.dp,
+                shape = RoundedCornerShape(23.dp),
+            )
             Spacer(Modifier.height(8.dp))
         }
     }

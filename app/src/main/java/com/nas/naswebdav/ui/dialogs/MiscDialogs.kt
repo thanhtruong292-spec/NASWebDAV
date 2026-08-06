@@ -4,6 +4,8 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasAlertDialog
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -145,12 +147,11 @@ fun FolderPickerDialog(
             }
         },
         confirmButton = {
-            Button(
+            NasGradientButton(
                 onClick = { onFolderSelected(currentUrl) },
-                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-            ) {
-                Text("Chép/Di chuyển vào đây", color = TextPrimary, fontWeight = FontWeight.Bold)
-            }
+                text = "Chép/Di chuyển vào đây",
+                gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f), AccentCyan),
+            )
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
@@ -495,6 +496,7 @@ fun OrganizeLegacyDialog(onDismiss: () -> Unit) {
                 }
             }
         },
+        containerColor = DarkCard,
         confirmButton = {
             if (!smartVM.organizingLegacyRunning && smartVM.organizingLegacyResult == null) {
                 TextButton(onClick = { smartVM.organizeLegacyVideos() }) { Text("Chạy NAS") }
@@ -519,10 +521,10 @@ fun CreateFolderDialog(
     onDismiss: () -> Unit
 ) {
     var folderName by remember { mutableStateOf("") }
-    AlertDialog(
+    NasAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Thư mục mới") },
-        text = {
+        title = "Thư mục mới",
+        content = {
             com.nas.naswebdav.ui.components.CompactTextField(
                 value = folderName,
                 onValueChange = { folderName = it },
@@ -530,10 +532,9 @@ fun CreateFolderDialog(
                 modifier = Modifier.fillMaxWidth()
             )
         },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(folderName) }) { Text("Tạo") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+        confirmText = "Tạo",
+        dismissText = "Hủy",
+        onConfirm = { onConfirm(folderName) },
     )
 }
 

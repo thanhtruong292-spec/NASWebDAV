@@ -108,7 +108,7 @@ internal fun TikTokLiveWatchSection(
     pendingDeleteUser?.let { target ->
         AlertDialog(
             onDismissRequest = { pendingDeleteUser = null },
-            containerColor = DarkSurface,
+            containerColor = DarkCard,
             title = {
                 Text("Xác nhận xoá người dùng", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             },

@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
@@ -220,7 +221,7 @@ fun BiometricSettingsDialogCompat(
 
             Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
                         sharedPrefs.edit {
                             putBoolean("biometric_enabled", enabled)
@@ -229,10 +230,12 @@ fun BiometricSettingsDialogCompat(
                         deviceVM.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentPurple),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f), AccentPurple),
+                )
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
@@ -344,7 +347,7 @@ fun BandwidthThrottleDialog(
             }
 
             Spacer(Modifier.height(8.dp))
-            Button(
+            NasGradientButton(
                 onClick = {
                     sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
@@ -352,10 +355,11 @@ fun BandwidthThrottleDialog(
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                text = "ÁP DỤNG",
+                height = 40.dp,
                 shape = RoundedCornerShape(10.dp),
-            ) { Text("ÁP DỤNG", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                gradientColors = listOf(AccentBlue, AccentBlue.copy(alpha = 0.8f), AccentCyan),
+            )
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
@@ -552,7 +556,7 @@ fun SleepScheduleDialog(
             // Save + test buttons
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
                         autoBackupVM.saveSleepSchedule(
                             SleepSchedule(
@@ -564,10 +568,12 @@ fun SleepScheduleDialog(
                             )
                         )
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentPurple),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f), AccentCyan),
+                )
                 OutlinedButton(
                     onClick = {
                         autoBackupVM.spindownHddNow()
