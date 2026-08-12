@@ -152,8 +152,11 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                     Result.success()
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (isStopped || e is kotlinx.coroutines.CancellationException) return@withContext Result.retry()
+            // P0-4: user cancel → failure, KHÔNG retry
+            if (isStopped) return@withContext Result.failure()
             SystemLogger.log("ERROR", "FingerprintWorker", "Lỗi: ${e.message}")
             return@withContext Result.retry()
         }

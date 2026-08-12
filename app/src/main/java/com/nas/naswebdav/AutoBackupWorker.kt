@@ -468,8 +468,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             throw e
         } catch (e: Exception) {
             if (isStopped) {
-                SystemLogger.log("WARNING", "AutoBackup", "Worker bị dừng giữa chừng — sẽ retry: ${e.message}")
-                return@withContext Result.retry()
+                // P0-4: user cancel → thất bại, KHÔNG retry (user đã chủ động dừng)
+                SystemLogger.log("WARNING", "AutoBackup", "Worker bị dừng bởi user — kết thúc: ${e.message}")
+                return@withContext Result.failure()
             }
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             SystemLogger.log(

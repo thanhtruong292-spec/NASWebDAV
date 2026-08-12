@@ -746,9 +746,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             db.checkpointDao().clearCheckpoint("DuplicateScan")
             return@withContext Result.success()
 
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            // Guideline: isStopped || CancellationException → Result.retry() (không nuốt cancellation)
-            if (isStopped || e is kotlinx.coroutines.CancellationException) return@withContext Result.retry()
+            // P0-4: user cancel → failure, KHÔNG retry
+            if (isStopped) return@withContext Result.failure()
             SystemLogger.log("WARNING", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             return@withContext Result.retry()
         } finally {

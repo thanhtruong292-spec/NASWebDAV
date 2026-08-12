@@ -150,10 +150,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                         else -> { /* skip unknown action */ }
                     }
                     if (handled) db.syncActionDao().deleteById(action.id)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    // Guideline: isStopped || CancellationException → Result.retry() (không nuốt cancellation)
-                    if (isStopped || e is kotlinx.coroutines.CancellationException) {
-                        return@withContext Result.retry()
+                    // P0-4: user cancel → failure, KHÔNG retry
+                    if (isStopped) {
+                        return@withContext Result.failure()
                     }
                     SystemLogger.log("WARNING", "OfflineSync",
                         "Action ${action.id} (${action.actionType}) failed: ${e.message} — row giữ lại để retry")

@@ -85,10 +85,12 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            // Guideline: isStopped || CancellationException → Result.retry() (không nuốt thành success)
-            if (isStopped || e is kotlinx.coroutines.CancellationException) {
-                return@withContext Result.retry()
+            // P0-4: user cancel → failure, KHÔNG retry
+            if (isStopped) {
+                return@withContext Result.failure()
             }
             SystemLogger.log("WARNING", "SpeedTest",
                 "Không thể thực thi speed test: ${e.message} — sẽ retry")
