@@ -144,4 +144,28 @@
     <string name="long_api_failed_title">%1$s — Failed</string>
     <string name="long_api_error_short">Error: %1$s</string>
     <string name="long_api_failed_log">%1$s failed: %2$s</string>
+
+    <!-- FileBrowser error messages -->
+    <string name="browser_folder_access_error">Cannot access %1$d subfolder(s) — NAS may refuse permissions or network is slow</string>
+    <string name="browser_error_prefix">Error: %1$s</string>
+    <string name="browser_delete_success">Deleted %1$s</string>
+    <string name="browser_webdav_system_error">WebDAV system error</string>
+    <string name="browser_delete_failure">Cannot delete %1$s: %2$s</string>
+    <string name="browser_batch_prepare_error">Cannot prepare batch task: %1$s</string>
+    <string name="browser_rename_failure">Rename failed: %1$s</string>
+    <string name="browser_create_folder_failure">Create folder failed: %1$s</string>
+    <string name="browser_restore_failure">Restore failed: %1$s</string>
+    <string name="browser_extract_failure">Extract failed: %1$s</string>
+
+    <!-- AutoDuplicateScanWorker -->
+    <string name="autodup_maintenance_window">Paused: outside maintenance window 2-5 AM (current hour %1$dh). Will retry later.</string>
+    <string name="autodup_system_busy">System under load (%1$s) — pause 5 min, retry attempt %2$d/5</string>
+    <string name="autodup_idle_check_error">Cannot reach /api/system/idle: %1$s</string>
+    <string name="autodup_not_idle_cancel">System not idle after 25 min wait — maintenance session cancelled, will retry next cycle.</string>
+    <string name="autodup_busy_pause">System under load — pausing auto-scan</string>
+    <string name="autodup_idle_resume">System idle — resuming scan</string>
+    <string name="autodup_launch_cleanup">Launching scheduled duplicate cleanup.</string>
+    <string name="autodup_auto_schedule_log">Auto duplicate cleanup ran on schedule</string>
+    <string name="autodup_no_fastpath">Cannot reach FastPath API</string>
+    <string name="autodup_maintenance_complete">Maintenance done: %1$d duplicates found, %2$d processed, %3$s freed, completed in %4$d min.</string>
 </resources>

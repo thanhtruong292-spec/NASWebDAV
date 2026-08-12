@@ -137,4 +137,28 @@
     <string name="long_api_failed_title">%1$s — Thất bại</string>
     <string name="long_api_error_short">Lỗi: %1$s</string>
     <string name="long_api_failed_log">%1$s thất bại: %2$s</string>
+
+    <!-- FileBrowser error messages -->
+    <string name="browser_folder_access_error">Không truy cập được %1$d thư mục con — NAS có thể từ chối quyền hoặc mạng chậm</string>
+    <string name="browser_error_prefix">Lỗi: %1$s</string>
+    <string name="browser_delete_success">Đã xóa %1$s</string>
+    <string name="browser_webdav_system_error">Lỗi hệ thống WebDAV</string>
+    <string name="browser_delete_failure">Không thể xóa %1$s: %2$s</string>
+    <string name="browser_batch_prepare_error">Không thể chuẩn bị tác vụ hàng loạt: %1$s</string>
+    <string name="browser_rename_failure">Đổi tên thất bại: %1$s</string>
+    <string name="browser_create_folder_failure">Tạo thư mục thất bại: %1$s</string>
+    <string name="browser_restore_failure">Khôi phục thất bại: %1$s</string>
+    <string name="browser_extract_failure">Giải nén thất bại: %1$s</string>
+
+    <!-- AutoDuplicateScanWorker -->
+    <string name="autodup_maintenance_window">Tạm hoãn: Ngoài khung giờ bảo trì 2h-5h sáng (hiện tại %1$dh). Sẽ thử lại sau.</string>
+    <string name="autodup_system_busy">Hệ thống đang chịu tải (%1$s) — tạm hoãn 5 phút, tiến hành kiểm tra lại (lần thứ %2$d/5)</string>
+    <string name="autodup_idle_check_error">Lỗi kết nối /api/system/idle: %1$s</string>
+    <string name="autodup_not_idle_cancel">Hệ thống không đạt trạng thái rảnh sau 25 phút chờ — phiên bảo trì bị huỷ bỏ, sẽ thực thi ở chu kỳ kế tiếp.</string>
+    <string name="autodup_busy_pause">Hệ thống đang chịu tải — tạm dừng tiến trình quét tự động</string>
+    <string name="autodup_idle_resume">Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét</string>
+    <string name="autodup_launch_cleanup">Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.</string>
+    <string name="autodup_auto_schedule_log">Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ</string>
+    <string name="autodup_no_fastpath">Không thể kết nối FastPath API</string>
+    <string name="autodup_maintenance_complete">Hoàn tất bảo trì: Phát hiện %1$d tập tin trùng lặp, %2$d đã được xử lý, %3$s dung lượng được giải phóng, hoàn tất trong %4$d phút.</string>
 </resources>

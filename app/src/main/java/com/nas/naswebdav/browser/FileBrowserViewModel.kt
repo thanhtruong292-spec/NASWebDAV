@@ -43,7 +43,8 @@ import kotlinx.coroutines.sync.withLock
  * (Phase 7d.7). UI now reads state directly from this VM.
  */
 class FileBrowserViewModel(
-    private val repository: WebDavRepository
+    private val repository: WebDavRepository,
+    private val appContext: Context = NasApplication.instance.applicationContext
 ) : ViewModel() {
 
     // ═══ NAVIGATION STATE (Phase 7a.1 — moved from facade) ═══
@@ -515,7 +516,7 @@ class FileBrowserViewModel(
                 _searchResults.value = allResults
                 _isSearchActive.value = false
                 if (allResults.isEmpty() && failCount > 0) {
-                    errorMessage = "Không truy cập được $failCount thư mục con — NAS có thể từ chối quyền hoặc mạng chậm"
+                    errorMessage = appContext.getString(R.string.browser_folder_access_error, failCount)
                 }
             }
         }
@@ -531,7 +532,7 @@ class FileBrowserViewModel(
     fun showLatestPhotos() {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Ảnh mới nhất" }
-            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = "Lỗi: ${e.message}" } }
+            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty()) } }
             val photos = repository.getLatestPhotos()
             withContext(Dispatchers.Main) { fileList = photos; isLoading = false }
         }
@@ -540,7 +541,7 @@ class FileBrowserViewModel(
     fun showRecentVideos() {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isLoading = true; isSpecialMode = true; specialTitle = "Video gần đây" }
-            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = "Lỗi: ${e.message}" } }
+            try { repository.getRemoteFilesAndCache(WebDavManager.currentBaseUrl) } catch(e: Exception) { withContext(Dispatchers.Main) { errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty()) } }
             val videos = repository.getRecentVideos()
             withContext(Dispatchers.Main) { fileList = videos; isLoading = false }
         }
@@ -600,7 +601,7 @@ class FileBrowserViewModel(
                     withContext(Dispatchers.Main) {
                         if (gen == loadGeneration) {
                             isLoading = false
-                            errorMessage = "Lỗi tải thư mục: ${e.message}"
+                            errorMessage = appContext.getString(R.string.browser_error_prefix, e.message.orEmpty())
                         }
                     }
                 }
@@ -657,10 +658,18 @@ class FileBrowserViewModel(
 
             withContext(Dispatchers.Main) {
                 if (deletedSuccessfully) {
-                    android.widget.Toast.makeText(context, "Đã xóa ${file.name}", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.browser_delete_success, file.name),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 } else {
-                    val errText = lastError?.message ?: "Lỗi hệ thống WebDAV"
-                    android.widget.Toast.makeText(context, "Không thể xóa ${file.name}: $errText", android.widget.Toast.LENGTH_LONG).show()
+                    val errText = lastError?.message ?: context.getString(R.string.browser_webdav_system_error)
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.browser_delete_failure, file.name, errText),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                     fileList = fileList + file
                 }
             }
@@ -716,7 +725,7 @@ class FileBrowserViewModel(
             file
         } catch (e: Exception) {
             isBatchProcessing = false
-            errorMessage = "Không thể chuẩn bị tác vụ hàng loạt: ${e.message}"
+            errorMessage = context.getString(R.string.browser_batch_prepare_error, e.message.orEmpty())
             return
         }
 
@@ -774,7 +783,7 @@ class FileBrowserViewModel(
             } catch (e: Exception) {
                 android.util.Log.w("FileBrowser", "renameFile: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    errorMessage = "Đổi tên thất bại: ${e.message}"
+                    errorMessage = context.getString(R.string.browser_rename_failure, e.message.orEmpty())
                 }
             }
         }
@@ -795,7 +804,7 @@ class FileBrowserViewModel(
             } catch (e: Exception) {
                 android.util.Log.w("FileBrowser", "createFolder: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    errorMessage = "Tạo thư mục thất bại: ${e.message}"
+                    errorMessage = context.getString(R.string.browser_create_folder_failure, e.message.orEmpty())
                 }
             }
         }
@@ -811,7 +820,7 @@ class FileBrowserViewModel(
                 trashMetaDao.deleteByTrashPath(file.path)
                 refresh()
             } catch (e: Exception) {
-                errorMessage = "Khôi phục thất bại: ${e.message}"
+                errorMessage = context.getString(R.string.browser_restore_failure, e.message.orEmpty())
             }
         }
     }
