@@ -216,9 +216,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // AutoBackup feature (optional) requires MANAGE_EXTERNAL_STORAGE on Android 11+;
-        // we now request it lazily from AutoBackupViewModel only when the user actually
-        // enables backup — never auto-open Settings on every app start (broke UX).
+        // AutoBackup dùng READ_MEDIA_* + SAF (P0-6). Không cần MANAGE_EXTERNAL_STORAGE nữa.
 
         requestMediaReadPermissionsIfNeeded()
 

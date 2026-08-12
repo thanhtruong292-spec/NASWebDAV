@@ -118,45 +118,39 @@ class AutoBackupViewModel(
     }
 
     fun triggerManualBackup(context: Context, onResult: (String) -> Unit) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            if (!android.os.Environment.isExternalStorageManager()) {
-                onResult("Thiếu quyền truy cập tất cả tệp. Đang mở cài đặt...")
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        addCategory("android.intent.category.DEFAULT")
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    try {
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 } catch (e2: Exception) {
-                        android.util.Log.e("AutoBackup", "Failed to open settings", e2)
-                    }
-                }
-                return
-            }
-        } else {
-            val permissions = mutableListOf<String>()
+        // P0-6: Dùng READ_MEDIA_* + SAF (Storage Access Framework).
+        // AutoBackupWorker đọc media qua MediaStore ContentResolver + SAF fallback.
+        // KHÔNG cần MANAGE_EXTERNAL_STORAGE (Google Play policy violation).
+        val permissions = mutableListOf<String>()
+        val sdk = android.os.Build.VERSION.SDK_INT
+        if (sdk >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+: READ_MEDIA_IMAGES/VIDEO/AUDIO
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_MEDIA_IMAGES) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                permissions.add(android.Manifest.permission.READ_MEDIA_IMAGES)
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_MEDIA_VIDEO) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                permissions.add(android.Manifest.permission.READ_MEDIA_VIDEO)
+        } else if (sdk >= android.os.Build.VERSION_CODES.R) {
+            // Android 11-12: READ_MEDIA_IMAGES/VIDEO (không cần MANAGE_EXTERNAL)
             if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                 permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (permissions.isNotEmpty()) {
-                onResult("Thiếu quyền Media. Đang mở cài đặt để bạn cấp quyền...")
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.e("AutoBackup", "Failed to open settings", e)
+        } else {
+            // Android 6-10: READ_EXTERNAL_STORAGE
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        if (permissions.isNotEmpty()) {
+            onResult("Thiếu quyền truy cập Media. Đang mở cài đặt để bạn cấp quyền...")
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.fromParts("package", context.packageName, null)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                return
+                context.startActivity(intent)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.e("AutoBackup", "Failed to open settings", e)
             }
+            return
         }
 
         viewModelScope.launch(Dispatchers.IO) {
