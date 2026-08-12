@@ -167,6 +167,7 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    testImplementation(libs.mockwebserver)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
