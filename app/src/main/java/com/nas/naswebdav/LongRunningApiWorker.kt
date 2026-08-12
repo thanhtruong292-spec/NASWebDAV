@@ -47,6 +47,12 @@ class LongRunningApiWorker(
         const val NOTIFICATION_ID = 9011
         private const val TAG = "LongRunAPI"
 
+        internal fun shouldRetry(error: Throwable, attempt: Int): Boolean =
+            attempt < 3 && (error is java.net.SocketTimeoutException ||
+                error is java.net.ConnectException ||
+                error is java.net.UnknownHostException ||
+                error is java.io.IOException)
+
         fun createChannel(context: Context) {
             val channel = NotificationChannel(
                 CHANNEL_ID, "Tác vụ NAS nặng",
@@ -238,8 +244,7 @@ class LongRunningApiWorker(
                 ))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
-            val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException || e is java.io.IOException
-            if (isTransient && runAttemptCount < 3) {
+            if (shouldRetry(e, runAttemptCount)) {
                 android.util.Log.w(TAG, "Transient error in LongRunningApiWorker (attempt $runAttemptCount), retrying: ${e.message}")
                 return@withContext Result.retry()
             }
