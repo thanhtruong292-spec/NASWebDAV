@@ -196,7 +196,7 @@ systemctl is-active nas_api nginx
 # Cả 2: active
 
 # 4. Disk Health Monitor verify
-curl -s -u 'daica:<your_password>' http://127.0.0.1:5050/api/disk/health | python3 -m json.tool
+curl -s -u 'daica:<YOUR_PASSWORD>' http://127.0.0.1:5050/api/disk/health | python3 -m json.tool
 
 # Output mong đợi:
 #   "score": 100,
