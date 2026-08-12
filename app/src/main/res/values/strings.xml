@@ -102,4 +102,23 @@
     <string name="social_share_invalid">URL chia sẻ không hợp lệ</string>
     <string name="social_share_login_required">Cần đăng nhập NAS trước khi chia sẻ</string>
     <string name="social_share_queued">Đã đưa vào hàng đợi</string>
+
+    <!-- Batch operation notifications -->
+    <string name="batch_channel_name">Tác vụ hàng loạt</string>
+    <string name="batch_channel_description">Hiển thị tiến trình Copy/Move/Delete file trên NAS</string>
+    <string name="batch_operation_copy">Sao chép</string>
+    <string name="batch_operation_move">Di chuyển</string>
+    <string name="batch_operation_delete">Xóa</string>
+    <string name="batch_operation_restore">Khôi phục</string>
+    <string name="batch_operation_process">Xử lý</string>
+    <string name="batch_operation_count">%1$s %2$d tệp</string>
+    <string name="batch_operation_progress">%1$s (%2$d/%3$d)</string>
+    <string name="batch_operation_complete">Hoàn tất</string>
+    <string name="batch_operation_success_log">%1$s thành công %2$d/%3$d tệp.</string>
+    <string name="batch_operation_partial_log">%1$s: %2$d thành công, %3$d thất bại.</string>
+    <string name="batch_operation_complete_success">Hoàn tất %1$s %2$d tệp!</string>
+    <string name="batch_operation_complete_partial">%1$s: %2$d thành công, %3$d lỗi</string>
+    <string name="batch_operation_some_failed">Một số tệp không thể xử lý.</string>
+    <string name="batch_operation_all_success">Tất cả tệp đã được xử lý thành công!</string>
+    <string name="batch_operation_module">Hàng loạt</string>
 </resources>

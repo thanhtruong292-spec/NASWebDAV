@@ -109,4 +109,23 @@
     <string name="social_share_invalid">Invalid share URL</string>
     <string name="social_share_login_required">Sign in to NAS before sharing</string>
     <string name="social_share_queued">Added to queue</string>
+
+    <!-- Batch operation notifications -->
+    <string name="batch_channel_name">Batch tasks</string>
+    <string name="batch_channel_description">Progress for Copy/Move/Delete files on NAS</string>
+    <string name="batch_operation_copy">Copy</string>
+    <string name="batch_operation_move">Move</string>
+    <string name="batch_operation_delete">Delete</string>
+    <string name="batch_operation_restore">Restore</string>
+    <string name="batch_operation_process">Process</string>
+    <string name="batch_operation_count">%1$s %2$d files</string>
+    <string name="batch_operation_progress">%1$s (%2$d/%3$d)</string>
+    <string name="batch_operation_complete">Complete</string>
+    <string name="batch_operation_success_log">%1$s succeeded %2$d/%3$d files.</string>
+    <string name="batch_operation_partial_log">%1$s: %2$d succeeded, %3$d failed.</string>
+    <string name="batch_operation_complete_success">Completed %1$s %2$d files!</string>
+    <string name="batch_operation_complete_partial">%1$s: %2$d succeeded, %3$d errors</string>
+    <string name="batch_operation_some_failed">Some files could not be processed.</string>
+    <string name="batch_operation_all_success">All files processed successfully!</string>
+    <string name="batch_operation_module">Batch</string>
 </resources>
