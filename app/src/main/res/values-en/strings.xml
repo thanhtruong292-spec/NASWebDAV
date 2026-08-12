@@ -128,4 +128,20 @@
     <string name="batch_operation_some_failed">Some files could not be processed.</string>
     <string name="batch_operation_all_success">All files processed successfully!</string>
     <string name="batch_operation_module">Batch</string>
+
+    <!-- Long-running NAS API notifications -->
+    <string name="long_api_channel_name">Heavy NAS task</string>
+    <string name="long_api_channel_description">Progress for extracting/organizing files on NAS</string>
+    <string name="long_api_default_task_label">Processing…</string>
+    <string name="long_api_waiting">Waiting for NAS…</string>
+    <string name="long_api_unzip_success">Extraction completed! ✅</string>
+    <string name="long_api_unzip_failure">Extraction failed: %1$s</string>
+    <string name="long_api_organize_success">Completed! Collected %1$d videos. ✅</string>
+    <string name="long_api_organize_failure">Organization error: %1$s</string>
+    <string name="long_api_success">Completed! ✅</string>
+    <string name="long_api_failure_code">Error: Code %1$d</string>
+    <string name="long_api_connection_error">Connection error: %1$s</string>
+    <string name="long_api_failed_title">%1$s — Failed</string>
+    <string name="long_api_error_short">Error: %1$s</string>
+    <string name="long_api_failed_log">%1$s failed: %2$s</string>
 </resources>

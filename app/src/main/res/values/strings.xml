@@ -121,4 +121,20 @@
     <string name="batch_operation_some_failed">Một số tệp không thể xử lý.</string>
     <string name="batch_operation_all_success">Tất cả tệp đã được xử lý thành công!</string>
     <string name="batch_operation_module">Hàng loạt</string>
+
+    <!-- Long-running NAS API notifications -->
+    <string name="long_api_channel_name">Tác vụ NAS nặng</string>
+    <string name="long_api_channel_description">Hiển thị tiến trình giải nén/sắp xếp file trên NAS</string>
+    <string name="long_api_default_task_label">Đang xử lý…</string>
+    <string name="long_api_waiting">Đang chờ NAS xử lý…</string>
+    <string name="long_api_unzip_success">Giải nén thành công! ✅</string>
+    <string name="long_api_unzip_failure">Giải nén thất bại: %1$s</string>
+    <string name="long_api_organize_success">Hoàn tất! Đã gom %1$d video. ✅</string>
+    <string name="long_api_organize_failure">Lỗi sắp xếp: %1$s</string>
+    <string name="long_api_success">Hoàn tất! ✅</string>
+    <string name="long_api_failure_code">Lỗi: Mã %1$d</string>
+    <string name="long_api_connection_error">Lỗi kết nối: %1$s</string>
+    <string name="long_api_failed_title">%1$s — Thất bại</string>
+    <string name="long_api_error_short">Lỗi: %1$s</string>
+    <string name="long_api_failed_log">%1$s thất bại: %2$s</string>
 </resources>

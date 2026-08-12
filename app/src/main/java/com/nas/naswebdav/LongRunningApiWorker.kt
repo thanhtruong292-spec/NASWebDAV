@@ -55,10 +55,10 @@ class LongRunningApiWorker(
 
         fun createChannel(context: Context) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Tác vụ NAS nặng",
+                CHANNEL_ID, context.getString(R.string.long_api_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Hiển thị tiến trình giải nén/sắp xếp file trên NAS"
+                description = context.getString(R.string.long_api_channel_description)
                 setShowBadge(false)
             }
             (context.getSystemService(NotificationManager::class.java))
@@ -75,7 +75,8 @@ class LongRunningApiWorker(
         val taskType = inputData.getString("taskType") ?: return@withContext Result.failure()
         val apiUrl = inputData.getString("apiUrl") ?: return@withContext Result.failure()
         val jsonBody = inputData.getString("jsonBody") ?: ""
-        val taskLabel = inputData.getString("taskLabel") ?: "Đang xử lý..."
+        val taskLabel = inputData.getString("taskLabel")
+            ?: applicationContext.getString(R.string.long_api_default_task_label)
 
         // Kết nối xác thực
         val user = SecurePrefsHelper.getUser(applicationContext)
@@ -87,7 +88,7 @@ class LongRunningApiWorker(
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle(taskLabel)
-            .setContentText("Đang chờ NAS xử lý...")
+            .setContentText(applicationContext.getString(R.string.long_api_waiting))
             .setProgress(0, 0, true) // Indeterminate (vòng xoay)
             .setOngoing(true)
             .setSilent(true)
@@ -163,18 +164,38 @@ class LongRunningApiWorker(
                     val json = org.json.JSONObject(body)
                     when (taskType) {
                         "UNZIP" -> {
-                            if (isSuccess) "Giải nén thành công! ✅"
-                            else "Giải nén thất bại: ${json.optString("error", "Mã ${response.code}")}"
+                            if (isSuccess) {
+                                applicationContext.getString(R.string.long_api_unzip_success)
+                            } else {
+                                applicationContext.getString(
+                                    R.string.long_api_unzip_failure,
+                                    json.optString("error", response.code.toString())
+                                )
+                            }
                         }
                         "ORGANIZE" -> {
                             val count = json.optInt("moved_count", 0)
-                            if (isSuccess) "Hoàn tất! Đã gom $count video. ✅"
-                            else "Lỗi sắp xếp: ${json.optString("error", "Mã ${response.code}")}"
+                            if (isSuccess) {
+                                applicationContext.getString(R.string.long_api_organize_success, count)
+                            } else {
+                                applicationContext.getString(
+                                    R.string.long_api_organize_failure,
+                                    json.optString("error", response.code.toString())
+                                )
+                            }
                         }
-                        else -> if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
+                        else -> if (isSuccess) {
+                            applicationContext.getString(R.string.long_api_success)
+                        } else {
+                            applicationContext.getString(R.string.long_api_failure_code, response.code)
+                        }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
-                    if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
+                    if (isSuccess) {
+                        applicationContext.getString(R.string.long_api_success)
+                    } else {
+                        applicationContext.getString(R.string.long_api_failure_code, response.code)
+                    }
                 }
 
                 // Báo cáo kết quả cho UI
@@ -221,14 +242,24 @@ class LongRunningApiWorker(
             setProgress(workDataOf(
                 "status" to "error",
                 "taskType" to taskType,
-                "message" to safeDataText("Lỗi kết nối: ${e.message}")
+                "message" to safeDataText(
+                    applicationContext.getString(
+                        R.string.long_api_connection_error,
+                        e.message.orEmpty()
+                    )
+                )
             ))
 
             // Notification lỗi
             val errorNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("$taskLabel — Thất bại")
-                .setContentText("Lỗi: ${e.message?.take(100)}")
+                .setContentTitle(applicationContext.getString(R.string.long_api_failed_title, taskLabel))
+                .setContentText(
+                    applicationContext.getString(
+                        R.string.long_api_error_short,
+                        e.message?.take(100).orEmpty()
+                    )
+                )
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             try {
@@ -240,7 +271,11 @@ class LongRunningApiWorker(
             try {
                 NasApplication.instance.database.logDao().insertLog(SystemLog(
                     type = "ERROR", module = "NAS API",
-                    message = "$taskLabel thất bại: ${e.message?.take(100)}"
+                    message = applicationContext.getString(
+                        R.string.long_api_failed_log,
+                        taskLabel,
+                        e.message?.take(100).orEmpty()
+                    )
                 ))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
