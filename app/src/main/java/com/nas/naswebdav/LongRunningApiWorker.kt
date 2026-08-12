@@ -11,6 +11,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,8 +31,16 @@ import kotlinx.coroutines.withContext
  */
 class LongRunningApiWorker(
     appContext: Context,
-    workerParams: WorkerParameters
+    workerParams: WorkerParameters,
+    private val httpClientProvider: () -> OkHttpClient
 ) : CoroutineWorker(appContext, workerParams) {
+
+    /** Constructor used by WorkManager's reflection-based worker factory. */
+    constructor(appContext: Context, workerParams: WorkerParameters) : this(
+        appContext,
+        workerParams,
+        { NasApplication.instance.longRunningApiClient }
+    )
 
     companion object {
         const val CHANNEL_ID = "long_running_api_channel"
@@ -137,7 +146,7 @@ class LongRunningApiWorker(
                 .build()
 
             // Client với timeout cực lớn cho tác vụ NAS nặng, Fix Bug #41: dùng singleton client
-            val longClient = NasApplication.instance.longRunningApiClient
+            val longClient = httpClientProvider()
 
             longClient.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: ""
