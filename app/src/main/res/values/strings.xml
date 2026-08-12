@@ -161,4 +161,54 @@
     <string name="autodup_auto_schedule_log">Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ</string>
     <string name="autodup_no_fastpath">Không thể kết nối FastPath API</string>
     <string name="autodup_maintenance_complete">Hoàn tất bảo trì: Phát hiện %1$d tập tin trùng lặp, %2$d đã được xử lý, %3$s dung lượng được giải phóng, hoàn tất trong %4$d phút.</string>
+
+    <!-- Shared status dialog titles -->
+    <string name="dialog_status_success">Thành công</string>
+    <string name="dialog_status_error">Thất bại</string>
+    <string name="dialog_status_warning">Cảnh báo</string>
+    <string name="dialog_status_confirm">Xác nhận</string>
+    <string name="dialog_close_button">Đóng</string>
+    <string name="dialog_confirm_button">Xác nhận</string>
+
+    <!-- Reboot / Shutdown confirm dialogs -->
+    <string name="reboot_confirm_message">Bạn có chắc chắn muốn khởi động lại NAS Chainedbox? Mọi tiến trình đang chạy sẽ bị dừng lại.</string>
+    <string name="shutdown_confirm_message">Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.</string>
+
+    <!-- BitTorrent download dialog -->
+    <string name="dl_title">Tải BitTorrent</string>
+    <string name="dl_link_tab">Link / Magnet</string>
+    <string name="dl_torrent_tab">File .torrent</string>
+    <string name="dl_link_description">Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.</string>
+    <string name="dl_link_placeholder">magnet:?xt=... hoặc https://...torrent</string>
+    <string name="dl_add_queue">THÊM VÀO HÀNG ĐỢI</string>
+    <string name="dl_pick_torrent_desc">Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.</string>
+    <string name="dl_pick_torrent_button">CHỌN FILE .TORRENT</string>
+    <string name="dl_pick_torrent_note">Sau khi chọn, file sẽ tự upload và đóng form.</string>
+    <string name="dl_cancel">HỦY</string>
+
+    <!-- Wake-on-LAN dialog -->
+    <string name="wol_title">Wake-on-LAN</string>
+    <string name="wol_description">Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.</string>
+    <string name="wol_mac_placeholder">VD: AA:BB:CC:DD:EE:FF</string>
+    <string name="wol_confirm">Đánh thức NAS</string>
+
+    <!-- Folder picker dialog -->
+    <string name="folder_picker_title">Chọn thư mục đích</string>
+    <string name="folder_picker_root">/ (Thư mục gốc)</string>
+    <string name="folder_picker_parent">.. (Quay lại)</string>
+    <string name="folder_picker_empty">(Thư mục trống)</string>
+    <string name="folder_picker_select_here">Chép/Di chuyển vào đây</string>
+    <string name="folder_picker_folder_cd">Thư mục</string>
+
+    <!-- Biometric lock -->
+    <string name="biometric_prompt_title">Khóa bảo mật NAS</string>
+    <string name="biometric_prompt_subtitle">Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu</string>
+    <string name="biometric_finger_cd">Quét vân tay để mở khóa</string>
+    <string name="biometric_error_with_count">Lỗi: %1$s (Sai %2$d/3 lần)</string>
+    <string name="biometric_finger_mismatch">Vân tay không khớp! (Sai %1$d/3 lần)</string>
+    <string name="biometric_open_fingerprint_failed">Không mở được quét vân tay</string>
+
+    <!-- IP approval -->
+    <string name="ip_risk_local">Mạng nội bộ</string>
+    <string name="ip_risk_external">IP ngoài (%1$s)</string>
 </resources>

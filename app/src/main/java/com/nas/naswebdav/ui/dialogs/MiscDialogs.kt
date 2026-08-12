@@ -83,11 +83,11 @@ fun FolderPickerDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(stringResource(R.string.folder_picker_title), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { currentUrl }
                 val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
                 Text(
-                    text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
+                    text = if (relativePath.isEmpty()) stringResource(R.string.folder_picker_root) else relativePath,
                     fontSize = 12.sp, color = TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
@@ -111,9 +111,9 @@ fun FolderPickerDialog(
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.a11y_back), tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(16.dp))
-                                    Text(".. (Quay lại)", fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.folder_picker_parent), fontWeight = FontWeight.Medium)
                                 }
                                 HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             }
@@ -122,7 +122,7 @@ fun FolderPickerDialog(
                         if (folderList.isEmpty()) {
                             item {
                                 Text(
-                                    text = "(Thư mục trống)",
+                                    text = stringResource(R.string.folder_picker_empty),
                                     color = TextTertiary,
                                     modifier = Modifier.padding(16.dp).fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally)
                                 )
@@ -136,7 +136,7 @@ fun FolderPickerDialog(
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Folder, contentDescription = "Thư mục", tint = AccentOrange)
+                                    Icon(Icons.Default.Folder, contentDescription = stringResource(R.string.folder_picker_folder_cd), tint = AccentOrange)
                                     Spacer(Modifier.width(16.dp))
                                     Text(folder.name, fontWeight = FontWeight.Medium)
                                 }
@@ -150,13 +150,13 @@ fun FolderPickerDialog(
         confirmButton = {
             NasGradientButton(
                 onClick = { onFolderSelected(currentUrl) },
-                text = "Chép/Di chuyển vào đây",
+                text = stringResource(R.string.folder_picker_select_here),
                 gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f), AccentCyan),
             )
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Hủy", color = TextTertiary)
+                Text(stringResource(R.string.action_cancel), color = TextTertiary)
             }
         },
         shape = RoundedCornerShape(16.dp)
@@ -175,10 +175,10 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
     if (message.isBlank()) return
 
     val (icon, color, title) = when (type) {
-        DialogType.SUCCESS -> Triple(Icons.Default.Check, AccentGreen, "Thành công")
-        DialogType.ERROR -> Triple(Icons.Default.Close, AccentRed, "Thất bại")
-        DialogType.WARNING -> Triple(Icons.Default.Warning, AccentOrange, "Cảnh báo")
-        DialogType.CONFIRM -> Triple(Icons.Default.HelpOutline, AccentBlue, "Xác nhận")
+        DialogType.SUCCESS -> Triple(Icons.Default.Check, AccentGreen, stringResource(R.string.dialog_status_success))
+        DialogType.ERROR -> Triple(Icons.Default.Close, AccentRed, stringResource(R.string.dialog_status_error))
+        DialogType.WARNING -> Triple(Icons.Default.Warning, AccentOrange, stringResource(R.string.dialog_status_warning))
+        DialogType.CONFIRM -> Triple(Icons.Default.HelpOutline, AccentBlue, stringResource(R.string.dialog_status_confirm))
     }
     val isDark = isSystemInDarkTheme()
     val dialogBg = if (isDark) DarkElevated else TextPrimary
@@ -195,8 +195,8 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
                 Text(text = message, fontSize = 16.sp, color = textColor, textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(18.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = color), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text("Đóng", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
-                    if (onConfirm != null) { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = AccentRed), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text("Xác nhận", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
+                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = color), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text(stringResource(R.string.dialog_close_button), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+                    if (onConfirm != null) { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = AccentRed), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text(stringResource(R.string.dialog_confirm_button), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                 }
             }
         }
@@ -225,7 +225,7 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
         authInFlight = true
         try {
             val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Khóa bảo mật NAS").setSubtitle("Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu")
+                .setTitle(activity.getString(R.string.biometric_prompt_title)).setSubtitle(activity.getString(R.string.biometric_prompt_subtitle))
                 .setConfirmationRequired(false)
                 .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build()
             val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
@@ -235,15 +235,19 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
                         super.onAuthenticationError(errorCode, errString)
                         clearActivePrompt()
                         if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED || errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) currentOnFallbackToLogin()
-                        else { failCount++; authError = "Lỗi: $errString (Sai $failCount/3 lần)"; if (failCount >= 3) currentOnFallbackToLogin() }
+                        else { failCount++; authError = activity.getString(R.string.biometric_error_with_count, errString.toString(), failCount); if (failCount >= 3) currentOnFallbackToLogin() }
                     }
-                    override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) { clearActivePrompt(); currentOnFallbackToLogin() } }
+                    override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = activity.getString(R.string.biometric_finger_mismatch, failCount); if (failCount >= 3) { clearActivePrompt(); currentOnFallbackToLogin() } }
                 })
             activePrompt = biometricPrompt
             biometricPrompt.authenticate(promptInfo)
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             clearActivePrompt()
-            authError = "Lỗi: ${e.message ?: "Không mở được quét vân tay"}"
+            authError = activity.getString(
+                R.string.biometric_error_with_count,
+                e.message ?: activity.getString(R.string.biometric_open_fingerprint_failed),
+                failCount
+            )
         }
     }
     DisposableEffect(Unit) {
@@ -258,7 +262,7 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
     Box(modifier = Modifier.fillMaxSize().background(DarkSurface).pointerInput(Unit) { detectTapGestures { authenticate() } }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             IconButton(onClick = authenticate, modifier = Modifier.size(140.dp)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Quét vân tay để mở khóa", modifier = Modifier.size(120.dp), tint = AccentCyan)
+                Icon(Icons.Default.Fingerprint, contentDescription = stringResource(R.string.biometric_finger_cd), modifier = Modifier.size(120.dp), tint = AccentCyan)
             }
             if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = AccentRed, fontSize = 14.sp) }
         }
@@ -631,7 +635,7 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onDismiss) { Text("Hủy", color = TextTertiary) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel), color = TextTertiary) }
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = !loading && !busy, onClick = {
                     busy = true; msg = "Đang lưu..."

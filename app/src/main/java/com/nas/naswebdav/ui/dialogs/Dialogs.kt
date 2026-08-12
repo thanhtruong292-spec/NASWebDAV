@@ -108,7 +108,7 @@ fun RebootConfirmDialog(
 ) {
     AppStatusDialog(
         type = DialogType.WARNING,
-        message = "Bạn có chắc chắn muốn khởi động lại NAS Chainedbox? Mọi tiến trình đang chạy sẽ bị dừng lại.",
+        message = stringResource(R.string.reboot_confirm_message),
         onConfirm = { onDismiss(); onConfirm() },
         onDismiss = onDismiss
     )
@@ -124,7 +124,7 @@ fun ShutdownConfirmDialog(
 ) {
     AppStatusDialog(
         type = DialogType.WARNING,
-        message = "Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.",
+        message = stringResource(R.string.shutdown_confirm_message),
         onConfirm = { onDismiss(); onConfirm() },
         onDismiss = onDismiss
     )

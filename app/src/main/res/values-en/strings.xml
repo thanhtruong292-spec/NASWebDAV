@@ -168,4 +168,54 @@
     <string name="autodup_auto_schedule_log">Auto duplicate cleanup ran on schedule</string>
     <string name="autodup_no_fastpath">Cannot reach FastPath API</string>
     <string name="autodup_maintenance_complete">Maintenance done: %1$d duplicates found, %2$d processed, %3$s freed, completed in %4$d min.</string>
+
+    <!-- Shared status dialog titles -->
+    <string name="dialog_status_success">Success</string>
+    <string name="dialog_status_error">Failed</string>
+    <string name="dialog_status_warning">Warning</string>
+    <string name="dialog_status_confirm">Confirm</string>
+    <string name="dialog_close_button">Close</string>
+    <string name="dialog_confirm_button">Confirm</string>
+
+    <!-- Reboot / Shutdown confirm dialogs -->
+    <string name="reboot_confirm_message">Are you sure you want to reboot NAS Chainedbox? All running processes will be stopped.</string>
+    <string name="shutdown_confirm_message">Switch NAS to sleep instead of full power off. LAN LED must remain lit for Wake-on-LAN to wake it.</string>
+
+    <!-- BitTorrent download dialog -->
+    <string name="dl_title">Download BitTorrent</string>
+    <string name="dl_link_tab">Link / Magnet</string>
+    <string name="dl_torrent_tab">File .torrent</string>
+    <string name="dl_link_description">Paste a Magnet link or HTTP URL to a .torrent file. NAS will download via qBittorrent.</string>
+    <string name="dl_link_placeholder">magnet:?xt=... or https://...torrent</string>
+    <string name="dl_add_queue">ADD TO QUEUE</string>
+    <string name="dl_pick_torrent_desc">Pick one .torrent file from your phone to upload to NAS. qBittorrent will start downloading immediately.</string>
+    <string name="dl_pick_torrent_button">CHOOSE .TORRENT FILE</string>
+    <string name="dl_pick_torrent_note">After choosing, the file uploads and the form closes automatically.</string>
+    <string name="dl_cancel">CANCEL</string>
+
+    <!-- Wake-on-LAN dialog -->
+    <string name="wol_title">Wake-on-LAN</string>
+    <string name="wol_description">Enter the MAC address of the NAS network port (e.g. 00:1A:2B:3C:4D:5E). The app saves it for next time and sends the wake signal over LAN.</string>
+    <string name="wol_mac_placeholder">e.g. AA:BB:CC:DD:EE:FF</string>
+    <string name="wol_confirm">Wake up NAS</string>
+
+    <!-- Folder picker dialog -->
+    <string name="folder_picker_title">Select destination folder</string>
+    <string name="folder_picker_root">/ (Root folder)</string>
+    <string name="folder_picker_parent">.. (Back)</string>
+    <string name="folder_picker_empty">(Empty folder)</string>
+    <string name="folder_picker_select_here">Copy/Move here</string>
+    <string name="folder_picker_folder_cd">Folder</string>
+
+    <!-- Biometric lock -->
+    <string name="biometric_prompt_title">NAS security lock</string>
+    <string name="biometric_prompt_subtitle">Authenticate with fingerprint/face to access data</string>
+    <string name="biometric_finger_cd">Scan fingerprint to unlock</string>
+    <string name="biometric_error_with_count">Error: %1$s (Failed %2$d/3 times)</string>
+    <string name="biometric_finger_mismatch">Fingerprint mismatch! (Failed %1$d/3 times)</string>
+    <string name="biometric_open_fingerprint_failed">Cannot open fingerprint scanner</string>
+
+    <!-- IP approval -->
+    <string name="ip_risk_local">Local network</string>
+    <string name="ip_risk_external">External IP (%1$s)</string>
 </resources>
