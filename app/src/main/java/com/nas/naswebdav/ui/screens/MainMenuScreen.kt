@@ -1825,7 +1825,14 @@ fun MainMenuDashboardGaugeCard(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(contentAlignment = Alignment.Center) {
-                    NasLoadingSpinner(size = 20.dp, color = accentColor, strokeWidth = 5.dp)
+                    CircularProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.size(64.dp),
+                        color = accentColor,
+                        trackColor = TextSecondary.copy(alpha = 0.15f),
+                        strokeWidth = 5.dp,
+                        strokeCap = StrokeCap.Round
+                    )
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy((-3).dp)

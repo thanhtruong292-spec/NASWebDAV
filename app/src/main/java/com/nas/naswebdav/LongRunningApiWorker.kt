@@ -92,10 +92,31 @@ class LongRunningApiWorker(
                 }
             )
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            try {
-                androidx.core.app.NotificationManagerCompat.from(applicationContext)
-                    .notify(NOTIFICATION_ID, notificationBuilder.build())
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            val exName = e.javaClass.name
+            val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                && exName.contains("ForegroundServiceStartNotAllowed")
+            val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+            when {
+                isBgRestriction -> {
+                    android.util.Log.w(TAG, "Background restriction: skip foreground (worker continues)", e)
+                    try {
+                        androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                            .notify(NOTIFICATION_ID, notificationBuilder.build())
+                    } catch (_: Exception) {}
+                }
+                isMissingType -> {
+                    android.util.Log.e(TAG, "setForeground failed: missing foregroundServiceType", e)
+                    return@withContext Result.failure()
+                }
+                else -> {
+                    android.util.Log.w(TAG, "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+                    try {
+                        androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                            .notify(NOTIFICATION_ID, notificationBuilder.build())
+                    } catch (_: Exception) {}
+                }
+            }
         }
 
         // Báo trạng thái cho UI

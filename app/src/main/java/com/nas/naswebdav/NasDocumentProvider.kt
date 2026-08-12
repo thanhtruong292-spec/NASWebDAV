@@ -170,7 +170,8 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryDocument timeout sau 10s")
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("NasDocProvider", "queryDocument failed: ${e.message}")
             }
         }
         return result
@@ -197,7 +198,8 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryChildDocuments timeout sau 10s — trả về cursor rỗng")
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("NasDocProvider", "queryChildDocuments failed: ${e.message}")
             }
         }
         return result

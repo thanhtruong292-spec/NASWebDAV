@@ -119,7 +119,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             SystemLogger.log("INFO", "AutoClean", "Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét")
                         }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    android.util.Log.w("AutoDuplicate", "idle poll failed: ${e.message}")
+                }
                 kotlinx.coroutines.delay(60 * 1000L)
             }
         }
@@ -199,10 +201,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // P1-14: Cap retries at 3 to prevent infinite retry loop
             if (runAttemptCount < 3) {
                 SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}")
-                Result.retry()
+                return@withContext Result.retry()
             } else {
                 SystemLogger.log("ERROR", "AutoClean", "Dọn dẹp thất bại sau 3 lần thử: ${e.message}")
-                Result.failure()
+                return@withContext Result.failure()
             }
         }
     }

@@ -187,7 +187,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                SystemLogger.log("ERROR", "OfflineSync",
+                SystemLogger.log("WARNING", "OfflineSync",
                     "Enqueue continuation work thất bại: ${e.message}")
             }
             result

@@ -70,7 +70,24 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(currentUrl, user, pass))) {
             try {
                 setForeground(makeForegroundInfo(channelId, "Quét dọn hệ thống", notificationId, "Đang quét dữ liệu trùng lặp..."))
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                val exName = e.javaClass.name
+                val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                    && exName.contains("ForegroundServiceStartNotAllowed")
+                val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                    && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+                when {
+                    isBgRestriction -> {
+                        android.util.Log.w("DuplicateScan", "Background restriction: skip foreground (worker continues)", e)
+                    }
+                    isMissingType -> {
+                        android.util.Log.e("DuplicateScan", "setForeground failed: missing foregroundServiceType", e)
+                        SystemLogger.log("ERROR", "DuplicateScan", "Lỗi thiếu foregroundServiceType (Android 14+): ${e.message}")
+                        return@withContext Result.failure()
+                    }
+                    else -> android.util.Log.w("DuplicateScan", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+                }
+            }
 
             val webDavManager = WebDavManager
         setThumbnailActivity("sync", true)
@@ -194,7 +211,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                 .setContentText(stageDescription.get())
                                 .setProgress(100, pct, false)
                             notificationManager.notify(notificationId, notificationBuilder.build())
-                        } catch (e: Exception) {}
+                        } catch (e: Exception) {
+                            android.util.Log.w("DuplicateScan", "notification update failed: ${e.message}")
+                        }
                     }
                     ticks++
                     // FIX #11: Tăng tử 50ms lên 250ms (giảm từ 20fps xuống 4fps)
@@ -392,7 +411,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
                     // Thuật toán duyệt BFS Đa Luồng (PHASE 8.C)
                     while (isActive) {
-                        while (DuplicateProgressState.isPaused.value) { delay(500) }
+                        while (DuplicateProgressState.isPaused.value && !isStopped) { delay(500) }
                         
                         val currentFolders = mutableListOf<String>()
                         while (folderQueue.isNotEmpty()) {
@@ -461,8 +480,10 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                 foldersSinceLastCheckpoint.set(0)
                                                 lastCheckpointTime.set(now)
                                             }
-                                            
-                                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+
+                                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                                            android.util.Log.w("DuplicateScan", "checkpoint save failed: ${e.message}")
+                                        }
                                     }
                                 }
                             }
@@ -532,7 +553,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     
                     for (batchSizes in chunkedSizes) {
                         if (!isActive) break
-                        while (DuplicateProgressState.isPaused.value) { delay(500) }
+                        while (DuplicateProgressState.isPaused.value && !isStopped) { delay(500) }
                         
                         // 1. Tải 50 nhóm file trong 1 truy vấn SQL duy nhất (Giảm 50x CSDL)
                         val batchFiles = db.fileDao().getFilesBySizes(batchSizes).groupBy { it.contentLength }
@@ -728,7 +749,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
         } catch (e: Exception) {
             // Guideline: isStopped || CancellationException → Result.retry() (không nuốt cancellation)
             if (isStopped || e is kotlinx.coroutines.CancellationException) return@withContext Result.retry()
-            SystemLogger.log("ERROR", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
+            SystemLogger.log("WARNING", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             return@withContext Result.retry()
         } finally {
             isUiUpdating.set(false)
@@ -763,7 +784,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     bufferHashCache.add(HashCache(dup.path, dup.contentLength, dup.lastModified, finalHash))
                 }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("DuplicateScan", "hashViaWebDavBuffered: ${e.message}")
+        }
     }
 
 }
@@ -834,7 +857,8 @@ abstract class NasWorker(appContext: Context, params: WorkerParameters) :
                 .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                 .build()
             NasApplication.instance.sharedHttpClient.newCall(request).execute().use { }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w("DuplicateScan", "thumb activity heartbeat failed: ${e.message}")
         }
     }
 }

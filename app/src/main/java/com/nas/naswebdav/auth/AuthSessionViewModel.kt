@@ -103,8 +103,8 @@ class AuthSessionViewModel(
                     return@withContext false
                 }
 
-                // SP5 FIX: Channel.UNLIMITED thay vì default (rendezvous 0) — tránh suspend vĩnh viễn
-                val channel = Channel<Pair<Boolean, String>>(Channel.UNLIMITED)
+                // Bounded capacity = số URL — tránh leak buffer khi receiver thoát sớm
+                val channel = Channel<Pair<Boolean, String>>(capacity = urlList.size.coerceAtLeast(1))
                 val jobs = urlList.map { activeUrl ->
                     launch(Dispatchers.IO) {
                         if (activeUrl.isBlank()) {

@@ -73,7 +73,7 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                     }
                     // 4xx khác: auth/permission/route không tồn tại → không tự hồi phục
                     response.code in 400..499 -> {
-                        SystemLogger.log("ERROR", "SpeedTest",
+                        SystemLogger.log("WARNING", "SpeedTest",
                             "Speed test endpoint trả về ${response.code} — không retry (client error)")
                         return@withContext Result.failure()
                     }

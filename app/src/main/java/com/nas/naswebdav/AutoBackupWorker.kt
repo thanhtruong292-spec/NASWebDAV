@@ -48,24 +48,39 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         SystemLogger.log("INFO", "AutoBackup", "Bắt đầu tiến trình đồng bộ nền (Worker khởi động).")
-        // FIX CRITICAL: On Android 14+ (API 34), setForeground() throws
-        // MissingForegroundServiceTypeException if manifest or code omits the correct
-        // foregroundServiceType. Swallowing the exception silently causes the Worker to
-        // run as background work → killed by system within seconds.
+        // FIX: Xử lý 2 loại lỗi foreground service khác nhau:
+        // 1. Android 12+ (API 31): ForegroundServiceStartNotAllowedException — app đang ở
+        //    background nên mAllowStartForeground=false → Worker vẫn chạy bình thường, chỉ
+        //    không có notification foreground → log WARNING, KHÔNG return failure.
+        // 2. Android 14+ (API 34): MissingForegroundServiceTypeException — thiếu
+        //    foregroundServiceType trong manifest → Worker bị system kill → log ERROR, return failure.
         try {
             setForeground(makeForegroundInfo("auto_backup_channel", "Auto Backup", 9903, "Auto Backup đang chạy..."))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            val isFatal = when {
-                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
-                    e.javaClass.name.contains("ForegroundService") || e.javaClass.name.contains("ForegroundServiceType")
-                else -> false
+            val exName = e.javaClass.name
+            val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                && exName.contains("ForegroundServiceStartNotAllowed")
+            val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+            when {
+                isBgRestriction -> {
+                    // Android 12+: app đang background → skip foreground, worker chạy tiếp
+                    android.util.Log.w("AutoBackup", "Background restriction: skip foreground (worker continues)", e)
+                    SystemLogger.log("WARNING", "AutoBackup",
+                        "Ứng dụng đang chạy nền — bỏ qua thông báo Foreground. Đồng bộ vẫn tiếp tục.")
+                }
+                isMissingType -> {
+                    // Android 14+: thiếu foregroundServiceType → fatal
+                    android.util.Log.e("AutoBackup", "setForeground failed: missing foregroundServiceType", e)
+                    SystemLogger.log("ERROR", "AutoBackup",
+                        "Lỗi thiếu foregroundServiceType (Android 14+): ${e.message}")
+                    return@withContext Result.failure()
+                }
+                else -> {
+                    // Lỗi khác (notification channel chưa tạo, v.v.) — bỏ qua
+                    android.util.Log.w("AutoBackup", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+                }
             }
-            if (isFatal) {
-                android.util.Log.e("AutoBackup", "setForeground failed (fatal)", e)
-                SystemLogger.log("ERROR", "AutoBackup", "Lỗi khởi động nền (Foreground): ${e.message}")
-                return@withContext Result.failure()
-            }
-            // Non-fatal — continue (e.g. notification channel not yet created)
         }
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
@@ -81,11 +96,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
         val webDavManager = loadWebDavManager() ?: run {
-            SystemLogger.log("ERROR", "AutoBackup", "Lỗi cấu hình NAS: URL hoặc tài khoản trống.")
+            SystemLogger.log("WARNING", "AutoBackup", "Lỗi cấu hình NAS: URL hoặc tài khoản trống.")
             return@withContext Result.failure()
         }
         if (runAttemptCount >= 3) {
-            SystemLogger.log("ERROR", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
+            SystemLogger.log("WARNING", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
             return@withContext Result.failure()
         }
 
@@ -156,7 +171,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                     applicationContext.contentResolver.query(mediaUri, projection, null, null, null)?.use { cursor ->
                         totalFilesToProcess += cursor.count
                     }
-                } catch(e: Exception) {}
+                } catch(e: Exception) {
+                    android.util.Log.w("AutoBackup", "Media query failed: ${e.message}")
+                }
             }
             var processedFilesCount = 0
             val startTime = System.currentTimeMillis()
@@ -451,10 +468,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             throw e
         } catch (e: Exception) {
             if (isStopped) {
+                SystemLogger.log("WARNING", "AutoBackup", "Worker bị dừng giữa chừng — sẽ retry: ${e.message}")
                 return@withContext Result.retry()
             }
-            SystemLogger.log("ERROR", "AutoBackup", "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}")
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
+            SystemLogger.log(
+                if (isTransient) "WARNING" else "ERROR",
+                "AutoBackup",
+                "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}"
+            )
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
             setThumbnailActivity("autobackup", false)

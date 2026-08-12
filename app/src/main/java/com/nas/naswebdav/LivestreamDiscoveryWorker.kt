@@ -65,7 +65,8 @@ class LivestreamDiscoveryWorker(
             }
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            // Không retry đám đám nếu network lỗi - cho tick sau (15p).
+            // Không retry nếu network lỗi — cho tick sau (15p). Log để dashboard hiển thị.
+            android.util.Log.w("LivestreamDiscovery", "Discovery tick failed: ${e.message}")
             Result.success()
         }
     }

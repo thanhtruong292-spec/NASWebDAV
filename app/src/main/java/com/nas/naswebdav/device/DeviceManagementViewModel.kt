@@ -146,7 +146,7 @@ class DeviceManagementViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
                     "Không tải được failed uploads: ${e.message}")
             } finally {
                 isLoadingFailedUploads = false
@@ -185,7 +185,7 @@ class DeviceManagementViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
                     "Enqueue retry thất bại cho id=$actionId: ${e.message}")
             }
         }
@@ -207,7 +207,7 @@ class DeviceManagementViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
                     "Xóa failed upload thất bại: ${e.message}")
             }
         }
@@ -236,7 +236,7 @@ class DeviceManagementViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "DeviceMgmt",
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
                     "Retry-all failed: ${e.message}")
             }
         }
@@ -260,7 +260,9 @@ class DeviceManagementViewModel(
                     .url("$apiBase/api/smb/toggle")
                     .post(body)
                     .build()
-                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     isLoadingSmb = false
                 }
@@ -269,6 +271,7 @@ class DeviceManagementViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     isSmbEnabled = !enabled // revert
                     isLoadingSmb = false
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Bật/tắt SMB thất bại: ${e.message}")
                 }
             }
         }
@@ -855,9 +858,17 @@ class DeviceManagementViewModel(
                 val req = okhttp3.Request.Builder()
                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/control")
                     .post(body).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 loadDockerContainers()
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "controlDockerContainer $action failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
+                        "Điều khiển Docker ($action) thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -907,8 +918,15 @@ class DeviceManagementViewModel(
                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/control")
                     .post(requestBody)
                     .build()
-                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "controlTorrent failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Điều khiển torrent thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1242,11 +1260,18 @@ class DeviceManagementViewModel(
                     put("ip", ip); put("approved", true)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
-                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                WebDavManager.optimizedClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, "Đã cấp quyền truy cập cho IP: $ip")
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "approveDeviceIp failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Cấp quyền IP thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1260,11 +1285,18 @@ class DeviceManagementViewModel(
                     put("ip", ip); put("approved", false)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
-                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                WebDavManager.optimizedClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.WARNING, "Đã chặn quyền truy cập của IP: $ip")
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "denyDeviceIp failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Chặn IP thất bại: ${e.message}")
+                }
+            }
         }
     }
 }

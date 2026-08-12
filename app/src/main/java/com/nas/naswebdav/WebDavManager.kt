@@ -841,16 +841,22 @@ object WebDavManager {
      */
     suspend fun getSha256PhoneStream(url: String): String? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().withAuth(authState)
-                .url(url)
-                .header("Range", "bytes=0-1048575")
-                .build()
-            optimizedClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful && response.code != 206) return@withContext null
-                val stream = response.body?.byteStream() ?: return@withContext null
-                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
-                    .takeIf { it.isNotEmpty() }
+            // Timeout 30s — tránh block hash stage vô hạn khi NAS không phản hồi
+            kotlinx.coroutines.withTimeout(30_000L) {
+                val request = Request.Builder().withAuth(authState)
+                    .url(url)
+                    .header("Range", "bytes=0-1048575")
+                    .build()
+                optimizedClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful && response.code != 206) return@withTimeout null
+                    val stream = response.body?.byteStream() ?: return@withTimeout null
+                    stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
+                        .takeIf { it.isNotEmpty() }
+                }
             }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            android.util.Log.w("WebDavManager", "getSha256PhoneStream timeout 30s: $url")
+            null
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
 

@@ -129,7 +129,13 @@ class FileBrowserViewModel(
             }
             val targetUrl = if (url.endsWith("/")) url else "$url/"
             if (title == "Thùng rác") {
-                try { WebDavManager.createFolder(targetUrl) } catch(e: Exception) {}
+                try {
+                    WebDavManager.createFolder(targetUrl)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("FileBrowser", "createFolder trash: ${e.message}")
+                }
             }
             withContext(Dispatchers.Main) { loadCurrentUrl() }
         }
@@ -562,7 +568,13 @@ class FileBrowserViewModel(
             if (!forceRefresh && cached.isNotEmpty()) {
                 isLoading = false
                 launch(Dispatchers.IO) {
-                    try { repository.getRemoteFilesAndCache(currentUrl) } catch (e: Exception) {}
+                    try {
+                        repository.getRemoteFilesAndCache(currentUrl)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        android.util.Log.w("FileBrowser", "background refresh: ${e.message}")
+                    }
                 }
                 return@launch
             }
@@ -757,9 +769,13 @@ class FileBrowserViewModel(
             try {
                 val newUrl = file.path.substringBeforeLast('/') + "/" + encodeWebDavSegment(newName)
                 WebDavManager.renameFile(file.path, newUrl)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("FileBrowser", "renameFile: ${e.message}")
-                // Facade handles rollback + offline queue
+                withContext(Dispatchers.Main) {
+                    errorMessage = "Đổi tên thất bại: ${e.message}"
+                }
             }
         }
     }
@@ -774,8 +790,13 @@ class FileBrowserViewModel(
                     currentUrl + sep + encodedName + "/"
                 }
                 WebDavManager.createFolder(targetUrl)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("FileBrowser", "createFolder: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    errorMessage = "Tạo thư mục thất bại: ${e.message}"
+                }
             }
         }
     }

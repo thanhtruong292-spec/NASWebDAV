@@ -15,6 +15,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -264,14 +265,14 @@ class SocialDownloadWorker(
                 when (status) {
                     "completed", "success", "done" -> return true
                     "error", "failed" -> {
-                        android.util.Log.e("SocialWorker", "Social job $jobId failed: $errorMsg")
+                        SystemLogger.log("WARNING", "SocialDownload", "Social job $jobId failed: $errorMsg")
                         return false
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.w("SocialWorker", "Error polling social job $jobId: ${e.message}")
+                android.util.Log.w("SocialWorker", "Poll error job $jobId: ${e.message}")
             }
             kotlinx.coroutines.delay(delayMs)
             delayMs = (delayMs * 1.5).toLong().coerceAtMost(10000L)

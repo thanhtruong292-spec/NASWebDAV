@@ -147,14 +147,20 @@ class BatchOperationWorker(
                     }
                 )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                val isFatal = when {
-                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
-                        e.javaClass.name.contains("ForegroundService") || e.javaClass.name.contains("ForegroundServiceType")
-                    else -> false
-                }
-                if (isFatal) {
-                    android.util.Log.e(TAG, "setForeground failed (fatal)", e)
-                    return@withContext Result.failure()
+                val exName = e.javaClass.name
+                val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                    && exName.contains("ForegroundServiceStartNotAllowed")
+                val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                    && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+                when {
+                    isBgRestriction -> {
+                        android.util.Log.w(TAG, "Background restriction: skip foreground (worker continues)", e)
+                    }
+                    isMissingType -> {
+                        android.util.Log.e(TAG, "setForeground failed: missing foregroundServiceType", e)
+                        return@withContext Result.failure()
+                    }
+                    else -> android.util.Log.w(TAG, "setForeground non-fatal: ${e.javaClass.simpleName}", e)
                 }
             }
 
@@ -274,7 +280,7 @@ class BatchOperationWorker(
                         }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
+                    android.util.Log.w(TAG, "Lỗi $operation file: $fileName", e)
                     failCount++
                 }
 
