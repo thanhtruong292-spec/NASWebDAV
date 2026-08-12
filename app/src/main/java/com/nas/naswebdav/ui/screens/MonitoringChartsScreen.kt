@@ -15,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Offset
@@ -463,7 +464,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
                 // Paint nhãn thời gian cho trục X tại mốc dọc
                 val xTimePaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(180, 136, 146, 176) // #8892B0 70% alpha
+                    color = ChartGridline.toArgb()
                     textSize = textPx * 0.9f
                     textAlign = android.graphics.Paint.Align.CENTER
                     isAntiAlias = true

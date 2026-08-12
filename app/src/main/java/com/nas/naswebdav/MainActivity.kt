@@ -26,6 +26,8 @@ import com.nas.naswebdav.ui.screens.SocialExtractorScreen
 import com.nas.naswebdav.ui.screens.SmartOrganizerScreen
 
 import com.nas.naswebdav.ui.screens.NasTheme
+import com.nas.naswebdav.ui.screens.RecordingOverlayBg
+import com.nas.naswebdav.ui.screens.RecordingOverlayBorder
 
 import com.nas.naswebdav.ui.screens.DarkSurface
 
@@ -964,9 +966,9 @@ fun ScreenRecordFloatingOverlay() {
             contentAlignment = Alignment.BottomCenter
         ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F1F1F).copy(alpha = 0.95f)),
+                colors = CardDefaults.cardColors(containerColor = RecordingOverlayBg.copy(alpha = 0.95f)),
                 shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF1744)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, RecordingOverlayBorder),
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer(shadowElevation = 8f)
@@ -984,7 +986,7 @@ fun ScreenRecordFloatingOverlay() {
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFFF1744).copy(alpha = alpha))
+                                .background(RecordingOverlayBorder.copy(alpha = alpha))
                         )
                         Spacer(Modifier.width(8.dp))
                         Column {
@@ -1008,7 +1010,7 @@ fun ScreenRecordFloatingOverlay() {
                             }
                             context.startService(stopIntent)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)),
+                        colors = ButtonDefaults.buttonColors(containerColor = RecordingOverlayBorder),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {

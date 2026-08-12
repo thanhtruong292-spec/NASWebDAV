@@ -28,6 +28,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.nas.naswebdav.utils.SystemLogger
+import com.nas.naswebdav.ui.screens.RecordingOverlayBg
+import com.nas.naswebdav.ui.screens.RecordingOverlayBorder
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
@@ -588,7 +592,7 @@ class ScreenRecordService : Service() {
             val dot = View(this).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.rgb(255, 23, 68))
+                    setColor(RecordingOverlayBorder.toArgb())
                 }
             }
             val dotSize = (10 * resources.displayMetrics.density).toInt()
@@ -604,8 +608,8 @@ class ScreenRecordService : Service() {
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 background = GradientDrawable().apply {
                     cornerRadius = dp(18).toFloat()
-                    setColor(Color.argb(220, 20, 20, 20))
-                    setStroke(dp(1), Color.rgb(255, 23, 68))
+                    setColor(RecordingOverlayBg.copy(alpha = 220f / 255f).toArgb())
+                    setStroke(dp(1), RecordingOverlayBorder.toArgb())
                 }
                 addView(dot, LinearLayout.LayoutParams(dotSize, dotSize).apply {
                     marginEnd = dp(8)

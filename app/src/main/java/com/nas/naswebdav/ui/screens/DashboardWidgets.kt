@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -591,7 +592,7 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                     lastCpuY - 15f,
                     paint
                 )
-                paint.color = "#03A9F4".toColorInt()
+                paint.color = AccentBlue500.toArgb()
                 drawContext.canvas.nativeCanvas.drawText(
                     "${String.format(java.util.Locale.US, "%.1f", lastPoint.second)}°C",
                     lastX - 15f,

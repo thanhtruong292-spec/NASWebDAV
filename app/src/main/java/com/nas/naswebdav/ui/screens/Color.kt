@@ -43,3 +43,32 @@ internal val PanelTitleLetterSpacing = 1.5.sp
 internal val TrackGray = Color(0xFF1F2937)
 internal val TrackGreen = Color(0xFF14532D)
 internal val TrackCyan = Color(0xFF1E3A8A)
+
+// On-dark text/icon colors used on bright accent backgrounds
+// (kept on pure black for AMOLED contrast on saturated accents).
+internal val OnDarkPrimary = Color(0xFF000000)
+internal val OnDarkSecondary = Color(0xFF000000)
+internal val OnDarkTertiary = Color(0xFF000000)
+internal val OnDarkError = Color(0xFF000000)
+
+// Subtle outline / track on AMOLED surfaces (slightly cooler than TrackGray).
+internal val OutlineVariantDark = Color(0xFF1F2937)
+
+// Chart series palette — Material-500 brightness band for OLED legibility.
+internal val ChartRed500 = Color(0xFFEF5350)
+internal val ChartAmber500 = Color(0xFFFFC400)
+internal val ChartGreen500 = Color(0xFF66BB6A)
+internal val ChartCoral500 = Color(0xFFFF5252)
+internal val ChartOrange500 = Color(0xFFFF9100)
+internal val ChartCyan500 = Color(0xFF00E5FF)
+internal val ChartBlue500 = Color(0xFF00B0FF)
+internal val ChartGridline = Color(0xB48892B0) // #8892B0 @ 70% alpha
+
+// Recording-overlay accents — brighter than the regular AccentRed so the
+// active-recording banner stays unmistakable on AMOLED dark UI.
+internal val RecordingOverlayBg = Color(0xFF1F1F1F)
+internal val RecordingOverlayBorder = Color(0xFFFF1744)
+
+// One-off Material Light Blue 500 used as a chart accent line in two
+// dashboard widgets. Kept as a token so future palette tweaks happen once.
+internal val AccentBlue500 = Color(0xFF03A9F4)

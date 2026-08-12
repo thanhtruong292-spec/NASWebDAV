@@ -128,31 +128,31 @@ private val NasDarkColorScheme = darkColorScheme(
 
     // Primary action — bright blue on pure black (WCAG AAA ≥7:1)
     primary = AccentCyan,
-    onPrimary = Color(0xFF000000),
+    onPrimary = OnDarkPrimary,
     primaryContainer = AccentCyan.copy(alpha = 0.12f),
     onPrimaryContainer = AccentCyan,
 
     // Secondary — vivid purple accent
     secondary = AccentPurple,
-    onSecondary = Color(0xFF000000),
+    onSecondary = OnDarkSecondary,
     secondaryContainer = AccentPurple.copy(alpha = 0.12f),
     onSecondaryContainer = AccentPurple,
 
     // Tertiary — bright green for success/online
     tertiary = AccentGreen,
-    onTertiary = Color(0xFF000000),
+    onTertiary = OnDarkTertiary,
     tertiaryContainer = AccentGreen.copy(alpha = 0.12f),
     onTertiaryContainer = AccentGreen,
 
     // Error — bright red on pure black
     error = AccentRed,
-    onError = Color(0xFF000000),
+    onError = OnDarkError,
     errorContainer = AccentRed.copy(alpha = 0.12f),
     onErrorContainer = AccentRed,
 
     // Outline — subtle, not slate
     outline = TextTertiary,
-    outlineVariant = Color(0xFF1F2937)
+    outlineVariant = OutlineVariantDark
 )
 
 // ════════════════════════════════════════════════════════════════════════════

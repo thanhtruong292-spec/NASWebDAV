@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -2227,7 +2228,7 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
                     lastCpuY - 15f, 
                     paint
                 )
-                paint.color = "#03A9F4".toColorInt()
+                paint.color = AccentBlue500.toArgb()
                 drawContext.canvas.nativeCanvas.drawText(
                     "${String.format(java.util.Locale.US, "%.1f", lastPoint.second)}°C",
                     lastX - 15f, 
