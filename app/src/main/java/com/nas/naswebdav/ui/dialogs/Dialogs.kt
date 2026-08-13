@@ -258,7 +258,7 @@ fun WolDialog(
             )
         },
         confirmText = stringResource(R.string.wol_confirm),
-        dismissText = "Hủy",
+        dismissText = stringResource(R.string.action_cancel),
         onConfirm = onConfirm,
     )
 }
@@ -2198,7 +2198,7 @@ fun DialogsCreateFolderDialog(
             )
         },
         confirmText = "Tạo",
-        dismissText = "Hủy",
+        dismissText = stringResource(R.string.action_cancel),
         onConfirm = { onConfirm(folderName) },
     )
 }
