@@ -157,13 +157,13 @@ fun DownloadDialog(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
                 Icon(Icons.Default.CloudDownload, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Tải BitTorrent", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(stringResource(R.string.dl_title), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(
-                    0 to ("🔗" to "Link / Magnet"),
-                    1 to ("📁" to "File .torrent"),
+                    0 to ("🔗" to stringResource(R.string.dl_link_tab)),
+                    1 to ("📁" to stringResource(R.string.dl_torrent_tab)),
                 ).forEach { (idx, pair) ->
                     val (emoji, label) = pair
                     val selected = tabIndex == idx
@@ -183,25 +183,25 @@ fun DownloadDialog(
 
             when (tabIndex) {
                 0 -> {
-                    Text("Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.dl_link_description), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(6.dp))
                     com.nas.naswebdav.ui.components.CompactTextField(
                         value = downloadLink,
                         onValueChange = onLinkChange,
-                        placeholder = "magnet:?xt=... hoặc https://...torrent",
+                        placeholder = stringResource(R.string.dl_link_placeholder),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(10.dp))
                     com.nas.naswebdav.ui.components.NasGradientButton(
                         onClick = onConfirm,
-                        text = "THÊM VÀO HÀNG ĐỢI",
+                        text = stringResource(R.string.dl_add_queue),
                         enabled = downloadLink.isNotBlank(),
                         height = 40.dp,
                         shape = RoundedCornerShape(10.dp)
                     )
                 }
                 1 -> {
-                    Text("Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.dl_pick_torrent_desc), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = { onPickTorrentFile() },
@@ -212,11 +212,11 @@ fun DownloadDialog(
                     ) {
                         Icon(Icons.Default.UploadFile, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("CHỌN FILE .TORRENT", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(stringResource(R.string.dl_pick_torrent_button), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(5.dp))
                     Text(
-                        "Sau khi chọn, file sẽ tự upload và đóng form.",
+                        stringResource(R.string.dl_pick_torrent_note),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 11.sp
                     )
                 }
@@ -228,7 +228,7 @@ fun DownloadDialog(
                 shape = RoundedCornerShape(10.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
-            ) { Text("HỦY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            ) { Text(stringResource(R.string.dl_cancel), fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             Spacer(Modifier.height(4.dp))
         }
     }
@@ -246,18 +246,18 @@ fun WolDialog(
 ) {
     NasAlertDialog(
         onDismissRequest = onDismiss,
-        title = "Wake-on-LAN",
+        title = stringResource(R.string.wol_title),
         content = {
-            Text("Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.", fontSize = 13.sp, color = TextSecondary)
+            Text(stringResource(R.string.wol_description), fontSize = 13.sp, color = TextSecondary)
             Spacer(Modifier.height(8.dp))
             com.nas.naswebdav.ui.components.CompactTextField(
                 value = macAddress,
                 onValueChange = onMacChange,
-                placeholder = "VD: AA:BB:CC:DD:EE:FF",
+                placeholder = stringResource(R.string.wol_mac_placeholder),
                 modifier = Modifier.fillMaxWidth()
             )
         },
-        confirmText = "Đánh thức NAS",
+        confirmText = stringResource(R.string.wol_confirm),
         dismissText = "Hủy",
         onConfirm = onConfirm,
     )
