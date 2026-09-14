@@ -47,6 +47,21 @@ object AutoBackupState {
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // FIX: Kiểm tra quyền truy cập Media ngay đầu Worker.
+        // Android 14+: partial access (READ_MEDIA_VISUAL_USER_SELECTED) khiến MediaStore
+        // trả về tất cả ảnh nhưng openInputStream() fail → mass "has no access" errors.
+        // Worker phải có FULL access (READ_MEDIA_IMAGES/VIDEO) mới chạy được an toàn.
+        val permCtx = applicationContext
+        if (com.nas.naswebdav.utils.MediaPermissionHelper.hasNoMediaAccess(permCtx)) {
+            SystemLogger.log("ERROR", "AutoBackup", "Không có quyền truy cập Media — Worker dừng lại. Vui lòng cấp quyền READ_MEDIA_IMAGES/VIDEO.")
+            return@withContext Result.failure()
+        }
+        if (!com.nas.naswebdav.utils.MediaPermissionHelper.canRunPeriodicBackup(permCtx)) {
+            // Partial access — cho phép chạy nhưng chỉ skip ảnh không truy cập được
+            SystemLogger.log("WARNING", "AutoBackup",
+                "Chỉ có quyền truy cập ảnh một phần (partial access). Một số ảnh có thể bị bỏ qua.")
+        }
+
         SystemLogger.log("INFO", "AutoBackup", "Bắt đầu tiến trình đồng bộ nền (Worker khởi động).")
         // FIX: Xử lý 2 loại lỗi foreground service khác nhau:
         // 1. Android 12+ (API 31): ForegroundServiceStartNotAllowedException — app đang ở
@@ -424,15 +439,26 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
-                        } catch (e: Exception) { 
-                            failedCount++
+                        } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) {
-                                if (e is java.net.ConnectException || e is java.net.SocketTimeoutException || e is java.net.UnknownHostException) {
-                                    SmartNetworkManager.invalidateCache()
-                                    SystemLogger.log("INFO", "AutoBackup", "Mạng chập chờn, tải file $fileName lỗi: ${e.message}")
-                                } else {
-                                    SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}") 
+                            // FIX: partial access trên Android 14+ khiến openInputStream() hoặc
+                            // ImageFingerprint.computeFromUri() throw SecurityException /
+                            // FileNotFoundException với "has no access" message.
+                            // Skip file thay vì count as failed — tránh log spam 161+ lỗi.
+                            val isAccessDenied = e is SecurityException
+                                || (e.message ?: "").contains("has no access")
+                                || (e.message ?: "").contains("Permission denied")
+                            if (isAccessDenied) {
+                                skippedCount++ // skip, NOT fail
+                            } else {
+                                failedCount++
+                                if (e !is java.io.FileNotFoundException && !(e.message ?: "").contains("Missing file")) {
+                                    if (e is java.net.ConnectException || e is java.net.SocketTimeoutException || e is java.net.UnknownHostException) {
+                                        SmartNetworkManager.invalidateCache()
+                                        SystemLogger.log("INFO", "AutoBackup", "Mạng chập chờn, tải file $fileName lỗi: ${e.message}")
+                                    } else {
+                                        SystemLogger.log("WARNING", "AutoBackup", "Lỗi tải xuống tập tin $fileName: ${e.message}")
+                                    }
                                 }
                             }
                         }

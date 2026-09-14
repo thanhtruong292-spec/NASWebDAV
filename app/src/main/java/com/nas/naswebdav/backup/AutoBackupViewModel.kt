@@ -121,25 +121,12 @@ class AutoBackupViewModel(
         // P0-6: Dùng READ_MEDIA_* + SAF (Storage Access Framework).
         // AutoBackupWorker đọc media qua MediaStore ContentResolver + SAF fallback.
         // KHÔNG cần MANAGE_EXTERNAL_STORAGE (Google Play policy violation).
-        val permissions = mutableListOf<String>()
+        // FIX Android 14+: Xử lý partial access (READ_MEDIA_VISUAL_USER_SELECTED).
+        val perm = com.nas.naswebdav.utils.MediaPermissionHelper
         val sdk = android.os.Build.VERSION.SDK_INT
-        if (sdk >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+: READ_MEDIA_IMAGES/VIDEO/AUDIO
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_MEDIA_IMAGES) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                permissions.add(android.Manifest.permission.READ_MEDIA_IMAGES)
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_MEDIA_VIDEO) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                permissions.add(android.Manifest.permission.READ_MEDIA_VIDEO)
-        } else if (sdk >= android.os.Build.VERSION_CODES.R) {
-            // Android 11-12: READ_MEDIA_IMAGES/VIDEO (không cần MANAGE_EXTERNAL)
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-        } else {
-            // Android 6-10: READ_EXTERNAL_STORAGE
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
 
-        if (permissions.isNotEmpty()) {
+        if (perm.hasNoMediaAccess(context)) {
+            // Không có quyền → mở Settings để cấp quyền
             onResult("Thiếu quyền truy cập Media. Đang mở cài đặt để bạn cấp quyền...")
             try {
                 val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -153,6 +140,9 @@ class AutoBackupViewModel(
             return
         }
 
+        val isPartialAccess = sdk >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            && perm.hasPartialVisualAccess(context) && !perm.canRunPeriodicBackup(context)
+
         viewModelScope.launch(Dispatchers.IO) {
             val url = com.nas.naswebdav.SmartNetworkManager.getActiveBaseUrl(context)
                 .ifEmpty { com.nas.naswebdav.SecurePrefsHelper.getUrl(context) }
@@ -164,7 +154,12 @@ class AutoBackupViewModel(
             }
 
             kotlinx.coroutines.withContext(Dispatchers.Main) {
-                onResult("Quyền đã được cấp đầy đủ! Đang bắt đầu đồng bộ nền...")
+                // FIX:partial access → hiển thị cảnh báo thay vì "đầy đủ quyền"
+                if (isPartialAccess) {
+                    onResult("Chế độ ảnh một phần: Worker sẽ bỏ qua ảnh ngoài danh sách chọn.")
+                } else {
+                    onResult("Quyền đã được cấp đầy đủ! Đang bắt đầu đồng bộ nền...")
+                }
                 isAutoBackupRunning = true
                 autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
             }
