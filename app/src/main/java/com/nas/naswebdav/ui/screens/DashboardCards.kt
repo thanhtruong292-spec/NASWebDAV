@@ -700,7 +700,7 @@ internal fun QuickAccessSection(
     slot3Id: String,
     slot4Id: String,
     editingSlot: Int?,
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onEditingSlotChange: (Int?) -> Unit,
     onSlot2Change: (String) -> Unit,
     onSlot3Change: (String) -> Unit,
@@ -758,11 +758,9 @@ internal fun QuickAccessSection(
                             nextSlot4 = newId
                         }
                     }
-                    sharedPrefs.edit {
-                        putString("qa_slot2", nextSlot2)
-                        putString("qa_slot3", nextSlot3)
-                        putString("qa_slot4", nextSlot4)
-                    }
+                    prefsRepo.setQuickSlot("qa_slot2", nextSlot2)
+                    prefsRepo.setQuickSlot("qa_slot3", nextSlot3)
+                    prefsRepo.setQuickSlot("qa_slot4", nextSlot4)
                     onSlot2Change(nextSlot2)
                     onSlot3Change(nextSlot3)
                     onSlot4Change(nextSlot4)

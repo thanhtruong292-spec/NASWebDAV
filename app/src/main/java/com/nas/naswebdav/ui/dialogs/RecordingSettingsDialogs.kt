@@ -67,14 +67,14 @@ import androidx.core.content.edit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BiometricSettingsDialogCompat(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
     val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
-    var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
+    var enabled by remember { mutableStateOf(prefsRepo.isBiometricEnabled()) }
+    var delaySec by remember { mutableStateOf(prefsRepo.getBiometricLockDelaySec()) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Check biometric availability
@@ -223,10 +223,8 @@ fun BiometricSettingsDialogCompat(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 NasGradientButton(
                     onClick = {
-                        sharedPrefs.edit {
-                            putBoolean("biometric_enabled", enabled)
-                            putInt("biometric_lock_delay_sec", delaySec)
-                        }
+                        prefsRepo.setBiometricEnabled(enabled)
+                        prefsRepo.setBiometricLockDelaySec(delaySec)
                         deviceVM.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
@@ -239,10 +237,8 @@ fun BiometricSettingsDialogCompat(
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
-                        sharedPrefs.edit {
-                            putBoolean("biometric_enabled", true)
-                            putInt("biometric_lock_delay_sec", delaySec)
-                        }
+                        prefsRepo.setBiometricEnabled(true)
+                        prefsRepo.setBiometricLockDelaySec(delaySec)
                         deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
                         autoBackupVM.lockNowRequested = true
                         onDismiss()
@@ -273,7 +269,7 @@ fun BiometricSettingsDialogCompat(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BandwidthThrottleDialog(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
@@ -285,7 +281,7 @@ fun BandwidthThrottleDialog(
         20L * 1024 * 1024 to "20 MB/s",
         50L * 1024 * 1024 to "50 MB/s",
     )
-    var selected by remember { mutableStateOf(sharedPrefs.getLong("upload_speed_limit_bps", 0L)) }
+    var selected by remember { mutableStateOf(prefsRepo.getUploadSpeedLimit()) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     NasModalBottomSheet(
@@ -349,7 +345,7 @@ fun BandwidthThrottleDialog(
             Spacer(Modifier.height(8.dp))
             NasGradientButton(
                 onClick = {
-                    sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
+                    prefsRepo.setUploadSpeedLimit(selected)
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")

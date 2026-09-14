@@ -95,43 +95,20 @@ import androidx.core.net.toUri
 
 private const val VIEWED_FILES_LIMIT = 5000
 
+/** Giữ tương thích caller cũ — delegate sang PreferencesRepository (reactive). */
 internal fun markBrowserFilesViewed(
     prefs: android.content.SharedPreferences,
     paths: Collection<String>
 ) {
-    val cleanPaths = paths.filter { it.isNotBlank() }.distinct()
-    if (cleanPaths.isEmpty()) return
-    synchronized(prefs) {
-        val viewed = prefs.getStringSet("viewed_files", emptySet())?.toMutableSet() ?: mutableSetOf()
-        val order = mutableListOf<String>()
-        val orderRaw = prefs.getString("viewed_files_order", "[]") ?: "[]"
-        try {
-            val arr = JSONArray(orderRaw)
-            for (i in 0 until arr.length()) {
-                val p = arr.optString(i, "")
-                if (p.isNotBlank() && p in viewed) order.add(p)
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-
-        val cleanSet = cleanPaths.toSet()
-        order.removeAll(cleanSet)
-        order.addAll(cleanPaths)
-        viewed.addAll(cleanPaths)
-
-        while (order.size > VIEWED_FILES_LIMIT) {
-            viewed.remove(order.removeAt(0))
-        }
-        if (viewed.size > VIEWED_FILES_LIMIT) {
-            val keep = order.toSet()
-            viewed.removeAll(viewed.filter { it !in keep }.take(viewed.size - VIEWED_FILES_LIMIT).toSet())
-        }
-
-        prefs.edit {
-            putStringSet("viewed_files", viewed)
-            putString("viewed_files_order", JSONArray(order).toString())
-        }
-    }
+    com.nas.naswebdav.utils.PreferencesRepository
+        .get(com.nas.naswebdav.NasApplication.instance.applicationContext)
+        .markViewed(paths)
 }
+
+internal fun markBrowserFilesViewed(
+    repo: com.nas.naswebdav.utils.PreferencesRepository,
+    paths: Collection<String>
+) = repo.markViewed(paths)
 
 // --- VIEW MODE ENUM ---
 // TÍNH NĂNG MỚI: Chế độ hiển thị file (giống Windows Explorer)
@@ -700,10 +677,9 @@ fun BrowserScreen(
                                     // de bo cham do (newFile indicator) — user da chu y
                                     // den toan bo danh sach thi khong can chi dau.
                                     try {
-                                        val prefs = context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
                                         val paths = displayedFiles.filter { !it.isDirectory }.map { it.path }
                                         coroutineScope.launch(Dispatchers.IO) {
-                                            markBrowserFilesViewed(prefs, paths)
+                                            fileBrowserVM.markFilesViewed(paths)
                                         }
                                         // Bump tick de moi FileItemGridCell remember key bi
                                         // invalidated -> doc lai prefs -> red dot bien mat.
@@ -1642,15 +1618,16 @@ fun BrowserScreenFileItemGridCell(
     var showPropertiesDialog by remember { mutableStateOf(false) }
     var newFileName by remember { mutableStateOf(file.name) }
 
-    // FIX CPU #C2: wrap getSharedPreferences trong remember(context) — mỗi cell gọi 1 lần,
-    // không phải mỗi recomposition (4259 cells × 120Hz = disaster)
-    val viewedPrefs = remember(context) {
-        context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE)
+    // Viewed set reactive từ PreferencesRepository — mỗi cell collect 1 lần,
+    // không đọc prefs mỗi recomposition.
+    val prefsRepo = remember(context) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(context)
     }
+    val viewedSet by prefsRepo.viewedFiles.collectAsStateWithLifecycle()
     val itemScope = rememberCoroutineScope()
     // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
-    var isNewFile by remember(file.path, viewedRefreshTick) {
-        mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
+    var isNewFile by remember(file.path, viewedRefreshTick, viewedSet) {
+        mutableStateOf(!file.isDirectory && file.path !in viewedSet)
     }
 
     val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
@@ -1731,7 +1708,7 @@ fun BrowserScreenFileItemGridCell(
                     if (!selectionMode && !file.isDirectory && isNewFile) {
                         isNewFile = false
                         itemScope.launch(Dispatchers.IO) {
-                            markBrowserFilesViewed(viewedPrefs, listOf(file.path))
+                            markBrowserFilesViewed(prefsRepo, listOf(file.path))
                         }
                     }
                     onClick()
@@ -2017,35 +1994,14 @@ private val mediaThumbClient by lazy {
 data class SearchHistory(val query: String, val timestamp: Long)
 
 class SearchHistoryManager(context: android.content.Context) {
-    private val prefs = context.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE)
-    private val maxHistorySize = 15
-    
-    fun saveQuery(query: String) {
-        if (query.isBlank()) return
-        val history = getHistory().filter { it.query != query }
-        val newHistory = (listOf(SearchHistory(query, System.currentTimeMillis())) + history).take(maxHistorySize)
-        val array = org.json.JSONArray()
-        newHistory.forEach { 
-            val obj = org.json.JSONObject()
-            obj.put("query", it.query)
-            obj.put("timestamp", it.timestamp)
-            array.put(obj)
-        }
-        prefs.edit { putString("history", array.toString()) }
-    }
-    
+    private val repo = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+
+    fun saveQuery(query: String) = repo.saveSearchQuery(query)
+
     fun getHistory(): List<SearchHistory> {
-        val jsonStr = prefs.getString("history", "[]") ?: "[]"
         return try {
-            val list = mutableListOf<SearchHistory>()
-            val array = org.json.JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(SearchHistory(obj.getString("query"), obj.getLong("timestamp")))
-            }
-            list
+            repo.getSearchHistory().map { (q, ts) -> SearchHistory(q, ts) }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            // BUG FIX P1#9: Log lỗi thay vì silent fail → mất data
             android.util.Log.e("SearchHistory", "Không đọc được lịch sử tìm kiếm: ${e.message}")
             emptyList()
         }

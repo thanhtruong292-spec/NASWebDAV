@@ -468,7 +468,9 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
 
     val mContext = androidx.compose.ui.platform.LocalContext.current
 
-    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    val prefsRepo = androidx.compose.runtime.remember(mContext) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(mContext)
+    }
 
     // Phase 7d.7: NasAppNavigation reads directly from domain VMs via the CompositionLocals
     // that MainActivity's setContent provides — no more facade pass-through.
@@ -509,7 +511,7 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
-                    val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                    val biometricEnabled = prefsRepo.isBiometricEnabled()
                     if (biometricEnabled && !isLoginScreen && !showBiometricLock) {
                         requireBiometricOnReturn = true
                     }
@@ -529,7 +531,7 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                         return@LifecycleEventObserver
                     }
                     if (requireBiometricOnReturn) {
-                        if (!isLoginScreen && sharedPrefs.getBoolean("biometric_enabled", false)) {
+                        if (!isLoginScreen && prefsRepo.isBiometricEnabled()) {
                             showBiometricLock = true
                         }
                         requireBiometricOnReturn = false

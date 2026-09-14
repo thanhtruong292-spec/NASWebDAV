@@ -54,6 +54,7 @@ class FileBrowserViewModel(
     val viewModeName: StateFlow<String> = prefsRepo.viewMode
     fun setFileSort(mode: String) = prefsRepo.setFileSort(mode)
     fun setViewModeName(mode: String) = prefsRepo.setViewMode(mode)
+    fun markFilesViewed(paths: Collection<String>) = prefsRepo.markViewed(paths)
 
     // ═══ NAVIGATION STATE (Phase 7a.1 — moved from facade) ═══
 

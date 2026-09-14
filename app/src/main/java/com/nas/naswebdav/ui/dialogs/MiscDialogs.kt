@@ -580,11 +580,12 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
     var msg by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        enabled = p.getBoolean("alert_enabled", true)
-        pause = p.getBoolean("alert_pause_disk_low", true)
-        disk = p.getInt("alert_ram_threshold", 85).toString()
-        cpuTemp = p.getInt("alert_cpu_threshold", 90).toString()
+        val rules = com.nas.naswebdav.utils.PreferencesRepository
+            .get(NasApplication.instance.applicationContext).getAlertRules()
+        enabled = rules.enabled
+        pause = rules.pauseOnDiskLow
+        disk = rules.ramThreshold.toString()
+        cpuTemp = rules.cpuThreshold.toString()
         loading = false
     }
     val numKb = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
@@ -642,14 +643,16 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = !loading && !busy, onClick = {
                     busy = true; msg = "Đang lưu..."
-                    val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                    p.edit {
-                        putBoolean("alert_enabled", enabled)
-                        putBoolean("alert_pause_disk_low", pause)
-                        putBoolean("alert_pause_heat", false)
-                        putInt("alert_cpu_threshold", cpuTemp.toIntOrNull() ?: 90)
-                        putInt("alert_ram_threshold", ram.toIntOrNull() ?: 85)
-                    }
+                    com.nas.naswebdav.utils.PreferencesRepository
+                        .get(NasApplication.instance.applicationContext)
+                        .setAlertRules(
+                            com.nas.naswebdav.utils.PreferencesRepository.AlertRules(
+                                enabled = enabled,
+                                pauseOnDiskLow = pause,
+                                cpuThreshold = cpuTemp.toIntOrNull() ?: 90,
+                                ramThreshold = ram.toIntOrNull() ?: 85
+                            )
+                        )
                     busy = false; msg = "Đã lưu quy tắc cảnh báo ✓"
                     onDismiss()
                 }) { Text("Lưu") }

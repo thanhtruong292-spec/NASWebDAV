@@ -120,9 +120,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     var ipFieldWidthPx by remember { mutableIntStateOf(0) }
 
     // State cho 2 nút khẩn cấp (WoL + Restart) hiện trên login screen — dùng khi
-    // NAS bị lỗi không đăng nhập được.
-    val sharedPrefs = remember { context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
-    var macAddress by remember { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
+    // NAS bị lỗi không đăng nhập được. MAC lưu qua PreferencesRepository.
+    val prefsRepo = remember(context) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    }
+    var macAddress by remember { mutableStateOf(prefsRepo.getMacAddress()) }
     var showWolDialog by remember { mutableStateOf(false) }
     var showRebootConfirm by remember { mutableStateOf(false) }
     var emergencyMsg by remember { mutableStateOf("") }
@@ -294,7 +296,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         )
 
         // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
-        val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+        val biometricEnabled = prefsRepo.isBiometricEnabled()
         val hasSavedCreds = remember {
             runCatching {
                 SecurePrefsHelper.getUser(context).isNotEmpty() &&
@@ -380,7 +382,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             // NUT 1: WoL — bat nguon NAS qua magic packet, chi can MAC address
             OutlinedButton(
                 onClick = {
-                    macAddress = sharedPrefs.getString("mac_address", macAddress) ?: macAddress
+                    macAddress = prefsRepo.getMacAddress().ifBlank { macAddress }
                     showWolDialog = true
                 },
                 modifier = Modifier.weight(1f).height(46.dp),
@@ -434,7 +436,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             onConfirm = {
                 val wolMac = macAddress.trim()
                 if (wolMac.isNotBlank()) {
-                    sharedPrefs.edit { putString("mac_address", wolMac) }
+                    prefsRepo.setMacAddress(wolMac)
                     showWolDialog = false
                     emergencyIsError = false
                     emergencyMsg = "Đang gửi Wake-on-LAN..."

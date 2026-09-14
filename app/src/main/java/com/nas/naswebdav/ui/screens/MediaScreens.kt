@@ -164,12 +164,12 @@ fun ImageViewerScreen(
         onDispose {
             val imageLoader = coil.Coil.imageLoader(context)
             imageLoader.memoryCache?.clear()
-            val prefs = context.getSharedPreferences("nas_cache", android.content.Context.MODE_PRIVATE)
-            val lastClearTime = prefs.getLong("last_cache_clear", 0)
+            val cachePrefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+            val lastClearTime = cachePrefs.getLastCacheClear()
             val now = System.currentTimeMillis()
             if (now - lastClearTime > 7 * 24 * 60 * 60 * 1000L) {
                 imageLoader.diskCache?.clear()
-                prefs.edit { putLong("last_cache_clear", now) }
+                cachePrefs.setLastCacheClear(now)
             }
         }
     }

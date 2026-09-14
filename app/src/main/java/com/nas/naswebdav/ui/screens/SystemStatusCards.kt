@@ -110,10 +110,10 @@ fun DashboardSystemStatusCards(
     val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
-    val sharedPrefs = androidx.compose.runtime.remember(mContext) {
-        mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    val prefsRepo = androidx.compose.runtime.remember(mContext) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(mContext)
     }
-    val autoBackupEnabled = sharedPrefs.getBoolean("auto_backup", false)
+    val autoBackupEnabled = prefsRepo.isAutoBackupFlag()
     val autoBackupIsActive = autoBackupVM.isAutoBackupRunning
 
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt

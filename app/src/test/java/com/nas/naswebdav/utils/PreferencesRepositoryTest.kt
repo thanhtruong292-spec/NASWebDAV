@@ -2,6 +2,7 @@ package com.nas.naswebdav.utils
 
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -45,5 +46,35 @@ class PreferencesRepositoryTest {
         assertEquals(false, repo.autoCleanEnabled.value)
         repo.setAutoCleanEnabled(true)
         assertEquals(true, repo.autoCleanEnabled.value)
+    }
+
+    @Test
+    fun `viewed set caps at 5000 and emits`() {
+        val repo = freshRepo()
+        repo.markViewed((0 until 5100).map { "/photos/img_$it.jpg" })
+        assertEquals(5000, repo.viewedFiles.value.size)
+        assertTrue(repo.isViewed("/photos/img_5099.jpg"))
+    }
+
+    @Test
+    fun `search history caps at 15 most recent first`() {
+        val repo = freshRepo()
+        repeat(20) { repo.saveSearchQuery("q$it") }
+        val history = repo.getSearchHistory()
+        assertEquals(15, history.size)
+        assertEquals("q19", history.first().first)
+    }
+
+    @Test
+    fun `mac alert and cache prefs round trip`() {
+        val repo = freshRepo()
+        repo.setMacAddress("AA:BB:CC:DD:EE:FF")
+        assertEquals("AA:BB:CC:DD:EE:FF", repo.getMacAddress())
+        repo.setAlertRules(PreferencesRepository.AlertRules(false, false, 70, 75))
+        val rules = repo.getAlertRules()
+        assertEquals(false, rules.enabled)
+        assertEquals(70, rules.cpuThreshold)
+        repo.setLastCacheClear(123L)
+        assertEquals(123L, repo.getLastCacheClear())
     }
 }

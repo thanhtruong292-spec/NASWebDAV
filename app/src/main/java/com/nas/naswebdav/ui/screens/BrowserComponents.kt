@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -128,13 +130,16 @@ fun FileItemGridCell(
     var pendingTransferOperation by remember { mutableStateOf("") }
     var newFileName by remember { mutableStateOf(file.name) }
 
-    // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
+    // Tracking file "moi/chua xem" — reactive từ PreferencesRepository.
     // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
-    val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    val prefsRepo = remember(context) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    }
+    val viewedSet by prefsRepo.viewedFiles.collectAsStateWithLifecycle()
     val itemScope = rememberCoroutineScope()
     // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
-    var isNewFile by remember(file.path, viewedRefreshTick) {
-        mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
+    var isNewFile by remember(file.path, viewedRefreshTick, viewedSet) {
+        mutableStateOf(!file.isDirectory && file.path !in viewedSet)
     }
 
     val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
@@ -222,7 +227,7 @@ fun FileItemGridCell(
                     if (!selectionMode && !file.isDirectory && isNewFile) {
                         isNewFile = false
                         itemScope.launch(Dispatchers.IO) {
-                            markBrowserFilesViewed(viewedPrefs, listOf(file.path))
+                            markBrowserFilesViewed(prefsRepo, listOf(file.path))
                         }
                     }
                     onClick()

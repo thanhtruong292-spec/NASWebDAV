@@ -272,9 +272,10 @@ fun MainMenuScreen(
     val livestreamVM = LocalLivestreamVM.current
     val authVM       = LocalAuthSessionVM.current
     val globalUiVM   = LocalGlobalUiVM.current
-    // FIX CPU #1: wrap getSharedPreferences trong remember() để tránh file I/O mỗi recomposition.
-    // Trước đây gọi trực tiếp → disk I/O mỗi khung hình (120Hz = 120 lần/giây).
-    val sharedPrefs = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
+    // FIX CPU #1: prefs qua PreferencesRepository (không I/O mỗi recomposition).
+    val prefsRepo = remember(mContext) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(mContext)
+    }
     var realtimeNow by rememberSaveable { mutableStateOf(System.currentTimeMillis()) }
     // Kept as Unit: this 1-second ticker is screen-scoped and intentionally
     // runs for the lifetime of the composable. The `isActive` guard prevents
@@ -302,25 +303,23 @@ fun MainMenuScreen(
 
     // STATE CHO WAKE-ON-LAN
     var showWolDialog by rememberSaveable { mutableStateOf(false) }
-    var macAddress by rememberSaveable { mutableStateOf(sharedPrefs.getString("mac_address", "") ?: "") }
+    var macAddress by rememberSaveable { mutableStateOf(prefsRepo.getMacAddress()) }
 
     // STATE CHO DIALOG THÔNG BÁO
     var commonDialogMessage by rememberSaveable { mutableStateOf("") }
     var commonDialogType by rememberSaveable { mutableStateOf(DialogType.SUCCESS) }
 
     // STATE CHO DANH MỤC TRUY CẬP NHANH ĐỘNG
-    var slot2Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot2", "sync") ?: "sync") }
-    var slot3Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot3", "stream") ?: "stream") }
-    var slot4Id by rememberSaveable { mutableStateOf(sharedPrefs.getString("qa_slot4", "trash") ?: "trash") }
+    var slot2Id by rememberSaveable { mutableStateOf(prefsRepo.getQuickSlot("qa_slot2", "sync")) }
+    var slot3Id by rememberSaveable { mutableStateOf(prefsRepo.getQuickSlot("qa_slot3", "stream")) }
+    var slot4Id by rememberSaveable { mutableStateOf(prefsRepo.getQuickSlot("qa_slot4", "trash")) }
     // Kept as Unit: one-shot SharedPreferences migration (runs once on first composition after
     // this code is introduced; guarded by screen_record_quick_added flag).
     LaunchedEffect(Unit) {
-        if (!sharedPrefs.getBoolean("screen_record_quick_added", false)) {
+        if (!prefsRepo.isScreenRecordQuickAdded()) {
             slot4Id = "screen_record"
-            sharedPrefs.edit {
-                putString("qa_slot4", "screen_record")
-                putBoolean("screen_record_quick_added", true)
-            }
+            prefsRepo.setQuickSlot("qa_slot4", "screen_record")
+            prefsRepo.setScreenRecordQuickAdded(true)
         }
     }
     var editingSlot by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -334,8 +333,8 @@ fun MainMenuScreen(
 
     // STATE CHO AUTO-BACKUP
     var showAutoBackupDialog by rememberSaveable { mutableStateOf(false) }
-    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
-    var deleteAfterBackup by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(prefsRepo.isAutoBackupFlag()) }
+    var deleteAfterBackup by rememberSaveable { mutableStateOf(prefsRepo.isDeleteAfterBackup()) }
 
     // STATE CHO LAN WHITELIST
     var showLanWhitelistDialog by rememberSaveable { mutableStateOf(false) }
@@ -356,11 +355,10 @@ fun MainMenuScreen(
     // STATE CHO USB IMPORT
     var showUsbImportDialog by rememberSaveable { mutableStateOf(false) }
     var showNasInsightsDialog by rememberSaveable { mutableStateOf(false) }
-    // Load bandwidth limit từ SharedPreferences (1 lần khi mở app)
-    // Kept as Unit: one-shot SharedPreferences read on screen load.
+    // Load bandwidth limit (1 lần khi mở app)
+    // Kept as Unit: one-shot read on screen load.
     LaunchedEffect(Unit) {
-        val savedLimit = sharedPrefs.getLong("upload_speed_limit_bps", 0L)
-        com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = savedLimit
+        com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = prefsRepo.getUploadSpeedLimit()
     }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     // Kept as Unit: fires once on screen open to refresh the dashboard state.
@@ -568,7 +566,7 @@ fun MainMenuScreen(
             onConfirm = {
                 val wolMac = macAddress.trim()
                 if (wolMac.isNotBlank()) {
-                    sharedPrefs.edit { putString("mac_address", wolMac) }
+                    prefsRepo.setMacAddress(wolMac)
                     showWolDialog = false
                     sendWakeOnLanFromMenu(menuScope, wolMac) { result ->
                         commonDialogType = if (result.success) DialogType.SUCCESS else DialogType.ERROR
@@ -608,10 +606,8 @@ fun MainMenuScreen(
                         showCommonDialog = true
                     } else {
                         // Đủ quyền → ghi prefs + enqueue worker
-                        sharedPrefs.edit {
-                            putBoolean("auto_backup", true)
-                            putBoolean("delete_after_backup", deleteAfterBackup)
-                        }
+                        prefsRepo.setAutoBackupFlag(true)
+                        prefsRepo.setDeleteAfterBackup(deleteAfterBackup)
                         val constraints = androidx.work.Constraints.Builder()
                             .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
                             .setRequiresCharging(true)
@@ -636,10 +632,8 @@ fun MainMenuScreen(
                     }
                 } else {
                     // Tắt auto-backup → ghi prefs + hủy worker
-                    sharedPrefs.edit {
-                        putBoolean("auto_backup", false)
-                        putBoolean("delete_after_backup", deleteAfterBackup)
-                    }
+                    prefsRepo.setAutoBackupFlag(false)
+                    prefsRepo.setDeleteAfterBackup(deleteAfterBackup)
                     androidx.work.WorkManager.getInstance(mContext).cancelUniqueWork("AutoBackupWork")
                 }
                 showAutoBackupDialog = false
@@ -729,7 +723,7 @@ fun MainMenuScreen(
     }
     if (showBandwidthDialog) {
         com.nas.naswebdav.ui.dialogs.BandwidthThrottleDialog(
-            sharedPrefs = sharedPrefs,
+            prefsRepo = prefsRepo,
             onDismiss = { showBandwidthDialog = false }
         )
     }
@@ -866,7 +860,7 @@ fun MainMenuScreen(
             slot3Id = slot3Id,
             slot4Id = slot4Id,
             editingSlot = editingSlot,
-            sharedPrefs = sharedPrefs,
+            prefsRepo = prefsRepo,
             onEditingSlotChange = { editingSlot = it },
             onSlot2Change = { slot2Id = it },
             onSlot3Change = { slot3Id = it },
@@ -911,7 +905,7 @@ fun MainMenuScreen(
     // Đã HỘP CÔNG CỤ TOOLBOX Đã
     if (showToolboxDialog) {
         MainMenuToolboxDialog(
-            sharedPrefs = sharedPrefs,
+            prefsRepo = prefsRepo,
             context = mContext,
             onDismiss = { showToolboxDialog = false },
             onOpenLatestPhotos = onOpenLatestPhotos,
@@ -1632,7 +1626,7 @@ private fun MainMenuDashboardQuickAccessSection(
     slot3Id: String,
     slot4Id: String,
     editingSlot: Int?,
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onEditingSlotChange: (Int?) -> Unit,
     onSlot2Change: (String) -> Unit,
     onSlot3Change: (String) -> Unit,
@@ -1690,11 +1684,9 @@ private fun MainMenuDashboardQuickAccessSection(
                             nextSlot4 = newId
                         }
                     }
-                    sharedPrefs.edit {
-                        putString("qa_slot2", nextSlot2)
-                        putString("qa_slot3", nextSlot3)
-                        putString("qa_slot4", nextSlot4)
-                    }
+                    prefsRepo.setQuickSlot("qa_slot2", nextSlot2)
+                    prefsRepo.setQuickSlot("qa_slot3", nextSlot3)
+                    prefsRepo.setQuickSlot("qa_slot4", nextSlot4)
                     onSlot2Change(nextSlot2)
                     onSlot3Change(nextSlot3)
                     onSlot4Change(nextSlot4)
@@ -2286,7 +2278,7 @@ fun MainMenuDashboardTemperatureChartCard(history: List<Pair<Float, Float>>, mod
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuToolboxDialog(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     context: android.content.Context,
     onDismiss: () -> Unit,
     onOpenLatestPhotos: () -> Unit,
@@ -2307,9 +2299,9 @@ fun MainMenuToolboxDialog(
     val deviceVM = LocalDeviceManagementVM.current
     val smartToolsVM = LocalSmartToolsVM.current
     val livestreamVM = LocalLivestreamVM.current
-    var isBiometricEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
-    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
-    var deleteAfterBackup by rememberSaveable { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    var isBiometricEnabled by rememberSaveable { mutableStateOf(prefsRepo.isBiometricEnabled()) }
+    var isAutoBackupEnabled by rememberSaveable { mutableStateOf(prefsRepo.isAutoBackupFlag()) }
+    var deleteAfterBackup by rememberSaveable { mutableStateOf(prefsRepo.isDeleteAfterBackup()) }
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     NasModalBottomSheet(
@@ -2339,7 +2331,7 @@ fun MainMenuToolboxDialog(
                 MainMenuSettingsMenuCard(
                     title = "Khóa Sinh trắc học",
                     subtitle = if (isBiometricEnabled) {
-                        val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
+                        val sec = prefsRepo.getBiometricLockDelaySec()
                         val delayLabel = when {
                             sec == 0 -> "khoá ngay"
                             sec < 60 -> "sau ${sec}s"
@@ -2357,11 +2349,11 @@ fun MainMenuToolboxDialog(
             Spacer(Modifier.height(8.dp))
             if (showBiometricSettings) {
                 com.nas.naswebdav.ui.dialogs.BiometricSettingsDialogCompat(
-                    sharedPrefs = sharedPrefs,
+                    prefsRepo = prefsRepo,
                     onDismiss = {
                         showBiometricSettings = false
-                        // Re-read from SharedPrefs to update card subtitle
-                        isBiometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                        // Re-read để cập nhật subtitle card
+                        isBiometricEnabled = prefsRepo.isBiometricEnabled()
                     }
                 )
             }
@@ -2579,8 +2571,10 @@ fun MainMenuSystemStatusCards(
     val dupIsActive = dupIsRunning || dupIsPaused || dupStage == "Đang tổng hợp kết quả..." || smartToolsVM.duplicateFilesList.isNotEmpty()
 
     // 3. Auto Backup
-    val sharedPrefs2 = remember(mContext) { mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE) }
-    val autoBackupEnabled = sharedPrefs2.getBoolean("auto_backup", false)
+    val prefsRepo2 = remember(mContext) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(mContext)
+    }
+    val autoBackupEnabled = prefsRepo2.isAutoBackupFlag()
     val autoBackupIsActive = autoBackupVM.isAutoBackupRunning
     
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
