@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NAS WebDAV</string>
+    <string name="social_share_target_label">Tải về NAS</string>
+    <string name="action_close">Đóng</string>
+    <string name="action_cancel">Hủy</string>
+    <string name="action_confirm">Xác nhận</string>
+    <string name="action_delete">Xóa</string>
+    <string name="action_rename">Đổi tên</string>
+    <string name="action_ok">OK</string>
+    <string name="action_save">Lưu</string>
+    <string name="action_copy">Sao chép</string>
+    <string name="action_copy_link">Sao chép liên kết</string>
+    <string name="action_create_folder">Tạo thư mục</string>
+    <string name="action_delete_file">Xóa file</string>
+    <string name="action_download">Tải xuống</string>
+    <string name="action_extract_nas">Giải nén trên NAS</string>
+    <string name="action_move">Di chuyển</string>
+    <string name="action_open_external">Mở bằng app khác</string>
+    <string name="action_properties">Thuộc tính</string>
+    <string name="action_refresh">Làm mới</string>
+    <string name="action_restore">Khôi phục</string>
+    <string name="action_retry">Thử lại</string>
+
+    <!-- Accessibility labels for icon-only controls -->
+    <string name="a11y_back">Quay lại</string>
+    <string name="a11y_close">Đóng</string>
+    <string name="a11y_menu">Mở menu</string>
+    <string name="a11y_more_options">Tùy chọn khác</string>
+    <string name="a11y_search">Tìm kiếm</string>
+    <string name="a11y_refresh">Làm mới</string>
+    <string name="a11y_delete">Xóa</string>
+    <string name="a11y_edit">Chỉnh sửa</string>
+    <string name="a11y_save">Lưu</string>
+    <string name="a11y_add">Thêm</string>
+    <string name="a11y_remove">Xóa mục</string>
+    <string name="a11y_download">Tải xuống</string>
+    <string name="a11y_upload">Tải lên</string>
+    <string name="a11y_play">Phát</string>
+    <string name="a11y_pause">Tạm dừng</string>
+    <string name="a11y_stop">Dừng</string>
+    <string name="a11y_expand">Mở rộng</string>
+    <string name="a11y_collapse">Thu gọn</string>
+    <string name="a11y_copy">Sao chép</string>
+    <string name="a11y_settings">Cài đặt</string>
+    <string name="a11y_show_password">Hiện mật khẩu</string>
+    <string name="a11y_hide_password">Ẩn mật khẩu</string>
+    <string name="a11y_mute">Tắt tiếng</string>
+    <string name="a11y_unmute">Bật tiếng</string>
+    <string name="action_run_nas">Chạy trên NAS</string>
+    <string name="error_cannot_connect_nas">Không thể kết nối NAS</string>
+    <string name="error_cannot_load_file">Không thể tải file</string>
+    <string name="label_folder_empty">Thư mục trống</string>
+    <string name="label_recent_searches">Tìm gần đây</string>
+    <string name="label_search_placeholder">Tìm kiếm…</string>
+    <string name="label_selected_count_with_count">Đã chọn %1$d mục</string>
+    <string name="label_days_left">Còn %1$d ngày</string>
+    <string name="menu_find_duplicates">Tìm trùng lặp</string>
+    <string name="menu_login">Đăng nhập</string>
+    <string name="menu_organize_videos">Phân loại video</string>
+    <string name="menu_random_photo">Ảnh ngẫu nhiên</string>
+    <string name="cd_close">Đóng</string>
+    <string name="cd_back">Quay lại</string>
+    <string name="cd_search">Tìm kiếm</string>
+    <string name="cd_delete">Xóa</string>
+    <string name="cd_refresh">Làm mới</string>
+    <string name="cd_more_options">Tùy chọn khác</string>
+    <string name="cd_clear">Xoá nội dung</string>
+    <string name="cd_copy">Sao chép</string>
+    <string name="cd_hide">Ẩn</string>
+    <string name="cd_move">Di chuyển</string>
+    <string name="cd_not_selected">Chưa chọn</string>
+    <string name="cd_pause">Tạm dừng</string>
+    <string name="cd_play">Phát</string>
+    <string name="cd_restore">Khôi phục</string>
+    <string name="cd_seek_backward">Tua lùi</string>
+    <string name="cd_seek_forward">Tua tới</string>
+    <string name="cd_select_file">Chọn file</string>
+    <string name="cd_selected">Đã chọn</string>
+    <string name="cd_skip_next">Bài tiếp theo</string>
+    <string name="cd_skip_previous">Bài trước</string>
+    <string name="cd_sort">Sắp xếp</string>
+    <string name="cd_tools">Công cụ</string>
+    <string name="dialog_duplicate_config">Cấu hình quét trùng lặp</string>
+    <string name="dialog_duplicate_config_desc">Thiết lập chế độ quét và tự động dọn dẹp.</string>
+    <string name="dialog_duplicate_fast_mode">Chế độ nhanh</string>
+    <string name="dialog_duplicate_fast_desc">So khớp nhanh bằng kích thước và tên.</string>
+    <string name="dialog_duplicate_rescan">Quét lại toàn bộ</string>
+    <string name="dialog_duplicate_rescan_desc">Bỏ qua cache, đọc lại từ NAS.</string>
+    <string name="dialog_duplicate_auto_clean">Tự dọn trùng lặp</string>
+    <string name="dialog_duplicate_auto_clean_desc">Tự động xóa file trùng sau khi quét.</string>
+    <string name="dialog_start_scan">Bắt đầu quét</string>
+    <string name="dialog_organize_title">Phân loại file</string>
+    <string name="dialog_organize_loading">Đang phân loại…</string>
+    <string name="dialog_organize_confirm">Xác nhận phân loại</string>
+    <string name="backup_schedule_title">Lịch sao lưu</string>
+    <string name="backup_schedule_frequency">Tần suất</string>
+    <string name="backup_schedule_hour">Giờ chạy</string>
+    <string name="backup_schedule_hour_format">Giờ chạy: %1$d</string>
+    <string name="recording_overlay_initial">Đang chuẩn bị ghi hình…</string>
+    <string name="recording_overlay_format">Đang ghi: %1$s</string>
+    <string name="social_share_invalid">URL chia sẻ không hợp lệ</string>
+    <string name="social_share_login_required">Cần đăng nhập NAS trước khi chia sẻ</string>
+    <string name="social_share_queued">Đã đưa vào hàng đợi</string>
+
+    <!-- Batch operation notifications -->
+    <string name="batch_channel_name">Tác vụ hàng loạt</string>
+    <string name="batch_channel_description">Hiển thị tiến trình Copy/Move/Delete file trên NAS</string>
+    <string name="batch_operation_copy">Sao chép</string>
+    <string name="batch_operation_move">Di chuyển</string>
+    <string name="batch_operation_delete">Xóa</string>
+    <string name="batch_operation_restore">Khôi phục</string>
+    <string name="batch_operation_process">Xử lý</string>
+    <string name="batch_operation_count">%1$s %2$d tệp</string>
+    <string name="batch_operation_progress">%1$s (%2$d/%3$d)</string>
+    <string name="batch_operation_complete">Hoàn tất</string>
+    <string name="batch_operation_success_log">%1$s thành công %2$d/%3$d tệp.</string>
+    <string name="batch_operation_partial_log">%1$s: %2$d thành công, %3$d thất bại.</string>
+    <string name="batch_operation_complete_success">Hoàn tất %1$s %2$d tệp!</string>
+    <string name="batch_operation_complete_partial">%1$s: %2$d thành công, %3$d lỗi</string>
+    <string name="batch_operation_some_failed">Một số tệp không thể xử lý.</string>
+    <string name="batch_operation_all_success">Tất cả tệp đã được xử lý thành công!</string>
+    <string name="batch_operation_module">Hàng loạt</string>
+
+    <!-- Long-running NAS API notifications -->
+    <string name="long_api_channel_name">Tác vụ NAS nặng</string>
+    <string name="long_api_channel_description">Hiển thị tiến trình giải nén/sắp xếp file trên NAS</string>
+    <string name="long_api_default_task_label">Đang xử lý…</string>
+    <string name="long_api_waiting">Đang chờ NAS xử lý…</string>
+    <string name="long_api_unzip_success">Giải nén thành công! ✅</string>
+    <string name="long_api_unzip_failure">Giải nén thất bại: %1$s</string>
+    <string name="long_api_organize_success">Hoàn tất! Đã gom %1$d video. ✅</string>
+    <string name="long_api_organize_failure">Lỗi sắp xếp: %1$s</string>
+    <string name="long_api_success">Hoàn tất! ✅</string>
+    <string name="long_api_failure_code">Lỗi: Mã %1$d</string>
+    <string name="long_api_connection_error">Lỗi kết nối: %1$s</string>
+    <string name="long_api_failed_title">%1$s — Thất bại</string>
+    <string name="long_api_error_short">Lỗi: %1$s</string>
+    <string name="long_api_failed_log">%1$s thất bại: %2$s</string>
+
+    <!-- FileBrowser error messages -->
+    <string name="browser_folder_access_error">Không truy cập được %1$d thư mục con — NAS có thể từ chối quyền hoặc mạng chậm</string>
+    <string name="browser_error_prefix">Lỗi: %1$s</string>
+    <string name="browser_delete_success">Đã xóa %1$s</string>
+    <string name="browser_webdav_system_error">Lỗi hệ thống WebDAV</string>
+    <string name="browser_delete_failure">Không thể xóa %1$s: %2$s</string>
+    <string name="browser_batch_prepare_error">Không thể chuẩn bị tác vụ hàng loạt: %1$s</string>
+    <string name="browser_rename_failure">Đổi tên thất bại: %1$s</string>
+    <string name="browser_create_folder_failure">Tạo thư mục thất bại: %1$s</string>
+    <string name="browser_restore_failure">Khôi phục thất bại: %1$s</string>
+    <string name="browser_extract_failure">Giải nén thất bại: %1$s</string>
+
+    <!-- AutoDuplicateScanWorker -->
+    <string name="autodup_maintenance_window">Tạm hoãn: Ngoài khung giờ bảo trì 2h-5h sáng (hiện tại %1$dh). Sẽ thử lại sau.</string>
+    <string name="autodup_system_busy">Hệ thống đang chịu tải (%1$s) — tạm hoãn 5 phút, tiến hành kiểm tra lại (lần thứ %2$d/5)</string>
+    <string name="autodup_idle_check_error">Lỗi kết nối /api/system/idle: %1$s</string>
+    <string name="autodup_not_idle_cancel">Hệ thống không đạt trạng thái rảnh sau 25 phút chờ — phiên bảo trì bị huỷ bỏ, sẽ thực thi ở chu kỳ kế tiếp.</string>
+    <string name="autodup_busy_pause">Hệ thống đang chịu tải — tạm dừng tiến trình quét tự động</string>
+    <string name="autodup_idle_resume">Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét</string>
+    <string name="autodup_launch_cleanup">Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.</string>
+    <string name="autodup_auto_schedule_log">Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ</string>
+    <string name="autodup_no_fastpath">Không thể kết nối FastPath API</string>
+    <string name="autodup_maintenance_complete">Hoàn tất bảo trì: Phát hiện %1$d tập tin trùng lặp, %2$d đã được xử lý, %3$s dung lượng được giải phóng, hoàn tất trong %4$d phút.</string>
+
+    <!-- Shared status dialog titles -->
+    <string name="dialog_status_success">Thành công</string>
+    <string name="dialog_status_error">Thất bại</string>
+    <string name="dialog_status_warning">Cảnh báo</string>
+    <string name="dialog_status_confirm">Xác nhận</string>
+    <string name="dialog_close_button">Đóng</string>
+    <string name="dialog_confirm_button">Xác nhận</string>
+
+    <!-- Reboot / Shutdown confirm dialogs -->
+    <string name="reboot_confirm_message">Bạn có chắc chắn muốn khởi động lại NAS Chainedbox? Mọi tiến trình đang chạy sẽ bị dừng lại.</string>
+    <string name="shutdown_confirm_message">Chuyển NAS sang chế độ ngủ thay vì tắt nguồn hoàn toàn. Đèn LAN cần còn sáng để Wake-on-LAN đánh thức lại NAS.</string>
+
+    <!-- BitTorrent download dialog -->
+    <string name="dl_title">Tải BitTorrent</string>
+    <string name="dl_link_tab">Link / Magnet</string>
+    <string name="dl_torrent_tab">File .torrent</string>
+    <string name="dl_link_description">Dán Magnet Link hoặc HTTP URL của file .torrent. NAS sẽ tự tải qua qBittorrent.</string>
+    <string name="dl_link_placeholder">magnet:?xt=... hoặc https://...torrent</string>
+    <string name="dl_add_queue">THÊM VÀO HÀNG ĐỢI</string>
+    <string name="dl_pick_torrent_desc">Chọn 1 file .torrent từ điện thoại để upload lên NAS. qBittorrent sẽ bắt đầu tải ngay.</string>
+    <string name="dl_pick_torrent_button">CHỌN FILE .TORRENT</string>
+    <string name="dl_pick_torrent_note">Sau khi chọn, file sẽ tự upload và đóng form.</string>
+    <string name="dl_cancel">HỦY</string>
+
+    <!-- Wake-on-LAN dialog -->
+    <string name="wol_title">Wake-on-LAN</string>
+    <string name="wol_description">Nhập địa chỉ MAC của cổng mạng NAS (VD: 00:1A:2B:3C:4D:5E). Ứng dụng sẽ lưu lại cho các lần sau và bắn tín hiệu đánh thức qua mạng LAN.</string>
+    <string name="wol_mac_placeholder">VD: AA:BB:CC:DD:EE:FF</string>
+    <string name="wol_confirm">Đánh thức NAS</string>
+
+    <!-- Folder picker dialog -->
+    <string name="folder_picker_title">Chọn thư mục đích</string>
+    <string name="folder_picker_root">/ (Thư mục gốc)</string>
+    <string name="folder_picker_parent">.. (Quay lại)</string>
+    <string name="folder_picker_empty">(Thư mục trống)</string>
+    <string name="folder_picker_select_here">Chép/Di chuyển vào đây</string>
+    <string name="folder_picker_folder_cd">Thư mục</string>
+
+    <!-- Biometric lock -->
+    <string name="biometric_prompt_title">Khóa bảo mật NAS</string>
+    <string name="biometric_prompt_subtitle">Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu</string>
+    <string name="biometric_finger_cd">Quét vân tay để mở khóa</string>
+    <string name="biometric_error_with_count">Lỗi: %1$s (Sai %2$d/3 lần)</string>
+    <string name="biometric_finger_mismatch">Vân tay không khớp! (Sai %1$d/3 lần)</string>
+    <string name="biometric_open_fingerprint_failed">Không mở được quét vân tay</string>
+
+    <!-- IP approval -->
+    <string name="ip_risk_local">Mạng nội bộ</string>
+    <string name="ip_risk_external">IP ngoài (%1$s)</string>
+</resources>
