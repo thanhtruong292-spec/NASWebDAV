@@ -27,6 +27,7 @@ mockWebServer = "4.12.0"
 timber = "5.0.1"
 chucker = "4.0.0"
 mockk = "1.13.8"
+lifecycleRuntime = "2.8.6"
 kotlinTestJunit = "1.9.22"
 coroutinesTest = "1.7.3"
 robolectric = "4.11.1"
@@ -35,6 +36,7 @@ robolectric = "4.11.1"
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycleRuntime" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "testCore" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }

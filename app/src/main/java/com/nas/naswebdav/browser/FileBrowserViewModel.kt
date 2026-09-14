@@ -48,6 +48,13 @@ class FileBrowserViewModel(
     private val appContext: Context = NasApplication.instance.applicationContext
 ) : ViewModel() {
 
+    // UI prefs reactive — survive rotation (VM scoped), thay đọc prefs trong composable.
+    private val prefsRepo = com.nas.naswebdav.utils.PreferencesRepository.get(appContext)
+    val fileSort: StateFlow<String> = prefsRepo.fileSort
+    val viewModeName: StateFlow<String> = prefsRepo.viewMode
+    fun setFileSort(mode: String) = prefsRepo.setFileSort(mode)
+    fun setViewModeName(mode: String) = prefsRepo.setViewMode(mode)
+
     // ═══ NAVIGATION STATE (Phase 7a.1 — moved from facade) ═══
 
     var currentUrl by androidx.compose.runtime.mutableStateOf("")

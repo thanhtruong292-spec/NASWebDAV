@@ -59,6 +59,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.viewinterop.AndroidView
 
@@ -176,31 +178,28 @@ fun BrowserScreen(
     var viewedRefreshTick by remember { mutableStateOf(0) }
     LaunchedEffect(fileBrowserVM.currentUrl) { viewedRefreshTick++ }
 
-    // SORT — luu trong SharedPreferences de nho cua user qua cac lan vao app.
+    // SORT — reactive từ FileBrowserViewModel (survive rotation).
     // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
-    val sortPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
-    var sortMode by remember { mutableStateOf(sortPrefs.getString("file_sort", "name_asc") ?: "name_asc") }
-    var showSortMenu by remember { mutableStateOf(false) }
+    val sortMode by fileBrowserVM.fileSort.collectAsStateWithLifecycle()
+    var showSortMenu by rememberSaveable { mutableStateOf(false) }
 
-    // View mode (ICON / LIST / DETAIL) — persisted across app launches
-    var viewMode by remember {
-        mutableStateOf(
-            runCatching { BrowserViewMode.valueOf(sortPrefs.getString("view_mode", "ICON") ?: "ICON") }
-                .getOrDefault(BrowserViewMode.ICON)
-        )
-    }
+    // View mode (ICON / LIST / DETAIL) — persisted, survive rotation
+    val viewModeName by fileBrowserVM.viewModeName.collectAsStateWithLifecycle()
+    var viewMode = runCatching { BrowserViewMode.valueOf(viewModeName) }
+        .getOrDefault(BrowserViewMode.ICON)
 
-    // TÍNH NĂNG 7.M: Trạng thái Text Preview
-    var showTextPreviewDialog by remember { mutableStateOf(false) }
-    var textPreviewName by remember { mutableStateOf("") }
+    // TÍNH NĂNG 7.M: Trạng thái Text Preview (saveable — survive rotation)
+    var showTextPreviewDialog by rememberSaveable { mutableStateOf(false) }
+    var textPreviewName by rememberSaveable { mutableStateOf("") }
 
-    // TÍNH NĂNG: Trạng thái Folder Picker cho Copy/Move
-    var showFolderPickerDialog by remember { mutableStateOf(false) }
-    var pendingBatchOperation by remember { mutableStateOf("") } // "COPY" hoặc "MOVE"
+    // TÍNH NĂNG: Trạng thái Folder Picker cho Copy/Move (saveable — survive rotation)
+    var showFolderPickerDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingBatchOperation by rememberSaveable { mutableStateOf("") } // "COPY" hoặc "MOVE"
 
 
     LaunchedEffect(Unit) {
-        smartToolsVM.autoCleanEnabled = context.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE).getBoolean("auto_clean_enabled", false)
+        smartToolsVM.autoCleanEnabled =
+            com.nas.naswebdav.utils.PreferencesRepository.get(context).autoCleanEnabled.value
     }
 
     // Xóa chế độ chọn khi đổi thư mục
@@ -1002,8 +1001,7 @@ fun BrowserScreen(
                         }
                         IconButton(
                             onClick = {
-                                viewMode = nextMode
-                                sortPrefs.edit { putString("view_mode", nextMode.name) }
+                                fileBrowserVM.setViewModeName(nextMode.name)
                             },
                             modifier = Modifier.size(36.dp)
                         ) {
@@ -1066,8 +1064,7 @@ fun BrowserScreen(
                                             { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
                                         } else null,
                                         onClick = {
-                                            sortMode = opt.key
-                                            sortPrefs.edit { putString("file_sort", opt.key) }
+                                            fileBrowserVM.setFileSort(opt.key)
                                             showSortMenu = false
                                         }
                                     )
