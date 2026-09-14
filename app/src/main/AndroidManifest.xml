@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- NetworkMonitor: đọc trạng thái mạng, không thu thập dữ liệu -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- READ_MEDIA_* for scoped storage access on Android 13+ -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
