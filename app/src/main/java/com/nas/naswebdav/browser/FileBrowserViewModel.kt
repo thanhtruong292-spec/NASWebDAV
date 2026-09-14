@@ -265,12 +265,11 @@ class FileBrowserViewModel(
                 }
             } catch (_: Exception) {}
 
-            // Pass 1: Room Cache Map — lọc các file trong thư mục hiện tại đã lưu SQLite (<10ms)
+            // Pass 1: Room Cache — query SQL giới hạn trong root (LIMIT 200),
+            // thay full-table scan 25k rows vào RAM.
             try {
-                repository.getAllFilesForMap().forEach { file ->
-                    if (file.path.startsWith(normalizedSearchRoot) && matchesQuery(file.name, normalizedQuery)) {
-                        results[file.path] = file
-                    }
+                repository.searchCacheUnder(normalizedSearchRoot, normalizedQuery).forEach { file ->
+                    results[file.path] = file
                 }
             } catch (_: Exception) {}
             if (results.isNotEmpty()) {

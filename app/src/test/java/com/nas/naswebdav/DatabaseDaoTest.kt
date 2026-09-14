@@ -46,6 +46,26 @@ class DatabaseDaoTest {
     }
 
     @Test
+    fun `scoped search respects root prefix and 200 limit`() {
+        val dao = database.fileDao()
+        val rows = mutableListOf<CachedFile>()
+        repeat(250) { i ->
+            rows.add(CachedFile("/photos/img_$i.jpg", "img_$i.jpg", false, "image/jpeg", "/photos", 5000, i.toLong()))
+        }
+        repeat(10) { i ->
+            rows.add(CachedFile("/docs/img_$i.jpg", "img_$i.jpg", false, "image/jpeg", "/docs", 5000, i.toLong()))
+        }
+        dao.insertFiles(rows)
+
+        val scoped = dao.searchFilesUnder("/photos/", "img_")
+        assertEquals(200, scoped.size)
+        assertTrue(scoped.all { it.path.startsWith("/photos/") })
+
+        val docs = dao.searchFilesUnder("/docs/", "img_")
+        assertEquals(10, docs.size)
+    }
+
+    @Test
     fun `sync queue and trash metadata round trip`() {
         database.syncActionDao().insert(SyncAction(actionType = "UPLOAD", sourcePath = "content://photo"))
         assertEquals(1, database.syncActionDao().countAll())

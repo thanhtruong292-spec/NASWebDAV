@@ -77,6 +77,14 @@ interface FileDao {
     @Query("SELECT * FROM files_cache WHERE name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFiles(keyword: String): List<CachedFile>
 
+    // Tìm kiếm giới hạn trong một root path — thay thế pattern load
+    // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
+    @Query("SELECT * FROM files_cache WHERE path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    fun searchFilesUnder(rootPrefix: String, keyword: String): List<CachedFile>
+
+    // DEAD QUERY (không còn caller): giữ để tương thích, không dùng cho flow mới.
+    // Flow mới dùng searchFilesUnder() với LIMIT thay vì load full-table.
+    @Deprecated("Dùng searchFilesUnder() hoặc Paging thay vì load full-table")
     @Query("SELECT * FROM files_cache LIMIT 25000")
     fun getAllFilesForMap(): List<CachedFile>
 

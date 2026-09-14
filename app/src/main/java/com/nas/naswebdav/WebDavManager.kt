@@ -1212,6 +1212,12 @@ class WebDavRepository(
         database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
+    // Tìm kiếm cache giới hạn trong root — thay full-table scan 25k rows.
+    suspend fun searchCacheUnder(rootPrefix: String, keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
+        database.fileDao().searchFilesUnder(rootPrefix, keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+    }
+
+    @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")
     suspend fun getAllFilesForMap(): List<NasFile> = withContext(Dispatchers.IO) {
         database.fileDao().getAllFilesForMap().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
