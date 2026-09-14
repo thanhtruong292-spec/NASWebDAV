@@ -592,33 +592,54 @@ fun MainMenuScreen(
             deleteAfterBackup = deleteAfterBackup,
             onDeleteAfterBackupChange = { deleteAfterBackup = it },
             onSaveAndSchedule = {
-                sharedPrefs.edit {
-                    putBoolean("auto_backup", isAutoBackupEnabled)
-                    putBoolean("delete_after_backup", deleteAfterBackup)
-                }
                 if (isAutoBackupEnabled) {
-                    val constraints = androidx.work.Constraints.Builder()
-                        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
-                        .setRequiresCharging(true)
-                        .build()
-                    val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
-                        .setConstraints(constraints)
-                        .setBackoffCriteria(
-                            androidx.work.BackoffPolicy.EXPONENTIAL,
-                            30L,
-                            java.util.concurrent.TimeUnit.SECONDS
+                    // FIX: Kiểm tra quyền TRƯỚC khi ghi prefs & enqueue worker.
+                    // Partial access (Android 14+) gây mass "has no access" errors
+                    // vì MediaStore trả về tất cả ảnh nhưng openInputStream() bị từ chối.
+                    val hasFullAccess = com.nas.naswebdav.utils.MediaPermissionHelper.canRunPeriodicBackup(mContext)
+                    if (!hasFullAccess) {
+                        // Không đủ quyền → chỉ hiện lỗi, KHÔNG ghi prefs, KHÔNG enqueue worker
+                        commonDialogType = DialogType.ERROR
+                        commonDialogMessage = if (com.nas.naswebdav.utils.MediaPermissionHelper.hasNoMediaAccess(mContext)) {
+                            "Chưa cấp quyền truy cập Media. Vui lòng cấp quyền READ_MEDIA_IMAGES/VIDEO trong Cài đặt trước khi bật Auto-Backup."
+                        } else {
+                            "Đang ở chế độ quyền ảnh một phần (partial access). Auto-Backup cần quyền truy cập TOÀN BỘ ảnh/video. Vui lòng chọn \"Cho phép tất cả\" trong Cài đặt quyền."
+                        }
+                        showCommonDialog = true
+                    } else {
+                        // Đủ quyền → ghi prefs + enqueue worker
+                        sharedPrefs.edit {
+                            putBoolean("auto_backup", true)
+                            putBoolean("delete_after_backup", deleteAfterBackup)
+                        }
+                        val constraints = androidx.work.Constraints.Builder()
+                            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+                            .setRequiresCharging(true)
+                            .build()
+                        val backupWorkRequest = androidx.work.PeriodicWorkRequestBuilder<AutoBackupWorker>(12, java.util.concurrent.TimeUnit.HOURS)
+                            .setConstraints(constraints)
+                            .setBackoffCriteria(
+                                androidx.work.BackoffPolicy.EXPONENTIAL,
+                                30L,
+                                java.util.concurrent.TimeUnit.SECONDS
+                            )
+                            .addTag("com.nas.naswebdav.AutoBackupWorker")
+                            .build()
+                        androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
+                            "AutoBackupWork",
+                            androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+                            backupWorkRequest
                         )
-                        .addTag("com.nas.naswebdav.AutoBackupWorker")
-                        .build()
-                    androidx.work.WorkManager.getInstance(mContext).enqueueUniquePeriodicWork(
-                        "AutoBackupWork",
-                        androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
-                        backupWorkRequest
-                    )
-                    commonDialogType = DialogType.SUCCESS
-                    commonDialogMessage = "Đã lưu cấu hình Auto-Backup!"
-                    showCommonDialog = true
+                        commonDialogType = DialogType.SUCCESS
+                        commonDialogMessage = "Đã lưu cấu hình Auto-Backup!"
+                        showCommonDialog = true
+                    }
                 } else {
+                    // Tắt auto-backup → ghi prefs + hủy worker
+                    sharedPrefs.edit {
+                        putBoolean("auto_backup", false)
+                        putBoolean("delete_after_backup", deleteAfterBackup)
+                    }
                     androidx.work.WorkManager.getInstance(mContext).cancelUniqueWork("AutoBackupWork")
                 }
                 showAutoBackupDialog = false
@@ -759,25 +780,27 @@ fun MainMenuScreen(
         ) {
         Spacer(Modifier.height(24.dp))
 
-        MainMenuDashboardHeader(
-            realtimeNow = realtimeNow,
-            showPowerMenu = showPowerMenu,
-            onPowerMenuChange = { showPowerMenu = it },
-            onLogout = onLogout,
-            onReboot = { showRebootConfirm = true },
-            onShutdown = { showShutdownConfirm = true }
+        // ── NEW: DashboardHeader component ──
+        DashboardHeader(
+            systemStatus = sysMonitorVM.systemStatus.status,
+            networkLabel = if (deviceVM.isOnLan) "LAN" else "Tailscale",
+            isOnLan = deviceVM.isOnLan,
+            uptime = sysMonitorVM.systemStatus.uptime,
+            apiLatencyMs = sysMonitorVM.apiLatencyMs,
+            apiFailureCount = sysMonitorVM.apiFailureCount,
+            onPowerMenuClick = { showPowerMenu = true },
         )
 
             Spacer(Modifier.height(8.dp))
 
         MainMenuDashboardSystemOverviewCard(
             realtimeNow = realtimeNow,
-            onShowProcessList = { sortType ->
-                processSortType = sortType
+            onShowProcessList = { type ->
+                processSortType = type
                 showProcessDialog = true
             },
             onOpenNewDiskProfile = { showNewDiskProfileSheet = true },
-            onOpenSmartDetails = { showSmartDialog = true }
+            onOpenSmartDetails = { showSmartDialog = true },
         )
 
         MainMenuDashboardOmvServicesHardwarePanel()
@@ -792,6 +815,24 @@ fun MainMenuScreen(
                 showNasInsightsDialog = true
             }
         )
+
+        // ── NEW: DashboardAlerts component ──
+        run {
+            val alerts = mutableListOf<Triple<androidx.compose.ui.graphics.vector.ImageVector, String, com.nas.naswebdav.ui.components.StatusLevel>>()
+            // API failures
+            if (sysMonitorVM.apiFailureCount > 0) {
+                alerts.add(Triple(Icons.Default.Warning, "${sysMonitorVM.apiFailureCount} lỗi API", com.nas.naswebdav.ui.components.StatusLevel.Error))
+            }
+            // NAS insights
+            val insights = sysMonitorVM.nasInsights
+            val insightsText = insights.toString()
+            if (insightsText.isNotBlank() && insightsText != "NasInsights()") {
+                alerts.add(Triple(AppIcons.Info, "NAS Insights có dữ liệu mới", com.nas.naswebdav.ui.components.StatusLevel.Info))
+            }
+            if (alerts.isNotEmpty()) {
+                DashboardAlerts(alerts = alerts)
+            }
+        }
         Spacer(Modifier.height(4.dp))
 
         MainMenuSystemStatusCards(
@@ -816,6 +857,7 @@ fun MainMenuScreen(
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
         )
+
 
 
 

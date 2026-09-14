@@ -1,5 +1,6 @@
 package com.nas.naswebdav.browser
 
+import com.nas.naswebdav.R
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue

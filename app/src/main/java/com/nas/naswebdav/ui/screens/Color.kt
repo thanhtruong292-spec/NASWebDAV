@@ -72,3 +72,23 @@ internal val RecordingOverlayBorder = Color(0xFFFF1744)
 // One-off Material Light Blue 500 used as a chart accent line in two
 // dashboard widgets. Kept as a token so future palette tweaks happen once.
 internal val AccentBlue500 = Color(0xFF03A9F4)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SEMANTIC CONTAINER COLORS — 12% alpha on accent for badge/chip backgrounds
+// ════════════════════════════════════════════════════════════════════════════
+internal val SuccessContainer = AccentGreen.copy(alpha = 0.12f)
+internal val WarningContainer = AccentOrange.copy(alpha = 0.12f)
+internal val ErrorContainer = AccentRed.copy(alpha = 0.12f)
+internal val InfoContainer = AccentCyan.copy(alpha = 0.12f)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SURFACE BORDERS — subtle elevation cues without lighting OLED pixels
+// ════════════════════════════════════════════════════════════════════════════
+internal val DarkCardBorder = Color(0xFF1A1A1A)
+internal val DarkDivider = Color(0xFF1F2937)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SKELETON SHIMMER — loading placeholder gradient endpoints
+// ════════════════════════════════════════════════════════════════════════════
+internal val SkeletonBase = Color(0xFF0A0A0A)
+internal val SkeletonHighlight = Color(0xFF1A1A1A)

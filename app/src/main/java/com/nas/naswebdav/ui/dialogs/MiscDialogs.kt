@@ -1,7 +1,9 @@
 @file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.dialogs
 
+import com.nas.naswebdav.R
 import com.nas.naswebdav.*
+import androidx.compose.ui.res.stringResource
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton

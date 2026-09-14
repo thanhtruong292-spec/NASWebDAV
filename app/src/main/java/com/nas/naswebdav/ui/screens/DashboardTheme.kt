@@ -21,6 +21,12 @@ import androidx.compose.ui.unit.sp
 // ════════════════════════════════════════════════════════════════════════════
 
 internal object AppTypography {
+    val DisplayLarge = TextStyle(
+        fontSize = 36.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = (-1).sp,
+        lineHeight = 42.sp
+    )
     val HeadlineLarge = TextStyle(
         fontSize = 28.sp,
         fontWeight = FontWeight.Bold,
@@ -80,6 +86,18 @@ internal object AppTypography {
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.3.sp,
         lineHeight = 12.sp
+    )
+    val Caption = TextStyle(
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.2.sp,
+        lineHeight = 14.sp
+    )
+    val SectionTitle = TextStyle(
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        letterSpacing = 1.5.sp,
+        lineHeight = 14.sp
     )
 }
 
@@ -160,6 +178,7 @@ private val NasDarkColorScheme = darkColorScheme(
 // ════════════════════════════════════════════════════════════════════════════
 
 private val NasTypography = androidx.compose.material3.Typography(
+    displayLarge = AppTypography.DisplayLarge,
     headlineLarge = AppTypography.HeadlineLarge,
     headlineMedium = AppTypography.HeadlineMedium,
     titleLarge = AppTypography.TitleLarge,
