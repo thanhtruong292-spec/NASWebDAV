@@ -218,4 +218,12 @@
     <!-- IP approval -->
     <string name="ip_risk_local">Local network</string>
     <string name="ip_risk_external">External IP (%1$s)</string>
+
+    <!-- Remote crash reporting (Sentry self-hosted, opt-in) -->
+    <string name="crash_remote_title">Send remote crash reports</string>
+    <string name="crash_remote_desc">Off by default. Only redacted crashes go to self-hosted Sentry.</string>
+    <string name="crash_dsn_hint">https://key@sentry.local/1</string>
+    <string name="crash_dsn_label">Sentry DSN (self-hosted)</string>
+    <string name="crash_dsn_saved">Reporting config saved</string>
+    <string name="crash_dsn_need">Enter DSN before enabling</string>
 </resources>

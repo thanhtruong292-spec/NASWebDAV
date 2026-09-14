@@ -1362,6 +1362,8 @@ fun SystemLogDialog(
                 }
             }
 
+            CrashReportingSection()
+
             if (deviceVM.systemLogsList.isEmpty()) {
                 Text("Chưa có dữ liệu nhật ký nào.", modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
             } else {

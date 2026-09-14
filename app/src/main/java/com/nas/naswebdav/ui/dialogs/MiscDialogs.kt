@@ -14,6 +14,7 @@ import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 import android.content.Context
+import android.widget.Toast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.animation.*
@@ -658,3 +659,74 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
     }
 }
 
+
+// ====================================================================
+// REMOTE CRASH REPORTING — Sentry self-hosted opt-in (hiển thị trong SystemLogDialog)
+// ====================================================================
+@Composable
+fun CrashReportingSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var enabled by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.nas.naswebdav.utils.CrashReporter.isEnabled(context)
+        )
+    }
+    var dsn by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.nas.naswebdav.utils.CrashReporter.getDsn(context)
+        )
+    }
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.material3.Card(
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = DarkCard),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.crash_remote_title),
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        stringResource(R.string.crash_remote_desc),
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = { want ->
+                        if (want && dsn.isBlank()) {
+                            Toast.makeText(context, context.getString(R.string.crash_dsn_need), Toast.LENGTH_SHORT).show()
+                            expanded = true
+                        } else {
+                            com.nas.naswebdav.utils.CrashReporter.setEnabled(context, want, dsn)
+                            enabled = want
+                            Toast.makeText(context, context.getString(R.string.crash_dsn_saved), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+            if (enabled || expanded) {
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = dsn,
+                    onValueChange = { dsn = it.trim() },
+                    label = { Text(stringResource(R.string.crash_dsn_label), fontSize = 11.sp) },
+                    placeholder = { Text(stringResource(R.string.crash_dsn_hint), fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        TextButton(onClick = {
+                            com.nas.naswebdav.utils.CrashReporter.setEnabled(context, enabled, dsn)
+                            Toast.makeText(context, context.getString(R.string.crash_dsn_saved), Toast.LENGTH_SHORT).show()
+                        }) { Text(stringResource(R.string.action_save), fontSize = 12.sp) }
+                    }
+                )
+            }
+        }
+    }
+}

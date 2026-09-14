@@ -211,4 +211,12 @@
     <!-- IP approval -->
     <string name="ip_risk_local">Mạng nội bộ</string>
     <string name="ip_risk_external">IP ngoài (%1$s)</string>
+
+    <!-- Remote crash reporting (Sentry self-hosted, opt-in) -->
+    <string name="crash_remote_title">Gửi báo cáo lỗi từ xa</string>
+    <string name="crash_remote_desc">Tắt mặc định. Bật mới gửi crash đã redact tới Sentry tự host.</string>
+    <string name="crash_dsn_hint">https://key@sentry.local/1</string>
+    <string name="crash_dsn_label">Sentry DSN (self-hosted)</string>
+    <string name="crash_dsn_saved">Đã lưu cấu hình báo cáo</string>
+    <string name="crash_dsn_need">Nhập DSN trước khi bật</string>
 </resources>
