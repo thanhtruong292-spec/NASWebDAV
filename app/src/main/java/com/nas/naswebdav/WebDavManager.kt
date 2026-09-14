@@ -161,6 +161,34 @@ object WebDavManager {
 
     private const val LOGIN_CALL_GROUP = "login"
 
+    // OOM guard: giới hạn kích thước body đọc vào RAM cho PROPFIND/error/JSON nhỏ.
+    // PROPFIND Depth:1 một thư mục thường < 1MB; 8MB đủ cho ~20k entries.
+    const val MAX_PROPFIND_BYTES = 8L * 1024 * 1024
+    const val MAX_PROPFIND_ENTRIES = 20_000
+    const val MAX_ERROR_BODY_BYTES = 8 * 1024
+    const val MAX_JSON_BODY_BYTES = 256 * 1024
+
+    /**
+     * Đọc response body tối đa [maxBytes], tự đóng stream.
+     * Trả null khi body rỗng hoặc vượt cap (tránh OOM thư viện lớn).
+     */
+    fun readCappedBody(response: okhttp3.Response, maxBytes: Int): String? {
+        val body = response.body ?: return null
+        body.byteStream().use { stream ->
+            val out = java.io.ByteArrayOutputStream(minOf(maxBytes, 8192))
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = stream.read(buffer)
+                if (read <= 0) break
+                total += read
+                if (total > maxBytes) return null
+                out.write(buffer, 0, read)
+            }
+            return out.toString("UTF-8")
+        }
+    }
+
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
     }
@@ -446,8 +474,14 @@ object WebDavManager {
 
         sardineClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200) ?: ""
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200) ?: ""
                 throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
+            }
+
+            // OOM guard: từ chối PROPFIND quá lớn trước khi parse.
+            val declaredLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
+            if (declaredLength > MAX_PROPFIND_BYTES) {
+                throw Exception("Thư mục quá lớn (${declaredLength / 1024 / 1024}MB), dùng tìm kiếm hoặc chia nhỏ thư mục")
             }
 
             val byteStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
@@ -485,7 +519,9 @@ object WebDavManager {
                             }
                         }
                         org.xmlpull.v1.XmlPullParser.TEXT -> {
-                            textBuffer = parser.text
+                            // OOM guard: text node đơn (vd. href dài bất thường) không tràn RAM.
+                            val text = parser.text ?: ""
+                            textBuffer = if (text.length > 8192) text.take(8192) else text
                         }
                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
                             val name = parser.name.lowercase()
@@ -525,6 +561,9 @@ object WebDavManager {
                                                 }
                                                 val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri
                                                 result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
+                                                if (result.size > MAX_PROPFIND_ENTRIES) {
+                                                    throw Exception("Thư mục quá nhiều file (>${MAX_PROPFIND_ENTRIES}), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                                                }
                                             }
                                         }
                                         insideResponse = false
@@ -954,7 +993,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "DELETE failed: ${response.code}$suffix")
                 throw java.io.IOException("DELETE failed: ${response.code}$suffix")
@@ -968,7 +1007,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "MOVE failed: ${response.code}$suffix")
                 throw java.io.IOException("MOVE failed: ${response.code}$suffix")
@@ -982,7 +1021,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "COPY failed: ${response.code}$suffix")
                 throw java.io.IOException("COPY failed: ${response.code}$suffix")
@@ -1039,7 +1078,7 @@ object WebDavManager {
 
     fun extractApiError(response: okhttp3.Response): String? {
         return runCatching {
-            val bodyStr = response.body?.string() ?: ""
+            val bodyStr = readCappedBody(response, MAX_JSON_BODY_BYTES) ?: ""
             if (bodyStr.isNotBlank()) {
                 val jsonErr = runCatching { org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null } }.getOrNull()
                 if (!jsonErr.isNullOrBlank()) return@runCatching jsonErr

@@ -156,7 +156,8 @@ class LongRunningApiWorker(
             val longClient = httpClientProvider()
 
             longClient.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: ""
+                // OOM guard: task JSON nhỏ, từ chối body vượt cap thay vì đọc hết RAM.
+                val body = WebDavManager.readCappedBody(response, WebDavManager.MAX_JSON_BODY_BYTES) ?: ""
                 val isSuccess = response.isSuccessful
 
                 // Phân tích kết quả
