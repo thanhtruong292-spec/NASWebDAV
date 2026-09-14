@@ -183,6 +183,9 @@ dependencies {
     // Timber for better logging
     implementation(libs.timber)
 
+    // Sentry self-hosted crash reporting (opt-in, xem CrashReporter.kt)
+    implementation(libs.sentry.android)
+
     // Chucker for in-app network inspection
     debugImplementation(libs.chucker)
     releaseImplementation(libs.chucker.no.op)

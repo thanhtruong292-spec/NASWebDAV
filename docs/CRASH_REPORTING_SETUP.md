@@ -1,7 +1,7 @@
 # Crash Reporting Setup
 
-**Status:** local-only export with privacy-safe redaction  
-**Date:** 2026-07-25
+**Status:** Sentry self-hosted (opt-in) + local export fallback
+**Date:** 2026-09-15
 
 ## Current state
 

@@ -27,6 +27,7 @@ mockWebServer = "4.12.0"
 timber = "5.0.1"
 chucker = "4.0.0"
 mockk = "1.13.8"
+sentry = "7.17.0"
 lifecycleRuntime = "2.8.6"
 kotlinTestJunit = "1.9.22"
 coroutinesTest = "1.7.3"
@@ -71,6 +72,7 @@ timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "tim
 chucker = { group = "com.github.chuckerteam.chucker", name = "library", version.ref = "chucker" }
 chucker-no-op = { group = "com.github.chuckerteam.chucker", name = "library-no-op", version.ref = "chucker" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry" }
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlinTestJunit" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }

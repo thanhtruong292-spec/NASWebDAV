@@ -345,6 +345,10 @@ class NasApplication : Application(), ImageLoaderFactory {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
+
+        // Remote crash reporting (Sentry self-hosted, opt-in).
+        // Local Room CrashHandler ở trên luôn chạy — Sentry chỉ gửi khi user bật.
+        com.nas.naswebdav.utils.CrashReporter.initIfOptedIn(this)
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
         // FIX: Thay Thread {} bằng applicationScope.launch(IO) — lifecycle-aware,
         // exception được SupervisorJob xử lý thay vì crash silent.
