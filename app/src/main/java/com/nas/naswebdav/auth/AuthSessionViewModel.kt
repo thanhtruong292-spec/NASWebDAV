@@ -62,7 +62,7 @@ class AuthSessionViewModel(
 
     fun cancelLogin() {
         loginJob?.cancel()
-        WebDavManager.cancelActiveCalls()
+        WebDavManager.cancelActiveCalls(WebDavManager.CALL_GROUP_LOGIN)
         loginJob = null
         isLoading = false
         SharedStateHolder.updateConnectionStatus(ConnectionStatus.Cancelled)

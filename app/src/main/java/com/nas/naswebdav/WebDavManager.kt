@@ -160,6 +160,9 @@ object WebDavManager {
     fun currentAuthState(): AuthState = authState
 
     private const val LOGIN_CALL_GROUP = "login"
+    const val CALL_GROUP_LOGIN = "login"
+    const val CALL_GROUP_BROWSER = "browser"
+    const val CALL_GROUP_TRANSFER = "transfer"
 
     // OOM guard: giới hạn kích thước body đọc vào RAM cho PROPFIND/error/JSON nhỏ.
     // PROPFIND Depth:1 một thư mục thường < 1MB; 8MB đủ cho ~20k entries.
@@ -338,7 +341,14 @@ object WebDavManager {
 
     }
 
-    fun cancelActiveCalls(group: String = LOGIN_CALL_GROUP) {
+    /**
+     * Cancel calls thuộc [group] (CALL_GROUP_*). Không default param —
+     * caller phải chỉ định explicit để tránh cancel nhầm scope.
+     */
+    fun cancelLoginCalls() = cancelActiveCalls(CALL_GROUP_LOGIN)
+    fun cancelBrowserCalls() = cancelActiveCalls(CALL_GROUP_BROWSER)
+    fun cancelTransferCalls() = cancelActiveCalls(CALL_GROUP_TRANSFER)
+    fun cancelActiveCalls(group: String) {
         fun cancelMatching(calls: List<okhttp3.Call>) {
             calls.filter { it.request().tag(String::class.java) == group }
                 .forEach { it.cancel() }
@@ -465,7 +475,7 @@ object WebDavManager {
             .url(safeUrl)
             .method("PROPFIND", propfindBody)
             .header("Depth", "1")
-
+            .withCallGroup(CALL_GROUP_BROWSER)
             .build()
 
             
@@ -658,6 +668,7 @@ object WebDavManager {
 
         val requestBuilder = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
         currentETag?.let { requestBuilder.header("If-Match", it) }
+        requestBuilder.withCallGroup(CALL_GROUP_TRANSFER)
         val request = requestBuilder.build()
 
         // OPTIMIZE: dùng thẳng optimizedClient — không tạo builder mới mỗi lần upload
@@ -853,6 +864,8 @@ object WebDavManager {
 
                 .header("Range", "bytes=0-1048575")
 
+                .withCallGroup(CALL_GROUP_TRANSFER)
+
                 .build()
 
             optimizedClient.newCall(request).execute().use { response ->
@@ -885,6 +898,7 @@ object WebDavManager {
                 val request = Request.Builder().withAuth(authState)
                     .url(url)
                     .header("Range", "bytes=0-1048575")
+                    .withCallGroup(CALL_GROUP_TRANSFER)
                     .build()
                 optimizedClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful && response.code != 206) return@withTimeout null
@@ -1044,7 +1058,8 @@ object WebDavManager {
 
     suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(url).build()
+        val request = Request.Builder().withAuth(authState).url(url)
+            .withCallGroup(CALL_GROUP_TRANSFER).build()
 
         optimizedClient.newCall(request).execute().use { response ->
 
