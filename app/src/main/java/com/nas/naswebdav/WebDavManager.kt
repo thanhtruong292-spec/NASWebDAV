@@ -104,9 +104,46 @@ internal fun toValidUrl(rawUrl: String): String {
     }
 }
 
+/**
+ * FIX-REVIEW-S3: identity chuẩn của file NAS, độc lập endpoint (LAN/Tailscale).
+ * Cùng file vật lý qua hai base URL khác nhau phải cho cùng identity —
+ * nếu không autoclean thấy 2 row, full-hash khớp tất yếu, rồi MOVE alias
+ * xóa bản duy nhất. Chuẩn hóa: bỏ scheme+host, unquote, gộp slash, bỏ
+ * trailing slash (trừ root). Trả "" khi không parse được.
+ */
+internal fun canonicalNasPath(urlOrPath: String): String {
+    if (urlOrPath.isBlank()) return ""
+    return try {
+        var path = urlOrPath.trim()
+        // Bỏ scheme://host nếu có (http://host/webdav/a -> /webdav/a).
+        val schemeIdx = path.indexOf("://")
+        if (schemeIdx >= 0) {
+            val afterHost = path.indexOf('/', schemeIdx + 3)
+            path = if (afterHost >= 0) path.substring(afterHost) else "/"
+        }
+        // Bỏ query/fragment (?download, #section).
+        path = path.substringBefore('?').substringBefore('#')
+        // Unquote %XX để %20 và dấu cách là một; quote hỏng thì giữ nguyên.
+        path = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrDefault(path)
+        // Gộp slash lặp, chuẩn trailing slash.
+        path = path.replace(Regex("/+"), "/")
+        if (path.length > 1 && path.endsWith("/")) path = path.dropLast(1)
+        if (!path.startsWith("/")) "/$path" else path
+    } catch (_: Exception) { "" }
+}
+
 internal fun buildWebDavTrashTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
     val normalizedBase = baseUrl.trimEnd('/')
-    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
+    // FIX-REVIEW-S3: sourcePath có thể là full URL từ endpoint khác baseUrl
+    // (LAN vs Tailscale) → removePrefix fail → driveName thành "http:" → trash
+    // URL rác → MOVE 409 → rơi vào fallback DELETE. Dùng canonical path.
+    val canonical = canonicalNasPath(sourcePath)
+    val basePath = canonicalNasPath(normalizedBase)
+    val relativePath = if (basePath.isNotEmpty() && canonical.startsWith(basePath)) {
+        canonical.removePrefix(basePath).trimStart('/')
+    } else {
+        canonical.trimStart('/')
+    }
     val driveName = relativePath.substringBefore('/')
     val encodedDriveName = encodeWebDavSegment(driveName)
     val encodedName = encodeWebDavSegment(fileName)
@@ -530,7 +567,14 @@ object WebDavManager {
             // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS (Sử dụng luồng trực tiếp để chống OOM)
             // FIX-AUDIT-F5: parse hỏng giữa chừng → throw (giữ cache cũ), không nuốt
             // thành partial list rồi để caller thay cache thiếu.
+            // FIX-REVIEW-S8: KXmlParser EOF không throw — XML cắt sau response mở
+            // vẫn về END_DOCUMENT "sạch". Track root multistatus + response mở:
+            // chỉ chấp nhận khi root đóng đủ và không response dở. HTML 200 đội
+            // lốt XML (không root multistatus) cũng bị từ chối, giữ cache cũ.
             var truncated = false
+            var sawMultistatus = false
+            var multistatusClosed = false
+            var openResponses = 0
             try {
                 val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
                 factory.isNamespaceAware = true
@@ -558,8 +602,10 @@ object WebDavManager {
                     when (eventType) {
                         org.xmlpull.v1.XmlPullParser.START_TAG -> {
                             val name = tagName
+                            if (name == "multistatus") sawMultistatus = true
                             if (name == "response") {
                                 insideResponse = true
+                                openResponses++
                                 currentHref = ""
                                 isDir = false
                                 currentType = ""
@@ -577,6 +623,7 @@ object WebDavManager {
                         }
                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
                             val name = tagName
+                            if (name == "multistatus") multistatusClosed = true
                             if (insideResponse) {
                                 when (name) {
                                     "href" -> currentHref = textBuffer.trim()
@@ -590,6 +637,7 @@ object WebDavManager {
                                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { currentModTime = 0L }
                                     }
                                     "response" -> {
+                                        openResponses = (openResponses - 1).coerceAtLeast(0)
                                         if (currentHref.isNotEmpty()) {
                                             val rawUri = if (currentHref.startsWith("http", ignoreCase = true)) {
                                                 currentHref
@@ -633,6 +681,15 @@ object WebDavManager {
                     }
                 }
                 if (truncated) throw Exception("Danh sách thư mục bị cắt giữa chừng (mạng/NAS lỗi) — giữ cache cũ, thử tải lại")
+                // FIX-REVIEW-S8: root multistatus không đóng đủ hoặc còn response mở
+                // (EOF im lặng, HTML đội lốt) → từ chối, giữ cache cũ. Chỉ thư mục
+                // rỗng HỢP LỆ (multistatus đóng, 0 response) mới trả list rỗng.
+                if (!sawMultistatus || !multistatusClosed) {
+                    throw Exception("Phản hồi thiếu root DAV multistatus hoàn chỉnh — giữ cache cũ, thử tải lại")
+                }
+                if (openResponses > 0 || insideResponse) {
+                    throw Exception("Danh sách thư mục dở dang (response chưa đóng) — giữ cache cũ, thử tải lại")
+                }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
                 throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
@@ -965,15 +1022,31 @@ object WebDavManager {
     /**
      * Full-content SHA-256 on phone. Streams the entire file via WebDAV GET and hashes
      * locally — pushes work OFF the NAS CPU. Use only for files small enough to download.
+     *
+     * FIX-REVIEW-S4: totalSize được SỬ DỤNG — từ chối 206 partial, đối chiếu byte
+     * thực đọc với kỳ vọng. Chunked cụt/chunked thiếu đều trả null (unverified),
+     * caller giữ cả nhóm thay vì xóa theo hash của prefix.
      */
     suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().withAuth(authState).url(url).build()
             optimizedClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext null
+                if (response.code == 206) {
+                    android.util.Log.w("WebDavManager", "Full-hash từ chối 206 partial: $url")
+                    return@withContext null
+                }
                 val stream = response.body?.byteStream() ?: return@withContext null
-                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(it) }
-                    .takeIf { it.isNotEmpty() }
+                val (hash, bytesRead) = stream.use {
+                    com.nas.naswebdav.utils.HashUtils.computeSha256Counted(it)
+                } ?: return@withContext null
+                if (hash.isEmpty()) return@withContext null
+                if (totalSize > 0 && bytesRead != totalSize) {
+                    android.util.Log.w("WebDavManager",
+                        "Full-hash thiếu byte ($bytesRead/$totalSize): $url — unverified")
+                    return@withContext null
+                }
+                hash
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }

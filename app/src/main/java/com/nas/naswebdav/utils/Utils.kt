@@ -143,6 +143,24 @@ object HashUtils {
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { "" }
 
     /**
+     * FIX-REVIEW-S4: SHA-256 kèm đếm byte thực đọc. Full-verify phải đối chiếu
+     * với kích thước kỳ vọng — response chunked cụt hoặc 206 partial vẫn EOF
+     * "hợp lệ" nhưng hash của prefix, không phải toàn file. Trả null khi lỗi.
+     * @return Pair(hash, bytesRead) hoặc null.
+     */
+    fun computeSha256Counted(inputStream: InputStream): Pair<String, Long>? = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(65536)
+        var total = 0L
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            digest.update(buffer, 0, bytesRead)
+            total += bytesRead
+        }
+        Pair(digest.digest().joinToString("") { "%02x".format(it) }, total)
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+
+    /**
      * Compute SHA-256 from a limited number of bytes (for Range-based partial hashing).
      * Used when we download only the first N bytes of a file for speed.
      */

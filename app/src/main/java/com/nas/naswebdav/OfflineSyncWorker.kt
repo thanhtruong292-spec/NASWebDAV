@@ -159,6 +159,11 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     if (isStopped) {
                         return@withContext Result.failure()
                     }
+                    // FIX-REVIEW-S9: mục lỗi đẩy xuống cuối queue để batch sau lấy
+                    // mục khác trước — không kẹt mãi ở batch đầu lỗi khi LIMIT 200.
+                    try { db.syncActionDao().pushBack(action.id, System.currentTimeMillis()) }
+                    catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
+                    catch (_: Exception) {}
                     SystemLogger.log("WARNING", "OfflineSync",
                         "Action ${action.id} (${action.actionType}) failed: ${e.message} — row giữ lại để retry")
                     allSuccess = false
@@ -173,9 +178,14 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             // P2 Continuation: vét hết queue, không chỉ khi > 200.
             // FIX-AUDIT-F4: bản cũ `remaining > 200` bỏ sót đuôi queue
             // (vd 201 mục → xử lý 200 → còn 1 → không enqueue tiếp).
+            // FIX-REVIEW-S9: chỉ enqueue continuation khi batch này SẠCH (allSuccess).
+            // Khi có lỗi, Result.retry() của chính worker quay lại vét tiếp (mục lỗi
+            // đã pushBack xuống cuối nên batch sau lấy mục khác). Enqueue APPEND vào
+            // cùng unique name khi predecessor sắp failure sẽ kế thừa failure và
+            // không chạy — đuôi hợp lệ bị kẹt.
             try {
                 val remaining = db.syncActionDao().countAll()
-                if (remaining > 0) {
+                if (remaining > 0 && allSuccess) {
                     SystemLogger.log("INFO", "OfflineSync",
                         "Queue còn $remaining action — enqueue continuation work")
                     val constraints = Constraints.Builder()

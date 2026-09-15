@@ -222,6 +222,15 @@ class NasDocumentProvider : DocumentsProvider() {
         // Phân loại đúng: chỉ WRITE_ONLY hoặc APPEND mới là ghi.
         val isWrite = (accessMode and ParcelFileDescriptor.MODE_WRITE_ONLY) != 0 ||
                 (accessMode and ParcelFileDescriptor.MODE_APPEND) != 0
+        val isAppend = (accessMode and ParcelFileDescriptor.MODE_APPEND) != 0
+        // FIX-REVIEW-S2: "w" = truncate (temp rỗng đúng); "wa"/"rw" giữ nội dung gốc
+        // nên phải preload từ NAS. Mode write lạ khác → từ chối thay vì đoán.
+        val rawMode = (mode ?: "r").lowercase()
+        val isTruncate = rawMode == "w" || rawMode == "wt"
+        if (isWrite && !isTruncate && !isAppend && rawMode != "rw" && rawMode != "rwt") {
+            throw FileNotFoundException("Chế độ ghi không hỗ trợ: $mode")
+        }
+        val needPreload = isWrite && !isTruncate
 
         val fileExtension = targetId.trimEnd('/').substringAfterLast('.', "")
 
@@ -238,6 +247,32 @@ class NasDocumentProvider : DocumentsProvider() {
             // với tên có timestamp để user/developer recover thủ công.
             val tempFile = File(context?.cacheDir, "nas_write_${System.currentTimeMillis()}.$fileExtension")
             tempFile.createNewFile()
+            // FIX-REVIEW-S2: wa/rw phải bắt đầu từ nội dung gốc trên NAS.
+            // Không preload được (file chưa tồn tại → tạo mới OK; lỗi mạng → từ chối
+            // thay vì trả temp rỗng rồi PUT đè 0 byte khi đóng).
+            if (needPreload) {
+                // Preload inline với header trực tiếp (không qua downloadFile vì
+                // hàm đó dùng singleton authState, còn đây là authState đã chụp).
+                try {
+                    val preloadReq = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("Authorization", authState.authHeader)
+                        .build()
+                    NasApplication.instance.sharedHttpClient.newCall(preloadReq).execute().use { resp ->
+                        if (resp.code == 404) return@use  // file chưa tồn tại → tạo mới
+                        if (!resp.isSuccessful) throw FileNotFoundException("Không tải được nội dung gốc: HTTP ${resp.code}")
+                        val body = resp.body ?: throw FileNotFoundException("Nội dung gốc rỗng")
+                        body.byteStream().use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: FileNotFoundException) {
+                    throw e
+                } catch (e: Exception) {
+                    tempFile.delete()
+                    throw FileNotFoundException("Không tải được nội dung gốc: ${e.message}")
+                }
+            }
 
             val handler = Handler(Looper.getMainLooper())
             return ParcelFileDescriptor.open(tempFile, accessMode, handler) { err ->
@@ -318,9 +353,12 @@ class NasDocumentProvider : DocumentsProvider() {
 
             NasApplication.applicationScope.launch(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(authState)) {
                 try {
+                    // FIX-REVIEW-S1: sharedHttpClient không có interceptor auth
+                    // (tag AuthState bị bỏ qua) → đọc ngoài luôn 401. Chèn header
+                    // trực tiếp từ AuthState đã chụp, không qua tag.
                     val request = okhttp3.Request.Builder()
                         .url(url)
-                        .let(WebDavManager::tagCurrentAuth)
+                        .header("Authorization", authState.authHeader)
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {

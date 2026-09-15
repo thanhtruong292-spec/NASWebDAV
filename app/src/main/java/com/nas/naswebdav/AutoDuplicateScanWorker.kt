@@ -172,13 +172,29 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             for (size in duplicateSizes) {
                 val group = db.fileDao().getFilesBySize(size)
                 if (group.size < 2 || group.first().contentLength < 1024L) continue
+                // FIX-REVIEW-S3: khử alias endpoint — cùng file vật lý qua LAN và
+                // Tailscale là 2 row khác URL nhưng cùng canonical path. Giữ một
+                // đại diện mỗi identity TRƯỚC khi hash, nếu không full-hash khớp
+                // tất yếu rồi MOVE alias xóa bản duy nhất.
+                val deduped = group.groupBy { canonicalNasPath(it.path) }
+                    .mapNotNull { (canonical, rows) ->
+                        if (canonical.isEmpty()) null
+                        else rows.minByOrNull { it.path.length }
+                    }
+                val aliasSkipped = group.size - deduped.size
+                if (aliasSkipped > 0) {
+                    SystemLogger.log("INFO", "AutoClean",
+                        "Bỏ qua $aliasSkipped alias endpoint (cùng file vật lý)")
+                }
+                val uniqueGroup = deduped
+                if (uniqueGroup.size < 2) continue
                 val hashResult = mutableMapOf<String, String>()
                 // FIX-AUDIT-F2: partial hash (1MB đầu) + fallback size+mtime chỉ là
                 // LỌC ỨNG VIÊN, không đủ kết luận trùng để xóa. File hash lỗi
                 // (null) bị bỏ qua thay vì gán pseudo-hash LGH_ rồi xóa nhầm.
                 // Phone CPU computes SHA-256 over first 1MB (WebDAV Range) — NAS chỉ serve bytes
                 try {
-                    for (file in group) {
+                    for (file in uniqueGroup) {
                         if (!isActive) break
                         val phoneHash = webDavManager.getSha256PhoneStream(file.path)
                         if (!phoneHash.isNullOrEmpty()) {
@@ -190,7 +206,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* bỏ qua group, không gán LGH_ */ }
                 val hashGroups = mutableMapOf<String, MutableList<CachedFile>>()
-                for (file in group) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
+                for (file in uniqueGroup) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
                     if (identicalFiles.size > 1) {
                         // Xác minh toàn bộ nội dung trước hành động phá hủy:
@@ -288,13 +304,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             android.util.Log.w("AutoCleanWorker", "MOVE to .trash failed: ${e.message}")
         }
 
-        // Fallback: WebDAV DELETE (xóa thẳng vĩnh viễn theo hardrule GEMINI §10)
-        val delSuccess = executeWebDavRequest(sourceUrl, "DELETE", ctx.authHeader)
-        if (delSuccess) {
-            android.util.Log.i("AutoCleanWorker", "Permanently deleted duplicate file $sourceUrl as fallback")
-        } else {
-            android.util.Log.e("AutoCleanWorker", "Fallback DELETE also failed for $sourceUrl")
-        }
-        return delSuccess
+        // FIX-REVIEW-S3: KHÔNG fallback DELETE vĩnh viễn khi MOVE trash fail.
+        // File trùng đã full-verify vẫn phải giữ để xử lý sau (log + retry vòng
+        // sau) — xóa vĩnh viễn tự động là mất dữ liệu khi trash gặp sự cố.
+        android.util.Log.w("AutoCleanWorker", "MOVE to .trash failed for $sourceUrl — giữ file, thử lại vòng sau")
+        SystemLogger.log("WARNING", "AutoClean",
+            "Không chuyển được vào trash (giữ file): $sourceUrl")
+        return false
     }
 }

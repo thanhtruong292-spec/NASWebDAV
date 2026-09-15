@@ -120,6 +120,23 @@ interface FileDao {
     """)
     fun countDuplicateFiles(): Int
 
+    // FIX-REVIEW-S7: đếm TRÙNG ĐÃ XÁC MINH (cùng định nghĩa với UI group) —
+    // worker báo số này thay vì count theo size (ứng viên). partialHash thật,
+    // loại LGH_ legacy và null. Hết lệch "báo N trùng nhưng danh sách rỗng".
+    @Query("""
+    SELECT COUNT(*) FROM files_cache
+    WHERE isDirectory = 0
+    AND partialHash IS NOT NULL AND partialHash != '' AND partialHash NOT LIKE 'LGH\_%' ESCAPE '\'
+    AND partialHash IN (
+        SELECT partialHash FROM files_cache
+        WHERE isDirectory = 0
+        AND partialHash IS NOT NULL AND partialHash != '' AND partialHash NOT LIKE 'LGH\_%' ESCAPE '\'
+        GROUP BY partialHash
+        HAVING COUNT(*) > 1
+    )
+    """)
+    fun countVerifiedDuplicates(): Int
+
     // LẤY DANH SÁCH CÁC KÍCH THƯỚC FILE BỊ TRÙNG (chỉ trả về Long, không load CachedFile)
     @Query("""
     SELECT contentLength FROM files_cache 
@@ -274,6 +291,11 @@ interface FingerprintDao {
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash LIMIT 1")
     fun findByExactHash(hash: String): FileFingerprint?
 
+    // FIX-REVIEW-S5: tìm theo hash + size (phiên bản nguồn). aHash va chạm
+    // đã chứng minh (2 BMP khác nội dung cùng aHash) — hash một mình không đủ.
+    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size LIMIT 5")
+    fun findByHashAndSize(hash: String, size: Long): List<FileFingerprint>
+
     // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker
     @Query("SELECT * FROM file_fingerprints LIMIT 10000")
     fun getAllFingerprints(): List<FileFingerprint>
@@ -346,6 +368,11 @@ interface SyncActionDao {
 
     @Query("DELETE FROM sync_queue WHERE id = :id")
     fun deleteById(id: Int)
+
+    // FIX-REVIEW-S9: mục lỗi đẩy timestamp xuống cuối queue — batch sau lấy mục
+    // khác trước thay vì kẹt mãi ở batch đầu lỗi (LIMIT 200 lấy lại cùng batch).
+    @Query("UPDATE sync_queue SET timestamp = :ts WHERE id = :id")
+    fun pushBack(id: Int, ts: Long)
 }
 
 // ================= TRASH META — Lưu path gốc để restore đúng vị trí =================

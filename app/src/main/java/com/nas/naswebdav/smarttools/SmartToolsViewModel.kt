@@ -294,8 +294,10 @@ class SmartToolsViewModel(
                             )
                         } catch (_: Exception) {}
                     } catch (moveEx: Exception) {
-                        // Fallback to direct DELETE if MOVE to trash fails
-                        WebDavManager.deleteFile(file.path, file.isDirectory)
+                        // FIX-REVIEW-S6: MOVE trash fail → GIỮ FILE, báo lỗi.
+                        // Không fallback DELETE vĩnh viễn (user bấm xóa 1 file
+                        // trong nhóm "trùng", mất là mất thật).
+                        throw Exception("Không chuyển được vào trash, giữ nguyên file: ${moveEx.message}")
                     }
                     repository.removeDuplicateFromDb(file.path)
                 }

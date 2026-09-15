@@ -257,12 +257,23 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
-                            // FIX-AUDIT-F3: perceptual hash KHÔNG đủ kết luận "đã backup" —
-                            // hai ảnh khác nhau có thể cùng aHash. Chỉ skip khi cùng hash
-                            // VÀ cùng fileSize (phiên bản nguồn), record gắn dest path NAS.
+                            // FIX-REVIEW-S5: skip chỉ khi (1) cùng aHash + cùng size,
+                            // (2) record dest path khớp NAS đích hiện tại, (3) file remote
+                            // CÒN TỒN TẠI (HEAD check). Đổi NAS/thư mục backup hoặc xóa
+                            // remote mà vẫn skip theo fingerprint cũ = mất backup.
                             if (fileHash != null) {
-                                val existingFp = db.fingerprintDao().findByExactHash(fileHash)
-                                if (existingFp != null && existingFp.fileSize == fileSize) isSkipped = true
+                                val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
+                                for (fp in candidates) {
+                                    if (fp.filePath.isEmpty()) continue
+                                    val remoteExists = try {
+                                        webDavManager.headFileHeaders(fp.filePath) != null
+                                    } catch (_: Exception) { false }
+                                    if (remoteExists) { isSkipped = true; break }
+                                }
+                                if (!isSkipped && candidates.isNotEmpty()) {
+                                    SystemLogger.log("INFO", "AutoBackup",
+                                        "Fingerprint cũ nhưng remote không còn ($fileName) — backup lại")
+                                }
                             }
                             
                             if (isSkipped) {

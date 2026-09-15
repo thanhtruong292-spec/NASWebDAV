@@ -579,11 +579,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                         continue
                                     }
                                     if (file.imageFingerprint != null && file.imageFingerprint != "NOT_SUPPORTED") {
-                                        if (ImageFingerprint.isSimilar(anchorFP, file.imageFingerprint)) {
-                                            pendingHashUpdates.add(Pair(file.path, "FINGERPRINT_$anchorFP"))
-                                        } else {
-                                            filesNeedHash.add(file)
-                                        }
+                                        // FIX-REVIEW-S6: ảnh "tương tự" (Hamming gần) KHÔNG phải
+                                        // nội dung giống hệt. Không gán nhãn FINGERPRINT_ vào
+                                        // partialHash — nhãn đó khiến UI group nhầm rồi user
+                                        // xóa nhầm. Đưa vào hàng đợi hash thật.
+                                        filesNeedHash.add(file)
                                     } else {
                                         filesNeedHash.add(file)
                                     }
@@ -709,7 +709,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 delay(100) // Cho UI kịp vẽ ra bước mới
 
                 // Đếm lại duplicate groups chính xác từ DB (CHỈ ĐẾM, không load object)
-                val finalDuplicateCount = db.fileDao().countDuplicateFiles()
+                val finalDuplicateCount = db.fileDao().countVerifiedDuplicates()
+                // FIX-REVIEW-S7: dem TRUNG DA XAC MINH (hash that) — cung dinh nghia voi UI group
                 
                 currentStage.set("Hoàn tất")
                 stageDescription.set("Hoàn tất. Đã quét ${totalFilesIndexed.get()} tệp, tìm thấy $finalDuplicateCount tệp trùng.")

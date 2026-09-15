@@ -2067,7 +2067,8 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                     }
 
                     androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
-                        items(items = filteredGroups, key = { it.first().contentLength }) { group ->
+                        items(items = filteredGroups, key = { it.first().partialHash ?: it.first().contentLength }) // FIX-REVIEW-S10: key = hash nhom (duy nhat)
+                        { group ->
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
