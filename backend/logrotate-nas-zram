@@ -1,0 +1,26 @@
+/var/log/syslog
+/var/log/daemon.log
+{
+	rotate 2
+	daily
+	size 2M
+	missingok
+	notifempty
+	compress
+	delaycompress
+	sharedscripts
+	postrotate
+		invoke-rc.d rsyslog rotate > /dev/null 2>&1 || true
+	endscript
+}
+/var/log/nas_api.log
+{
+	rotate 2
+	daily
+	size 1M
+	missingok
+	notifempty
+	compress
+	delaycompress
+	copytruncate
+}
