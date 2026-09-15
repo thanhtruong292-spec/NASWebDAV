@@ -1991,6 +1991,7 @@ private val mediaThumbClient by lazy {
 }
 
 // LỚP PHỤ TRỢ: Bộ nhớ Lịch sử Tìm Kiếm (TÍNH NĂNG 3.E)
+@androidx.compose.runtime.Immutable
 data class SearchHistory(val query: String, val timestamp: Long)
 
 class SearchHistoryManager(context: android.content.Context) {

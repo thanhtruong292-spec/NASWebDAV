@@ -56,6 +56,18 @@ import androidx.core.content.edit
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+// Palette hằng số cho BigMenuTile — stable reference, tránh tạo List mới mỗi recomposition.
+private val TilePaletteOrange = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange.copy(alpha = 0.8f))
+private val TilePalettePurpleCyan = kotlinx.collections.immutable.persistentListOf(AccentPurple, AccentCyan)
+private val TilePalettePinkOrange = kotlinx.collections.immutable.persistentListOf(AccentPink, AccentOrange)
+private val SmartPaletteOk = kotlinx.collections.immutable.persistentListOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
+private val SmartPaletteEmmc = kotlinx.collections.immutable.persistentListOf(AccentBlue, AccentBlue.copy(alpha = 0.8f))
+private val SmartPaletteFailed = kotlinx.collections.immutable.persistentListOf(AccentRed, AccentRed.copy(alpha = 0.8f))
+private val SmartPaletteUnknown = kotlinx.collections.immutable.persistentListOf(TextTertiary, TextTertiary.copy(alpha = 0.8f))
+private val GaugePaletteCpu = kotlinx.collections.immutable.persistentListOf(AccentPurple, AccentPurple.copy(alpha = 0.8f))
+private val GaugePaletteRam = kotlinx.collections.immutable.persistentListOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
+private val GaugePaletteHdd = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange.copy(alpha = 0.8f))
+
 @Composable
 internal fun MainDashboardHeader(
     realtimeNow: Long,
@@ -234,7 +246,7 @@ internal fun DashboardSystemOverviewCard(
                         title = "CPU", value = systemVM.systemStatus.cpu,
                         subValue = systemVM.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
-                        gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f)),
+                        gradientColors = GaugePaletteCpu,
                         modifier = Modifier.weight(1f),
                         onClick = {
                             onShowProcessList("cpu")
@@ -243,7 +255,7 @@ internal fun DashboardSystemOverviewCard(
                     GaugeCard(
                         title = "RAM", value = systemVM.systemStatus.ram, subValue = "${systemVM.systemStatus.ramPercent}%",
                         icon = Icons.Default.DeveloperBoard,
-                        gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f)),
+                        gradientColors = GaugePaletteRam,
                         modifier = Modifier.weight(1f),
                         overridePercent = systemVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
                         onClick = {
@@ -262,7 +274,7 @@ internal fun DashboardSystemOverviewCard(
                             title = "HDD", value = "${hddDisk.used} / $fmtTotal",
                             subValue = "${hddDisk.percent}%",
                             icon = Icons.Default.Storage,
-                            gradientColors = listOf(AccentOrange, AccentOrange.copy(alpha = 0.8f)),
+                            gradientColors = GaugePaletteHdd,
                             modifier = Modifier.weight(1f),
                             overridePercent = hddDisk.percent,
                             onClick = onOpenNewDiskProfile
@@ -276,10 +288,10 @@ internal fun DashboardSystemOverviewCard(
                     val isSmartEmmc = smartStatusText.contains("EMMC")
 
                     val smartColors = when {
-                        isSmartOk -> listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
-                        isSmartEmmc -> listOf(AccentBlue, AccentBlue.copy(alpha = 0.8f)) // Nhận diện eMMC màu Xanh Dương
-                        isSmartFailed -> listOf(AccentRed, AccentRed.copy(alpha = 0.8f)) // FAILED hiển thị màu Đỏ
-                        else -> listOf(TextTertiary, TextTertiary.copy(alpha = 0.8f)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
+                        isSmartOk -> SmartPaletteOk
+                        isSmartEmmc -> SmartPaletteEmmc // Nhận diện eMMC màu Xanh Dương
+                        isSmartFailed -> SmartPaletteFailed // FAILED hiển thị màu Đỏ
+                        else -> SmartPaletteUnknown // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
                     }
                     val smartPercent = when {
                         isSmartOk -> 100f
@@ -714,9 +726,9 @@ internal fun QuickAccessSection(
         // Đã DANH MỤC TRUY CẬP NHANH Đã 
         Text("TRUY CẬP NHANH", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitlePurple, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = AppSpacing.SM - AppSpacing.XS))
 
-        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
+        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(AccentOrange, AccentOrange.copy(alpha = 0.8f)), Modifier.weight(1f), onClick = onOpenFiles)
+            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, TilePaletteOrange, Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
             BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
         }
@@ -729,8 +741,8 @@ internal fun QuickAccessSection(
         }
         Spacer(Modifier.height(AppSpacing.SM))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(AccentPurple, AccentCyan), Modifier.weight(1f), onClick = onOpenLatestPhotos)
-            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(AccentPink, AccentOrange), Modifier.weight(1f), onClick = onOpenRecentVideos)
+            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, TilePalettePurpleCyan, Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, TilePalettePinkOrange, Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {

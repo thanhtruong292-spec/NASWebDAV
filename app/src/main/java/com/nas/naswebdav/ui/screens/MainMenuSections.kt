@@ -1,6 +1,7 @@
 @file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
+import kotlinx.collections.immutable.persistentListOf
 import com.nas.naswebdav.*
 import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
@@ -61,26 +62,28 @@ import com.nas.naswebdav.NasFile
 // ============ MainMenu sections: status cards, dialogs & bottom sheets
 //              (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+// @Immutable để tile composable skip recomposition (list dùng hằng số brand palette).
+@androidx.compose.runtime.Immutable
 data class QuickActionDef(
     val id: String,
     val title: String,
     val subtitle: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val gradientColors: List<androidx.compose.ui.graphics.Color>
+    val gradientColors: kotlinx.collections.immutable.ImmutableList<androidx.compose.ui.graphics.Color>
 )
 
 // Gradient colors are intentional brand palette constants for quick-action tile icons.
 val AVAILABLE_QUICK_ACTIONS = listOf(
-    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(AccentCyan, AccentCyan)),
-    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, listOf(AccentRed, AccentRed)),
-    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(AccentRed, AccentRed)),
-    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(AccentBlue, AccentBlue)),
-    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(AccentPurple, AccentPurple)),
-    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(AccentCyan, AccentCyan)),
-    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(AccentGreen, AccentGreen)),
-    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(AccentOrange, AccentOrange)),
-    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(AccentBlue, AccentBlue)),
-    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, listOf(AccentGreen, AccentCyan))
+    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, persistentListOf(AccentCyan, AccentCyan)),
+    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, persistentListOf(AccentRed, AccentRed)),
+    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, persistentListOf(AccentRed, AccentRed)),
+    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, persistentListOf(AccentBlue, AccentBlue)),
+    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, persistentListOf(AccentPurple, AccentPurple)),
+    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, persistentListOf(AccentCyan, AccentCyan)),
+    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, persistentListOf(AccentGreen, AccentGreen)),
+    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, persistentListOf(AccentOrange, AccentOrange)),
+    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, persistentListOf(AccentBlue, AccentBlue)),
+    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, persistentListOf(AccentGreen, AccentCyan))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

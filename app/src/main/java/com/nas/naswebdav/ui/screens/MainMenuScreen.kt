@@ -1620,6 +1620,9 @@ private fun MainMenuDashboardTorrentActivityCard(
         }
 }
 
+// Palette hằng số cho menu tile — stable reference, tránh tạo List mỗi recomposition.
+private val MenuTilePaletteOrange = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange)
+
 @Composable
 private fun MainMenuDashboardQuickAccessSection(
     slot2Id: String,
@@ -1640,9 +1643,9 @@ private fun MainMenuDashboardQuickAccessSection(
         // Đã DANH MỤC TRUY CẬP NHANH Đã 
         Text("TRUY CẬP NHANH", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitlePurple, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = 6.dp))
 
-        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
+        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MainMenuDashboardBigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(AccentOrange, AccentOrange), Modifier.weight(1f), onClick = onOpenFiles)
+            MainMenuDashboardBigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, MenuTilePaletteOrange, Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
             MainMenuDashboardBigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
         }
@@ -1655,8 +1658,17 @@ private fun MainMenuDashboardQuickAccessSection(
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MainMenuDashboardBigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(AccentPurple, MaterialTheme.colorScheme.primary), Modifier.weight(1f), onClick = onOpenLatestPhotos)
-            MainMenuDashboardBigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(AccentPink, MaterialTheme.colorScheme.error), Modifier.weight(1f), onClick = onOpenRecentVideos)
+            // remember theo theme colors — tránh tạo List mới mỗi recomposition.
+            val primaryColor = MaterialTheme.colorScheme.primary
+            val errorColor = MaterialTheme.colorScheme.error
+            val photoPalette = remember(primaryColor) {
+                kotlinx.collections.immutable.persistentListOf(AccentPurple, primaryColor)
+            }
+            val videoPalette = remember(errorColor) {
+                kotlinx.collections.immutable.persistentListOf(AccentPink, errorColor)
+            }
+            MainMenuDashboardBigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, photoPalette, Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            MainMenuDashboardBigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, videoPalette, Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {
@@ -1987,7 +1999,7 @@ fun MainMenuDashboardQuickActionChip(label: String, icon: ImageVector, color: Co
 // ============ COMPONENT: Thẻ menu lớn (gradient) ============
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun MainMenuDashboardBigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
+fun MainMenuDashboardBigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: kotlinx.collections.immutable.ImmutableList<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
         modifier = modifier
             .pointerInput(Unit) {

@@ -187,6 +187,9 @@ dependencies {
     // Sentry self-hosted crash reporting (opt-in, xem CrashReporter.kt)
     implementation(libs.sentry.android)
 
+    // Immutable collections — stable List params cho Compose (tránh recomposition)
+    implementation(libs.kotlinx.collections.immutable)
+
     // Chucker for in-app network inspection
     debugImplementation(libs.chucker)
     releaseImplementation(libs.chucker.no.op)

@@ -142,7 +142,7 @@ fun GaugeCard(
     value: String,
     subValue: String? = null,
     icon: ImageVector,
-    gradientColors: List<Color>,
+    gradientColors: kotlinx.collections.immutable.ImmutableList<Color>,
     modifier: Modifier = Modifier,
     overridePercent: Float? = null,
     label: String? = null,
@@ -318,7 +318,7 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
 // ============ COMPONENT: Thẻ menu lớn (gradient) ============
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
+fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: kotlinx.collections.immutable.ImmutableList<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
         modifier = modifier
             .pointerInput(Unit) {

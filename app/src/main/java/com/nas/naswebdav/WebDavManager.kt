@@ -50,6 +50,8 @@ import kotlinx.coroutines.sync.withLock
 
 
 
+// @Immutable: toàn val immutable — Compose skip recomposition khi equals không đổi.
+@androidx.compose.runtime.Immutable
 data class NasFile(
 
     val name: String,
