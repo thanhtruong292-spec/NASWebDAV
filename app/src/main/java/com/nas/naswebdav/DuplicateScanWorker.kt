@@ -603,12 +603,13 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         // 3. HASH TRÊN PHONE: tải file qua WebDAV Range → SHA-256 bằng CPU điện thoại
                         // Trước đây dùng NAS /api/disk/hash_batch → NAS tốn CPU, giờ phone lo
                         if (filesNeedHash.isNotEmpty()) {
+                            // FIX-SYNC-G1: lightning mode KHÔNG ghi pseudo-hash LGH_ vào DB nữa.
+                            // LGH_ (size+mtime) không phải bằng chứng trùng — ghi vào partialHash
+                            // khiến UI group nhầm file khác nội dung thành "trùng". Bỏ qua file
+                            // (giữ partialHash null) thay vì gán nhãn giả.
                             if (isLightningMode) {
-                                for (file in filesNeedHash) {
-                                    if (!isActive) break
-                                    val pseudoHash = "LGH_${file.contentLength}_${file.lastModified}"
-                                    pendingHashUpdates.add(Pair(file.path, pseudoHash))
-                                }
+                                SystemLogger.log("INFO", "HashEngine",
+                                    "Lightning: bỏ qua hash ${filesNeedHash.size} file (chưa xác minh) — không gán LGH_")
                             } else {
                                 // Hash song song 3 coroutine — phone CPU tính SHA-256, NAS chỉ serve bytes
                                 val hashSemaphore = kotlinx.coroutines.sync.Semaphore(3)

@@ -161,10 +161,14 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
             } else {
                 // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                 // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
-                // BỔ SUNG: Nhóm theo Hash/Fingerprint để đảm bảo hiển thị đúng file trùng, 
-                // dùng contentLength làm fallback dự phòng.
+                // FIX-SYNC-G1: chỉ group theo partialHash THẬT. Bỏ fallback contentLength
+                // (gộp nhầm file khác nội dung cùng size) và bỏ qua pseudo-hash LGH_
+                // legacy của lightning mode (size+mtime, không phải bằng chứng trùng).
+                // File chưa hash (null) không hiện nhóm trùng — tránh user xóa nhầm.
                 val groupedDuplicates = remember(viewModel.duplicateFilesList) {
-                    viewModel.duplicateFilesList.groupBy { it.partialHash ?: it.contentLength }.values.filter { it.size >= 2 }.toList()
+                    viewModel.duplicateFilesList
+                        .filter { !it.partialHash.isNullOrEmpty() && !it.partialHash.startsWith("LGH_") }
+                        .groupBy { it.partialHash }.values.filter { it.size >= 2 }.toList()
                 }
 
                 // ═══ BỘ LỌC NHANH ═══
