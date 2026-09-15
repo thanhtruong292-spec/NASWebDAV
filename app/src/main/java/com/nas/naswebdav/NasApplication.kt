@@ -658,7 +658,11 @@ object NetworkMonitor {
             }
 
             override fun onLost(network: android.net.Network) {
-                _isOnline.value = cm.activeNetwork == null
+                // FIX-AUDIT-F6: bản cũ `isOnline = (activeNetwork == null)` đảo cả
+                // hai nhánh (mất hết mạng → true, còn mạng khác → false).
+                // onLost chỉ nghĩa là network này mất — online còn hay không phải
+                // hỏi activeNetwork != null.
+                _isOnline.value = cm.activeNetwork != null
                 SmartNetworkManager.invalidateCache()
             }
         })

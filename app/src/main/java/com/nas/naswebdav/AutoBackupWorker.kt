@@ -257,9 +257,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
-                            if (fileHash != null) { 
-                                val existingFp = db.fingerprintDao().findByExactHash(fileHash); 
-                                if (existingFp != null) isSkipped = true 
+                            // FIX-AUDIT-F3: perceptual hash KHÔNG đủ kết luận "đã backup" —
+                            // hai ảnh khác nhau có thể cùng aHash. Chỉ skip khi cùng hash
+                            // VÀ cùng fileSize (phiên bản nguồn), record gắn dest path NAS.
+                            if (fileHash != null) {
+                                val existingFp = db.fingerprintDao().findByExactHash(fileHash)
+                                if (existingFp != null && existingFp.fileSize == fileSize) isSkipped = true
                             }
                             
                             if (isSkipped) {

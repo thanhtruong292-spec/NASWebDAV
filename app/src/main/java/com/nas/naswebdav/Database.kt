@@ -332,6 +332,10 @@ interface SyncActionDao {
     @Query("SELECT * FROM sync_queue ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
     fun getAllPendingActions(): List<SyncAction>
 
+    // FIX-AUDIT-F4: retry theo ID phải query trực tiếp, không tìm trong top 200.
+    @Query("SELECT * FROM sync_queue WHERE id = :id LIMIT 1")
+    fun getById(id: Int): SyncAction?
+
     // Tổng số action còn lại trong queue (dùng để quyết định continuation work khi > 200)
     @Query("SELECT COUNT(*) FROM sync_queue")
     fun countAll(): Int

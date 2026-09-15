@@ -173,6 +173,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 val group = db.fileDao().getFilesBySize(size)
                 if (group.size < 2 || group.first().contentLength < 1024L) continue
                 val hashResult = mutableMapOf<String, String>()
+                // FIX-AUDIT-F2: partial hash (1MB đầu) + fallback size+mtime chỉ là
+                // LỌC ỨNG VIÊN, không đủ kết luận trùng để xóa. File hash lỗi
+                // (null) bị bỏ qua thay vì gán pseudo-hash LGH_ rồi xóa nhầm.
                 // Phone CPU computes SHA-256 over first 1MB (WebDAV Range) — NAS chỉ serve bytes
                 try {
                     for (file in group) {
@@ -181,19 +184,41 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         if (!phoneHash.isNullOrEmpty()) {
                             hashResult[file.path] = phoneHash
                         } else {
-                            // Fallback khi phone không tải được: dùng size+mtime pseudo-hash
-                            hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}"
+                            SystemLogger.log("WARNING", "AutoClean",
+                                "Bỏ qua ứng viên trùng (không hash được): ${file.path}")
                         }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { for (file in group) hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}" }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* bỏ qua group, không gán LGH_ */ }
                 val hashGroups = mutableMapOf<String, MutableList<CachedFile>>()
                 for (file in group) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
                     if (identicalFiles.size > 1) {
-                        val sorted = identicalFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
-                        val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
-                        val authCtx = WebDavAuthContext(webDavManager, user, pass)
-                        for (trashFile in filesToTrash) { if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength } }
+                        // Xác minh toàn bộ nội dung trước hành động phá hủy:
+                        // full SHA-256 khớp mới xóa, một file fail full-hash thì giữ cả nhóm.
+                        val fullHashes = mutableMapOf<String, String>()
+                        var fullOk = true
+                        for (file in identicalFiles) {
+                            if (!isActive) { fullOk = false; break }
+                            val full = webDavManager.getFullSha256PhoneStream(file.path, file.contentLength)
+                            if (full.isNullOrEmpty()) {
+                                fullOk = false
+                                SystemLogger.log("WARNING", "AutoClean",
+                                    "Bỏ qua nhóm trùng (không verify full được): ${file.path}")
+                                break
+                            }
+                            fullHashes[file.path] = full
+                        }
+                        if (!fullOk) continue
+                        val verified = fullHashes.entries.groupBy({ it.value }, { it.key })
+                            .filter { it.value.size > 1 }
+                        for ((_, paths) in verified) {
+                            val verifiedFiles = identicalFiles.filter { it.path in paths }
+                            if (verifiedFiles.size < 2) continue
+                            val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
+                            val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
+                            val authCtx = WebDavAuthContext(webDavManager, user, pass)
+                            for (trashFile in filesToTrash) { if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength } }
+                        }
                     }
                 }
             }

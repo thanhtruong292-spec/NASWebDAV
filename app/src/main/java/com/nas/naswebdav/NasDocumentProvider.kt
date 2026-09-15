@@ -217,8 +217,11 @@ class NasDocumentProvider : DocumentsProvider() {
         val url = resolveDocumentUrl(targetId, baseUrl)
 
         val accessMode = ParcelFileDescriptor.parseMode(mode ?: "r")
+        // FIX-AUDIT-F1: bitmask cũ `(mode & READ_WRITE) != 0` luôn true với "r"
+        // vì MODE_READ_WRITE (0x30000000) chứa bit MODE_READ_ONLY (0x10000000).
+        // Phân loại đúng: chỉ WRITE_ONLY hoặc APPEND mới là ghi.
         val isWrite = (accessMode and ParcelFileDescriptor.MODE_WRITE_ONLY) != 0 ||
-                (accessMode and ParcelFileDescriptor.MODE_READ_WRITE) != 0
+                (accessMode and ParcelFileDescriptor.MODE_APPEND) != 0
 
         val fileExtension = targetId.trimEnd('/').substringAfterLast('.', "")
 

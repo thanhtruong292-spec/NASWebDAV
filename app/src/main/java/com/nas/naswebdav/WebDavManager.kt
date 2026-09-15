@@ -501,9 +501,36 @@ object WebDavManager {
                 throw Exception("Thư mục quá lớn (${declaredLength / 1024 / 1024}MB), dùng tìm kiếm hoặc chia nhỏ thư mục")
             }
 
-            val byteStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
+            val rawStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
+
+            // FIX-AUDIT-F5: đếm byte thực đọc (chunked không có Content-Length vẫn
+            // bị chặn). Vượt cap → throw, caller giữ cache cũ thay vì partial.
+            var bytesRead = 0L
+            val byteStream = object : java.io.FilterInputStream(rawStream) {
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val n = super.read(b, off, len)
+                    if (n > 0) {
+                        bytesRead += n
+                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception(
+                            "Thư mục quá lớn (vượt ${MAX_PROPFIND_BYTES / 1024 / 1024}MB thực đọc), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    return n
+                }
+                override fun read(): Int {
+                    val v = super.read()
+                    if (v >= 0) {
+                        bytesRead++
+                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception(
+                            "Thư mục quá lớn (vượt ${MAX_PROPFIND_BYTES / 1024 / 1024}MB thực đọc), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    return v
+                }
+            }
 
             // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS (Sử dụng luồng trực tiếp để chống OOM)
+            // FIX-AUDIT-F5: parse hỏng giữa chừng → throw (giữ cache cũ), không nuốt
+            // thành partial list rồi để caller thay cache thiếu.
+            var truncated = false
             try {
                 val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
                 factory.isNamespaceAware = true
@@ -598,11 +625,14 @@ object WebDavManager {
                         }
                     }
                     eventType = runCatching { parser.next() }.getOrElse {
-                        // Tolerant: chunk XML hỏng giữa chừng → giữ entries đã parse.
-                        android.util.Log.w("NAS_XML", "XML PROPFIND hỏng giữa chừng, giữ ${result.size} entries đã parse")
+                        // FIX-AUDIT-F5: chunk hỏng → đánh dấu truncated rồi throw ở
+                        // cuối, caller giữ cache cũ thay vì nhận partial im lặng.
+                        android.util.Log.w("NAS_XML", "XML PROPFIND hỏng giữa chừng sau ${result.size} entries đã parse")
+                        truncated = true
                         org.xmlpull.v1.XmlPullParser.END_DOCUMENT
                     }
                 }
+                if (truncated) throw Exception("Danh sách thư mục bị cắt giữa chừng (mạng/NAS lỗi) — giữ cache cũ, thử tải lại")
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
                 throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
