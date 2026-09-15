@@ -39,7 +39,7 @@ import androidx.core.net.toUri
  * Tránh tạo nhiều Database/OkHttpClient instance trong mỗi Worker/Activity.
  */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
-class NasApplication : Application(), ImageLoaderFactory {
+open class NasApplication : Application(), ImageLoaderFactory {
 
     // ════════════════════════════════════════════════════════════════════════════
     // Timber Tree ghi log vào Room DB — hiển thị trong phần System Log trên app
@@ -283,6 +283,11 @@ class NasApplication : Application(), ImageLoaderFactory {
     companion object {
         lateinit var instance: NasApplication
             private set
+
+        /** Test hook: gán instance nhẹ cho Robolectric test cần lazy clients. */
+        fun setInstanceForTest(app: NasApplication) {
+            instance = app
+        }
 
         /**
          * FIX P12: Application-scoped CoroutineScope thay thế GlobalScope trong SystemLogger.

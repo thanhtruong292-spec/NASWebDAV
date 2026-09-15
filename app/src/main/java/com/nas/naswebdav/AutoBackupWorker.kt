@@ -367,16 +367,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 var lastWebDavException: Exception? = null
                                 for (webDavAttempt in 1..3) {
                                     try {
+                                        // ETag precondition: tránh ghi đè file NAS đã đổi bởi
+                                        // client khác giữa lúc scan và upload (412 → retry).
+                                        val preETag = runCatching { webDavManager.getFileETag(targetFileNasPath) }.getOrNull()
                                         val rawStream = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
                                             ?: error("Không đọc được file $fileName (ContentResolver trả null)")
                                         rawStream.use { input2 ->
                                             val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
-                                            val uploadCall: suspend (
-                                                String, java.io.InputStream, Long, String,
-                                                (Long, Long) -> Unit
-                                            ) -> Unit = if (useCompression)
-                                                webDavManager::uploadCompressedStream else webDavManager::uploadStreamWithProgress
-                                            uploadCall(targetFileNasPath, input2, fileSize, mimeType) { bytesWritten, totalBytes ->
+                                            val onUploadProgress: (Long, Long) -> Unit = { bytesWritten, totalBytes ->
                                                 if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
                                                 val now = System.currentTimeMillis()
                                                 val dt = (now - lastSpeedCalcTime) / 1000.0
@@ -415,6 +413,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                         androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, notificationBuilder.build())
                                                     } catch (_: Exception) {}
                                                 }
+                                            }
+                                            if (useCompression) {
+                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress)
+                                            } else {
+                                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
                                             }
                                         }
                                         break // upload thành công → thoát retry loop

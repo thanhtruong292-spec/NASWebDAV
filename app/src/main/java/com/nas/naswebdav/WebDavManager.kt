@@ -168,6 +168,7 @@ object WebDavManager {
     // PROPFIND Depth:1 một thư mục thường < 1MB; 8MB đủ cho ~20k entries.
     const val MAX_PROPFIND_BYTES = 8L * 1024 * 1024
     const val MAX_PROPFIND_ENTRIES = 20_000
+    const val MAX_PROPFIND_PARSE_STEPS = 500_000
     const val MAX_ERROR_BODY_BYTES = 8 * 1024
     const val MAX_JSON_BODY_BYTES = 256 * 1024
 
@@ -415,6 +416,10 @@ object WebDavManager {
 
     // KIẾN TRÚC DOANH NGHIỆP: Truy vấn thông số tệp (Kích thước, ETag) an toàn, ĐÓNG kết nối ngay để tránh sập Connection Pool của OkHttp
 
+    /** ETag hiện tại của file trên NAS (null nếu chưa tồn tại/lỗi) — dùng cho If-Match khi upload. */
+    suspend fun getFileETag(url: String): String? =
+        headFileHeaders(url)?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+
     suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
 
         try {
@@ -511,11 +516,19 @@ object WebDavManager {
                 var currentModTime = 0L
                 var insideResponse = false
                 var textBuffer = ""
+                // Tolerant: NAS firmware lạ có thể trả XML phình to mà
+                // Content-Length/chunked — giới hạn vòng lặp parse.
+                var parseSteps = 0
 
                 while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (++parseSteps > MAX_PROPFIND_PARSE_STEPS) {
+                        throw Exception("Thư mục quá nhiều file, dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    // Tolerant: tag lạ/namespace prefix bất thường → bỏ qua tag đó.
+                    val tagName = runCatching { parser.name?.lowercase()?.substringAfter(':') ?: "" }.getOrDefault("")
                     when (eventType) {
                         org.xmlpull.v1.XmlPullParser.START_TAG -> {
-                            val name = parser.name.lowercase()
+                            val name = tagName
                             if (name == "response") {
                                 insideResponse = true
                                 currentHref = ""
@@ -534,7 +547,7 @@ object WebDavManager {
                             textBuffer = if (text.length > 8192) text.take(8192) else text
                         }
                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
-                            val name = parser.name.lowercase()
+                            val name = tagName
                             if (insideResponse) {
                                 when (name) {
                                     "href" -> currentHref = textBuffer.trim()
@@ -582,7 +595,11 @@ object WebDavManager {
                             }
                         }
                     }
-                    eventType = parser.next()
+                    eventType = runCatching { parser.next() }.getOrElse {
+                        // Tolerant: chunk XML hỏng giữa chừng → giữ entries đã parse.
+                        android.util.Log.w("NAS_XML", "XML PROPFIND hỏng giữa chừng, giữ ${result.size} entries đã parse")
+                        org.xmlpull.v1.XmlPullParser.END_DOCUMENT
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
