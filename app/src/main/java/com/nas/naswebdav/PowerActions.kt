@@ -36,8 +36,19 @@ private fun extractHost(url: String): String? {
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
 }
 
+/**
+ * FIX-SYNC-S2: một schedule quét trùng duy nhất.
+ * Trước đây periodic DuplicateScanWorker 168h ("Auto_Idle_Duplicate_Scan") chạy
+ * song song AutoDuplicateScanWorker 30 ngày ("AutoCleanDuplicates") — cùng
+ * fast_index + hash phone, double I/O, một bên trash file bên kia đang hash.
+ * Giờ hàm này chỉ đảm bảo AutoDuplicateScanWorker periodic + hủy schedule cũ.
+ * Quét thủ công vẫn qua DuplicateScanWorker OneTime "Unique_Scan_V3" trong
+ * SmartToolsViewModel (user bấm tay, không periodic).
+ */
 fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val workManager = androidx.work.WorkManager.getInstance(context)
+    // Hủy schedule trùng cũ một lần (nếu còn từ bản trước).
+    try { workManager.cancelUniqueWork("Auto_Idle_Duplicate_Scan") } catch (_: Exception) {}
     val constraints = androidx.work.Constraints.Builder()
         .setRequiresDeviceIdle(true)
         .setRequiresCharging(true)
@@ -46,14 +57,17 @@ fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
         .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
         .build()
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
-    val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
-        168, java.util.concurrent.TimeUnit.HOURS
+    val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(
+        30, java.util.concurrent.TimeUnit.DAYS
     ).setConstraints(constraints).setInputData(inputData)
+        .setBackoffCriteria(
+            androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS
+        )
         .build()
     workManager.enqueueUniquePeriodicWork(
-        "Auto_Idle_Duplicate_Scan",
+        "AutoCleanDuplicates",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicScanRequest
+        req
     )
 }
 

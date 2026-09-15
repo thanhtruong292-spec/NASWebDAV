@@ -79,7 +79,7 @@ data class InsightFlowTask(
 
 /**
  * Aggregate of all NAS Insights widgets on the SystemMonitorCard.
- * Backed by GET /api/insights; refreshed on app foreground.
+ * Backed by GET /api/system/insights; refreshed on app foreground.
  */
 data class NasInsights(
     val hddScore: Int = 0,
@@ -159,7 +159,7 @@ data class TikTokLiveWatchUser(
 
 // ─── Pre-existing top-level data classes (Phase 7d.7 extraction from facade file) ───
 
-/** Active torrent the NAS reports via /api/torrent/list. */
+/** Active torrent the NAS reports via /api/status (field "torrents"). */
 data class TorrentInfo(
     val name: String,
     val progress: Float,
@@ -296,7 +296,7 @@ data class NasSystemStatus(
     val topProcesses: List<Pair<String, Float>> = emptyList()
 )
 
-/** Guest pass credential with expiry, returned by /api/guest_pass/create. */
+/** Guest pass credential with expiry, returned by /api/guest/create. */
 data class GuestPassInfo(
     val username: String,
     val password: String,
@@ -335,7 +335,7 @@ data class MetricsSnapshot(
     val netTxKbps: Float = 0f
 )
 
-/** Aggregate stats for one day, returned by /api/daily-report. */
+/** Aggregate stats for one day, returned by /api/report/daily. */
 data class DailyReportData(
     val date: String = "",
     val healthScore: Int = 0,
