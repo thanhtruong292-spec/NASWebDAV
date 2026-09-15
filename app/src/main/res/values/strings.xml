@@ -98,7 +98,7 @@
     <string name="backup_schedule_hour">Giờ chạy</string>
     <string name="backup_schedule_hour_format">Giờ chạy: %1$d</string>
     <string name="recording_overlay_initial">Đang chuẩn bị ghi hình…</string>
-    <string name="recording_overlay_format">Đang ghi: %1$s</string>
+    <string name="recording_overlay_format">Đang ghi: %1$d:%2$02d</string>
     <string name="social_share_invalid">URL chia sẻ không hợp lệ</string>
     <string name="social_share_login_required">Cần đăng nhập NAS trước khi chia sẻ</string>
     <string name="social_share_queued">Đã đưa vào hàng đợi</string>

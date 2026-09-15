@@ -107,7 +107,7 @@ fun NasNavHost(
         NavHost(
             navController = navController,
             startDestination = NasRoutes.LOGIN,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
             enterTransition = {
                 fadeIn(animationSpec = tween(300)) + slideInHorizontally(
                     initialOffsetX = { 60 },

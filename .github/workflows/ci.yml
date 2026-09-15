@@ -44,6 +44,9 @@ jobs:
       - name: Run JVM unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
 
+      - name: Run Android Lint
+        run: ./gradlew :app:lintDebug --stacktrace
+
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
@@ -55,10 +58,13 @@ jobs:
           path: app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
 
-  # NOTE: lintDebug hiện crash với IncompatibleClassChangeError trong
-  # NonNullableMutableLiveDataDetector (AGP 8.7.3 + Kotlin 2.0.21 UAST) —
-  # lỗi toolchain, không phải code. Bật lại lint gate sau khi nâng AGP.
-  # Local: ./gradlew :app:lintDebug (biết trước sẽ fail vì lý do trên).
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
 
   release-build:
     name: Release build (R8 verification)

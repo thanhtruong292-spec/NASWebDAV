@@ -669,6 +669,8 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
 @Composable
 fun CrashReportingSection() {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val dsnNeedMsg = stringResource(R.string.crash_dsn_need)
+    val dsnSavedMsg = stringResource(R.string.crash_dsn_saved)
     var enabled by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf(
             com.nas.naswebdav.utils.CrashReporter.isEnabled(context)
@@ -703,12 +705,12 @@ fun CrashReportingSection() {
                     checked = enabled,
                     onCheckedChange = { want ->
                         if (want && dsn.isBlank()) {
-                            Toast.makeText(context, context.getString(R.string.crash_dsn_need), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, dsnNeedMsg, Toast.LENGTH_SHORT).show()
                             expanded = true
                         } else {
                             com.nas.naswebdav.utils.CrashReporter.setEnabled(context, want, dsn)
                             enabled = want
-                            Toast.makeText(context, context.getString(R.string.crash_dsn_saved), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
@@ -725,7 +727,7 @@ fun CrashReportingSection() {
                     trailingIcon = {
                         TextButton(onClick = {
                             com.nas.naswebdav.utils.CrashReporter.setEnabled(context, enabled, dsn)
-                            Toast.makeText(context, context.getString(R.string.crash_dsn_saved), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
                         }) { Text(stringResource(R.string.action_save), fontSize = 12.sp) }
                     }
                 )
