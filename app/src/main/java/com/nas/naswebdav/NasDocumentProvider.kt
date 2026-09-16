@@ -21,6 +21,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.asContextElement
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.buffer
+import okio.source
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
@@ -289,8 +291,16 @@ class NasDocumentProvider : DocumentsProvider() {
                             // R4-P1: PUT với auth + URL ĐÃ CHỤP lúc mở file.
                             // uploadFile dùng singleton authState — đổi tài khoản giữa
                             // mở và đóng sẽ upload bằng credentials B tới máy A.
-                            val putBody = tempFile.readBytes().toRequestBody(
-                                mime.toMediaTypeOrNull())
+                            // REVIEW-R2: streaming body, không readBytes (OOM file lớn).
+                            val putBody = object : okhttp3.RequestBody() {
+                                override fun contentType() = mime.toMediaTypeOrNull()
+                                override fun contentLength() = tempFile.length()
+                                override fun writeTo(sink: okio.BufferedSink) {
+                                    tempFile.inputStream().use { input ->
+                                        sink.writeAll(input.source().buffer())
+                                    }
+                                }
+                            }
                             val putReq = okhttp3.Request.Builder()
                                 .url(url)
                                 .header("Authorization", authState.authHeader)

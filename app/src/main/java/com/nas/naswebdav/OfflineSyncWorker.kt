@@ -226,9 +226,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             // không chạy — đuôi hợp lệ bị kẹt.
             try {
                 val remaining = db.syncActionDao().countAll()
-                if (remaining > 0 && allSuccess) {
+                // REVIEW-R2: trừ row foreign (giữ lại chờ đúng NAS) khỏi continuation.
+                // Nếu không, queue toàn row foreign → enqueue continuation vô hạn.
+                val localRemaining = remaining - skippedForeign
+                if (localRemaining > 0 && allSuccess) {
                     SystemLogger.log("INFO", "OfflineSync",
-                        "Queue còn $remaining action — enqueue continuation work")
+                        "Queue còn $localRemaining action local ($skippedForeign foreign giữ lại) — enqueue continuation work")
                     val constraints = Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
                         .build()

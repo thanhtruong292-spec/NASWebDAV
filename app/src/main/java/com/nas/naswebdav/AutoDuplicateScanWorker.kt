@@ -250,14 +250,27 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     kotlinx.coroutines.delay(500)
                                 }
                                 if (!isActive) break
-                                // R4-P1 TOCTOU revalidate: HEAD size phải khớp snapshot lúc
-                                // hash. File bị sửa sau hash → bỏ qua, không MOVE.
+                                // R4-P1 TOCTOU revalidate: HEAD size VÀ mtime phải khớp snapshot
+                                // lúc hash. File bị sửa sau hash → bỏ qua, không MOVE.
+                                // Size giữ nguyên nhưng mtime đổi vẫn lọt nếu chỉ check size.
                                 val snap = hashSnapshot[trashFile.path]
-                                val freshLen = try {
-                                    webDavManager.headFileHeaders(trashFile.path)?.get("Content-Length")?.toLongOrNull()
+                                val freshHeaders = try {
+                                    webDavManager.headFileHeaders(trashFile.path)
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                 catch (_: Exception) { null }
-                                if (snap == null || freshLen == null || freshLen != snap.first) {
+                                val freshLen = freshHeaders?.get("Content-Length")?.toLongOrNull()
+                                // So mtime theo epoch (cho lệch 2s do làm tròn HTTP-date).
+                                val freshMod = try {
+                                    freshHeaders?.get("Last-Modified")?.let {
+                                        java.text.SimpleDateFormat(
+                                            "EEE, dd MMM yyyy HH:mm:ss z", java.util.Locale.US).apply {
+                                            timeZone = java.util.TimeZone.getTimeZone("GMT")
+                                        }.parse(it)?.time
+                                    }
+                                } catch (_: Exception) { null }
+                                val modChanged = snap != null && snap.second > 0L && freshMod != null &&
+                                    kotlin.math.abs(freshMod - snap.second) > 2000L
+                                if (snap == null || freshLen == null || freshLen != snap.first || modChanged) {
                                     SystemLogger.log("WARNING", "AutoClean",
                                         "Bỏ qua (đổi sau hash): ${trashFile.path}")
                                     continue
