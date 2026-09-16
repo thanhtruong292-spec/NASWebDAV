@@ -79,6 +79,9 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         // khác khi đổi endpoint. Row cũ (nasHost rỗng, trước v17) vẫn xử lý để
         // tương thích, nhưng KHÔNG rewrite authority sang host hiện tại.
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
+        // REVIEW-R5: chụp auth lúc start — mọi op destructive dùng auth này,
+        // đổi user giữa chừng không lẫn credentials.
+        val runAuth = WebDavManager.AuthState(url, user, pass)
         setThumbnailActivity("sync", true)
         try {
             var allSuccess = true
@@ -94,12 +97,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     when (action.actionType) {
                         "DELETE" -> {
                             val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
-                            webDavManager.deleteFile(sourceUrl, sourceUrl.endsWith("/"))
+                            webDavManager.deleteFile(sourceUrl, sourceUrl.endsWith("/"), runAuth)
                             trashMetaDao.deleteByTrashPath(sourceUrl)
                             handled = true
                         }
                         "CREATE_FOLDER" -> {
-                            webDavManager.createFolder(resolveQueuedWebDavPath(action.sourcePath, url))
+                            webDavManager.createFolder(resolveQueuedWebDavPath(action.sourcePath, url), runAuth)
                             handled = true
                         }
                         "RENAME", "MOVE" -> {
@@ -110,7 +113,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     if (segment.isEmpty() || segment.contains(":")) segment
                                     else encodeWebDavSegment(segment)
                                 }
-                                webDavManager.renameFile(sourceUrl, encodedDest)
+                                webDavManager.renameFile(sourceUrl, encodedDest, runAuth)
                                 if (sourceUrl.contains(".trash/") && !encodedDest.contains(".trash/")) {
                                     trashMetaDao.deleteByTrashPath(sourceUrl)
                                 } else if (!sourceUrl.contains(".trash/") && encodedDest.contains(".trash/")) {
@@ -130,7 +133,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         if (segment.isEmpty() || segment.contains(":")) segment
                                         else encodeWebDavSegment(segment)
                                     }
-                                    webDavManager.uploadFile(encodedDest, file, mime)
+                                    webDavManager.uploadFile(encodedDest, file, mime, runAuth)
                                     // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images.
                                     // NAS daemon handles thumbnail generation (idle 24/7 + on-demand /api/thumb).
                                 }
@@ -155,7 +158,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         if (segment.isEmpty() || segment.contains(":")) segment
                                         else encodeWebDavSegment(segment)
                                     }
-                                    webDavManager.uploadFile(encodedDest, file, mime)
+                                    webDavManager.uploadFile(encodedDest, file, mime, runAuth)
                                     file.delete() // dọn temp sau khi upload thành công
                                 } else {
                                     // Temp bị OS dọn — park + log trạng thái cuối.

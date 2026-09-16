@@ -472,11 +472,12 @@ object WebDavManager {
     suspend fun getFileETag(url: String): String? =
         headFileHeaders(url)?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
 
-    suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
+    // REVIEW-R5: nhan auth rieng (provider truyen authState da chup) — mac dinh singleton.
+    suspend fun headFileHeaders(url: String, auth: AuthState? = null): okhttp3.Headers? = withContext(Dispatchers.IO) {
 
         try {
 
-            val request = Request.Builder().withAuth(authState)
+            val request = Request.Builder().withAuth(auth ?: authState)
 
                 .url(url)
 
@@ -512,7 +513,7 @@ object WebDavManager {
 
     // Trở lại Trình phân tích XML tuỳ chỉnh siêu cấp (Custom PullParser) gắn vào sardineClient.
 
-    suspend fun listFiles(url: String): List<NasFile> = withContext(Dispatchers.IO) {
+    suspend fun listFiles(url: String, auth: AuthState? = null): List<NasFile> = withContext(Dispatchers.IO) {
 
         val safeUrl = toValidUrl(if (url.endsWith("/")) url else "$url/")
 
@@ -528,7 +529,7 @@ object WebDavManager {
   <D:getcontentlength/><D:getlastmodified/><D:getcontenttype/>
   <D:resourcetype/><D:getetag/>
 </D:prop></D:propfind>""".toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull())
-        val request = okhttp3.Request.Builder().withAuth(authState)
+        val request = okhttp3.Request.Builder().withAuth(auth ?: authState)
             .url(safeUrl)
             .method("PROPFIND", propfindBody)
             .header("Depth", "1")
@@ -719,13 +720,16 @@ object WebDavManager {
 
     // Tải lên trực tiếp luồng (Streaming Upload), không nạp file vào RAM
 
+    // REVIEW-R5: nhan auth rieng (worker chup luc start).
     suspend fun uploadStreamWithProgress(
 
         fileUrl: String, inputStream: InputStream, totalContentLength: Long,
 
         contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
 
-        currentETag: String? = null
+        currentETag: String? = null,
+
+        auth: AuthState? = null
 
     ) = withContext(Dispatchers.IO) {
 
@@ -785,7 +789,7 @@ object WebDavManager {
 
 
 
-        val requestBuilder = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
+        val requestBuilder = Request.Builder().withAuth(auth ?: authState).url(fileUrl).put(requestBody)
         currentETag?.let { requestBuilder.header("If-Match", it) }
         requestBuilder.withCallGroup(CALL_GROUP_TRANSFER)
         val request = requestBuilder.build()
@@ -815,7 +819,9 @@ object WebDavManager {
 
         contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
 
-        currentETag: String? = null
+        currentETag: String? = null,
+
+        auth: AuthState? = null
 
     ) = withContext(Dispatchers.IO) {
 
@@ -857,7 +863,7 @@ object WebDavManager {
 
 
 
-        val compBuilder = Request.Builder().withAuth(authState)
+        val compBuilder = Request.Builder().withAuth(auth ?: authState)
 
             .url(fileUrl)
 
@@ -1118,11 +1124,11 @@ object WebDavManager {
 
 
 
-    suspend fun createFolder(url: String) = withContext(Dispatchers.IO) {
+    suspend fun createFolder(url: String, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
         val safeUrl = if (url.endsWith("/")) url else "$url/"
 
-        val request = Request.Builder().withAuth(authState).url(safeUrl).method("MKCOL", null).build()
+        val request = Request.Builder().withAuth(auth ?: authState).url(safeUrl).method("MKCOL", null).build()
 
         // Fail fast so callers can detect folder-create errors.
         optimizedClient.newCall(request).execute().use { response ->
@@ -1135,10 +1141,10 @@ object WebDavManager {
 
     }
 
-    suspend fun deleteFile(url: String, isDirectory: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun deleteFile(url: String, isDirectory: Boolean = false, auth: AuthState? = null) = withContext(Dispatchers.IO) {
         val actualIsDir = isDirectory || url.endsWith("/")
         val normUrl = if (actualIsDir && !url.endsWith("/")) "$url/" else url
-        val builder = Request.Builder().withAuth(authState).url(normUrl).method("DELETE", null)
+        val builder = Request.Builder().withAuth(auth ?: authState).url(normUrl).method("DELETE", null)
         if (actualIsDir) {
             builder.header("Depth", "Infinity")
         }
@@ -1160,9 +1166,10 @@ object WebDavManager {
      * va nhau; không header này thì bản trash cũ bị ghi đè im lặng = mất dữ liệu.
      * Trùng đích → throw 412 để caller đổi tên duy nhất rồi thử lại.
      */
-    suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
+    // REVIEW-R5: nhan auth rieng — worker chup auth luc start, doi user giua chung khong lan.
+    suspend fun renameFile(oldUrl: String, newUrl: String, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+        val request = Request.Builder().withAuth(auth ?: authState).url(oldUrl).method("MOVE", null)
             .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
@@ -1175,9 +1182,9 @@ object WebDavManager {
         }
     }
 
-    suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
+    suspend fun copyFile(oldUrl: String, newUrl: String, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(auth ?: authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -1189,12 +1196,12 @@ object WebDavManager {
         }
     }
 
-    suspend fun uploadFile(fileUrl: String, file: java.io.File, contentType: String) = withContext(Dispatchers.IO) {
+    suspend fun uploadFile(fileUrl: String, file: java.io.File, contentType: String, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
 
         java.io.FileInputStream(file).use { inputStream ->
 
-            uploadStreamWithProgress(fileUrl, inputStream, file.length(), contentType, { _, _ -> })
+            uploadStreamWithProgress(fileUrl, inputStream, file.length(), contentType, { _, _ -> }, null, auth)
 
         }
 
@@ -1223,11 +1230,11 @@ object WebDavManager {
 
     }
 
-    suspend fun createEmptyFile(url: String) = withContext(Dispatchers.IO) {
+    suspend fun createEmptyFile(url: String, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
         val requestBody = ByteArray(0).toRequestBody(null, 0, 0)
 
-        val request = Request.Builder().withAuth(authState).url(url).put(requestBody).build()
+        val request = Request.Builder().withAuth(auth ?: authState).url(url).put(requestBody).build()
 
         optimizedClient.newCall(request).execute().use { response ->
 

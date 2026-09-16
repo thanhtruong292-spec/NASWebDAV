@@ -631,7 +631,7 @@ class FileBrowserViewModel(
             val trashUrl = file.path.toTrashUrl()
             if (trashUrl != null) {
                 try {
-                    WebDavManager.renameFile(file.path, trashUrl)
+                    WebDavManager.renameFile(file.path, trashUrl, WebDavManager.currentAuthState())
                     deletedSuccessfully = true
                     try {
                         NasApplication.instance.database.trashMetaDao().insert(
@@ -649,7 +649,7 @@ class FileBrowserViewModel(
             // 2. Nếu MOVE thất bại hoặc không có trashUrl, thực hiện WebDAV DELETE trực tiếp
             if (!deletedSuccessfully) {
                 try {
-                    WebDavManager.deleteFile(file.path, file.isDirectory)
+                    WebDavManager.deleteFile(file.path, file.isDirectory, WebDavManager.currentAuthState())
                     deletedSuccessfully = true
                 } catch (e: Exception) {
                     android.util.Log.e("FileBrowser", "WebDAV DELETE failed: ${e.message}", e)
@@ -785,7 +785,7 @@ class FileBrowserViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newUrl = file.path.substringBeforeLast('/') + "/" + encodeWebDavSegment(newName)
-                WebDavManager.renameFile(file.path, newUrl)
+                WebDavManager.renameFile(file.path, newUrl, WebDavManager.currentAuthState())
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -824,7 +824,7 @@ class FileBrowserViewModel(
             val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
             val targetUrl = meta?.originalPath ?: file.path.replace(".trash/", "")
             try {
-                WebDavManager.renameFile(file.path, targetUrl)
+                WebDavManager.renameFile(file.path, targetUrl, WebDavManager.currentAuthState())
                 trashMetaDao.deleteByTrashPath(file.path)
                 refresh()
             } catch (e: Exception) {

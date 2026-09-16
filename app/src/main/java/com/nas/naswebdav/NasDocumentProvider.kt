@@ -168,7 +168,7 @@ class NasDocumentProvider : DocumentsProvider() {
                 kotlinx.coroutines.withTimeout(10_000L) {
                     val isDir = (documentId ?: ROOT_DOC_ID).endsWith("/")
                     val name = (documentId ?: ROOT_DOC_ID).trimEnd('/').substringAfterLast('/')
-                    val headers = webDavManager.headFileHeaders(url)
+                    val headers = webDavManager.headFileHeaders(url, authState)
                     val len = headers?.get("Content-Length")?.toLongOrNull() ?: 0L
                     includeFile(result, NasFile(name, url, isDir, headers?.get("Content-Type"), len), baseUrl)
                 }
@@ -195,7 +195,7 @@ class NasDocumentProvider : DocumentsProvider() {
             try {
                 kotlinx.coroutines.withTimeout(10_000L) {
                     val url = resolveDocumentUrl(parentDocumentId ?: ROOT_DOC_ID, baseUrl)
-                    val files = webDavManager.listFiles(url)
+                    val files = webDavManager.listFiles(url, authState)
                     for (file in files) {
                         includeFile(result, file, baseUrl)
                     }
@@ -464,9 +464,9 @@ class NasDocumentProvider : DocumentsProvider() {
             runBlocking(WebDavManager.threadLocalAuth.asContextElement(authState)) {
                 kotlinx.coroutines.withTimeout(10_000L) {
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        webDavManager.createFolder(url)
+                        webDavManager.createFolder(url, authState)
                     } else {
-                        webDavManager.createEmptyFile(url)
+                        webDavManager.createEmptyFile(url, authState)
                     }
                 }
             }
@@ -484,9 +484,23 @@ class NasDocumentProvider : DocumentsProvider() {
         val url = resolveDocumentUrl(targetId, baseUrl)
 
         try {
-            runBlocking(WebDavManager.threadLocalAuth.asContextElement(authState)) {
+            runBlocking {
                 kotlinx.coroutines.withTimeout(10_000L) {
-                    webDavManager.deleteFile(url, url.endsWith("/"))
+                    // REVIEW-R5: DELETE với auth đã chụp, không qua deleteFile
+                    // (hàm đó dùng singleton authState — đổi user giữa chừng sẽ
+                    // xóa bằng credentials sai, giống bug S1 ở GET/PUT).
+                    val normUrl = if (url.endsWith("/")) url else {
+                        // Giữ nguyên URL file; thư mục cần trailing slash + Depth.
+                        url
+                    }
+                    val builder = okhttp3.Request.Builder()
+                        .url(normUrl)
+                        .header("Authorization", authState.authHeader)
+                        .method("DELETE", null)
+                    if (url.endsWith("/")) builder.header("Depth", "Infinity")
+                    NasApplication.instance.sharedHttpClient.newCall(builder.build()).execute().use { resp ->
+                        if (!resp.isSuccessful) throw java.io.IOException("DELETE: HTTP ${resp.code}")
+                    }
                 }
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {

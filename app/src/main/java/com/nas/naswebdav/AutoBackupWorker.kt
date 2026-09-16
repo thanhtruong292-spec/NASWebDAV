@@ -124,6 +124,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             return@withContext Result.failure()
         }
 
+        // REVIEW-R5: chup auth luc start cho moi upload — doi user giua chung khong lan.
+        val runAuth = WebDavManager.AuthState(baseUrl, SecurePrefsHelper.getUser(applicationContext), SecurePrefsHelper.getPass(applicationContext))
         // ── SMB probe: check if SMB is enabled on NAS (one-time) ──
         val smbUser = SecurePrefsHelper.getUser(applicationContext)
         val smbPass = SecurePrefsHelper.getPass(applicationContext)
@@ -460,9 +462,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 }
                                             }
                                             if (useCompression) {
-                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
+                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag, runAuth)
                                             } else {
-                                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
+                                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag, runAuth)
                                             }
                                         }
                                         break // upload thành công → thoát retry loop

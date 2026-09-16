@@ -281,7 +281,7 @@ class SmartToolsViewModel(
             try {
                 val isInTrash = file.path.contains(".trash")
                 if (isInTrash) {
-                    WebDavManager.deleteFile(file.path, file.isDirectory)
+                    WebDavManager.deleteFile(file.path, file.isDirectory, WebDavManager.currentAuthState())
                     repository.removeDuplicateFromDb(file.path)
                 } else {
                     val rootUrl = WebDavManager.currentBaseUrl.trimEnd('/')
@@ -290,7 +290,7 @@ class SmartToolsViewModel(
                     try { WebDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     try {
                         try {
-                            WebDavManager.renameFile(file.path, trashTargetUrl)
+                            WebDavManager.renameFile(file.path, trashTargetUrl, WebDavManager.currentAuthState())
                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                             // R2-P1: đích trash trùng tên (412 Overwrite F) → đổi tên
                             // duy nhất rồi thử lại, không ghi đè bản trash cũ.
@@ -302,7 +302,7 @@ class SmartToolsViewModel(
                                 nm + "_" + System.currentTimeMillis()
                             }
                             trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, unique, file.isDirectory)
-                            WebDavManager.renameFile(file.path, trashTargetUrl)
+                            WebDavManager.renameFile(file.path, trashTargetUrl, WebDavManager.currentAuthState())
                         }
                         try {
                             NasApplication.instance.database.trashMetaDao().insert(
