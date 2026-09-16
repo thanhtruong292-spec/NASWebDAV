@@ -135,8 +135,10 @@ class SmartToolsViewModel(
 
     fun toggleAutoClean(context: Context, enabled: Boolean) {
         autoCleanEnabled = enabled
-        context.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-            .edit { putBoolean("auto_clean_enabled", enabled) }
+        // R3-P2: ghi qua PreferencesRepository để snapshot StateFlow cập nhật —
+        // bản cũ ghi SharedPreferences trực tiếp, BrowserScreen đọc snapshot cũ
+        // nên công tắc hiện tắt dù WorkManager vẫn chạy.
+        com.nas.naswebdav.utils.PreferencesRepository.get(context).setAutoCleanEnabled(enabled)
         val workManager = androidx.work.WorkManager.getInstance(context)
         if (enabled) {
             val constraints = androidx.work.Constraints.Builder()

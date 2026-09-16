@@ -196,6 +196,12 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 try {
                     for (file in uniqueGroup) {
                         if (!isActive) break
+                        // R3-P2: tôn trọng pause của user (togglePauseDuplicateScan)
+                        // trong vòng hash/MOVE — trước đây báo tạm dừng nhưng vẫn làm.
+                        while (DuplicateProgressState.isPaused.value && isActive) {
+                            kotlinx.coroutines.delay(500)
+                        }
+                        if (!isActive) break
                         val phoneHash = webDavManager.getSha256PhoneStream(file.path)
                         if (!phoneHash.isNullOrEmpty()) {
                             hashResult[file.path] = phoneHash
@@ -233,7 +239,14 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
                             val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
                             val authCtx = WebDavAuthContext(webDavManager, user, pass)
-                            for (trashFile in filesToTrash) { if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength } }
+                            for (trashFile in filesToTrash) {
+                                if (!isActive) break
+                                while (DuplicateProgressState.isPaused.value && isActive) {
+                                    kotlinx.coroutines.delay(500)
+                                }
+                                if (!isActive) break
+                                if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength }
+                            }
                         }
                     }
                 }
