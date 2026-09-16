@@ -12,6 +12,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+@org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
+@org.robolectric.annotation.Config(application = TestNasApplication::class, sdk = [34])
 class CancelScopeTest {
 
     @Test
@@ -57,6 +59,41 @@ class CancelScopeTest {
 
             // Browser call sau đó vẫn chạy bình thường — không bị cancel lan.
             client.newCall(req(WebDavManager.CALL_GROUP_BROWSER, "/dav/"))
+                .execute().use { assertEquals(200, it.code) }
+        }
+    }
+
+    @Test
+    fun `production cancelActiveCalls cancels only matching group`() {
+        // R4-P3: gọi WebDavManager.cancelActiveCalls THẬT (không sao chép logic).
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+            server.start()
+            val mgr = WebDavManager
+            fun req(group: String, path: String): okhttp3.Request {
+                val b = okhttp3.Request.Builder().url(server.url(path))
+                return WebDavManager.tagCurrentAuth(b).tag(String::class.java, group).build()
+            }
+            val loginResult = AtomicInteger(-9)
+            val loginDone = CountDownLatch(1)
+            Thread {
+                try {
+                    mgr.optimizedClient.newCall(req(WebDavManager.CALL_GROUP_LOGIN, "/login"))
+                        .execute().use { loginResult.set(it.code) }
+                } catch (_: Exception) {
+                    loginResult.set(-1)
+                } finally {
+                    loginDone.countDown()
+                }
+            }.start()
+            Thread.sleep(800)
+            // Hàm production hủy nhóm login.
+            mgr.cancelActiveCalls(WebDavManager.CALL_GROUP_LOGIN)
+            assertTrue(loginDone.await(10, TimeUnit.SECONDS))
+            assertEquals(-1, loginResult.get())
+            // Browser sau đó vẫn chạy — không cancel lan.
+            mgr.optimizedClient.newCall(req(WebDavManager.CALL_GROUP_BROWSER, "/dav/"))
                 .execute().use { assertEquals(200, it.code) }
         }
     }

@@ -111,6 +111,42 @@ object FormatUtils {
         }
         return clean
     }
+
+    /**
+     * R4-P2: escape wildcard LIKE (%, _, \) cho searchFilesUnder. Không escape thì
+     * /foo_bar/ khớp /fooXbar/, % trong URL thành wildcard = sai phạm vi.
+     */
+    fun escapeLike(raw: String): String =
+        raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    fun removeDiacritics(str: String): String {
+        val nfd = java.text.Normalizer.normalize(str, java.text.Normalizer.Form.NFD)
+        return Regex("\\p{InCombiningDiacriticalMarks}+").replace(nfd, "")
+            .replace('đ', 'd').replace('Đ', 'D')
+    }
+
+    /**
+     * R4-P2: khớp tên file offline — substring + không dấu + đa từ + acronym.
+     * SQL LIKE chỉ lọc thô (200 rows); hàm này lọc lại để giữ khả năng tìm
+     * tiếng Việt không dấu khi offline (pass mạng không bù được).
+     */
+    fun matchesFileQuery(name: String, query: String): Boolean {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return true
+        val n = name.lowercase()
+        if (n.contains(q)) return true
+        val normName = removeDiacritics(n)
+        val normQuery = removeDiacritics(q)
+        if (normName.contains(normQuery)) return true
+        val tokens = normQuery.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size > 1 && tokens.all { normName.contains(it) }) return true
+        val words = normName.split(Regex("[\\s._\\-]+")).filter { it.isNotBlank() }
+        if (words.size >= q.length) {
+            val acronym = words.mapNotNull { it.firstOrNull() }.joinToString("")
+            if (acronym.contains(q)) return true
+        }
+        return false
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

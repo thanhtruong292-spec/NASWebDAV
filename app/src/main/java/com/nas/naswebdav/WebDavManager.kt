@@ -807,11 +807,15 @@ object WebDavManager {
 
     // Tự động bóp méo luồng dữ liệu thành định dạng GZIP thu nhỏ đến 80% dung lượng mạng trước khi lên sóng.
 
+    // R4-P3: nhan currentETag (If-Match) nhu upload thuong — bao ve file NAS
+    // doi boi client khac giua scan va upload.
     suspend fun uploadCompressedStream(
 
         fileUrl: String, inputStream: InputStream, totalUncompressedLength: Long,
 
-        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
+        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
+
+        currentETag: String? = null
 
     ) = withContext(Dispatchers.IO) {
 
@@ -853,15 +857,15 @@ object WebDavManager {
 
 
 
-        val request = Request.Builder().withAuth(authState)
+        val compBuilder = Request.Builder().withAuth(authState)
 
             .url(fileUrl)
 
             .put(requestBody)
 
             .header("Content-Encoding", "gzip") // Kích hoạt vòi xả GZIP phía Server NGINX / NAS
-
-            .build()
+        currentETag?.let { compBuilder.header("If-Match", it) }
+        val request = compBuilder.build()
 
 
 
@@ -1355,8 +1359,15 @@ class WebDavRepository(
     }
 
     // Tìm kiếm cache giới hạn trong root — thay full-table scan 25k rows.
+    // R4-P2: (1) escape LIKE trước khi query (scope đúng thư mục);
+    // (2) lọc lại bằng matchesFileQuery trên ≤200 rows để giữ tìm không dấu /
+    // đa từ / acronym khi offline (SQL LIKE thô mất khả năng này).
     suspend fun searchCacheUnder(rootPrefix: String, keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().searchFilesUnder(rootPrefix, keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        val escRoot = com.nas.naswebdav.utils.FormatUtils.escapeLike(rootPrefix)
+        val escKey = com.nas.naswebdav.utils.FormatUtils.escapeLike(keyword.trim())
+        database.fileDao().searchFilesUnder(escRoot, escKey)
+            .filter { com.nas.naswebdav.utils.FormatUtils.matchesFileQuery(it.name, keyword) }
+            .map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
     @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")

@@ -112,10 +112,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
         val webDavManager = loadWebDavManager() ?: run {
             SystemLogger.log("WARNING", "AutoBackup", "Lỗi cấu hình NAS: URL hoặc tài khoản trống.")
+            // R4-P2: return sớm PHẢI release wakelock + gate (finally ở cuối chưa tới).
+            setThumbnailActivity("autobackup", false)
+            if (wakeLock.isHeld) wakeLock.release()
             return@withContext Result.failure()
         }
         if (runAttemptCount >= 3) {
             SystemLogger.log("WARNING", "AutoBackup", "Đã ghi nhận $runAttemptCount lần thực thi thất bại.")
+            setThumbnailActivity("autobackup", false)
+            if (wakeLock.isHeld) wakeLock.release()
             return@withContext Result.failure()
         }
 
@@ -239,8 +244,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             backupFolderBase
                         }
                         
-                        val encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        val targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + encodedFileName else "$targetFolder/$encodedFileName"
+                        var encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
+                        var targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + encodedFileName else "$targetFolder/$encodedFileName"
+
+
                         
                         // Bỏ qua kiểm tra existingRemoteFiles dạng list toàn bộ vì giờ cấu trúc thành dạng Tree,
                         // thay vào đó chúng ta sẽ rely vào Database / Hash hoặc Head Request để tránh trùng
@@ -253,6 +260,26 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             skippedCount++
                             continue
                         }
+                        // R4-P1: sanitize gây va chạm (anh.jpg/ảnh.jpg → cùng tên).
+                        // HEAD dest trước upload — tồn tại mà KHÁC nội dung/size thì
+                        // thêm hậu tố mediaId, không ghi đè. Trùng đúng file thì
+                        // vòng skip hash+size phía dưới xử lý.
+                        try {
+                            val destHeaders = webDavManager.headFileHeaders(targetFileNasPath)
+                            val destLen = destHeaders?.get("Content-Length")?.toLongOrNull()
+                            if (destHeaders != null && destLen != fileSize) {
+                                val dot = encodedFileName.lastIndexOf('.')
+                                val unique = if (dot > 0) {
+                                    encodedFileName.substring(0, dot) + "_$id" + encodedFileName.substring(dot)
+                                } else {
+                                    encodedFileName + "_$id"
+                                }
+                                targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + unique else "$targetFolder/$unique"
+                                SystemLogger.log("INFO", "AutoBackup",
+                                    "Đích tồn tại khác nội dung ($fileName) — đổi tên tránh ghi đè")
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) { /* HEAD lỗi → giữ dest gốc, upload quyết định */ }
                         val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
@@ -433,7 +460,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 }
                                             }
                                             if (useCompression) {
-                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress)
+                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
                                             } else {
                                                 webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
                                             }
@@ -443,7 +470,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         lastWebDavException = e
                                         val msg = e.message ?: ""
                                         val isServerError = msg.contains("500") || msg.contains("502") || msg.contains("503")
-                                        if (isServerError && webDavAttempt < 3) {
+                                        // R4-P3: 412 = ETag cu (file doi giua scan va upload) — lay ETag moi roi retry.
+                                        val isPrecondition = msg.contains("412")
+                                        if ((isServerError || isPrecondition) && webDavAttempt < 3) {
                                             android.util.Log.w("AutoBackup", "WebDAV attempt $webDavAttempt failed ($msg), retrying in ${webDavAttempt * 2}s...")
                                             kotlinx.coroutines.delay(webDavAttempt * 2000L)
                                         } else {
@@ -454,9 +483,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             }
 
                             // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images for thumbnails.
-                            // NAS daemon handles ALL thumbnail generation (idle 24/7 + 5-min rescan +
-                            // on-demand /api/thumb). Phone only uploads the file and lets NAS pick it up.
-                            val uploadVerified = if (smbUploadOk) true else try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
+                            // NAS daemon handles ALL thumbnail generation (idle 24/7 + on-demand /api/thumb).
+                            // Phone only uploads the file and lets NAS pick it up.
+                            // R4-P1: verify ĐÚNG BẢN — HEAD tồn tại VÀ size khớp mới xóa nguồn.
+                            // Tồn tại mà size lệch (va chạm tên, upload dở) → giữ nguồn.
+                            val remoteLen = if (smbUploadOk) fileSize else try {
+                                webDavManager.headFileHeaders(targetFileNasPath)?.get("Content-Length")?.toLongOrNull()
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                            val uploadVerified = remoteLen != null && remoteLen == fileSize
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++
@@ -501,7 +536,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 AutoBackupState.resultSkipped.value = 0
                 AutoBackupState.resultFailed.value = 0
                 AutoBackupState.showResultDialog.value = true
-                return@withContext Result.success()
+            // R4-P2: fail TOAN BO ma co file -> retry thay vi success gia.
+            if (backupCount == 0 && failedCount > 0 && totalFilesToProcess > 0) {
+                return@withContext if (runAttemptCount < 3) Result.retry() else Result.failure()
+            }
+            return@withContext Result.success()
             }
             
             AutoBackupState.resultTotal.value = totalFilesToProcess

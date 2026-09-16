@@ -71,6 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     needs: unit-tests
+    # R4-P2: assembleRelease đòi signing secrets (guard trong build.gradle.kts).
+    # Runner sạch không có secrets → job fail trước R8. Chỉ chạy release khi
+    # secrets đã cấu hình; còn lại verify R8 bằng unsigned release build.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,8 +98,18 @@ jobs:
           EOF
           chmod +x gradlew
 
-      - name: Assemble Release APK
+      - name: Assemble Release APK (signed)
+        if: ${{ secrets.NAS_RELEASE_STORE_PASSWORD != '' }}
+        env:
+          NAS_RELEASE_STORE_FILE: ${{ secrets.NAS_RELEASE_STORE_FILE }}
+          NAS_RELEASE_STORE_PASSWORD: ${{ secrets.NAS_RELEASE_STORE_PASSWORD }}
+          NAS_RELEASE_KEY_ALIAS: ${{ secrets.NAS_RELEASE_KEY_ALIAS }}
+          NAS_RELEASE_KEY_PASSWORD: ${{ secrets.NAS_RELEASE_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify release graph without signing (unsigned)
+        if: ${{ secrets.NAS_RELEASE_STORE_PASSWORD == '' }}
+        run: ./gradlew :app:assembleRelease --stacktrace -x :app:packageRelease || ./gradlew :app:compileReleaseKotlin :app:minifyReleaseWithR8 --stacktrace
 
       - name: Upload release APK
         if: success()

@@ -79,7 +79,9 @@ interface FileDao {
 
     // Tìm kiếm giới hạn trong một root path — thay thế pattern load
     // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
-    @Query("SELECT * FROM files_cache WHERE path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    // R4-P2: rootPrefix/keyword PHẢI escape ở caller (escapeLike) — LIKE trần
+    // khiến /foo_bar/ khớp /fooXbar/, % trong URL thành wildcard.
+    @Query("SELECT * FROM files_cache WHERE path LIKE :rootPrefix || '%' ESCAPE '\\' AND name LIKE '%' || :keyword || '%' ESCAPE '\\' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFilesUnder(rootPrefix: String, keyword: String): List<CachedFile>
 
     // DEAD QUERY (không còn caller): giữ để tương thích, không dùng cho flow mới.
@@ -344,7 +346,11 @@ data class SyncAction(
     val status: String = "PENDING", // PENDING, FAILED, PARKED
     val timestamp: Long = System.currentTimeMillis(),
     // R2-P2: đếm lỗi liên tiếp để park row hỏng, không chiếm batch mãi.
-    val failCount: Int = 0
+    val failCount: Int = 0,
+    // R4-P1: rang buoc NAS + user luc enqueue. Retry sang NAS/user khac thi
+    // BO QUA row (khong phat lai thao tac sang may khac).
+    val nasHost: String = "",
+    val nasUser: String = ""
 )
 
 @Dao
@@ -531,6 +537,13 @@ val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
     }
 }
 // R2-P2: v16 thêm failCount cho sync_queue (park row hỏng).
+// R4-P1: v17 them nasHost/nasUser cho sync_queue (rang buoc NAS+user).
+val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `sync_queue` ADD COLUMN `nasHost` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `sync_queue` ADD COLUMN `nasUser` TEXT NOT NULL DEFAULT ''")
+    }
+}
 val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `sync_queue` ADD COLUMN `failCount` INTEGER NOT NULL DEFAULT 0")
@@ -539,7 +552,7 @@ val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
 
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 16,
+    version = 17,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

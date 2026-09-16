@@ -306,7 +306,10 @@ class AuthSessionViewModel(
                     com.nas.naswebdav.SyncAction(
                         actionType = actionType,
                         sourcePath = normalizedSourcePath,
-                        destPath = normalizedDestPath
+                        destPath = normalizedDestPath,
+                        // R4-P1: rang buoc NAS+user — retry sang may khac thi worker bo qua.
+                        nasHost = runCatching { java.net.URL(queueBaseUrl).host ?: queueBaseUrl }.getOrDefault(queueBaseUrl),
+                        nasUser = com.nas.naswebdav.WebDavManager.currentUser
                     )
                 )
 

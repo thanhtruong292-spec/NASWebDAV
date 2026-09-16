@@ -217,7 +217,11 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     if (identicalFiles.size > 1) {
                         // Xác minh toàn bộ nội dung trước hành động phá hủy:
                         // full SHA-256 khớp mới xóa, một file fail full-hash thì giữ cả nhóm.
+                        // R4-P1 TOCTOU: chụp size+mtime lúc hash, HEAD lại ngay trước MOVE.
+                        // Client khác sửa file giữa hai bước → size/mtime lệch → bỏ qua,
+                        // không xóa bản mới chưa kiểm tra.
                         val fullHashes = mutableMapOf<String, String>()
+                        val hashSnapshot = mutableMapOf<String, Pair<Long, Long>>()
                         var fullOk = true
                         for (file in identicalFiles) {
                             if (!isActive) { fullOk = false; break }
@@ -229,6 +233,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                 break
                             }
                             fullHashes[file.path] = full
+                            hashSnapshot[file.path] = Pair(file.contentLength, file.lastModified)
                         }
                         if (!fullOk) continue
                         val verified = fullHashes.entries.groupBy({ it.value }, { it.key })
@@ -245,6 +250,18 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     kotlinx.coroutines.delay(500)
                                 }
                                 if (!isActive) break
+                                // R4-P1 TOCTOU revalidate: HEAD size phải khớp snapshot lúc
+                                // hash. File bị sửa sau hash → bỏ qua, không MOVE.
+                                val snap = hashSnapshot[trashFile.path]
+                                val freshLen = try {
+                                    webDavManager.headFileHeaders(trashFile.path)?.get("Content-Length")?.toLongOrNull()
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                if (snap == null || freshLen == null || freshLen != snap.first) {
+                                    SystemLogger.log("WARNING", "AutoClean",
+                                        "Bỏ qua (đổi sau hash): ${trashFile.path}")
+                                    continue
+                                }
                                 if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength }
                             }
                         }

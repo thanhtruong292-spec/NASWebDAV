@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.asContextElement
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
@@ -284,7 +286,19 @@ class NasDocumentProvider : DocumentsProvider() {
                             val mime = android.webkit.MimeTypeMap.getSingleton()
                                 .getMimeTypeFromExtension(fileExtension.lowercase())
                                 ?: "application/octet-stream"
-                            webDavManager.uploadFile(url, tempFile, mime)
+                            // R4-P1: PUT với auth + URL ĐÃ CHỤP lúc mở file.
+                            // uploadFile dùng singleton authState — đổi tài khoản giữa
+                            // mở và đóng sẽ upload bằng credentials B tới máy A.
+                            val putBody = tempFile.readBytes().toRequestBody(
+                                mime.toMediaTypeOrNull())
+                            val putReq = okhttp3.Request.Builder()
+                                .url(url)
+                                .header("Authorization", authState.authHeader)
+                                .put(putBody)
+                                .build()
+                            NasApplication.instance.sharedHttpClient.newCall(putReq).execute().use { resp ->
+                                if (!resp.isSuccessful) throw java.io.IOException("Upload: HTTP ${resp.code}")
+                            }
                             true
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
@@ -302,7 +316,9 @@ class NasDocumentProvider : DocumentsProvider() {
                                         actionType = "UPLOAD_FAILED",
                                         sourcePath = tempFile.absolutePath,
                                         destPath = url,
-                                        status = "FAILED"
+                                        status = "FAILED",
+                                        nasHost = runCatching { java.net.URL(baseUrl).host ?: baseUrl }.getOrDefault(baseUrl),
+                                        nasUser = authState.user
                                     )
                                 )
                                 // Kích hoạt OfflineSyncWorker retry ngay khi có mạng.

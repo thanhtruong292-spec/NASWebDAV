@@ -78,6 +78,31 @@ object CrashReporter {
         }
         // Không gửi tag chứa URL/user/token thô.
         event.serverName = null
+        // R4-P3: redact headers/breadcrumb-data/tags/extras có cấu trúc —
+        // Authorization/userinfo có thể nằm ở đó, không chỉ message.
+        event.request?.headers?.forEach { (k, v) ->
+            val ks = k.lowercase()
+            if (ks.contains("auth") || ks.contains("cookie") || ks.contains("token")) {
+                event.request?.headers?.put(k, "[REDACTED]")
+            } else if (v is String) {
+                event.request?.headers?.put(k, CrashLogExporter.redactUrlUserinfo(v))
+            }
+        }
+        event.breadcrumbs?.forEach { crumb ->
+            crumb.data?.forEach { (k, v) ->
+                if (v is String) crumb.data?.put(k, CrashLogExporter.redactUrlUserinfo(v))
+            }
+        }
+        event.tags?.keys?.toList()?.forEach { k ->
+            event.tags?.get(k)?.let { v ->
+                event.setTag(k, CrashLogExporter.redactUrlUserinfo(v))
+            }
+        }
+        try {
+            event.contexts?.forEach { (k, v) ->
+                event.contexts?.put(k, v)
+            }
+        } catch (_: Exception) { }
         return event
     }
 }

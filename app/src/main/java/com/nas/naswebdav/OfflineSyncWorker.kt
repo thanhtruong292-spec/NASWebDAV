@@ -15,10 +15,13 @@ import java.util.concurrent.TimeUnit
 
 private fun resolveQueuedWebDavPath(rawPath: String, activeBaseUrl: String): String {
     val trimmed = rawPath.trim()
+    // R4-P1: URL tuyệt đối GIỮ NGUYÊN — không rewrite authority sang host hiện tại.
+    // Rewrite cũ phát lại thao tác của NAS A sang NAS B khi đổi endpoint.
+    // Chỉ chấp nhận đổi LAN/Tailscale khi row không ràng buộc NAS (nasHost rỗng,
+    // bản ghi trước v17) — và khi đó worker đã lọc nasHost khác ở trên nên
+    // trường hợp này chỉ còn URL tương đối.
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-        val active = runCatching { URL(activeBaseUrl) }.getOrNull() ?: return trimmed
-        val raw = runCatching { URL(trimmed) }.getOrNull() ?: return trimmed
-        return "${active.protocol}://${active.authority}${raw.path}" + (raw.query?.let { "?$it" } ?: "") + (raw.ref?.let { "#$it" } ?: "")
+        return trimmed
     }
     val base = activeBaseUrl.trimEnd('/')
     return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
@@ -71,11 +74,21 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         if (user.isEmpty() || pass.isEmpty() || url.isEmpty()) return@withContext Result.failure()
+        val activeHost = runCatching { java.net.URL(url).host ?: url }.getOrDefault(url)
+        // R4-P1: bỏ qua row của NAS/user khác — không phát lại thao tác sang máy
+        // khác khi đổi endpoint. Row cũ (nasHost rỗng, trước v17) vẫn xử lý để
+        // tương thích, nhưng KHÔNG rewrite authority sang host hiện tại.
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
         setThumbnailActivity("sync", true)
         try {
             var allSuccess = true
+            var skippedForeign = 0
             for (action in sortedActions) {
+                if (action.nasHost.isNotEmpty() &&
+                    (action.nasHost != activeHost || action.nasUser.isNotEmpty() && action.nasUser != user)) {
+                    skippedForeign++
+                    continue
+                }
                 try {
                     var handled = false
                     when (action.actionType) {
@@ -127,7 +140,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                         // UPLOAD_FAILED = metadata ghi bởi NasDocumentProvider.
                         // Retry upload nếu file temp vẫn còn trong cacheDir.
                         // Sau khi upload thành công → xóa row + file temp.
-                        // File không còn → xóa row (OS đã dọn cache).
+                        // R4-P2: file không còn (OS dọn cache) → PARK row + log rõ
+                        // "dữ liệu nguồn đã mất", KHÔNG xóa như đã xử lý (mất dấu vết).
                         "UPLOAD_FAILED" -> {
                             val tempPath = action.sourcePath
                             if (tempPath != null && action.destPath != null) {
@@ -143,6 +157,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
                                     file.delete() // dọn temp sau khi upload thành công
+                                } else {
+                                    // Temp bị OS dọn — park + log trạng thái cuối.
+                                    try { db.syncActionDao().park(action.id) } catch (_: Exception) {}
+                                    com.nas.naswebdav.utils.SystemLogger.log("WARNING", "OfflineSync",
+                                        "Dữ liệu nguồn đã mất (cache bị dọn): ${action.destPath} — giữ bản ghi để kiểm tra")
+                                    handled = true
                                 }
                             }
                             // Luôn xóa row: upload thành công hoặc file đã bị OS xóa
@@ -188,6 +208,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                 // Tránh retry vô hạn: sau 3 lần thất bại liên tiếp, báo failure hẳn
                 // thay vì để WorkManager exponential-backoff retry mãi mãi.
                 if (runAttemptCount >= 3) Result.failure() else Result.retry()
+            }
+            // R4-P1: row khác NAS/user bị bỏ qua (giữ lại, không xóa) — log để user
+            // biết khi về đúng NAS chúng sẽ được xử lý.
+            if (skippedForeign > 0) {
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "OfflineSync",
+                    "$skippedForeign action thuộc NAS khác — giữ lại, xử lý khi về đúng NAS")
             }
 
             // P2 Continuation: vét hết queue, không chỉ khi > 200.

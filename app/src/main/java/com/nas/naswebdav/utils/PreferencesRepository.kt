@@ -66,8 +66,15 @@ class PreferencesRepository(context: Context) {
         synchronized(p) {
             val viewed = readViewedSet().toMutableSet()
             val order = readViewedOrder().toMutableList()
+            // R4-P3: file xem lai dua xuong cuoi (moi nhat) — ban cu giu vi tri
+            // cu nen file vua xem van bi loai truoc khi dat gioi han 5000.
             clean.forEach { path ->
-                if (viewed.add(path)) order.add(path)
+                if (viewed.add(path)) {
+                    order.add(path)
+                } else {
+                    order.remove(path)
+                    order.add(path)
+                }
             }
             val trimmed = if (order.size > VIEWED_FILES_LIMIT) {
                 val drop = order.size - VIEWED_FILES_LIMIT

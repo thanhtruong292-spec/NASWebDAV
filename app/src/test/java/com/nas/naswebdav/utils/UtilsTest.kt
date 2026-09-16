@@ -55,6 +55,24 @@ class UtilsTest {
     }
 
     @Test
+    fun `escapeLike neutralizes wildcards`() {
+        // R4-P2: /foo_bar/ khong khop /fooXbar/ sau escape.
+        val bs = "\\"
+        assertEquals("foo" + bs + "_bar", FormatUtils.escapeLike("foo_bar"))
+        assertEquals("100" + bs + "%", FormatUtils.escapeLike("100%"))
+        assertEquals("a" + bs + bs + "b", FormatUtils.escapeLike("a" + bs + "b"))
+    }
+
+    @Test
+    fun `matchesFileQuery keeps accent-insensitive offline search`() {
+        // R4-P2: "bao cao" khop "Báo cáo.pdf" khi offline (SQL LIKE tho khong lam duoc).
+        assertTrue(FormatUtils.matchesFileQuery("Báo cáo.pdf", "bao cao"))
+        assertTrue(FormatUtils.matchesFileQuery("IMG_2024_Alpine.jpg", "alpine"))
+        assertTrue(FormatUtils.matchesFileQuery("Tai lieu bao cao.pdf", "bao cao tai lieu"))
+        assertTrue(!FormatUtils.matchesFileQuery("img1.jpg", "img2"))
+    }
+
+    @Test
     fun `shouldCompress detects text formats`() {
         assertTrue(HashUtils.shouldCompress("text/plain"))
         assertTrue(HashUtils.shouldCompress("application/json"))
