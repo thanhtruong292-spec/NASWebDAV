@@ -46,15 +46,13 @@ class ReviewSeamTest {
 
     @Test
     fun `hash group key distinguishes same-size groups`() {
-        // S10: 2 nhóm cùng contentLength nhưng hash khác phải key khác nhau.
-        val keyA = "abc123"
-        val keyB = "def456"
-        assertTrue(keyA != keyB)
-        // Quy ước key production: partialHash ?: contentLength.
-        fun groupKey(partialHash: String?, contentLength: Long): Any =
-            partialHash ?: contentLength
-        assertEquals("abc123", groupKey("abc123", 100L))
-        assertEquals("def456", groupKey("def456", 100L))
-        assertTrue(groupKey("abc123", 100L) != groupKey("def456", 100L))
+        // R2-P2: gọi HÀM PRODUCTION thật — đổi key ở UI mà không đổi
+        // duplicateGroupKey thì test này fail (không sao chép logic).
+        assertEquals("abc123", duplicateGroupKey("abc123", 100L))
+        assertEquals("def456", duplicateGroupKey("def456", 100L))
+        assertTrue(duplicateGroupKey("abc123", 100L) != duplicateGroupKey("def456", 100L))
+        // LGH_ legacy và null rơi về size (UI lọc ra, không hiện nhóm).
+        assertEquals(100L, duplicateGroupKey("LGH_100_123", 100L))
+        assertEquals(100L, duplicateGroupKey(null, 100L))
     }
 }

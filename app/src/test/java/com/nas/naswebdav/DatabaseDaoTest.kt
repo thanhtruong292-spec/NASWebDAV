@@ -74,4 +74,39 @@ class DatabaseDaoTest {
         database.trashMetaDao().insert(meta)
         assertEquals(meta, database.trashMetaDao().findByOriginalPath("/photos/photo.jpg"))
     }
+
+    @Test
+    fun `parked rows leave batch and unpark restores them`() {
+        // R2-P2: row hỏng park sau N lỗi — batch sau bỏ qua, đuôi hợp lệ vét được.
+        val dao = database.syncActionDao()
+        dao.insert(SyncAction(actionType = "UPLOAD", sourcePath = "bad://1"))
+        dao.insert(SyncAction(actionType = "UPLOAD", sourcePath = "good://2"))
+        val bad = dao.getAllPendingActions().first { it.sourcePath == "bad://1" }
+        repeat(5) { dao.bumpFail(bad.id, System.currentTimeMillis()) }
+        assertEquals(5, dao.getFailCount(bad.id))
+        dao.park(bad.id)
+        // Batch chỉ còn good; count loại parked.
+        assertEquals(listOf("good://2"), dao.getAllPendingActions().map { it.sourcePath })
+        assertEquals(1, dao.countAll())
+        assertEquals(1, dao.getParked().size)
+        // Retry tay mở park.
+        dao.unpark(bad.id, System.currentTimeMillis())
+        assertEquals(2, dao.countAll())
+        assertEquals(0, dao.getFailCount(bad.id))
+    }
+
+    @Test
+    fun `verified duplicate count matches UI grouping definition`() {
+        // R2 (S7): countVerifiedDuplicates cùng định nghĩa với UI group —
+        // hash thật, loại LGH_ legacy và null.
+        val dao = database.fileDao()
+        dao.insertFiles(listOf(
+            CachedFile("/a/1.jpg", "1.jpg", false, "image/jpeg", "/a/", 100L, 1L, partialHash = "h1"),
+            CachedFile("/a/2.jpg", "2.jpg", false, "image/jpeg", "/a/", 100L, 2L, partialHash = "h1"),
+            CachedFile("/a/3.jpg", "3.jpg", false, "image/jpeg", "/a/", 100L, 3L, partialHash = "LGH_100_3"),
+            CachedFile("/a/4.jpg", "4.jpg", false, "image/jpeg", "/a/", 100L, 4L, partialHash = null),
+        ))
+        // Chỉ 2 file hash thật h1 tạo 1 nhóm → count = 2.
+        assertEquals(2, dao.countVerifiedDuplicates())
+    }
 }

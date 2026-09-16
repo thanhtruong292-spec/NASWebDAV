@@ -284,16 +284,30 @@ class SmartToolsViewModel(
                 } else {
                     val rootUrl = WebDavManager.currentBaseUrl.trimEnd('/')
                     val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, "", false)
-                    val trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, file.name, file.isDirectory)
+                    var trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, file.name, file.isDirectory)
                     try { WebDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     try {
-                        WebDavManager.renameFile(file.path, trashTargetUrl)
+                        try {
+                            WebDavManager.renameFile(file.path, trashTargetUrl)
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                            // R2-P1: đích trash trùng tên (412 Overwrite F) → đổi tên
+                            // duy nhất rồi thử lại, không ghi đè bản trash cũ.
+                            val nm = file.name
+                            val dot = nm.lastIndexOf('.')
+                            val unique = if (dot > 0) {
+                                nm.substring(0, dot) + "_" + System.currentTimeMillis() + nm.substring(dot)
+                            } else {
+                                nm + "_" + System.currentTimeMillis()
+                            }
+                            trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, unique, file.isDirectory)
+                            WebDavManager.renameFile(file.path, trashTargetUrl)
+                        }
                         try {
                             NasApplication.instance.database.trashMetaDao().insert(
                                 com.nas.naswebdav.TrashMeta(trashPath = trashTargetUrl, originalPath = file.path)
                             )
                         } catch (_: Exception) {}
-                    } catch (moveEx: Exception) {
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (moveEx: Exception) {
                         // FIX-REVIEW-S6: MOVE trash fail → GIỮ FILE, báo lỗi.
                         // Không fallback DELETE vĩnh viễn (user bấm xóa 1 file
                         // trong nhóm "trùng", mất là mất thật).
@@ -311,8 +325,60 @@ class SmartToolsViewModel(
         }
     }
 
+    /**
+     * R2-P1: full-verify một nhóm trước khi MOVE hàng loạt vào trash.
+     * UI group theo partial hash (1MB đầu) — hai file cùng đầu khác đuôi vẫn
+     * chung nhóm. Verify full SHA-256 + byte count của TỪNG file, chỉ nhóm con
+     * nào khớp toàn bộ mới cho xóa. File verify fail bị loại khỏi danh sách.
+     * @return danh sách file đã xác minh trùng toàn bộ, rỗng nếu không có.
+     */
+    suspend fun verifyDuplicateGroup(paths: List<com.nas.naswebdav.NasFile>): List<com.nas.naswebdav.NasFile> =
+        withContext(Dispatchers.IO) {
+            if (paths.size < 2) return@withContext emptyList<com.nas.naswebdav.NasFile>()
+            try {
+                val hashes = mutableMapOf<String, String>()
+                for (f in paths) {
+                    val size = f.contentLength
+                    val h = WebDavManager.getFullSha256PhoneStream(f.path, size)
+                    if (h.isNullOrEmpty()) {
+                        com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DuplicateVerify",
+                            "Loại khỏi nhóm xóa (không verify full được): ${f.name}")
+                        continue
+                    }
+                    hashes[f.path] = h
+                }
+                val byHash = hashes.entries.groupBy({ it.value }, { it.key })
+                    .filter { it.value.size > 1 }
+                if (byHash.isEmpty()) return@withContext emptyList<com.nas.naswebdav.NasFile>()
+                // Giữ lại 1 bản (đường ngắn nhất), trả các bản còn lại để xóa.
+                val keep = byHash.values.flatten().minByOrNull { it.length } ?: return@withContext emptyList<com.nas.naswebdav.NasFile>()
+                val toDelete = byHash.values.flatten().filter { it != keep }.toSet()
+                paths.filter { it.path in toDelete }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DuplicateVerify",
+                    "Verify nhóm thất bại, không xóa: ${e.message}")
+                emptyList()
+            }
+        }
+
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) {
         files.forEach { deleteDuplicateFile(it) }
+    }
+
+    /**
+     * R2-P1: xóa cả nhóm SAU full-verify. UI gọi hàm này thay vì
+     * deleteSelectedDuplicates khi user bấm "xóa nhóm trùng".
+     */
+    fun deleteVerifiedGroup(files: List<com.nas.naswebdav.NasFile>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val verified = verifyDuplicateGroup(files)
+            if (verified.isEmpty()) {
+                _globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.WARNING,
+                    "Nhóm chưa xác minh trùng toàn bộ — không xóa để an toàn.")
+                return@launch
+            }
+            verified.forEach { deleteDuplicateFile(it) }
+        }
     }
     fun togglePauseDuplicateScan() {
         scanDuplicatesIsPaused = !scanDuplicatesIsPaused

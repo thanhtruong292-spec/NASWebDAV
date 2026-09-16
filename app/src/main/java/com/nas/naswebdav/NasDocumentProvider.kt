@@ -226,7 +226,8 @@ class NasDocumentProvider : DocumentsProvider() {
         // FIX-REVIEW-S2: "w" = truncate (temp rỗng đúng); "wa"/"rw" giữ nội dung gốc
         // nên phải preload từ NAS. Mode write lạ khác → từ chối thay vì đoán.
         val rawMode = (mode ?: "r").lowercase()
-        val isTruncate = rawMode == "w" || rawMode == "wt"
+        // R2-P2: "rwt" cũng truncate (t trong mode = truncate) — không preload.
+        val isTruncate = rawMode == "w" || rawMode == "wt" || rawMode == "rwt"
         if (isWrite && !isTruncate && !isAppend && rawMode != "rw" && rawMode != "rwt") {
             throw FileNotFoundException("Chế độ ghi không hỗ trợ: $mode")
         }

@@ -111,6 +111,14 @@ internal fun toValidUrl(rawUrl: String): String {
  * xóa bản duy nhất. Chuẩn hóa: bỏ scheme+host, unquote, gộp slash, bỏ
  * trailing slash (trừ root). Trả "" khi không parse được.
  */
+/**
+ * R2-P2: key nhóm trùng cho UI LazyColumn — partialHash thật, fallback size
+ * chỉ khi chưa hash (nhóm này UI lọc ra, không hiện). Đổi key ở UI mà không
+ * đổi đây thì ReviewSeamTest báo regression.
+ */
+internal fun duplicateGroupKey(partialHash: String?, contentLength: Long): Any =
+    if (!partialHash.isNullOrEmpty() && !partialHash.startsWith("LGH_")) partialHash else contentLength
+
 internal fun canonicalNasPath(urlOrPath: String): String {
     if (urlOrPath.isBlank()) return ""
     return try {
@@ -124,7 +132,12 @@ internal fun canonicalNasPath(urlOrPath: String): String {
         // Bỏ query/fragment (?download, #section).
         path = path.substringBefore('?').substringBefore('#')
         // Unquote %XX để %20 và dấu cách là một; quote hỏng thì giữ nguyên.
-        path = runCatching { java.net.URLDecoder.decode(path, "UTF-8") }.getOrDefault(path)
+        // R2-P1: URLDecoder.decode biến "+" thành space (quy tắc form-encoding).
+        // Path WebDAV "+" là ký tự thật — che thành %2B trước decode để
+        // "a+b" và "a b" không thành 2 identity khác nhau lọt khử alias.
+        path = runCatching {
+            java.net.URLDecoder.decode(path.replace("+", "%2B"), "UTF-8")
+        }.getOrDefault(path)
         // Gộp slash lặp, chuẩn trailing slash.
         path = path.replace(Regex("/+"), "/")
         if (path.length > 1 && path.endsWith("/")) path = path.dropLast(1)
@@ -1137,9 +1150,16 @@ object WebDavManager {
         }
     }
 
+    /**
+     * R2-P1: MOVE luôn gửi `Overwrite: F` (RFC 4918 §10.6 — mặc định server là T).
+     * Đích trash cố định `.trash/<tên>` nên hai file khác thư mục cùng tên sẽ
+     * va nhau; không header này thì bản trash cũ bị ghi đè im lặng = mất dữ liệu.
+     * Trùng đích → throw 412 để caller đổi tên duy nhất rồi thử lại.
+     */
     suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

@@ -341,8 +341,10 @@ data class SyncAction(
     val actionType: String, // "UPLOAD", "DELETE", "RENAME", "MOVE", "CREATE_FOLDER"
     val sourcePath: String, // Đường dẫn nguồn (Local URI hoặc NAS Path)
     val destPath: String? = null, // Cho hành động MOVE/RENAME
-    val status: String = "PENDING", // PENDING, FAILED
-    val timestamp: Long = System.currentTimeMillis()
+    val status: String = "PENDING", // PENDING, FAILED, PARKED
+    val timestamp: Long = System.currentTimeMillis(),
+    // R2-P2: đếm lỗi liên tiếp để park row hỏng, không chiếm batch mãi.
+    val failCount: Int = 0
 )
 
 @Dao
@@ -351,7 +353,8 @@ interface SyncActionDao {
     fun insert(action: SyncAction)
 
     // UPLOAD_FAILED xếp cuối để action bình thường không bị starve khi queue đầy.
-    @Query("SELECT * FROM sync_queue ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
+    // R2-P2: loại PARKED (row hỏng đã park) khỏi batch — batch chỉ lấy việc làm được.
+    @Query("SELECT * FROM sync_queue WHERE status != 'PARKED' ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
     fun getAllPendingActions(): List<SyncAction>
 
     // FIX-AUDIT-F4: retry theo ID phải query trực tiếp, không tìm trong top 200.
@@ -359,7 +362,8 @@ interface SyncActionDao {
     fun getById(id: Int): SyncAction?
 
     // Tổng số action còn lại trong queue (dùng để quyết định continuation work khi > 200)
-    @Query("SELECT COUNT(*) FROM sync_queue")
+    // R2-P2: chỉ đếm việc chưa park.
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE status != 'PARKED'")
     fun countAll(): Int
 
     // Liệt kê các UPLOAD_FAILED cho UI (mới nhất trước)
@@ -373,6 +377,24 @@ interface SyncActionDao {
     // khác trước thay vì kẹt mãi ở batch đầu lỗi (LIMIT 200 lấy lại cùng batch).
     @Query("UPDATE sync_queue SET timestamp = :ts WHERE id = :id")
     fun pushBack(id: Int, ts: Long)
+
+    // R2-P2: tang failCount, park row hong, mo park retry tay.
+    @Query("UPDATE sync_queue SET failCount = failCount + 1, timestamp = :ts WHERE id = :id")
+    fun bumpFail(id: Int, ts: Long)
+
+    @Query("SELECT failCount FROM sync_queue WHERE id = :id LIMIT 1")
+    fun getFailCount(id: Int): Int?
+
+    // R2-P2: park row hong sau N loi — batch sau bo qua, duoi hop le duoc vet.
+    @Query("UPDATE sync_queue SET status = 'PARKED' WHERE id = :id")
+    fun park(id: Int)
+
+    @Query("SELECT * FROM sync_queue WHERE status = 'PARKED' ORDER BY timestamp DESC")
+    fun getParked(): List<SyncAction>
+
+    // Retry thu cong tu UI: mo park ve PENDING.
+    @Query("UPDATE sync_queue SET status = 'PENDING', failCount = 0, timestamp = :ts WHERE id = :id")
+    fun unpark(id: Int, ts: Long)
 }
 
 // ================= TRASH META — Lưu path gốc để restore đúng vị trí =================
@@ -508,10 +530,16 @@ val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_meta_originalPath` ON `trash_meta` (`originalPath`)")
     }
 }
+// R2-P2: v16 thêm failCount cho sync_queue (park row hỏng).
+val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `sync_queue` ADD COLUMN `failCount` INTEGER NOT NULL DEFAULT 0")
+    }
+}
 
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 15,
+    version = 16,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

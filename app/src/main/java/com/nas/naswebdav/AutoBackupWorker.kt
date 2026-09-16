@@ -261,13 +261,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // (2) record dest path khớp NAS đích hiện tại, (3) file remote
                             // CÒN TỒN TẠI (HEAD check). Đổi NAS/thư mục backup hoặc xóa
                             // remote mà vẫn skip theo fingerprint cũ = mất backup.
+                            // R2-P1: (2) phải SO SÁNH THẬT fp.filePath với dest hiện tại
+                            // (targetFileNasPath) — comment cũ nói nhưng code không làm.
                             if (fileHash != null) {
                                 val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
                                 for (fp in candidates) {
                                     if (fp.filePath.isEmpty()) continue
+                                    if (canonicalNasPath(fp.filePath) != canonicalNasPath(targetFileNasPath)) continue
                                     val remoteExists = try {
                                         webDavManager.headFileHeaders(fp.filePath) != null
-                                    } catch (_: Exception) { false }
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { false }
                                     if (remoteExists) { isSkipped = true; break }
                                 }
                                 if (!isSkipped && candidates.isNotEmpty()) {

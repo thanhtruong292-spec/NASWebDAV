@@ -287,9 +287,21 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             val rootUrl = ctx.manager.currentBaseUrl.trimEnd('/')
             val fileName = sourceUrl.substringAfterLast("/")
             val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
-            val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
+            var destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
             executeWebDavRequest(trashFolderUrl, "MKCOL", ctx.authHeader)
-            val success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+            var success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+            // R2-P1: đích trash trùng tên (412) → đổi tên duy nhất + timestamp,
+            // không ghi đè bản trash cũ.
+            if (!success) {
+                val dot = fileName.lastIndexOf('.')
+                val unique = if (dot > 0) {
+                    fileName.substring(0, dot) + "_" + System.currentTimeMillis() + fileName.substring(dot)
+                } else {
+                    fileName + "_" + System.currentTimeMillis()
+                }
+                destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, unique, false)
+                success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+            }
             if (success) {
                 try {
                     NasApplication.instance.database.trashMetaDao().insert(

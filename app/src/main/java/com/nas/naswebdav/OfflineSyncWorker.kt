@@ -161,9 +161,24 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     }
                     // FIX-REVIEW-S9: mục lỗi đẩy xuống cuối queue để batch sau lấy
                     // mục khác trước — không kẹt mãi ở batch đầu lỗi khi LIMIT 200.
-                    try { db.syncActionDao().pushBack(action.id, System.currentTimeMillis()) }
+                    // R2-P2: sau 5 lỗi liên tiếp thì PARK row (batch sau bỏ qua),
+                    // đuôi hợp lệ được vét; user retry tay mở park từ UI.
+                    try {
+                        val now = System.currentTimeMillis()
+                        db.syncActionDao().bumpFail(action.id, now)
+                        val fails = db.syncActionDao().getFailCount(action.id) ?: 0
+                        if (fails >= 5) {
+                            db.syncActionDao().park(action.id)
+                            SystemLogger.log("WARNING", "OfflineSync",
+                                "Action ${action.id} (${action.actionType}) park sau $fails lỗi — không chặn queue")
+                        }
+                    }
                     catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
-                    catch (_: Exception) {}
+                    catch (_: Exception) {
+                        try { db.syncActionDao().pushBack(action.id, System.currentTimeMillis()) }
+                        catch (e3: kotlinx.coroutines.CancellationException) { throw e3 }
+                        catch (_: Exception) {}
+                    }
                     SystemLogger.log("WARNING", "OfflineSync",
                         "Action ${action.id} (${action.actionType}) failed: ${e.message} — row giữ lại để retry")
                     allSuccess = false
