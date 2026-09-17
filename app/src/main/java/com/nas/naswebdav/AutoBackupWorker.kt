@@ -419,8 +419,27 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         val preETag = runCatching { webDavManager.getFileETag(targetFileNasPath) }.getOrNull()
                                         val rawStream = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
                                             ?: error("Không đọc được file $fileName (ContentResolver trả null)")
-                                        rawStream.use { input2 ->
-                                            val useCompression = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
+                                        // Task 9: opt-in ma hoa — encrypt vao temp .nasenc roi upload temp.
+                                        // Khong nen + ma hoa dong thoi (cipher doi length).
+                                        val encryptOn = com.nas.naswebdav.utils.BackupCrypto.isEnabled(applicationContext)
+                                        var uploadDest = targetFileNasPath
+                                        var uploadSize = fileSize
+                                        var encTemp: java.io.File? = null
+                                        if (encryptOn) {
+                                            uploadDest = targetFileNasPath + com.nas.naswebdav.utils.BackupCrypto.ENCRYPTED_SUFFIX
+                                            encTemp = java.io.File.createTempFile("nasenc_", ".bin", applicationContext.cacheDir)
+                                            val encOut = com.nas.naswebdav.utils.BackupCrypto.encryptingStream(applicationContext, encTemp.outputStream())
+                                            rawStream.use { input0 -> input0.copyTo(encOut) }
+                                            try { encOut.close() } catch (_: Exception) {}
+                                            uploadSize = encTemp.length()
+                                        }
+                                        val uploadInput: java.io.InputStream = if (encryptOn && encTemp != null) {
+                                            encTemp.inputStream()
+                                        } else {
+                                            rawStream
+                                        }
+                                        uploadInput.use { input2 ->
+                                            val useCompression = if (encryptOn) false else com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
                                             val onUploadProgress: (Long, Long) -> Unit = { bytesWritten, totalBytes ->
                                                 if (isStopped) throw kotlinx.coroutines.CancellationException("User cancelled upload")
                                                 val now = System.currentTimeMillis()
@@ -462,11 +481,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 }
                                             }
                                             if (useCompression) {
-                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag, runAuth)
+                                                webDavManager.uploadCompressedStream(uploadDest, input2, uploadSize, mimeType, onUploadProgress, preETag, runAuth)
                                             } else {
-                                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag, runAuth)
+                                                webDavManager.uploadStreamWithProgress(uploadDest, input2, uploadSize, mimeType, onUploadProgress, preETag, runAuth)
                                             }
                                         }
+                                        try { encTemp?.delete() } catch (_: Exception) {}
+                                        // Task 9: record + verify theo dest thuc (.nasenc khi ma hoa).
+                                        if (encryptOn) targetFileNasPath = uploadDest
                                         break // upload thành công → thoát retry loop
                                     } catch (e: Exception) {
                                         lastWebDavException = e
