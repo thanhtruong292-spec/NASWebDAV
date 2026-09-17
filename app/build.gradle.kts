@@ -146,6 +146,7 @@ dependencies {
 
     // Navigation Compose
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
 
     // Jetpack Compose UI
     implementation(libs.androidx.compose.material.icons.extended)
@@ -167,6 +168,9 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
+    testImplementation(libs.mockwebserver)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.work.testing)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
@@ -179,6 +183,12 @@ dependencies {
 
     // Timber for better logging
     implementation(libs.timber)
+
+    // Sentry self-hosted crash reporting (opt-in, xem CrashReporter.kt)
+    implementation(libs.sentry.android)
+
+    // Immutable collections — stable List params cho Compose (tránh recomposition)
+    implementation(libs.kotlinx.collections.immutable)
 
     // Chucker for in-app network inspection
     debugImplementation(libs.chucker)

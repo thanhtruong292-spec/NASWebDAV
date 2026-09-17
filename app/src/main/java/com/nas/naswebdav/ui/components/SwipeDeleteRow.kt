@@ -1,5 +1,8 @@
 package com.nas.naswebdav.ui.components
 
+import com.nas.naswebdav.ui.screens.AccentRed
+import com.nas.naswebdav.ui.screens.TextPrimary
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -46,8 +49,8 @@ fun SwipeDeleteRow(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
     threshold: Float = 0.35f,
-    backgroundColor: Color = Color(0xFFFF1744).copy(alpha = 0.55f),
-    iconTint: Color = Color.White,
+    backgroundColor: Color = AccentRed.copy(alpha = 0.55f),
+    iconTint: Color = TextPrimary,
     iconSize: Dp = 22.dp,
     shape: Shape = RoundedCornerShape(10.dp),
     backgroundPaddingHorizontal: Dp = 16.dp,

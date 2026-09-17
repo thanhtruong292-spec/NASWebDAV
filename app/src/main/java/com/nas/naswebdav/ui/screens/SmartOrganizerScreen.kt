@@ -60,18 +60,18 @@ import kotlinx.coroutines.withContext
 // ── Màu dùng chung (nhân bản private từ MediaScreens.kt để giữ self-contained, không đổi giá trị) ──
 private val SoDarkSurface = Color.Black
 private val SoDarkCard    = Color.Black
-private val SoAccentCyan  = Color(0xFF00D2FF)
-private val SoTextPrimary = Color(0xFFE8E8E8)
-private val SoTextSecondary = Color(0xFF8892B0)
+private val SoAccentCyan  = AccentCyan
+private val SoTextPrimary = TextPrimary
+private val SoTextSecondary = TextTertiary
 
 // ════════════════════════════════════════════════════════════════════════════
 // SmartOrganizerScreen.kt
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Bảng màu bổ sung cho SmartOrganizer ──
-private val SoAccentGreen = Color(0xFF00E676)
-private val SoAccentOrange = Color(0xFFFF9100)
-private val SoAccentRed = Color(0xFFFF1744)
+private val SoAccentGreen = AccentGreen
+private val SoAccentOrange = AccentOrange
+private val SoAccentRed = AccentRed
 
 
 
@@ -150,7 +150,7 @@ fun SmartOrganizerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF0D1B2A))
+                            .background(DarkSurface)
                             .border(1.dp, SoAccentCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
                             .clickable {
                                 android.widget.Toast.makeText(context, "Sẽ sớm hỗ trợ chọn thư mục con!", android.widget.Toast.LENGTH_SHORT).show()
@@ -158,7 +158,7 @@ fun SmartOrganizerScreen(
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Folder, null, tint = Color(0xFFFFCA28), modifier = Modifier.size(24.dp))
+                        Icon(Icons.Default.Folder, null, tint = AccentOrange, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(12.dp))
                         Text(
                             sourceUrl.ifEmpty { "Chưa kết nối" },
@@ -463,13 +463,13 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         .size(46.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(
-                            Brush.linearGradient(listOf(Color(0xFF667EEA), Color(0xFF764BA2)))
+                            Brush.linearGradient(listOf(AccentBlue, AccentPurple))
                         ),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(monthNum, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                        Text(year, fontSize = 8.sp, color = Color.White.copy(alpha = 0.8f))
+                        Text(monthNum, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary)
+                        Text(year, fontSize = 8.sp, color = TextPrimary.copy(alpha = 0.8f))
                     }
                 }
 

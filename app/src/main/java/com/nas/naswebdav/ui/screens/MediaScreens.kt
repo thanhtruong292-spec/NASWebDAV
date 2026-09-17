@@ -32,6 +32,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -160,12 +164,12 @@ fun ImageViewerScreen(
         onDispose {
             val imageLoader = coil.Coil.imageLoader(context)
             imageLoader.memoryCache?.clear()
-            val prefs = context.getSharedPreferences("nas_cache", android.content.Context.MODE_PRIVATE)
-            val lastClearTime = prefs.getLong("last_cache_clear", 0)
+            val cachePrefs = com.nas.naswebdav.utils.PreferencesRepository.get(context)
+            val lastClearTime = cachePrefs.getLastCacheClear()
             val now = System.currentTimeMillis()
             if (now - lastClearTime > 7 * 24 * 60 * 60 * 1000L) {
                 imageLoader.diskCache?.clear()
-                prefs.edit { putLong("last_cache_clear", now) }
+                cachePrefs.setLastCacheClear(now)
             }
         }
     }
@@ -209,7 +213,7 @@ fun ImageViewerScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black) // pure black immersive background
+            .background(DarkSurface) // pure black immersive background
     ) {
         if (imageFiles.isEmpty()) {
             Column(
@@ -217,9 +221,9 @@ fun ImageViewerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Icon(Icons.Default.ImageNotSupported, null, tint = Color.Gray, modifier = Modifier.size(56.dp))
+                Icon(Icons.Default.ImageNotSupported, null, tint = TextTertiary, modifier = Modifier.size(56.dp))
                 Spacer(Modifier.height(8.dp))
-                Text("Không có ảnh nào để hiển thị", color = Color.Gray)
+                Text("Không có ảnh nào để hiển thị", color = TextTertiary)
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = onBack) { Text("Quay lại") }
             }
@@ -256,7 +260,7 @@ fun ImageViewerScreen(
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                            listOf(DarkSurface.copy(alpha = 0.7f), Color.Transparent)
                         )
                     )
             ) {
@@ -278,7 +282,7 @@ fun ImageViewerScreen(
                         Icon(
                             if (isSlideshowActive) Icons.Default.Stop else Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Quay lại",
-                            tint = Color.White
+                            tint = TextPrimary
                         )
                     }
 
@@ -287,7 +291,7 @@ fun ImageViewerScreen(
                     val current = (pagerState.currentPage + 1).coerceAtMost(total)
                     Text(
                         text = "$current / $total",
-                        color = Color.White,
+                        color = TextPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         modifier = Modifier.weight(1f),
@@ -302,7 +306,7 @@ fun ImageViewerScreen(
                         Icon(
                             if (isSlideshowActive) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
                             contentDescription = "Trình chiếu",
-                            tint = if (isSlideshowActive) AccentGreen else Color.White,
+                            tint = if (isSlideshowActive) AccentGreen else TextPrimary,
                             modifier = Modifier.size(28.dp)
                         )
                     }
@@ -315,7 +319,7 @@ fun ImageViewerScreen(
                         Icon(
                             Icons.Default.Share,
                             contentDescription = "Chia sẻ",
-                            tint = Color.White
+                            tint = TextPrimary
                         )
                     }
 
@@ -355,14 +359,14 @@ fun ImageViewerScreen(
                         .fillMaxWidth()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                                listOf(Color.Transparent, DarkSurface.copy(alpha = 0.85f))
                             )
                         )
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
                         text = currentFile.name,
-                        color = Color.White,
+                        color = TextPrimary,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
@@ -591,7 +595,7 @@ private fun ThumbnailStrip(
         modifier = modifier
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+                    listOf(Color.Transparent, DarkSurface.copy(alpha = 0.55f))
                 )
             )
             .padding(vertical = 6.dp)
@@ -990,7 +994,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(DarkSurface)) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -1040,7 +1044,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                         .align(Alignment.TopStart)
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)
+                                colors = listOf(DarkSurface.copy(alpha = 0.7f), Color.Transparent)
                             )
                         )
                         .padding(top = 24.dp, start = 16.dp, end = 16.dp, bottom = 48.dp),
@@ -1050,12 +1054,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                         onClick = onBack,
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.ArrowBack, "Back", tint = Color.White)
+                        Icon(Icons.Default.ArrowBack, "Back", tint = TextPrimary)
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(
                         text = fileName,
-                        color = Color.White,
+                        color = TextPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         maxLines = 1,
@@ -1070,7 +1074,7 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f))
+                            colors = listOf(Color.Transparent, DarkSurface.copy(alpha = 0.62f))
                         )
                     )
                     .padding(start = 10.dp, end = 10.dp, bottom = 12.dp, top = 18.dp)
@@ -1088,9 +1092,9 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                     },
                     valueRange = 0f..playbackDurationMs.coerceAtLeast(1L).toFloat(),
                     colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color(0xFFFFC7B2),
-                        inactiveTrackColor = Color.White.copy(alpha = 0.42f)
+                        thumbColor = TextPrimary,
+                        activeTrackColor = AccentOrange,
+                        inactiveTrackColor = TextPrimary.copy(alpha = 0.42f)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1105,11 +1109,11 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.SkipPrevious, "Về đầu", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekTo(0L) }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.SkipPrevious, "Về đầu", tint = TextPrimary, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Replay30, "Tua lùi", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.Replay30, "Tua lùi", tint = TextPrimary, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
@@ -1118,12 +1122,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                             Icon(
                                 if (playerIsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 "Phát / tạm dừng",
-                                tint = Color.White,
+                                tint = TextPrimary,
                                 modifier = Modifier.size(25.dp)
                             )
                         }
-                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Forward30, "Tua tới", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.Forward30, "Tua tới", tint = TextPrimary, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = {
@@ -1132,13 +1136,13 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                                     exoPlayer.seekTo(duration)
                                 }
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.minimumInteractiveComponentSize()
                         ) {
-                            Icon(Icons.Default.SkipNext, "Tới cuối", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.SkipNext, "Tới cuối", tint = TextPrimary.copy(alpha = 0.65f), modifier = Modifier.size(20.dp))
                         }
                         Text(
                             text = "${FormatUtils.formatPlayerTime(playbackPositionMs)} / ${FormatUtils.formatPlayerTime(playbackDurationMs)}",
-                            color = Color.White,
+                            color = TextPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -1150,24 +1154,36 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { isMuted = !isMuted }, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = { isMuted = !isMuted },
+                            modifier = Modifier.minimumInteractiveComponentSize().semantics {
+                                stateDescription = if (isMuted) "Tắt tiếng: Bật" else "Tắt tiếng: Tắt"
+                                role = Role.Button
+                            }
+                        ) {
                             Icon(
                                 if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                "Âm lượng",
-                                tint = if (isMuted) Color(0xFFFF8A80) else Color.White,
+                                if (isMuted) "Đang tắt tiếng" else "Đang bật tiếng",
+                                tint = if (isMuted) AccentRed else TextPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        IconButton(onClick = { isRepeat = !isRepeat }, modifier = Modifier.size(32.dp)) {
+                        IconButton(
+                            onClick = { isRepeat = !isRepeat },
+                            modifier = Modifier.minimumInteractiveComponentSize().semantics {
+                                stateDescription = if (isRepeat) "Lặp lại: Bật" else "Lặp lại: Tắt"
+                                role = Role.Button
+                            }
+                        ) {
                             Icon(
                                 Icons.Default.Repeat,
-                                "Lặp lại",
-                                tint = if (isRepeat) Color(0xFF00E676) else Color.White,
+                                if (isRepeat) "Đang lặp lại" else "Không lặp lại",
+                                tint = if (isRepeat) AccentGreen else TextPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = Color.White, modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { activity?.let { act -> enterPipMode(act, exoPlayer) } }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.PictureInPictureAlt, "Popup", tint = TextPrimary, modifier = Modifier.size(20.dp))
                         }
                         IconButton(
                             onClick = {
@@ -1181,12 +1197,12 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
                                     onError = { android.util.Log.e("VideoPlayer", "Không mở được trình phát ngoài") }
                                 )
                             },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.minimumInteractiveComponentSize()
                         ) {
-                            Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.OpenInNew, "Mở bằng ứng dụng ngoài", tint = TextPrimary, modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Delete, "Xóa video", tint = Color(0xFFEF5350), modifier = Modifier.size(20.dp))
+                        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Default.Delete, "Xóa video", tint = AccentRed, modifier = Modifier.size(20.dp))
                         }
                     }
                 }

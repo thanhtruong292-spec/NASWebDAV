@@ -234,7 +234,12 @@ object WolUtil {
                                 }
                             }
                         }
-                        if (round < 2) Thread.sleep(80)
+                        if (round < 2) {
+                            try { Thread.sleep(80) } catch (_: InterruptedException) {
+                                Thread.currentThread().interrupt()
+                                return@repeat
+                            }
+                        }
                     }
                 }
             }

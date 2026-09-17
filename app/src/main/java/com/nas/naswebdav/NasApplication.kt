@@ -39,7 +39,7 @@ import androidx.core.net.toUri
  * Tránh tạo nhiều Database/OkHttpClient instance trong mỗi Worker/Activity.
  */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
-class NasApplication : Application(), ImageLoaderFactory {
+open class NasApplication : Application(), ImageLoaderFactory {
 
     // ════════════════════════════════════════════════════════════════════════════
     // Timber Tree ghi log vào Room DB — hiển thị trong phần System Log trên app
@@ -284,6 +284,11 @@ class NasApplication : Application(), ImageLoaderFactory {
         lateinit var instance: NasApplication
             private set
 
+        /** Test hook: gán instance nhẹ cho Robolectric test cần lazy clients. */
+        fun setInstanceForTest(app: NasApplication) {
+            instance = app
+        }
+
         /**
          * FIX P12: Application-scoped CoroutineScope thay thế GlobalScope trong SystemLogger.
          * SupervisorJob đảm bảo một coroutine lỗi không huỷ các coroutine khác.
@@ -345,6 +350,13 @@ class NasApplication : Application(), ImageLoaderFactory {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
             defaultHandler?.uncaughtException(thread, exception)
         }
+
+        // Remote crash reporting (Sentry self-hosted, opt-in).
+        // Local Room CrashHandler ở trên luôn chạy — Sentry chỉ gửi khi user bật.
+        com.nas.naswebdav.utils.CrashReporter.initIfOptedIn(this)
+
+        // Network listener app-scoped — SmartNetworkManager bỏ ping khi offline.
+        NetworkMonitor.start(this)
             // TÍNH NĂNG 1.B: Auto dọn rác Thumbnail Coil (Tuổi thọ > 7 ngày)
         // FIX: Thay Thread {} bằng applicationScope.launch(IO) — lifecycle-aware,
         // exception được SupervisorJob xử lý thay vì crash silent.
@@ -620,6 +632,40 @@ object SecurePrefsHelper {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// NetworkMonitor — ConnectivityManager listener (app-scoped).
+// SmartNetworkManager đọc isOnline để bỏ qua ping khi offline thay vì
+// retry mù: offline → trả URL đầu tiên ngay, không tốn timeout.
+// ════════════════════════════════════════════════════════════════════════════
+
+object NetworkMonitor {
+    private val _isOnline = kotlinx.coroutines.flow.MutableStateFlow(true)
+    val isOnline: kotlinx.coroutines.flow.StateFlow<Boolean> = _isOnline
+
+    @Volatile private var registered = false
+
+    fun start(context: Context) {
+        if (registered) return
+        registered = true
+        val appContext = context.applicationContext
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return
+        // Trạng thái đầu: có network active không.
+        _isOnline.value = cm.activeNetwork != null
+        cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                _isOnline.value = true
+                SmartNetworkManager.invalidateCache()
+            }
+
+            override fun onLost(network: android.net.Network) {
+                _isOnline.value = cm.activeNetwork == null
+                SmartNetworkManager.invalidateCache()
+            }
+        })
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // SmartNetworkManager — Tự động chọn URL NAS nhanh nhất
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -636,6 +682,8 @@ object SmartNetworkManager {
             val urlList = SecurePrefsHelper.getUrlList(context)
             if (urlList.isEmpty()) return@withContext ""
             if (urlList.size == 1) return@withContext urlList[0]
+            // Offline: không ping mù — trả URL đầu tiên ngay.
+            if (!NetworkMonitor.isOnline.value) return@withContext urlList.first()
             val now = System.currentTimeMillis()
             
             // Nếu cache còn hạn, trả về kết quả đã đánh giá ĐÚNG NHẤT thay vì lấy đại urlList.first()

@@ -175,8 +175,25 @@ class LivestreamMonitorWorker(
                 title   = "$platformIcon Đang ghi livestream $platformLabel",
                 content = "Đang kết nối..."
             ))
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
-            return@withContext Result.failure()
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            val exName = e.javaClass.name
+            val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                && exName.contains("ForegroundServiceStartNotAllowed")
+            val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+            when {
+                isBgRestriction -> {
+                    // Android 12+: app đang background → skip foreground, worker chạy tiếp
+                    android.util.Log.w("LivestreamMonitor", "Background restriction: skip foreground (worker continues)", e)
+                }
+                isMissingType -> {
+                    android.util.Log.e("LivestreamMonitor", "setForeground failed: missing foregroundServiceType", e)
+                    return@withContext Result.failure()
+                }
+                else -> {
+                    android.util.Log.w("LivestreamMonitor", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+                }
+            }
         }
 
         // Lấy credentials
@@ -295,8 +312,9 @@ class LivestreamMonitorWorker(
                     break
                 }
 
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 consecutiveErrors++
+                android.util.Log.w("LivestreamMonitor", "Poll error ($consecutiveErrors/10): ${e.message}")
                 if (consecutiveErrors >= 10) break
             }
         }

@@ -3,6 +3,8 @@ package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import androidx.compose.runtime.collectAsState
@@ -55,7 +57,7 @@ import com.nas.naswebdav.NasFile
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ToolboxDialog(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     context: android.content.Context,
     onDismiss: () -> Unit,
     onOpenLatestPhotos: () -> Unit,
@@ -78,17 +80,14 @@ fun ToolboxDialog(
     val livestreamVM = com.nas.naswebdav.LocalLivestreamVM.current
     // ═══ PHASE 7c.2: Toolbox state (isSmbEnabled, isLoadingSmb, isFanModeUpdating,
     // dockerContainers) reads via facade delegation → DeviceManagementVM is SSoT. ═══
-    var isBiometricEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
-    var isAutoBackupEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("auto_backup", false)) }
-    var deleteAfterBackup by remember { mutableStateOf(sharedPrefs.getBoolean("delete_after_backup", false)) }
+    var isBiometricEnabled by remember { mutableStateOf(prefsRepo.isBiometricEnabled()) }
+    var isAutoBackupEnabled by remember { mutableStateOf(prefsRepo.isAutoBackupFlag()) }
+    var deleteAfterBackup by remember { mutableStateOf(prefsRepo.isDeleteAfterBackup()) }
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = DarkSurface,
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -131,7 +130,7 @@ fun ToolboxDialog(
                 MainMenuSettingsMenuCard(
                     title = "Khóa Sinh trắc học",
                     subtitle = if (isBiometricEnabled) {
-                        val sec = sharedPrefs.getInt("biometric_lock_delay_sec", 10)
+                        val sec = prefsRepo.getBiometricLockDelaySec()
                         val delayLabel = when {
                             sec == 0 -> "khoá ngay"
                             sec < 60 -> "sau ${sec}s"
@@ -149,11 +148,11 @@ fun ToolboxDialog(
             Spacer(Modifier.height(AppSpacing.SM))
             if (showBiometricSettings) {
                 com.nas.naswebdav.ui.dialogs.DialogsBiometricSettingsDialog(
-                    sharedPrefs = sharedPrefs,
+                    prefsRepo = prefsRepo,
                     onDismiss = {
                         showBiometricSettings = false
-                        // Re-read from SharedPrefs to update card subtitle
-                        isBiometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                        // Re-read để cập nhật subtitle card
+                        isBiometricEnabled = prefsRepo.isBiometricEnabled()
                     }
                 )
             }

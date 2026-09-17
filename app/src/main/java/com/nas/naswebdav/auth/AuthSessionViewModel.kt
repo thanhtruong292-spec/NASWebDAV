@@ -20,9 +20,6 @@ import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -65,7 +62,7 @@ class AuthSessionViewModel(
 
     fun cancelLogin() {
         loginJob?.cancel()
-        WebDavManager.cancelActiveCalls()
+        WebDavManager.cancelActiveCalls(WebDavManager.CALL_GROUP_LOGIN)
         loginJob = null
         isLoading = false
         SharedStateHolder.updateConnectionStatus(ConnectionStatus.Cancelled)
@@ -106,8 +103,8 @@ class AuthSessionViewModel(
                     return@withContext false
                 }
 
-                // SP5 FIX: Channel.UNLIMITED thay vì default (rendezvous 0) — tránh suspend vĩnh viễn
-                val channel = Channel<Pair<Boolean, String>>(Channel.UNLIMITED)
+                // Bounded capacity = số URL — tránh leak buffer khi receiver thoát sớm
+                val channel = Channel<Pair<Boolean, String>>(capacity = urlList.size.coerceAtLeast(1))
                 val jobs = urlList.map { activeUrl ->
                     launch(Dispatchers.IO) {
                         if (activeUrl.isBlank()) {
@@ -223,25 +220,16 @@ class AuthSessionViewModel(
                 }
             }
 
-            // AuthSessionVM không gọi refresh() — FileBrowserVM owns that.
-            // Fire a signal so the orchestrator can trigger a refresh.
-            if (result2) {
-                _authSuccessSignal.value = true
-            }
+            // AuthSessionVM không gọi refresh() — FileBrowserVM owns that,
+            // triggered via onSuccess() callback ở caller (xem LoginScreen).
             loginJob = null
         }
     }
 
-    // ─── AUTH SUCCESS SIGNAL ───────────────────────────────────────────────
-    // After a successful login, the orchestrator observes this signal
-    // and calls FileBrowserVM.refresh() / showLatestPhotos() etc.
-
-    private val _authSuccessSignal = MutableStateFlow(false)
-    val authSuccessSignal: StateFlow<Boolean> = _authSuccessSignal.asStateFlow()
-
-    fun consumeAuthSuccessSignal() {
-        _authSuccessSignal.value = false
-    }
+    // ─── AUTH SUCCESS SIGNAL REMOVED ─────────────────────────────────────
+    // _authSuccessSignal / authSuccessSignal / consumeAuthSuccessSignal đã bị xóa:
+    // grep authSuccessSignal trong toàn project chỉ match chính file này — không có
+    // consumer nào. onSuccess() callback của connect() đã đủ cho orchestrator.
 
     // ─── SMART NETWORK ──────────────────────────────────────────────────────
 

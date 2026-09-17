@@ -11,6 +11,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,20 +31,34 @@ import kotlinx.coroutines.withContext
  */
 class LongRunningApiWorker(
     appContext: Context,
-    workerParams: WorkerParameters
+    workerParams: WorkerParameters,
+    private val httpClientProvider: () -> OkHttpClient
 ) : CoroutineWorker(appContext, workerParams) {
+
+    /** Constructor used by WorkManager's reflection-based worker factory. */
+    constructor(appContext: Context, workerParams: WorkerParameters) : this(
+        appContext,
+        workerParams,
+        { NasApplication.instance.longRunningApiClient }
+    )
 
     companion object {
         const val CHANNEL_ID = "long_running_api_channel"
         const val NOTIFICATION_ID = 9011
         private const val TAG = "LongRunAPI"
 
+        internal fun shouldRetry(error: Throwable, attempt: Int): Boolean =
+            attempt < 3 && (error is java.net.SocketTimeoutException ||
+                error is java.net.ConnectException ||
+                error is java.net.UnknownHostException ||
+                error is java.io.IOException)
+
         fun createChannel(context: Context) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Tác vụ NAS nặng",
+                CHANNEL_ID, context.getString(R.string.long_api_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Hiển thị tiến trình giải nén/sắp xếp file trên NAS"
+                description = context.getString(R.string.long_api_channel_description)
                 setShowBadge(false)
             }
             (context.getSystemService(NotificationManager::class.java))
@@ -60,7 +75,8 @@ class LongRunningApiWorker(
         val taskType = inputData.getString("taskType") ?: return@withContext Result.failure()
         val apiUrl = inputData.getString("apiUrl") ?: return@withContext Result.failure()
         val jsonBody = inputData.getString("jsonBody") ?: ""
-        val taskLabel = inputData.getString("taskLabel") ?: "Đang xử lý..."
+        val taskLabel = inputData.getString("taskLabel")
+            ?: applicationContext.getString(R.string.long_api_default_task_label)
 
         // Kết nối xác thực
         val user = SecurePrefsHelper.getUser(applicationContext)
@@ -72,7 +88,7 @@ class LongRunningApiWorker(
         val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setContentTitle(taskLabel)
-            .setContentText("Đang chờ NAS xử lý...")
+            .setContentText(applicationContext.getString(R.string.long_api_waiting))
             .setProgress(0, 0, true) // Indeterminate (vòng xoay)
             .setOngoing(true)
             .setSilent(true)
@@ -92,10 +108,31 @@ class LongRunningApiWorker(
                 }
             )
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            try {
-                androidx.core.app.NotificationManagerCompat.from(applicationContext)
-                    .notify(NOTIFICATION_ID, notificationBuilder.build())
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            val exName = e.javaClass.name
+            val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                && exName.contains("ForegroundServiceStartNotAllowed")
+            val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+            when {
+                isBgRestriction -> {
+                    android.util.Log.w(TAG, "Background restriction: skip foreground (worker continues)", e)
+                    try {
+                        androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                            .notify(NOTIFICATION_ID, notificationBuilder.build())
+                    } catch (_: Exception) {}
+                }
+                isMissingType -> {
+                    android.util.Log.e(TAG, "setForeground failed: missing foregroundServiceType", e)
+                    return@withContext Result.failure()
+                }
+                else -> {
+                    android.util.Log.w(TAG, "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+                    try {
+                        androidx.core.app.NotificationManagerCompat.from(applicationContext)
+                            .notify(NOTIFICATION_ID, notificationBuilder.build())
+                    } catch (_: Exception) {}
+                }
+            }
         }
 
         // Báo trạng thái cho UI
@@ -116,10 +153,11 @@ class LongRunningApiWorker(
                 .build()
 
             // Client với timeout cực lớn cho tác vụ NAS nặng, Fix Bug #41: dùng singleton client
-            val longClient = NasApplication.instance.longRunningApiClient
+            val longClient = httpClientProvider()
 
             longClient.newCall(request).execute().use { response ->
-                val body = response.body?.string() ?: ""
+                // OOM guard: task JSON nhỏ, từ chối body vượt cap thay vì đọc hết RAM.
+                val body = WebDavManager.readCappedBody(response, WebDavManager.MAX_JSON_BODY_BYTES) ?: ""
                 val isSuccess = response.isSuccessful
 
                 // Phân tích kết quả
@@ -127,18 +165,38 @@ class LongRunningApiWorker(
                     val json = org.json.JSONObject(body)
                     when (taskType) {
                         "UNZIP" -> {
-                            if (isSuccess) "Giải nén thành công! ✅"
-                            else "Giải nén thất bại: ${json.optString("error", "Mã ${response.code}")}"
+                            if (isSuccess) {
+                                applicationContext.getString(R.string.long_api_unzip_success)
+                            } else {
+                                applicationContext.getString(
+                                    R.string.long_api_unzip_failure,
+                                    json.optString("error", response.code.toString())
+                                )
+                            }
                         }
                         "ORGANIZE" -> {
                             val count = json.optInt("moved_count", 0)
-                            if (isSuccess) "Hoàn tất! Đã gom $count video. ✅"
-                            else "Lỗi sắp xếp: ${json.optString("error", "Mã ${response.code}")}"
+                            if (isSuccess) {
+                                applicationContext.getString(R.string.long_api_organize_success, count)
+                            } else {
+                                applicationContext.getString(
+                                    R.string.long_api_organize_failure,
+                                    json.optString("error", response.code.toString())
+                                )
+                            }
                         }
-                        else -> if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
+                        else -> if (isSuccess) {
+                            applicationContext.getString(R.string.long_api_success)
+                        } else {
+                            applicationContext.getString(R.string.long_api_failure_code, response.code)
+                        }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
-                    if (isSuccess) "Hoàn tất! ✅" else "Lỗi: Mã ${response.code}"
+                    if (isSuccess) {
+                        applicationContext.getString(R.string.long_api_success)
+                    } else {
+                        applicationContext.getString(R.string.long_api_failure_code, response.code)
+                    }
                 }
 
                 // Báo cáo kết quả cho UI
@@ -185,14 +243,24 @@ class LongRunningApiWorker(
             setProgress(workDataOf(
                 "status" to "error",
                 "taskType" to taskType,
-                "message" to safeDataText("Lỗi kết nối: ${e.message}")
+                "message" to safeDataText(
+                    applicationContext.getString(
+                        R.string.long_api_connection_error,
+                        e.message.orEmpty()
+                    )
+                )
             ))
 
             // Notification lỗi
             val errorNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("$taskLabel — Thất bại")
-                .setContentText("Lỗi: ${e.message?.take(100)}")
+                .setContentTitle(applicationContext.getString(R.string.long_api_failed_title, taskLabel))
+                .setContentText(
+                    applicationContext.getString(
+                        R.string.long_api_error_short,
+                        e.message?.take(100).orEmpty()
+                    )
+                )
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             try {
@@ -204,12 +272,15 @@ class LongRunningApiWorker(
             try {
                 NasApplication.instance.database.logDao().insertLog(SystemLog(
                     type = "ERROR", module = "NAS API",
-                    message = "$taskLabel thất bại: ${e.message?.take(100)}"
+                    message = applicationContext.getString(
+                        R.string.long_api_failed_log,
+                        taskLabel,
+                        e.message?.take(100).orEmpty()
+                    )
                 ))
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
-            val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException || e is java.io.IOException
-            if (isTransient && runAttemptCount < 3) {
+            if (shouldRetry(e, runAttemptCount)) {
                 android.util.Log.w(TAG, "Transient error in LongRunningApiWorker (attempt $runAttemptCount), retrying: ${e.message}")
                 return@withContext Result.retry()
             }

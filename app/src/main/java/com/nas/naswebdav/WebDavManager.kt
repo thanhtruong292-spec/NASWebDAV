@@ -50,6 +50,8 @@ import kotlinx.coroutines.sync.withLock
 
 
 
+// @Immutable: toàn val immutable — Compose skip recomposition khi equals không đổi.
+@androidx.compose.runtime.Immutable
 data class NasFile(
 
     val name: String,
@@ -160,6 +162,38 @@ object WebDavManager {
     fun currentAuthState(): AuthState = authState
 
     private const val LOGIN_CALL_GROUP = "login"
+    const val CALL_GROUP_LOGIN = "login"
+    const val CALL_GROUP_BROWSER = "browser"
+    const val CALL_GROUP_TRANSFER = "transfer"
+
+    // OOM guard: giới hạn kích thước body đọc vào RAM cho PROPFIND/error/JSON nhỏ.
+    // PROPFIND Depth:1 một thư mục thường < 1MB; 8MB đủ cho ~20k entries.
+    const val MAX_PROPFIND_BYTES = 8L * 1024 * 1024
+    const val MAX_PROPFIND_ENTRIES = 20_000
+    const val MAX_PROPFIND_PARSE_STEPS = 500_000
+    const val MAX_ERROR_BODY_BYTES = 8 * 1024
+    const val MAX_JSON_BODY_BYTES = 256 * 1024
+
+    /**
+     * Đọc response body tối đa [maxBytes], tự đóng stream.
+     * Trả null khi body rỗng hoặc vượt cap (tránh OOM thư viện lớn).
+     */
+    fun readCappedBody(response: okhttp3.Response, maxBytes: Int): String? {
+        val body = response.body ?: return null
+        body.byteStream().use { stream ->
+            val out = java.io.ByteArrayOutputStream(minOf(maxBytes, 8192))
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val read = stream.read(buffer)
+                if (read <= 0) break
+                total += read
+                if (total > maxBytes) return null
+                out.write(buffer, 0, read)
+            }
+            return out.toString("UTF-8")
+        }
+    }
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
         return tag(AuthState::class.java, auth)
@@ -310,7 +344,14 @@ object WebDavManager {
 
     }
 
-    fun cancelActiveCalls(group: String = LOGIN_CALL_GROUP) {
+    /**
+     * Cancel calls thuộc [group] (CALL_GROUP_*). Không default param —
+     * caller phải chỉ định explicit để tránh cancel nhầm scope.
+     */
+    fun cancelLoginCalls() = cancelActiveCalls(CALL_GROUP_LOGIN)
+    fun cancelBrowserCalls() = cancelActiveCalls(CALL_GROUP_BROWSER)
+    fun cancelTransferCalls() = cancelActiveCalls(CALL_GROUP_TRANSFER)
+    fun cancelActiveCalls(group: String) {
         fun cancelMatching(calls: List<okhttp3.Call>) {
             calls.filter { it.request().tag(String::class.java) == group }
                 .forEach { it.cancel() }
@@ -377,6 +418,10 @@ object WebDavManager {
 
     // KIẾN TRÚC DOANH NGHIỆP: Truy vấn thông số tệp (Kích thước, ETag) an toàn, ĐÓNG kết nối ngay để tránh sập Connection Pool của OkHttp
 
+    /** ETag hiện tại của file trên NAS (null nếu chưa tồn tại/lỗi) — dùng cho If-Match khi upload. */
+    suspend fun getFileETag(url: String): String? =
+        headFileHeaders(url)?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+
     suspend fun headFileHeaders(url: String): okhttp3.Headers? = withContext(Dispatchers.IO) {
 
         try {
@@ -437,7 +482,7 @@ object WebDavManager {
             .url(safeUrl)
             .method("PROPFIND", propfindBody)
             .header("Depth", "1")
-
+            .withCallGroup(CALL_GROUP_BROWSER)
             .build()
 
             
@@ -446,8 +491,14 @@ object WebDavManager {
 
         sardineClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200) ?: ""
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200) ?: ""
                 throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
+            }
+
+            // OOM guard: từ chối PROPFIND quá lớn trước khi parse.
+            val declaredLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
+            if (declaredLength > MAX_PROPFIND_BYTES) {
+                throw Exception("Thư mục quá lớn (${declaredLength / 1024 / 1024}MB), dùng tìm kiếm hoặc chia nhỏ thư mục")
             }
 
             val byteStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
@@ -467,11 +518,19 @@ object WebDavManager {
                 var currentModTime = 0L
                 var insideResponse = false
                 var textBuffer = ""
+                // Tolerant: NAS firmware lạ có thể trả XML phình to mà
+                // Content-Length/chunked — giới hạn vòng lặp parse.
+                var parseSteps = 0
 
                 while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (++parseSteps > MAX_PROPFIND_PARSE_STEPS) {
+                        throw Exception("Thư mục quá nhiều file, dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    // Tolerant: tag lạ/namespace prefix bất thường → bỏ qua tag đó.
+                    val tagName = runCatching { parser.name?.lowercase()?.substringAfter(':') ?: "" }.getOrDefault("")
                     when (eventType) {
                         org.xmlpull.v1.XmlPullParser.START_TAG -> {
-                            val name = parser.name.lowercase()
+                            val name = tagName
                             if (name == "response") {
                                 insideResponse = true
                                 currentHref = ""
@@ -485,10 +544,12 @@ object WebDavManager {
                             }
                         }
                         org.xmlpull.v1.XmlPullParser.TEXT -> {
-                            textBuffer = parser.text
+                            // OOM guard: text node đơn (vd. href dài bất thường) không tràn RAM.
+                            val text = parser.text ?: ""
+                            textBuffer = if (text.length > 8192) text.take(8192) else text
                         }
                         org.xmlpull.v1.XmlPullParser.END_TAG -> {
-                            val name = parser.name.lowercase()
+                            val name = tagName
                             if (insideResponse) {
                                 when (name) {
                                     "href" -> currentHref = textBuffer.trim()
@@ -525,6 +586,9 @@ object WebDavManager {
                                                 }
                                                 val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri
                                                 result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
+                                                if (result.size > MAX_PROPFIND_ENTRIES) {
+                                                    throw Exception("Thư mục quá nhiều file (>${MAX_PROPFIND_ENTRIES}), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                                                }
                                             }
                                         }
                                         insideResponse = false
@@ -533,7 +597,11 @@ object WebDavManager {
                             }
                         }
                     }
-                    eventType = parser.next()
+                    eventType = runCatching { parser.next() }.getOrElse {
+                        // Tolerant: chunk XML hỏng giữa chừng → giữ entries đã parse.
+                        android.util.Log.w("NAS_XML", "XML PROPFIND hỏng giữa chừng, giữ ${result.size} entries đã parse")
+                        org.xmlpull.v1.XmlPullParser.END_DOCUMENT
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
@@ -619,6 +687,7 @@ object WebDavManager {
 
         val requestBuilder = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
         currentETag?.let { requestBuilder.header("If-Match", it) }
+        requestBuilder.withCallGroup(CALL_GROUP_TRANSFER)
         val request = requestBuilder.build()
 
         // OPTIMIZE: dùng thẳng optimizedClient — không tạo builder mới mỗi lần upload
@@ -814,6 +883,8 @@ object WebDavManager {
 
                 .header("Range", "bytes=0-1048575")
 
+                .withCallGroup(CALL_GROUP_TRANSFER)
+
                 .build()
 
             optimizedClient.newCall(request).execute().use { response ->
@@ -841,16 +912,23 @@ object WebDavManager {
      */
     suspend fun getSha256PhoneStream(url: String): String? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().withAuth(authState)
-                .url(url)
-                .header("Range", "bytes=0-1048575")
-                .build()
-            optimizedClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful && response.code != 206) return@withContext null
-                val stream = response.body?.byteStream() ?: return@withContext null
-                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
-                    .takeIf { it.isNotEmpty() }
+            // Timeout 30s — tránh block hash stage vô hạn khi NAS không phản hồi
+            kotlinx.coroutines.withTimeout(30_000L) {
+                val request = Request.Builder().withAuth(authState)
+                    .url(url)
+                    .header("Range", "bytes=0-1048575")
+                    .withCallGroup(CALL_GROUP_TRANSFER)
+                    .build()
+                optimizedClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful && response.code != 206) return@withTimeout null
+                    val stream = response.body?.byteStream() ?: return@withTimeout null
+                    stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256Partial(it, 1048576L) }
+                        .takeIf { it.isNotEmpty() }
+                }
             }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            android.util.Log.w("WebDavManager", "getSha256PhoneStream timeout 30s: $url")
+            null
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
 
@@ -948,7 +1026,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "DELETE failed: ${response.code}$suffix")
                 throw java.io.IOException("DELETE failed: ${response.code}$suffix")
@@ -962,7 +1040,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "MOVE failed: ${response.code}$suffix")
                 throw java.io.IOException("MOVE failed: ${response.code}$suffix")
@@ -976,7 +1054,7 @@ object WebDavManager {
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                val errorBody = response.body?.string()?.take(200)?.trim().orEmpty()
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
                 val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
                 android.util.Log.w("WebDAV", "COPY failed: ${response.code}$suffix")
                 throw java.io.IOException("COPY failed: ${response.code}$suffix")
@@ -999,7 +1077,8 @@ object WebDavManager {
 
     suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(url).build()
+        val request = Request.Builder().withAuth(authState).url(url)
+            .withCallGroup(CALL_GROUP_TRANSFER).build()
 
         optimizedClient.newCall(request).execute().use { response ->
 
@@ -1033,7 +1112,7 @@ object WebDavManager {
 
     fun extractApiError(response: okhttp3.Response): String? {
         return runCatching {
-            val bodyStr = response.body?.string() ?: ""
+            val bodyStr = readCappedBody(response, MAX_JSON_BODY_BYTES) ?: ""
             if (bodyStr.isNotBlank()) {
                 val jsonErr = runCatching { org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null } }.getOrNull()
                 if (!jsonErr.isNullOrBlank()) return@runCatching jsonErr
@@ -1152,6 +1231,12 @@ class WebDavRepository(
         database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
+    // Tìm kiếm cache giới hạn trong root — thay full-table scan 25k rows.
+    suspend fun searchCacheUnder(rootPrefix: String, keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
+        database.fileDao().searchFilesUnder(rootPrefix, keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+    }
+
+    @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")
     suspend fun getAllFilesForMap(): List<NasFile> = withContext(Dispatchers.IO) {
         database.fileDao().getAllFilesForMap().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }

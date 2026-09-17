@@ -2,6 +2,10 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.ui.screens.*
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -184,7 +188,7 @@ fun LivestreamRecordDialog(
     val activePlatform = detectedPlatform.ifEmpty { "livestream" }
     val platformIcon = when (activePlatform) { "tiktok" -> "🎵"; "facebook" -> "📘"; "youtube" -> "▶️"; "shopee" -> "🛒"; else -> "📹" }
     val platformName = when (activePlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
-    val accentColor = when (activePlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
+    val accentColor = when (activePlatform) { "tiktok" -> AccentRed; "facebook" -> AccentBlue; "youtube" -> AccentRed; else -> AccentOrange }
 
     // ScrollState chia se cho toan dialog — khi user mo 1 panel thi tu dong scroll
     // de panel content lo ra ngoai cua so visible (khong bi an duoi day man hinh).
@@ -207,12 +211,9 @@ fun LivestreamRecordDialog(
         }
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -228,12 +229,12 @@ fun LivestreamRecordDialog(
                 Text(platformIcon, fontSize = 22.sp)
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Ghi hình Livestream", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("Ghi trực tiếp vào NAS HDD", color = Color(0xFF8892B0), fontSize = 12.sp)
+                    Text("Ghi hình Livestream", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Ghi trực tiếp vào NAS HDD", color = TextTertiary, fontSize = 12.sp)
                 }
                 if (activeLivestreams.isNotEmpty()) {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Thu nhỏ", tint = Color.Gray)
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Thu nhỏ", tint = TextTertiary)
                     }
                 }
             }
@@ -244,7 +245,7 @@ fun LivestreamRecordDialog(
                     selected = livePanelMode == "watch",
                     label = "Theo dõi người dùng",
                     emoji = "👤",
-                    accentColor = Color(0xFFEE1D52),
+                    accentColor = AccentRed,
                     onClick = { livePanelMode = "watch" },
                     modifier = Modifier.weight(1f),
                 )
@@ -283,7 +284,7 @@ fun LivestreamRecordDialog(
                 trailingIcon = {
                     if (liveUrl.isNotEmpty()) {
                         IconButton(onClick = { liveUrl = "" }, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color(0xFF8892B0), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = TextTertiary, modifier = Modifier.size(18.dp))
                         }
                     } else if (detectedPlatform.isNotEmpty()) {
                         Text(platformIcon, fontSize = 18.sp)
@@ -305,7 +306,7 @@ fun LivestreamRecordDialog(
                 Spacer(Modifier.height(6.dp))
             }
             
-            Text("CHẤT LƯỢNG", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("CHẤT LƯỢNG", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
@@ -318,10 +319,10 @@ fun LivestreamRecordDialog(
                             selectedContainerColor = accentColor.copy(alpha = 0.2f),
                             selectedLabelColor = accentColor,
                             containerColor = Color.Transparent,
-                            labelColor = Color(0xFF8892B0)
+                            labelColor = TextTertiary
                         ),
                         border = FilterChipDefaults.filterChipBorder(
-                            borderColor = Color(0xFF8892B0).copy(alpha = 0.2f),
+                            borderColor = TextTertiary.copy(alpha = 0.2f),
                             selectedBorderColor = accentColor.copy(alpha = 0.5f),
                             enabled = true,
                             selected = selected
@@ -334,7 +335,7 @@ fun LivestreamRecordDialog(
             if (liveVM.isStartingLivestream) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = accentColor, strokeWidth = 2.dp)
+                    NasLoadingSpinner(size = 24.dp, color = accentColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(liveVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -345,7 +346,7 @@ fun LivestreamRecordDialog(
                     liveVM.clearLivestreamMessage()
                 }
                 Spacer(Modifier.height(6.dp))
-                val msgColor = if (message.startsWith("Lỗi")) Color.Red else Color(0xFF8892B0)
+                val msgColor = if (message.startsWith("Lỗi")) AccentRed else TextTertiary
                 Text(
                     message, color = msgColor, fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth().clickable { liveVM.clearLivestreamMessage() },
@@ -353,7 +354,7 @@ fun LivestreamRecordDialog(
                 )
             } else {
                 Spacer(Modifier.height(8.dp))
-                Button(
+                NasGradientButton(
                     onClick = {
                         if (liveUrl.isNotBlank() && !liveVM.isStartingLivestream) {
                             val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
@@ -372,15 +373,12 @@ fun LivestreamRecordDialog(
                             }
                         }
                     },
+                    text = if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI",
                     enabled = liveUrl.isNotBlank() && !isResolvingTikTokLink,
-                    modifier = Modifier.fillMaxWidth().height(42.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Icon(Icons.Default.AddCircle, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (isResolvingTikTokLink) "ĐANG LẤY USER..." else "BẮT ĐẦU GHI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                }
+                    height = 42.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    icon = { Icon(Icons.Default.AddCircle, null, tint = TextPrimary, modifier = Modifier.size(18.dp)) }
+                )
             }
             }
 
@@ -391,7 +389,7 @@ fun LivestreamRecordDialog(
             // động đóng các panel khác (watchlist + exclude) thông qua LivestreamPanelState.
             val activeExpanded = LivestreamPanelState.current.value == "active"
             if (activeLivestreams.isNotEmpty()) {
-                HorizontalDivider(color = Color.DarkGray)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -404,17 +402,17 @@ fun LivestreamRecordDialog(
                 ) {
                     val pulse = rememberInfiniteTransition(label = "rec_pulse")
                     val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.4f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "rec_alpha")
-                    Box(Modifier.size(8.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                    Box(Modifier.size(8.dp).background(AccentRed.copy(alpha = alpha), CircleShape))
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "ĐANG GHI HÌNH (${activeLivestreams.size})",
-                        color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                        color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
                         if (activeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         contentDescription = if (activeExpanded) "Ẩn" else "Mở",
-                        tint = Color(0xFF9AA3B8),
+                        tint = TextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -431,7 +429,7 @@ fun LivestreamRecordDialog(
                     activeLivestreams.forEach { job ->
                         val jobPlatform = job.platform.ifEmpty { "livestream" }
                         val jobPlatformName = when (jobPlatform) { "tiktok" -> "TikTok"; "facebook" -> "Facebook"; "youtube" -> "YouTube"; "shopee" -> "Shopee"; else -> "Livestream" }
-                        val jobAccentColor = when (jobPlatform) { "tiktok" -> Color(0xFFEE1D52); "facebook" -> Color(0xFF1877F2); "youtube" -> Color(0xFFFF0000); else -> Color(0xFFFF6B35) }
+                        val jobAccentColor = when (jobPlatform) { "tiktok" -> AccentRed; "facebook" -> AccentBlue; "youtube" -> AccentRed; else -> AccentOrange }
 
                         Column(
                             Modifier.fillMaxWidth()
@@ -442,9 +440,9 @@ fun LivestreamRecordDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val pulse = rememberInfiniteTransition(label = "pulse")
                                 val alpha by pulse.animateFloat(initialValue = 1f, targetValue = 0.3f, animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "pulseAlpha")
-                                Box(Modifier.size(10.dp).background(Color.Red.copy(alpha = alpha), CircleShape))
+                                Box(Modifier.size(10.dp).background(AccentRed.copy(alpha = alpha), CircleShape))
                                 Spacer(Modifier.width(8.dp))
-                                Text("GHI HÌNH", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                Text("GHI HÌNH", color = AccentRed, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 Spacer(Modifier.weight(1f))
                                 Text(jobPlatformName, color = jobAccentColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
@@ -455,7 +453,7 @@ fun LivestreamRecordDialog(
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 // Cot 1: Thoi gian chay
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Thời gian chạy", color = Color(0xFF8892B0), fontSize = 10.sp)
+                                    Text("Thời gian chạy", color = TextTertiary, fontSize = 10.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
                                     LaunchedEffect(job.jobId, job.durationSeconds) {
                                         localSeconds = job.durationSeconds
@@ -467,30 +465,30 @@ fun LivestreamRecordDialog(
                                         }
                                     }
                                     val displayDur = "${localSeconds / 3600}h${String.format(java.util.Locale.US, "%02d", (localSeconds % 3600) / 60)}m${String.format(java.util.Locale.US, "%02d", localSeconds % 60)}s"
-                                    Text(displayDur, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text(displayDur, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 2: Toc do (giua, ngang voi 2 cot kia)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Tốc độ", color = Color(0xFF8892B0), fontSize = 10.sp)
-                                    Text(job.speed.ifEmpty { "—" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("Tốc độ", color = TextTertiary, fontSize = 10.sp)
+                                    Text(job.speed.ifEmpty { "—" }, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 3: Dung luong (align phai)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                                    Text("Dung lượng", color = Color(0xFF8892B0), fontSize = 10.sp)
-                                    Text(job.fileSize.ifEmpty { "0 B" }, color = Color(0xFFE8E8E8), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                    Text("Dung lượng", color = TextTertiary, fontSize = 10.sp)
+                                    Text(job.fileSize.ifEmpty { "0 B" }, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = Color(0xFF8892B0), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = TextTertiary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
                                 onClick = { liveVM.stopLivestreamRecord(job.jobId) },
                                 modifier = Modifier.fillMaxWidth().height(38.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f)),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentRed.copy(alpha = 0.15f)),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Icon(Icons.Default.Stop, null, tint = Color.Red, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Stop, null, tint = AccentRed, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("DỪNG GHI", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("DỪNG GHI", color = AccentRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
                     }
@@ -501,21 +499,10 @@ fun LivestreamRecordDialog(
                 Spacer(Modifier.height(12.dp))
             }
         }
-        SnackbarHost(
+        com.nas.naswebdav.ui.components.NasSnackbarHost(
             hostState = tiktokSnackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-        ) { data ->
-            Snackbar(
-                snackbarData = data,
-                containerColor = Color(0xFF1A1A24),
-                contentColor = Color(0xFFE8E8E8),
-                actionColor = Color(0xFF4DD0E1),
-                shape = RoundedCornerShape(8.dp)
-            )
-        }
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
         }
     }
 }

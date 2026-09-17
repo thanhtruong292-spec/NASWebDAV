@@ -118,46 +118,30 @@ class AutoBackupViewModel(
     }
 
     fun triggerManualBackup(context: Context, onResult: (String) -> Unit) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            if (!android.os.Environment.isExternalStorageManager()) {
-                onResult("Thiếu quyền truy cập tất cả tệp. Đang mở cài đặt...")
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        addCategory("android.intent.category.DEFAULT")
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    try {
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 } catch (e2: Exception) {
-                        android.util.Log.e("AutoBackup", "Failed to open settings", e2)
-                    }
+        // P0-6: Dùng READ_MEDIA_* + SAF (Storage Access Framework).
+        // AutoBackupWorker đọc media qua MediaStore ContentResolver + SAF fallback.
+        // KHÔNG cần MANAGE_EXTERNAL_STORAGE (Google Play policy violation).
+        // FIX Android 14+: Xử lý partial access (READ_MEDIA_VISUAL_USER_SELECTED).
+        val perm = com.nas.naswebdav.utils.MediaPermissionHelper
+        val sdk = android.os.Build.VERSION.SDK_INT
+
+        if (perm.hasNoMediaAccess(context)) {
+            // Không có quyền → mở Settings để cấp quyền
+            onResult("Thiếu quyền truy cập Media. Đang mở cài đặt để bạn cấp quyền...")
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = android.net.Uri.fromParts("package", context.packageName, null)
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                return
+                context.startActivity(intent)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.e("AutoBackup", "Failed to open settings", e)
             }
-        } else {
-            val permissions = mutableListOf<String>()
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                permissions.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (permissions.isNotEmpty()) {
-                onResult("Thiếu quyền Media. Đang mở cài đặt để bạn cấp quyền...")
-                try {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                        addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.e("AutoBackup", "Failed to open settings", e)
-                }
-                return
-            }
+            return
         }
+
+        val isPartialAccess = sdk >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            && perm.hasPartialVisualAccess(context) && !perm.canRunPeriodicBackup(context)
 
         viewModelScope.launch(Dispatchers.IO) {
             val url = com.nas.naswebdav.SmartNetworkManager.getActiveBaseUrl(context)
@@ -170,7 +154,12 @@ class AutoBackupViewModel(
             }
 
             kotlinx.coroutines.withContext(Dispatchers.Main) {
-                onResult("Quyền đã được cấp đầy đủ! Đang bắt đầu đồng bộ nền...")
+                // FIX:partial access → hiển thị cảnh báo thay vì "đầy đủ quyền"
+                if (isPartialAccess) {
+                    onResult("Chế độ ảnh một phần: Worker sẽ bỏ qua ảnh ngoài danh sách chọn.")
+                } else {
+                    onResult("Quyền đã được cấp đầy đủ! Đang bắt đầu đồng bộ nền...")
+                }
                 isAutoBackupRunning = true
                 autoBackupCurrentFile = "Đang xếp hàng đồng bộ..."
             }

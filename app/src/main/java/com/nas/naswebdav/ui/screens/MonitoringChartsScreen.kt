@@ -15,6 +15,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Offset
@@ -29,27 +30,27 @@ import com.nas.naswebdav.LocalSystemMonitorVM
 import com.nas.naswebdav.MetricsSnapshot
 
 
-private val _ChartDarkCard    = Color(0xFF0F0F0F)
+private val _ChartDarkCard    = DarkSurface
 private val _ChartDarkSurface = Color.Black
-private val _ChartAccentBlue  = Color(0xFF2196F3)
-private val _ChartAccentCyan  = Color(0xFF00D2FF)
-private val _ChartAccentGreen = Color(0xFF00E676)
-private val _ChartAccentOrange= Color(0xFFFF9100)
-private val _ChartAccentRed   = Color(0xFFFF1744)
-private val _ChartAccentPurple= Color(0xFFBB86FC)
-private val _ChartAccentPink  = Color(0xFFFF6EC7)
-private val _ChartTextPrimary = Color(0xFFE8E8E8)
-private val _ChartTextSecond  = Color(0xFF8892B0)
-private val _ChartPanelTitle  = Color(0xFF4DD0E1)
-private val _ChartReportTitle = Color(0xFFB388FF)
+private val _ChartAccentBlue  = AccentBlue
+private val _ChartAccentCyan  = AccentCyan
+private val _ChartAccentGreen = AccentGreen
+private val _ChartAccentOrange= AccentOrange
+private val _ChartAccentRed   = AccentRed
+private val _ChartAccentPurple= AccentPurple
+private val _ChartAccentPink  = AccentPink
+private val _ChartTextPrimary = TextPrimary
+private val _ChartTextSecond  = TextTertiary
+private val _ChartPanelTitle  = AccentCyan
+private val _ChartReportTitle = AccentPurple
 private val _ChartPanelTitleSize = 11.sp
 private val _ChartPanelTitleLetterSpacing = 1.5.sp
 
 // Ke thua nguong tu GaugeCard (MainMenuScreen.kt) de bieu do duong dong bo voi GaugeCard tron.
 // Mau: Do 0xFFEF5350 / Vang 0xFFFFC400 (vang am thuan, dam hon Material 400 mat) / Xanh 0xFF66BB6A
-private val _StatusRed    = Color(0xFFEF5350)
-private val _StatusYellow = Color(0xFFFFC400)
-private val _StatusGreen  = Color(0xFF66BB6A)
+private val _StatusRed    = AccentRed
+private val _StatusYellow = AccentOrange
+private val _StatusGreen  = AccentGreen
 
 private fun percentStatusColor(latest: Float): Color = when {
     latest >= 90f -> _StatusRed
@@ -60,25 +61,25 @@ private fun percentStatusColor(latest: Float): Color = when {
 private fun cpuTempStatusColor(v: Float): Color = when {
     v >= 80f -> _StatusRed
     v >= 60f -> _StatusYellow
-    else -> Color(0xFFFF5252)
+    else -> AccentRed
 }
 
 private fun hddTempStatusColor(v: Float): Color = when {
     v >= 55f -> _StatusRed
     v >= 45f -> _StatusYellow
-    else -> Color(0xFF00E5FF)
+    else -> AccentCyan
 }
 
 private fun cpuPercentStatusColor(v: Float): Color = when {
     v >= 90f -> _StatusRed
     v >= 70f -> _StatusYellow
-    else -> Color(0xFFFF9100)
+    else -> AccentOrange
 }
 
 private fun ramPercentStatusColor(v: Float): Color = when {
     v >= 90f -> _StatusRed
     v >= 70f -> _StatusYellow
-    else -> Color(0xFF00B0FF)
+    else -> AccentBlue
 }
 
 // Linear blend ARGB cho 2 mau de doan noi 2 diem nhiet do/ phan tram khac mau
@@ -182,7 +183,7 @@ fun MonitoringChartCard() {
                     val sel = i == sysMonitorVM.metricsChartTab
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (sel) Color(0xFF1B5E20).copy(alpha = 0.5f) else _ChartDarkSurface,
+                        color = if (sel) TrackGreen.copy(alpha = 0.5f) else _ChartDarkSurface,
                         modifier = Modifier.weight(1f).clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -194,7 +195,7 @@ fun MonitoringChartCard() {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (sel) {
-                                Box(Modifier.size(6.dp).background(Color(0xFFFF1744), androidx.compose.foundation.shape.CircleShape))
+                                Box(Modifier.size(6.dp).background(AccentRed, androidx.compose.foundation.shape.CircleShape))
                                 Spacer(Modifier.width(4.dp))
                             }
                             Text(label, fontSize = 10.sp,
@@ -360,16 +361,16 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
     // - HDD / RAM: Nét đứt (Dashed Line), màu Cyan (#00E5FF) / Xanh Dương (#00B0FF) khi bình thường
     val series: List<Series> = when (tabIndex) {
         0 -> listOf(
-            Series(cpuTempVals, Color(0xFFFF5252), "CPU", "°C", Icons.Default.Memory, isDashed = false, colorOf = ::cpuTempStatusColor),
-            Series(hddTempVals, Color(0xFF00E5FF), "HDD", "°C", Icons.Default.Storage, isDashed = true, colorOf = ::hddTempStatusColor)
+            Series(cpuTempVals, AccentRed, "CPU", "°C", Icons.Default.Memory, isDashed = false, colorOf = ::cpuTempStatusColor),
+            Series(hddTempVals, AccentCyan, "HDD", "°C", Icons.Default.Storage, isDashed = true, colorOf = ::hddTempStatusColor)
         )
         1 -> listOf(
-            Series(cpuPctVals, Color(0xFFFF9100), "CPU", "%", Icons.Default.Speed, isDashed = false, colorOf = ::cpuPercentStatusColor),
-            Series(ramPctVals, Color(0xFF00B0FF), "RAM", "%", Icons.Default.DeveloperBoard, isDashed = true, colorOf = ::ramPercentStatusColor)
+            Series(cpuPctVals, AccentOrange, "CPU", "%", Icons.Default.Speed, isDashed = false, colorOf = ::cpuPercentStatusColor),
+            Series(ramPctVals, AccentBlue, "RAM", "%", Icons.Default.DeveloperBoard, isDashed = true, colorOf = ::ramPercentStatusColor)
         )
         else -> listOf(
-            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFF00E676), "Tải về", " MB/s", Icons.Default.ArrowDownward, isDashed = false),
-            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, Color(0xFFFF4081), "Tải lên", " MB/s", Icons.Default.ArrowUpward, isDashed = true)
+            Series(history.map { (it.netRxKbps / 1024f).coerceAtLeast(0f) }, AccentGreen, "Tải về", " MB/s", Icons.Default.ArrowDownward, isDashed = false),
+            Series(history.map { (it.netTxKbps / 1024f).coerceAtLeast(0f) }, AccentPink, "Tải lên", " MB/s", Icons.Default.ArrowUpward, isDashed = true)
         )
     }
 
@@ -463,7 +464,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
                 // Paint nhãn thời gian cho trục X tại mốc dọc
                 val xTimePaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(180, 136, 146, 176) // #8892B0 70% alpha
+                    color = ChartGridline.toArgb()
                     textSize = textPx * 0.9f
                     textAlign = android.graphics.Paint.Align.CENTER
                     isAntiAlias = true
@@ -478,7 +479,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     val gridVal = maxVal - fraction * (maxVal - minVal)
 
                     drawLine(
-                        color = Color(0x22FFFFFF),
+                        color = TextPrimary.copy(alpha = 0.13f),
                         start = Offset(leftPad, y),
                         end = Offset(w, y),
                         strokeWidth = 0.6f * density
@@ -507,7 +508,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         val vx = leftPad + (pIdx.toFloat() / (sampleSize - 1)) * usableW
                         
                         drawLine(
-                            color = Color(0x1CFFFFFF),
+                            color = TextPrimary.copy(alpha = 0.11f),
                             start = Offset(vx, topPad),
                             end = Offset(vx, topPad + usableH),
                             strokeWidth = 0.5f * density,
@@ -601,7 +602,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                         val lastY = yOf(pts.last())
                         val lastColor = colorFn(pts.last())
                         drawCircle(lastColor, 3.5f * density, Offset(xOf(pts.lastIndex), lastY))
-                        drawCircle(Color.White, 1.5f * density, Offset(xOf(pts.lastIndex), lastY))
+                        drawCircle(TextPrimary, 1.5f * density, Offset(xOf(pts.lastIndex), lastY))
                     }
                 }
 
@@ -611,7 +612,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     if (touchedIndex < pts0.size) {
                         val cx = leftPad + (touchedIndex.toFloat() / (pts0.size - 1)) * usableW
 
-                        drawLine(Color.White, Offset(cx, topPad), Offset(cx, topPad + usableH), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
+                        drawLine(TextPrimary, Offset(cx, topPad), Offset(cx, topPad + usableH), strokeWidth = 1f * density, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f)))
 
                         val tsText = history[touchedIndex].timestamp
                         val timeStr = if (tsText.length >= 19) tsText.substring(11, 19) else tsText
@@ -647,7 +648,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
                             drawCircle(s.color.copy(alpha = 0.4f), 8f * density, Offset(cx, cy))
                             drawCircle(s.color, 5f * density, Offset(cx, cy))
-                            drawCircle(Color.White, 2.5f * density, Offset(cx, cy))
+                            drawCircle(TextPrimary, 2.5f * density, Offset(cx, cy))
 
                             val fmt = if (tabIndex == 2) "%.2f" else "%.1f"
                             val label = "${fmt.format(v)}${s.unit}"
@@ -697,8 +698,8 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
             val prefixText = if (touchedIndex != -1) "Mốc vuốt: " else "Cập nhật lúc: "
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(Icons.Default.Schedule, null, tint = Color(0xFF8892B0), modifier = Modifier.size(12.dp))
-                Text("$prefixText$timeLabel", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Medium)
+                Icon(Icons.Default.Schedule, null, tint = TextTertiary, modifier = Modifier.size(12.dp))
+                Text("$prefixText$timeLabel", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Medium)
             }
         }
     }

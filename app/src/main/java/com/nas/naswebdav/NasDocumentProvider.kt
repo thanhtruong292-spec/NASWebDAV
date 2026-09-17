@@ -10,12 +10,18 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
 import androidx.annotation.GuardedBy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.Constraints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.asContextElement
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.concurrent.TimeUnit
 
 class NasDocumentProvider : DocumentsProvider() {
 
@@ -164,7 +170,8 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryDocument timeout sau 10s")
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("NasDocProvider", "queryDocument failed: ${e.message}")
             }
         }
         return result
@@ -191,7 +198,8 @@ class NasDocumentProvider : DocumentsProvider() {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 android.util.Log.w("NasDocProvider", "queryChildDocuments timeout sau 10s — trả về cursor rỗng")
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("NasDocProvider", "queryChildDocuments failed: ${e.message}")
             }
         }
         return result
@@ -215,25 +223,88 @@ class NasDocumentProvider : DocumentsProvider() {
         val fileExtension = targetId.trimEnd('/').substringAfterLast('.', "")
 
         if (isWrite) {
+            // DocumentsProvider write path design constraint:
+            //   - Caller CẦN PFD ngay để bắt đầu ghi → KHÔNG được block openDocument()
+            //     chờ upload (sẽ deadlock: callback chỉ chạy sau khi caller đóng PFD).
+            //   - Sau khi caller đóng PFD, HTTP status chỉ về SAU → caller đã thấy
+            //     "ghi thành công" và không nhận được exception qua return value.
+            //
+            // Fix: fire-and-forget upload qua applicationScope. Upload failure
+            // được báo qua 3 kênh (1) System log (SystemLogger), (2) system
+            // notification cho user, (3) file temp được giữ lại trong cacheDir
+            // với tên có timestamp để user/developer recover thủ công.
             val tempFile = File(context?.cacheDir, "nas_write_${System.currentTimeMillis()}.$fileExtension")
             tempFile.createNewFile()
 
             val handler = Handler(Looper.getMainLooper())
             return ParcelFileDescriptor.open(tempFile, accessMode, handler) { err ->
+                // Callback chạy SAU khi caller đóng fd → file đã có đủ dữ liệu.
                 if (err == null) {
                     NasApplication.applicationScope.launch(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(authState)) {
-                        try {
+                        val uploadSuccess = try {
                             val mime = android.webkit.MimeTypeMap.getSingleton()
                                 .getMimeTypeFromExtension(fileExtension.lowercase())
                                 ?: "application/octet-stream"
                             webDavManager.uploadFile(url, tempFile, mime)
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                            true
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
                             android.util.Log.e("NasDocProvider", "Upload thất bại: ${e.message}")
-                        } finally {
+                            // Persist recoverable metadata into SyncAction table (đã tồn tại)
+                            // → user có thể browse failed uploads trong app và retry thủ công.
+                            // sourcePath = temp file (còn trong cacheDir cho đến khi OS dọn);
+                            // destPath = NAS URL; actionType phân biệt với offline sync queue.
+                            try {
+                                val app = NasApplication.instance
+                                val db = app.database
+                                db.syncActionDao().insert(
+                                    com.nas.naswebdav.SyncAction(
+                                        actionType = "UPLOAD_FAILED",
+                                        sourcePath = tempFile.absolutePath,
+                                        destPath = url,
+                                        status = "FAILED"
+                                    )
+                                )
+                                // Kích hoạt OfflineSyncWorker retry ngay khi có mạng.
+                                // APPEND_OR_REPLACE: nếu worker đang chờ thì enqueue lại đảm bảo chạy.
+                                val ctx = context ?: return@launch
+                                val syncConstraints = Constraints.Builder()
+                                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                                    .build()
+                                val syncRequest = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
+                                    .setConstraints(syncConstraints)
+                                    .setBackoffCriteria(
+                                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.SECONDS
+                                    )
+                                    .build()
+                                WorkManager.getInstance(ctx).enqueueUniqueWork(
+                                    OfflineSyncWorker.UNIQUE_WORK_NAME,
+                                    ExistingWorkPolicy.APPEND_OR_REPLACE,
+                                    syncRequest
+                                )
+                            } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
+                            catch (_: Exception) {}
+                            // Ghi vào SystemLog để dev thấy trong UI + ADB log
+                            try { com.nas.naswebdav.utils.SystemLogger.log("ERROR", "NasDocProvider",
+                                "Upload thất bại: ${targetId.substringAfterLast('/')} → ${e.message} (file=${tempFile.absolutePath})") }
+                            catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
+                            catch (_: Exception) {}
+                            // Notification chỉ gửi nếu permission đã cấp (API 33+);
+                            // thiếu permission thì skip silently — user vẫn thấy trong System Logs.
+                            try { notifyUploadFailure(tempFile.name) }
+                            catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
+                            catch (_: Exception) {}
+                            false
+                        }
+                        if (uploadSuccess) {
                             tempFile.delete()
+                        } else {
+                            // File vẫn còn + có metadata trong SyncAction để recovery
                         }
                     }
                 } else {
+                    // Caller đóng fd với error → xóa ngay (không có data hợp lệ)
                     tempFile.delete()
                 }
             }
@@ -268,6 +339,42 @@ class NasDocumentProvider : DocumentsProvider() {
             }
 
             return readFd
+        }
+    }
+
+    /**
+     * Báo upload failure qua system notification channel.
+     * DocumentsProvider architecture không cho phép throw exception về caller
+     * sau khi fd đã đóng ��� đây là cách duy nhất để user biết upload thất bại.
+     */
+    private fun notifyUploadFailure(fileName: String) {
+        val ctx = context ?: return
+        val nm = ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
+            as android.app.NotificationManager
+        val channelId = "nas_doc_provider_uploads"
+        val channel = android.app.NotificationChannel(
+            channelId, "Lỗi upload DocumentsProvider",
+            android.app.NotificationManager.IMPORTANCE_HIGH
+        ).apply { description = "Báo lỗi khi upload file qua DocumentsProvider thất bại" }
+        nm.createNotificationChannel(channel)
+        val notif = androidx.core.app.NotificationCompat.Builder(ctx, channelId)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Upload lên NAS thất bại")
+            .setContentText("$fileName không upload được. Xem System Logs để retry.")
+            .setAutoCancel(true)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .build()
+        // API 33+: POST_NOTIFICATIONS runtime permission — skip nếu chưa cấp;
+        // SystemLogger.log vẫn có thể đọc được trong UI.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.app.ActivityCompat.checkSelfPermission(
+                    ctx, android.Manifest.permission.POST_NOTIFICATIONS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                nm.notify(fileName.hashCode(), notif)
+            }
+        } else {
+            nm.notify(fileName.hashCode(), notif)
         }
     }
 

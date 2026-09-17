@@ -44,10 +44,10 @@ class BatchOperationWorker(
 
         fun createChannel(context: Context) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Tác vụ hàng loạt",
+                CHANNEL_ID, context.getString(R.string.batch_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Hiển thị tiến trình Copy/Move/Delete file trên NAS"
+                description = context.getString(R.string.batch_channel_description)
                 setShowBadge(false)
             }
             (context.getSystemService(NotificationManager::class.java))
@@ -120,16 +120,16 @@ class BatchOperationWorker(
 
             createChannel(applicationContext)
             val operationLabel = when (operation) {
-                "COPY" -> "Sao chép"
-                "MOVE" -> "Di chuyển"
-                "DELETE" -> "Xóa"
-                "RESTORE" -> "Khôi phục"
-                else -> "Xử lý"
+                "COPY" -> applicationContext.getString(R.string.batch_operation_copy)
+                "MOVE" -> applicationContext.getString(R.string.batch_operation_move)
+                "DELETE" -> applicationContext.getString(R.string.batch_operation_delete)
+                "RESTORE" -> applicationContext.getString(R.string.batch_operation_restore)
+                else -> applicationContext.getString(R.string.batch_operation_process)
             }
 
             val notificationBuilder = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setContentTitle("$operationLabel ${filePaths.size} tệp")
+                .setContentTitle(applicationContext.getString(R.string.batch_operation_count, operationLabel, filePaths.size))
                 .setProgress(100, 0, true)
                 .setOngoing(true)
                 .setSilent(true)
@@ -147,14 +147,20 @@ class BatchOperationWorker(
                     }
                 )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                val isFatal = when {
-                    android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
-                        e.javaClass.name.contains("ForegroundService") || e.javaClass.name.contains("ForegroundServiceType")
-                    else -> false
-                }
-                if (isFatal) {
-                    android.util.Log.e(TAG, "setForeground failed (fatal)", e)
-                    return@withContext Result.failure()
+                val exName = e.javaClass.name
+                val isBgRestriction = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                    && exName.contains("ForegroundServiceStartNotAllowed")
+                val isMissingType = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                    && (exName.contains("MissingForegroundServiceType") || exName.contains("ForegroundServiceType"))
+                when {
+                    isBgRestriction -> {
+                        android.util.Log.w(TAG, "Background restriction: skip foreground (worker continues)", e)
+                    }
+                    isMissingType -> {
+                        android.util.Log.e(TAG, "setForeground failed: missing foregroundServiceType", e)
+                        return@withContext Result.failure()
+                    }
+                    else -> android.util.Log.w(TAG, "setForeground non-fatal: ${e.javaClass.simpleName}", e)
                 }
             }
 
@@ -177,7 +183,7 @@ class BatchOperationWorker(
                     lastNotifyUpdate = now
 
                     notificationBuilder
-                        .setContentTitle("$operationLabel (${ index + 1 }/$total)")
+                        .setContentTitle(applicationContext.getString(R.string.batch_operation_progress, operationLabel, index + 1, total))
                         .setContentText(displayName)
                         .setProgress(100, percentDone, false)
                     try {
@@ -274,7 +280,7 @@ class BatchOperationWorker(
                         }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.e(TAG, "Lỗi $operation file: $fileName", e)
+                    android.util.Log.w(TAG, "Lỗi $operation file: $fileName", e)
                     failCount++
                 }
 
@@ -289,7 +295,7 @@ class BatchOperationWorker(
             setProgress(workDataOf(
                 "completed" to total,
                 "total" to total,
-                "currentFile" to "Hoàn tất",
+                "currentFile" to applicationContext.getString(R.string.batch_operation_complete),
                 "operation" to operation,
                 "percent" to 100,
                 "successCount" to successCount,
@@ -300,22 +306,52 @@ class BatchOperationWorker(
                 val db = NasApplication.instance.database
                 val logType = if (failCount == 0) "SUCCESS" else "WARNING"
                 val logMsg = if (failCount == 0) {
-                    "$operationLabel thành công $successCount/$total tệp."
+                    applicationContext.getString(
+                        R.string.batch_operation_success_log,
+                        operationLabel,
+                        successCount,
+                        total
+                    )
                 } else {
-                    "$operationLabel: $successCount thành công, $failCount thất bại."
+                    applicationContext.getString(
+                        R.string.batch_operation_partial_log,
+                        operationLabel,
+                        successCount,
+                        failCount
+                    )
                 }
-                db.logDao().insertLog(SystemLog(type = logType, module = "Hàng loạt", message = logMsg))
+                db.logDao().insertLog(
+                    SystemLog(
+                        type = logType,
+                        module = applicationContext.getString(R.string.batch_operation_module),
+                        message = logMsg
+                    )
+                )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
             val resultText = if (failCount == 0) {
-                "Hoàn tất $operationLabel $successCount tệp!"
+                applicationContext.getString(
+                    R.string.batch_operation_complete_success,
+                    operationLabel,
+                    successCount
+                )
             } else {
-                "$operationLabel: $successCount thành công, $failCount lỗi"
+                applicationContext.getString(
+                    R.string.batch_operation_complete_partial,
+                    operationLabel,
+                    successCount,
+                    failCount
+                )
             }
             val doneNotification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setContentTitle(resultText)
-                .setContentText(if (failCount > 0) "Một số tệp không thể xử lý." else "Tất cả tệp đã được xử lý thành công!")
+                .setContentText(
+                    if (failCount > 0)
+                        applicationContext.getString(R.string.batch_operation_some_failed)
+                    else
+                        applicationContext.getString(R.string.batch_operation_all_success)
+                )
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             try {

@@ -56,6 +56,18 @@ import androidx.core.content.edit
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+// Palette hằng số cho BigMenuTile — stable reference, tránh tạo List mới mỗi recomposition.
+private val TilePaletteOrange = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange.copy(alpha = 0.8f))
+private val TilePalettePurpleCyan = kotlinx.collections.immutable.persistentListOf(AccentPurple, AccentCyan)
+private val TilePalettePinkOrange = kotlinx.collections.immutable.persistentListOf(AccentPink, AccentOrange)
+private val SmartPaletteOk = kotlinx.collections.immutable.persistentListOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
+private val SmartPaletteEmmc = kotlinx.collections.immutable.persistentListOf(AccentBlue, AccentBlue.copy(alpha = 0.8f))
+private val SmartPaletteFailed = kotlinx.collections.immutable.persistentListOf(AccentRed, AccentRed.copy(alpha = 0.8f))
+private val SmartPaletteUnknown = kotlinx.collections.immutable.persistentListOf(TextTertiary, TextTertiary.copy(alpha = 0.8f))
+private val GaugePaletteCpu = kotlinx.collections.immutable.persistentListOf(AccentPurple, AccentPurple.copy(alpha = 0.8f))
+private val GaugePaletteRam = kotlinx.collections.immutable.persistentListOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
+private val GaugePaletteHdd = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange.copy(alpha = 0.8f))
+
 @Composable
 internal fun MainDashboardHeader(
     realtimeNow: Long,
@@ -101,7 +113,7 @@ internal fun MainDashboardHeader(
                 ) {
                     Text(
                         if (isOnlineStatus) "Online" else "Offline",
-                        style = AppTypography.BodyMedium.copy(color = Color.White, fontWeight = FontWeight.Bold),
+                        style = AppTypography.BodyMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -159,14 +171,14 @@ internal fun MainDashboardHeader(
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFAB47BC).copy(alpha = 0.25f))
+                        .background(AccentPurple.copy(alpha = 0.25f))
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         "v${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
                         fontSize = 10.sp,
-                        color = Color(0xFFE040FB),
+                        color = AccentPurple,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -234,7 +246,7 @@ internal fun DashboardSystemOverviewCard(
                         title = "CPU", value = systemVM.systemStatus.cpu,
                         subValue = systemVM.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
-                        gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f)),
+                        gradientColors = GaugePaletteCpu,
                         modifier = Modifier.weight(1f),
                         onClick = {
                             onShowProcessList("cpu")
@@ -243,7 +255,7 @@ internal fun DashboardSystemOverviewCard(
                     GaugeCard(
                         title = "RAM", value = systemVM.systemStatus.ram, subValue = "${systemVM.systemStatus.ramPercent}%",
                         icon = Icons.Default.DeveloperBoard,
-                        gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f)),
+                        gradientColors = GaugePaletteRam,
                         modifier = Modifier.weight(1f),
                         overridePercent = systemVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
                         onClick = {
@@ -262,7 +274,7 @@ internal fun DashboardSystemOverviewCard(
                             title = "HDD", value = "${hddDisk.used} / $fmtTotal",
                             subValue = "${hddDisk.percent}%",
                             icon = Icons.Default.Storage,
-                            gradientColors = listOf(AccentOrange, AccentOrange.copy(alpha = 0.8f)),
+                            gradientColors = GaugePaletteHdd,
                             modifier = Modifier.weight(1f),
                             overridePercent = hddDisk.percent,
                             onClick = onOpenNewDiskProfile
@@ -276,10 +288,10 @@ internal fun DashboardSystemOverviewCard(
                     val isSmartEmmc = smartStatusText.contains("EMMC")
 
                     val smartColors = when {
-                        isSmartOk -> listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f))
-                        isSmartEmmc -> listOf(AccentBlue, AccentBlue.copy(alpha = 0.8f)) // Nhận diện eMMC màu Xanh Dương
-                        isSmartFailed -> listOf(AccentRed, AccentRed.copy(alpha = 0.8f)) // FAILED hiển thị màu Đỏ
-                        else -> listOf(TextTertiary, TextTertiary.copy(alpha = 0.8f)) // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
+                        isSmartOk -> SmartPaletteOk
+                        isSmartEmmc -> SmartPaletteEmmc // Nhận diện eMMC màu Xanh Dương
+                        isSmartFailed -> SmartPaletteFailed // FAILED hiển thị màu Đỏ
+                        else -> SmartPaletteUnknown // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
                     }
                     val smartPercent = when {
                         isSmartOk -> 100f
@@ -357,7 +369,7 @@ internal fun DashboardSystemOverviewCard(
                                             }
                                             .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XS)
                                     ) {
-                                        Text(currentLabel, style = AppTypography.LabelMedium.copy(color = Color.Black, fontWeight = FontWeight.Bold))
+                                        Text(currentLabel, style = AppTypography.LabelMedium.copy(color = DarkSurface, fontWeight = FontWeight.Bold))
                                     }
                                     if (currentMode == "custom") {
                                         IconButton(
@@ -398,7 +410,7 @@ internal fun DashboardSystemOverviewCard(
                                             androidx.compose.material3.TextButton(onClick = { showFanSettings = false }) { Text("Hủy", color = TextSecondary) }
                                         },
                                         containerColor = DarkCardHover,
-                                        textContentColor = Color.White
+                                        textContentColor = TextPrimary
                                     )
                                 }
                             }
@@ -633,7 +645,7 @@ internal fun TorrentActivityCard(
                     if (completedTorrents.isNotEmpty()) {
                         if (downloadingTorrents.isNotEmpty()) {
                             Spacer(Modifier.height(AppSpacing.SM))
-                            androidx.compose.material3.HorizontalDivider(color = TextSecondary.copy(alpha = 0.1f), thickness = 0.7.dp)
+                            androidx.compose.material3.HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             Spacer(Modifier.height(AppSpacing.SM))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -700,7 +712,7 @@ internal fun QuickAccessSection(
     slot3Id: String,
     slot4Id: String,
     editingSlot: Int?,
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onEditingSlotChange: (Int?) -> Unit,
     onSlot2Change: (String) -> Unit,
     onSlot3Change: (String) -> Unit,
@@ -714,9 +726,9 @@ internal fun QuickAccessSection(
         // Đã DANH MỤC TRUY CẬP NHANH Đã 
         Text("TRUY CẬP NHANH", fontSize = PanelTitleSize, fontWeight = FontWeight.Black, color = PanelTitlePurple, letterSpacing = PanelTitleLetterSpacing, modifier = Modifier.padding(bottom = AppSpacing.SM - AppSpacing.XS))
 
-        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã 
+        // Đã CHỨC NĂNG CHÍNH (Lưới 2x2) Đã
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, listOf(AccentOrange, AccentOrange.copy(alpha = 0.8f)), Modifier.weight(1f), onClick = onOpenFiles)
+            BigMenuTile("Quản lý Tệp", "Duyệt & quản lý tệp", Icons.Default.Folder, TilePaletteOrange, Modifier.weight(1f), onClick = onOpenFiles)
             val s2 = AVAILABLE_QUICK_ACTIONS.find { it.id == slot2Id } ?: AVAILABLE_QUICK_ACTIONS[0]
             BigMenuTile(s2.title, s2.subtitle, s2.icon, s2.gradientColors, Modifier.weight(1f), onClick = { onQuickAction(s2.id) }, onLongClick = { onEditingSlotChange(2) })
         }
@@ -729,8 +741,8 @@ internal fun QuickAccessSection(
         }
         Spacer(Modifier.height(AppSpacing.SM))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, listOf(AccentPurple, AccentCyan), Modifier.weight(1f), onClick = onOpenLatestPhotos)
-            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, listOf(AccentPink, AccentOrange), Modifier.weight(1f), onClick = onOpenRecentVideos)
+            BigMenuTile("Ảnh gần đây", "Mở ảnh mới nhất", Icons.Default.PhotoLibrary, TilePalettePurpleCyan, Modifier.weight(1f), onClick = onOpenLatestPhotos)
+            BigMenuTile("Video gần đây", "Mở video mới nhất", Icons.Default.VideoLibrary, TilePalettePinkOrange, Modifier.weight(1f), onClick = onOpenRecentVideos)
         }
 
         if (editingSlot != null) {
@@ -758,11 +770,9 @@ internal fun QuickAccessSection(
                             nextSlot4 = newId
                         }
                     }
-                    sharedPrefs.edit {
-                        putString("qa_slot2", nextSlot2)
-                        putString("qa_slot3", nextSlot3)
-                        putString("qa_slot4", nextSlot4)
-                    }
+                    prefsRepo.setQuickSlot("qa_slot2", nextSlot2)
+                    prefsRepo.setQuickSlot("qa_slot3", nextSlot3)
+                    prefsRepo.setQuickSlot("qa_slot4", nextSlot4)
                     onSlot2Change(nextSlot2)
                     onSlot3Change(nextSlot3)
                     onSlot4Change(nextSlot4)

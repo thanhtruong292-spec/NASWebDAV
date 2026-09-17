@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -128,13 +130,16 @@ fun FileItemGridCell(
     var pendingTransferOperation by remember { mutableStateOf("") }
     var newFileName by remember { mutableStateOf(file.name) }
 
-    // Tracking file "moi/chua xem" — luu set duong dan da xem vao SharedPreferences.
+    // Tracking file "moi/chua xem" — reactive từ PreferencesRepository.
     // Khi user click vao file de mo lan dau, set them path va red dot bien mat.
-    val viewedPrefs = remember { context.getSharedPreferences("browser_prefs", android.content.Context.MODE_PRIVATE) }
+    val prefsRepo = remember(context) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    }
+    val viewedSet by prefsRepo.viewedFiles.collectAsStateWithLifecycle()
     val itemScope = rememberCoroutineScope()
     // Key on viewedRefreshTick de re-init khi parent goi "Chon tat ca" mark all viewed.
-    var isNewFile by remember(file.path, viewedRefreshTick) {
-        mutableStateOf(!file.isDirectory && file.path !in (viewedPrefs.getStringSet("viewed_files", emptySet()) ?: emptySet()))
+    var isNewFile by remember(file.path, viewedRefreshTick, viewedSet) {
+        mutableStateOf(!file.isDirectory && file.path !in viewedSet)
     }
 
     val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
@@ -222,7 +227,7 @@ fun FileItemGridCell(
                     if (!selectionMode && !file.isDirectory && isNewFile) {
                         isNewFile = false
                         itemScope.launch(Dispatchers.IO) {
-                            markBrowserFilesViewed(viewedPrefs, listOf(file.path))
+                            markBrowserFilesViewed(prefsRepo, listOf(file.path))
                         }
                     }
                     onClick()
@@ -287,7 +292,7 @@ fun FileItemGridCell(
             // TÍNH NĂNG MỚI: Giải nén tại NAS
             if (file.name.lowercase().endsWith(".zip")) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_extract_nas), color = Color(0xFF8E24AA), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_extract_nas), color = AccentPurple, fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         smartToolsVM.unzipFile(file.path)
@@ -298,7 +303,7 @@ fun FileItemGridCell(
             // Mở video bằng ứng dụng ngoài
             if (isVideo) {
                 DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_open_external), color = Color(0xFFE65100), fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.action_open_external), color = AccentOrange, fontWeight = FontWeight.Bold) },
                     onClick = {
                         showMenu = false
                         val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
@@ -319,7 +324,7 @@ fun FileItemGridCell(
 
             DropdownMenuItem(text = { Text(stringResource(R.string.action_rename)) }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
             DropdownMenuItem(text = { Text(stringResource(R.string.action_properties)) }, onClick = { showMenu = false; showPropertiesDialog = true })
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = Color.Red) }, onClick = { showMenu = false; showDeleteDialog = true })
+            DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = AccentRed) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
         // === KHUNG HIỂN THỊ CHÍNH — ĐỒNG BỘ DASHBOARD DESIGN ===
@@ -351,24 +356,24 @@ fun FileItemGridCell(
                     Icon(
                         Icons.Default.PlayCircle,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.85f),
+                        tint = TextPrimary.copy(alpha = 0.85f),
                         modifier = Modifier.size(28.dp).align(Alignment.Center)
                     )
                 }
             } else if (file.isDirectory) {
-                // THƯ MỤC: Icon folder lớn, canh giữa — dùng AccentCyan đồng bộ dashboard
+                // Folder: outlined FolderOpen với tint theo FileTypeColors
                 Icon(
-                    imageVector = Icons.Default.Folder,
+                    imageVector = AppIcons.FolderOpen,
                     contentDescription = null,
-                    tint = AccentCyan,
+                    tint = FileTypeColors.Folder,
                     modifier = Modifier.size(36.dp)
                 )
             } else {
-                // FILE THƯỜNG: Icon cơ bản
+                // File: dùng fileRowIcon/icon helper, tint theo phân loại
                 Icon(
-                    imageVector = Icons.Default.InsertDriveFile,
+                    imageVector = fileRowIcon(file.name, isDirectory = false),
                     contentDescription = null,
-                    tint = TextTertiary,
+                    tint = fileRowTint(file.name, isDirectory = false),
                     modifier = Modifier.size(32.dp).align(Alignment.Center)
                 )
             }
@@ -376,29 +381,21 @@ fun FileItemGridCell(
             // GẮN BADGE THÔNG TIN (Cho mọi tệp không phải thư mục)
             if (!file.isDirectory) {
                 val ext = file.name.substringAfterLast('.', "").uppercase().takeIf { it.isNotBlank() } ?: "FILE"
-                
-                // MÀU SẮC BADGE THEO LOẠI FILE
-                val extColor = when {
-                    isImage -> Color(0xFF1E88E5) // Xanh dương
-                    isVideo -> Color(0xFFFF8F00) // Cam
-                    ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> Color(0xFFE53935) // Đỏ
-                    ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> Color(0xFF43A047) // Xanh lá
-                    ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> Color(0xFF8E24AA) // Tím
-                    ext in listOf("MP3", "WAV", "FLAC", "M4A") -> Color(0xFF00ACC1) // Xanh Cyan
-                    else -> Color(0xFF757575) // Xám
-                }
+
+                // MÀU SẮC BADGE THEO LOẠI FILE — dùng semantic FileTypeColors
+                val extColor = fileRowTint(file.name, isDirectory = false)
 
                 // Dung lượng góc dưới trái
                 val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
                 Text(
                     text = displaySize,
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 8.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(4.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
+                        .background(DarkSurface.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
                         .padding(horizontal = 3.dp, vertical = 1.dp)
                 )
             }
@@ -408,9 +405,9 @@ fun FileItemGridCell(
                     val daysInTrash = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis() - file.lastModified)
                     val daysLeft = (30 - daysInTrash).coerceAtLeast(0)
                     val badgeColor = when {
-                        daysLeft <= 3 -> Color(0xFFFF1744)
-                        daysLeft <= 7 -> Color(0xFFFFA726)
-                        else -> Color(0xFF8892B0)
+                        daysLeft <= 3 -> AccentRed
+                        daysLeft <= 7 -> AccentOrange
+                        else -> TextTertiary
                     }
                     Box(
                         modifier = Modifier
@@ -420,7 +417,7 @@ fun FileItemGridCell(
                             .padding(horizontal = 3.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(stringResource(R.string.label_days_left, daysLeft), color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                        Text(stringResource(R.string.label_days_left, daysLeft), color = TextPrimary, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
                     }
                 } else if (isNewFile) {
                     Box(
@@ -428,8 +425,8 @@ fun FileItemGridCell(
                             .align(Alignment.TopEnd)
                             .padding(6.dp)
                             .size(10.dp)
-                            .background(Color(0xFFFF1744), CircleShape)
-                            .border(1.dp, Color.White, CircleShape)
+                            .background(AccentRed, CircleShape)
+                            .border(1.dp, TextPrimary, CircleShape)
                     )
                 }
             }
@@ -441,7 +438,7 @@ fun FileItemGridCell(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0x5542A5F5))
+                            .background(AccentBlue.copy(alpha = 0.33f))
                     )
                 }
                 // Checkbox góc trái trên — luôn hiển thị khi selectionMode
@@ -450,7 +447,7 @@ fun FileItemGridCell(
                         .align(Alignment.TopStart)
                         .padding(4.dp)
                         .size(24.dp)
-                        .background(Color.White.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
+                        .background(TextPrimary.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
                         .clip(androidx.compose.foundation.shape.CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -458,14 +455,14 @@ fun FileItemGridCell(
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = stringResource(R.string.cd_selected),
-                            tint = Color(0xFF42A5F5),
+                            tint = AccentBlue,
                             modifier = Modifier.size(20.dp)
                         )
                     } else {
                         Icon(
                             imageVector = Icons.Default.RadioButtonUnchecked,
                             contentDescription = stringResource(R.string.cd_not_selected),
-                            tint = Color(0xFF90A4AE),
+                            tint = TextSecondary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -665,7 +662,7 @@ fun WebDavCachedThumbnail(
                             .background(AccentRed, AppShapes.Badge)
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     ) {
-                        Text("!", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text("!", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

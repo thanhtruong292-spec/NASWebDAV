@@ -1,11 +1,20 @@
 @file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.dialogs
 
+import com.nas.naswebdav.R
 import com.nas.naswebdav.*
+import androidx.compose.ui.res.stringResource
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.components.NasAlertDialog
+import com.nas.naswebdav.ui.components.NasLoadingSpinner
+import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 import android.content.Context
+import android.widget.Toast
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.animation.*
@@ -77,19 +86,19 @@ fun FolderPickerDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text("Chọn thư mục đích", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(stringResource(R.string.folder_picker_title), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 val decoded = try { java.net.URLDecoder.decode(currentUrl, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { currentUrl }
                 val relativePath = decoded.removePrefix(WebDavManager.currentBaseUrl)
                 Text(
-                    text = if (relativePath.isEmpty()) "/ (Thư mục gốc)" else relativePath,
-                    fontSize = 12.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    text = if (relativePath.isEmpty()) stringResource(R.string.folder_picker_root) else relativePath,
+                    fontSize = 12.sp, color = TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
         },
         text = {
             Box(modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp, max = 400.dp)) {
                 if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    NasLoadingSpinner(size = 28.dp, color = AccentCyan, strokeWidth = 3.dp)
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         if (currentUrl.trimEnd('/') != WebDavManager.currentBaseUrl.trimEnd('/')) {
@@ -105,19 +114,19 @@ fun FolderPickerDialog(
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.a11y_back), tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(16.dp))
-                                    Text(".. (Quay lại)", fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.folder_picker_parent), fontWeight = FontWeight.Medium)
                                 }
-                                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
+                                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             }
                         }
 
                         if (folderList.isEmpty()) {
                             item {
                                 Text(
-                                    text = "(Thư mục trống)",
-                                    color = Color.Gray,
+                                    text = stringResource(R.string.folder_picker_empty),
+                                    color = TextTertiary,
                                     modifier = Modifier.padding(16.dp).fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally)
                                 )
                             }
@@ -130,11 +139,11 @@ fun FolderPickerDialog(
                                         .padding(vertical = 12.dp, horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Folder, contentDescription = "Thư mục", tint = Color(0xFFFFCA28))
+                                    Icon(Icons.Default.Folder, contentDescription = stringResource(R.string.folder_picker_folder_cd), tint = AccentOrange)
                                     Spacer(Modifier.width(16.dp))
                                     Text(folder.name, fontWeight = FontWeight.Medium)
                                 }
-                                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
+                                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                             }
                         }
                     }
@@ -142,16 +151,15 @@ fun FolderPickerDialog(
             }
         },
         confirmButton = {
-            Button(
+            NasGradientButton(
                 onClick = { onFolderSelected(currentUrl) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
-            ) {
-                Text("Chép/Di chuyển vào đây", color = Color.White, fontWeight = FontWeight.Bold)
-            }
+                text = stringResource(R.string.folder_picker_select_here),
+                gradientColors = listOf(AccentGreen, AccentGreen.copy(alpha = 0.8f), AccentCyan),
+            )
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Hủy", color = Color.Gray)
+                Text(stringResource(R.string.action_cancel), color = TextTertiary)
             }
         },
         shape = RoundedCornerShape(16.dp)
@@ -170,16 +178,16 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
     if (message.isBlank()) return
 
     val (icon, color, title) = when (type) {
-        DialogType.SUCCESS -> Triple(Icons.Default.Check, Color(0xFF4CAF50), "Thành công")
-        DialogType.ERROR -> Triple(Icons.Default.Close, Color(0xFFE53935), "Thất bại")
-        DialogType.WARNING -> Triple(Icons.Default.Warning, Color(0xFFFFA726), "Cảnh báo")
-        DialogType.CONFIRM -> Triple(Icons.Default.HelpOutline, Color(0xFF2196F3), "Xác nhận")
+        DialogType.SUCCESS -> Triple(Icons.Default.Check, AccentGreen, stringResource(R.string.dialog_status_success))
+        DialogType.ERROR -> Triple(Icons.Default.Close, AccentRed, stringResource(R.string.dialog_status_error))
+        DialogType.WARNING -> Triple(Icons.Default.Warning, AccentOrange, stringResource(R.string.dialog_status_warning))
+        DialogType.CONFIRM -> Triple(Icons.Default.HelpOutline, AccentBlue, stringResource(R.string.dialog_status_confirm))
     }
     val isDark = isSystemInDarkTheme()
-    val dialogBg = if (isDark) Color(0xFF263238) else Color.White
-    val textColor = if (isDark) Color.White else Color(0xFF546E7A)
+    val dialogBg = if (isDark) DarkElevated else TextPrimary
+    val textColor = if (isDark) TextPrimary else TextSecondary
     Dialog(onDismissRequest = onDismiss) {
-        Box(modifier = Modifier.fillMaxWidth().background(dialogBg, shape = RoundedCornerShape(14.dp)).border(1.dp, Color(0xFFEEEEEE).copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(18.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.fillMaxWidth().background(dialogBg, shape = RoundedCornerShape(14.dp)).border(1.dp, TextPrimary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(18.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(56.dp).background(color.copy(0.1f), CircleShape).border(2.dp, color.copy(0.2f), CircleShape), contentAlignment = Alignment.Center) {
                     Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(28.dp))
@@ -190,8 +198,8 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
                 Text(text = message, fontSize = 16.sp, color = textColor, textAlign = TextAlign.Center)
                 Spacer(modifier = Modifier.height(18.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = color), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text("Đóng", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
-                    if (onConfirm != null) { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text("Xác nhận", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
+                    Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = color), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text(stringResource(R.string.dialog_close_button), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+                    if (onConfirm != null) { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = AccentRed), shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f).height(44.dp)) { Text(stringResource(R.string.dialog_confirm_button), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp) } }
                 }
             }
         }
@@ -220,7 +228,7 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
         authInFlight = true
         try {
             val promptInfo = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Khóa bảo mật NAS").setSubtitle("Vui lòng xác thực vân tay/khuôn mặt để truy cập dữ liệu")
+                .setTitle(activity.getString(R.string.biometric_prompt_title)).setSubtitle(activity.getString(R.string.biometric_prompt_subtitle))
                 .setConfirmationRequired(false)
                 .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL).build()
             val biometricPrompt = androidx.biometric.BiometricPrompt(activity, executor,
@@ -230,15 +238,19 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
                         super.onAuthenticationError(errorCode, errString)
                         clearActivePrompt()
                         if (errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED || errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON) currentOnFallbackToLogin()
-                        else { failCount++; authError = "Lỗi: $errString (Sai $failCount/3 lần)"; if (failCount >= 3) currentOnFallbackToLogin() }
+                        else { failCount++; authError = activity.getString(R.string.biometric_error_with_count, errString.toString(), failCount); if (failCount >= 3) currentOnFallbackToLogin() }
                     }
-                    override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = "Vân tay không khớp! (Sai $failCount/3 lần)"; if (failCount >= 3) { clearActivePrompt(); currentOnFallbackToLogin() } }
+                    override fun onAuthenticationFailed() { super.onAuthenticationFailed(); failCount++; authError = activity.getString(R.string.biometric_finger_mismatch, failCount); if (failCount >= 3) { clearActivePrompt(); currentOnFallbackToLogin() } }
                 })
             activePrompt = biometricPrompt
             biometricPrompt.authenticate(promptInfo)
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             clearActivePrompt()
-            authError = "Lỗi: ${e.message ?: "Không mở được quét vân tay"}"
+            authError = activity.getString(
+                R.string.biometric_error_with_count,
+                e.message ?: activity.getString(R.string.biometric_open_fingerprint_failed),
+                failCount
+            )
         }
     }
     DisposableEffect(Unit) {
@@ -250,12 +262,12 @@ fun BiometricLockScreen(activity: androidx.fragment.app.FragmentActivity, onAuth
     }
     var hasStartedAuth by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (!hasStartedAuth) { hasStartedAuth = true; authenticate() } }
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0A0A0A)).pointerInput(Unit) { detectTapGestures { authenticate() } }, contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(DarkSurface).pointerInput(Unit) { detectTapGestures { authenticate() } }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             IconButton(onClick = authenticate, modifier = Modifier.size(140.dp)) {
-                Icon(Icons.Default.Fingerprint, contentDescription = "Quét vân tay để mở khóa", modifier = Modifier.size(120.dp), tint = Color(0xFF00897B))
+                Icon(Icons.Default.Fingerprint, contentDescription = stringResource(R.string.biometric_finger_cd), modifier = Modifier.size(120.dp), tint = AccentCyan)
             }
-            if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = Color.Red, fontSize = 14.sp) }
+            if (authError.isNotEmpty()) { Spacer(Modifier.height(16.dp)); Text(authError, color = AccentRed, fontSize = 14.sp) }
         }
     }
 }
@@ -287,9 +299,9 @@ fun IpApprovalDialog(onDismiss: () -> Unit) {
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(0.7f, 1f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "alpha")
     val isLocal = ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")
-    val riskColor = if (isLocal) Color(0xFFFB8C00) else Color(0xFFE53935)
+    val riskColor = if (isLocal) AccentOrange else AccentRed
     val riskLabel = if (isLocal) "Mạng nội bộ" else "IP ngoài ($countryCode)"
-    AlertDialog(onDismissRequest = {}, containerColor = Color(0xFF1A1A2E), shape = RoundedCornerShape(24.dp),
+    AlertDialog(onDismissRequest = {}, containerColor = DarkElevated, shape = RoundedCornerShape(24.dp),
         title = {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(64.dp).scale(pulseScale).clip(CircleShape).background(Brush.radialGradient(listOf(riskColor.copy(alpha = pulseAlpha * 0.3f), riskColor.copy(alpha = 0.05f)))), contentAlignment = Alignment.Center) {
@@ -298,41 +310,41 @@ fun IpApprovalDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Text("⚠️ CẢNH BÁO BẢO MẬT", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = riskColor, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(4.dp))
-                Text("Phát hiện thiết bị lạ kết nối", fontSize = 13.sp, color = Color(0xFF8892B0), textAlign = TextAlign.Center)
+                Text("Phát hiện thiết bị lạ kết nối", fontSize = 13.sp, color = TextTertiary, textAlign = TextAlign.Center)
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF16213E)), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Card(colors = CardDefaults.cardColors(containerColor = DarkCard), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("ĐỊA CHỈ IP", fontSize = 10.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        Text("ĐỊA CHỈ IP", fontSize = 10.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                         Spacer(Modifier.height(4.dp))
-                        Text(ip.ifEmpty { "Không xác định" }, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE8E8E8), textAlign = TextAlign.Center)
+                        Text(ip.ifEmpty { "Không xác định" }, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
                         Surface(color = riskColor.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) { Text(riskLabel, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = riskColor) }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                if (message.isNotBlank()) { Text(message, fontSize = 13.sp, color = Color(0xFFB0BEC5), textAlign = TextAlign.Center, lineHeight = 18.sp); Spacer(Modifier.height(12.dp)) }
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0F3460).copy(alpha = 0.5f)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                if (message.isNotBlank()) { Text(message, fontSize = 13.sp, color = TextSecondary, textAlign = TextAlign.Center, lineHeight = 18.sp); Spacer(Modifier.height(12.dp)) }
+                Card(colors = CardDefaults.cardColors(containerColor = DarkElevated.copy(alpha = 0.5f)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = AccentGreen, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 11.sp, color = TextSecondary) }
                         Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = Color(0xFFE53935), modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 11.sp, color = Color(0xFFB0BEC5)) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = AccentRed, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 11.sp, color = TextSecondary) }
                     }
                 }
             }
         },
         confirmButton = {
             Button(onClick = { deviceVM.approveDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-                modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFF00897B), Color(0xFF26A69A), Color(0xFF80CBC4))), RoundedCornerShape(24.dp))) {
-                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Cho phép", color = Color.White, fontWeight = FontWeight.Bold) }
+                modifier = Modifier.background(Brush.linearGradient(listOf(AccentCyan, AccentCyan, AccentGreen)), RoundedCornerShape(24.dp))) {
+                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = TextPrimary, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Cho phép", color = TextPrimary, fontWeight = FontWeight.Bold) }
             }
         },
         dismissButton = {
             Button(onClick = { deviceVM.denyDeviceIp(ip) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent), contentPadding = PaddingValues(),
-                modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFFE53935), Color(0xFFC62828))), RoundedCornerShape(24.dp))) {
-                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = Color.White, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Chặn IP", color = Color.White, fontWeight = FontWeight.Bold) }
+                modifier = Modifier.background(Brush.linearGradient(listOf(AccentRed, AccentRed)), RoundedCornerShape(24.dp))) {
+                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = TextPrimary, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Chặn IP", color = TextPrimary, fontWeight = FontWeight.Bold) }
             }
         }
     )
@@ -357,21 +369,18 @@ fun LanWhitelistDialog(
     var newEntry by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { deviceVM.loadLanWhitelist() }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).heightIn(max = 600.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Icon(Icons.Default.Wifi, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.Wifi, null, tint = AccentGreen, modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
                 Column {
-                    Text("LAN Whitelist", color = Color(0xFFE8E8E8), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("IP truy cập không cần Tailscale", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("LAN Whitelist", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("IP truy cập không cần Tailscale", color = TextTertiary, fontSize = 11.sp)
                 }
             }
 
@@ -380,7 +389,7 @@ fun LanWhitelistDialog(
                     value = newEntry,
                     onValueChange = { newEntry = it },
                     placeholder = "192.168.1.0/24",
-                    accentColor = Color(0xFF66BB6A),
+                    accentColor = AccentGreen,
                     shape = RoundedCornerShape(12.dp),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
                     modifier = Modifier.weight(1f)
@@ -393,31 +402,31 @@ fun LanWhitelistDialog(
                             newEntry = ""
                         }
                     },
-                    modifier = Modifier.size(40.dp).background(Color(0xFF66BB6A).copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                ) { Icon(Icons.Default.Add, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp)) }
+                    modifier = Modifier.size(40.dp).background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                ) { Icon(Icons.Default.Add, null, tint = AccentGreen, modifier = Modifier.size(18.dp)) }
             }
 
             if (statusMessage.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(statusMessage, fontSize = 12.sp, color = if (statusMessage.startsWith("✅")) Color(0xFF66BB6A) else if (statusMessage.startsWith("❌")) Color(0xFFFF1744) else Color(0xFF8892B0))
+                Text(statusMessage, fontSize = 12.sp, color = if (statusMessage.startsWith("✅")) AccentGreen else if (statusMessage.startsWith("❌")) AccentRed else TextTertiary)
             }
 
             Spacer(Modifier.height(16.dp))
 
             if (isLoading) {
                 Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFF66BB6A), modifier = Modifier.size(28.dp))
+                    NasLoadingSpinner(size = 28.dp, color = AccentGreen, strokeWidth = 3.dp)
                 }
             } else if (errorMessage.isNotBlank()) {
-                Text(errorMessage, color = Color(0xFFFF1744), fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                Text(errorMessage, color = AccentRed, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
             } else if (subnetList.isEmpty() && ipList.isEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f, fill = false), contentAlignment = Alignment.Center) {
-                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = Color(0xFF8892B0), fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+                    Text("Chưa có IP/subnet nào. Thêm để cho phép truy cập LAN.", color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
                 }
             } else {
                 Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                     if (subnetList.isNotEmpty()) {
-                        Text("SUBNET", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("SUBNET", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         subnetList.forEach { subnet ->
                             key("subnet-$subnet") {
@@ -427,10 +436,10 @@ fun LanWhitelistDialog(
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
                                 ) {
-                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Hub, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(16.dp))
+                                    Row(Modifier.fillMaxWidth().background(DarkSurface, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Hub, null, tint = AccentGreen, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
-                                        Text(subnet, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                        Text(subnet, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                                     }
                                 }
                                 Spacer(Modifier.height(3.dp))
@@ -439,7 +448,7 @@ fun LanWhitelistDialog(
                     }
                     if (ipList.isNotEmpty()) {
                         if (subnetList.isNotEmpty()) Spacer(Modifier.height(12.dp))
-                        Text("IP", fontSize = 11.sp, color = Color(0xFF8892B0), fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("IP", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         ipList.forEach { ip ->
                             key("ip-$ip") {
@@ -449,10 +458,10 @@ fun LanWhitelistDialog(
                                     backgroundPaddingHorizontal = 8.dp,
                                     iconSize = 18.dp
                                 ) {
-                                    Row(Modifier.fillMaxWidth().background(Color(0xFF15151D), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Computer, null, tint = Color(0xFF00D2FF), modifier = Modifier.size(16.dp))
+                                    Row(Modifier.fillMaxWidth().background(DarkSurface, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Computer, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(8.dp))
-                                        Text(ip, color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                                        Text(ip, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                                     }
                                 }
                                 Spacer(Modifier.height(3.dp))
@@ -466,10 +475,10 @@ fun LanWhitelistDialog(
             Button(
                 onClick = onDismiss,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF263238)),
+                colors = ButtonDefaults.buttonColors(containerColor = DarkElevated),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("ĐÓNG", color = Color(0xFF66BB6A), fontWeight = FontWeight.Bold)
+                Text("ĐÓNG", color = AccentGreen, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -486,7 +495,7 @@ fun OrganizeLegacyDialog(onDismiss: () -> Unit) {
         text = {
             Column {
                 if (smartVM.organizingLegacyRunning) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = Color(0xFF00897B), trackColor = Color.Transparent)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), color = AccentCyan, trackColor = Color.Transparent)
                     Text("Đang ra lệnh cho NAS dọn dẹp nội bộ...")
                 } else if (smartVM.organizingLegacyResult != null) {
                     Text(smartVM.organizingLegacyResult!!)
@@ -495,6 +504,7 @@ fun OrganizeLegacyDialog(onDismiss: () -> Unit) {
                 }
             }
         },
+        containerColor = DarkCard,
         confirmButton = {
             if (!smartVM.organizingLegacyRunning && smartVM.organizingLegacyResult == null) {
                 TextButton(onClick = { smartVM.organizeLegacyVideos() }) { Text("Chạy NAS") }
@@ -519,10 +529,10 @@ fun CreateFolderDialog(
     onDismiss: () -> Unit
 ) {
     var folderName by remember { mutableStateOf("") }
-    AlertDialog(
+    NasAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Thư mục mới") },
-        text = {
+        title = "Thư mục mới",
+        content = {
             com.nas.naswebdav.ui.components.CompactTextField(
                 value = folderName,
                 onValueChange = { folderName = it },
@@ -530,10 +540,9 @@ fun CreateFolderDialog(
                 modifier = Modifier.fillMaxWidth()
             )
         },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(folderName) }) { Text("Tạo") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Hủy") } }
+        confirmText = "Tạo",
+        dismissText = "Hủy",
+        onConfirm = { onConfirm(folderName) },
     )
 }
 
@@ -571,22 +580,20 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
     var msg by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-        enabled = p.getBoolean("alert_enabled", true)
-        pause = p.getBoolean("alert_pause_disk_low", true)
-        disk = p.getInt("alert_ram_threshold", 85).toString()
-        cpuTemp = p.getInt("alert_cpu_threshold", 90).toString()
+        val rules = com.nas.naswebdav.utils.PreferencesRepository
+            .get(NasApplication.instance.applicationContext).getAlertRules()
+        enabled = rules.enabled
+        pause = rules.pauseOnDiskLow
+        disk = rules.ramThreshold.toString()
+        cpuTemp = rules.cpuThreshold.toString()
         loading = false
     }
     val numKb = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -595,22 +602,22 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
                 .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                Icon(Icons.Default.Tune, null, tint = Color(0xFFFFB300), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Tune, null, tint = AccentOrange, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Quy tắc cảnh báo", fontWeight = FontWeight.Bold, color = Color(0xFFE8E8E8), fontSize = 17.sp)
+                Text("Quy tắc cảnh báo", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 17.sp)
             }
             Text("NAS tự kiểm tra mỗi 60s và cảnh báo (Telegram + nhật ký) khi vượt ngưỡng.",
-                fontSize = 12.sp, color = Color(0xFF8892B0), lineHeight = 17.sp)
+                fontSize = 12.sp, color = TextTertiary, lineHeight = 17.sp)
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Bật quy tắc", fontSize = 14.sp, color = Color(0xFFE8E8E8), modifier = Modifier.weight(1f))
+                Text("Bật quy tắc", fontSize = 14.sp, color = TextPrimary, modifier = Modifier.weight(1f))
                 Switch(checked = enabled, onCheckedChange = { enabled = it }, enabled = !loading && !busy)
             }
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = Color(0xFFE8E8E8))
-                    Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = Color(0xFF8892B0))
+                    Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = TextPrimary)
+                    Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = TextTertiary)
                 }
                 Switch(checked = pause, onCheckedChange = { pause = it }, enabled = !loading && !busy)
             }
@@ -628,22 +635,24 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
                 label = { Text("Ngưỡng RAM (%)") }, singleLine = true, keyboardOptions = numKb, modifier = Modifier.fillMaxWidth())
             if (msg.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(msg, fontSize = 12.sp, color = if (msg.contains("✓")) Color(0xFF00E676) else Color(0xFFFF9100))
+                Text(msg, fontSize = 12.sp, color = if (msg.contains("✓")) AccentGreen else AccentOrange)
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onDismiss) { Text("Hủy", color = Color(0xFF8892B0)) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel), color = TextTertiary) }
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = !loading && !busy, onClick = {
                     busy = true; msg = "Đang lưu..."
-                    val p = NasApplication.instance.getSharedPreferences("nas_prefs", Context.MODE_PRIVATE)
-                    p.edit {
-                        putBoolean("alert_enabled", enabled)
-                        putBoolean("alert_pause_disk_low", pause)
-                        putBoolean("alert_pause_heat", false)
-                        putInt("alert_cpu_threshold", cpuTemp.toIntOrNull() ?: 90)
-                        putInt("alert_ram_threshold", ram.toIntOrNull() ?: 85)
-                    }
+                    com.nas.naswebdav.utils.PreferencesRepository
+                        .get(NasApplication.instance.applicationContext)
+                        .setAlertRules(
+                            com.nas.naswebdav.utils.PreferencesRepository.AlertRules(
+                                enabled = enabled,
+                                pauseOnDiskLow = pause,
+                                cpuThreshold = cpuTemp.toIntOrNull() ?: 90,
+                                ramThreshold = ram.toIntOrNull() ?: 85
+                            )
+                        )
                     busy = false; msg = "Đã lưu quy tắc cảnh báo ✓"
                     onDismiss()
                 }) { Text("Lưu") }
@@ -653,3 +662,76 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
     }
 }
 
+
+// ====================================================================
+// REMOTE CRASH REPORTING — Sentry self-hosted opt-in (hiển thị trong SystemLogDialog)
+// ====================================================================
+@Composable
+fun CrashReportingSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val dsnNeedMsg = stringResource(R.string.crash_dsn_need)
+    val dsnSavedMsg = stringResource(R.string.crash_dsn_saved)
+    var enabled by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.nas.naswebdav.utils.CrashReporter.isEnabled(context)
+        )
+    }
+    var dsn by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(
+            com.nas.naswebdav.utils.CrashReporter.getDsn(context)
+        )
+    }
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.material3.Card(
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = DarkCard),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.crash_remote_title),
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        stringResource(R.string.crash_remote_desc),
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = { want ->
+                        if (want && dsn.isBlank()) {
+                            Toast.makeText(context, dsnNeedMsg, Toast.LENGTH_SHORT).show()
+                            expanded = true
+                        } else {
+                            com.nas.naswebdav.utils.CrashReporter.setEnabled(context, want, dsn)
+                            enabled = want
+                            Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+            if (enabled || expanded) {
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = dsn,
+                    onValueChange = { dsn = it.trim() },
+                    label = { Text(stringResource(R.string.crash_dsn_label), fontSize = 11.sp) },
+                    placeholder = { Text(stringResource(R.string.crash_dsn_hint), fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        TextButton(onClick = {
+                            com.nas.naswebdav.utils.CrashReporter.setEnabled(context, enabled, dsn)
+                            Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
+                        }) { Text(stringResource(R.string.action_save), fontSize = 12.sp) }
+                    }
+                )
+            }
+        }
+    }
+}

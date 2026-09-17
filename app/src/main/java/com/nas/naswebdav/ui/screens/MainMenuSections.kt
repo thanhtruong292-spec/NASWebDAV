@@ -1,11 +1,14 @@
 @file:Suppress("DEPRECATION")
 package com.nas.naswebdav.ui.screens
 
+import kotlinx.collections.immutable.persistentListOf
 import com.nas.naswebdav.*
 import com.nas.naswebdav.R
 import com.nas.naswebdav.ui.dialogs.AppStatusDialog
 import com.nas.naswebdav.ui.dialogs.DialogType
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -59,26 +62,28 @@ import com.nas.naswebdav.NasFile
 // ============ MainMenu sections: status cards, dialogs & bottom sheets
 //              (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+// @Immutable để tile composable skip recomposition (list dùng hằng số brand palette).
+@androidx.compose.runtime.Immutable
 data class QuickActionDef(
     val id: String,
     val title: String,
     val subtitle: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val gradientColors: List<androidx.compose.ui.graphics.Color>
+    val gradientColors: kotlinx.collections.immutable.ImmutableList<androidx.compose.ui.graphics.Color>
 )
 
 // Gradient colors are intentional brand palette constants for quick-action tile icons.
 val AVAILABLE_QUICK_ACTIONS = listOf(
-    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, listOf(Color(0xFF26A69A), Color(0xFF00897B))),
-    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, listOf(Color(0xFFFF5252), Color(0xFFC62828))),
-    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, listOf(Color(0xFFEF5350), Color(0xFFD32F2F))),
-    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, listOf(Color(0xFF42A5F5), Color(0xFF1565C0))),
-    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, listOf(Color(0xFFAB47BC), Color(0xFF7B1FA2))),
-    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, listOf(Color(0xFF26C6DA), Color(0xFF0097A7))),
-    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, listOf(Color(0xFF66BB6A), Color(0xFF388E3C))),
-    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, listOf(Color(0xFFFF9800), Color(0xFFF57C00))),
-    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, listOf(Color(0xFF29B6F6), Color(0xFF0277BD))),
-    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, listOf(Color(0xFF00BFA5), Color(0xFF00695C)))
+    QuickActionDef("sync", "Tự Đồng Bộ", "Cấu hình sao lưu", Icons.Default.CloudSync, persistentListOf(AccentCyan, AccentCyan)),
+    QuickActionDef("stream", "Ghi Livestream", "Ghi TikTok, Facebook", Icons.Default.Videocam, persistentListOf(AccentRed, AccentRed)),
+    QuickActionDef("trash", "Thùng Rác", "Khôi phục dữ liệu", Icons.Default.Delete, persistentListOf(AccentRed, AccentRed)),
+    QuickActionDef("organizer", "Phân Loại Tệp", "AI Smart Organizer", Icons.Default.AutoAwesomeMotion, persistentListOf(AccentBlue, AccentBlue)),
+    QuickActionDef("guest", "Mạng Khách", "Cấp thẻ Wi-Fi QR", Icons.Default.Wifi, persistentListOf(AccentPurple, AccentPurple)),
+    QuickActionDef("log", "Nhật ký Lõi", "Tiến trình giám sát", Icons.Default.Assignment, persistentListOf(AccentCyan, AccentCyan)),
+    QuickActionDef("nasbackup", "Sao Lưu Cấu Hình", "Backup NAS + OneDrive", Icons.Default.SettingsBackupRestore, persistentListOf(AccentGreen, AccentGreen)),
+    QuickActionDef("smb", "Ổ đĩa LAN (SMB)", "Map Network Drive", Icons.Default.Dns, persistentListOf(AccentOrange, AccentOrange)),
+    QuickActionDef("duplicate", "Quét Trùng Lặp", "Phát hiện tệp trùng", Icons.Default.ContentCopy, persistentListOf(AccentBlue, AccentBlue)),
+    QuickActionDef("screen_record", "Quay Màn Hình", "Lưu thẳng vào NAS", Icons.Default.ScreenShare, persistentListOf(AccentGreen, AccentCyan))
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -88,11 +93,8 @@ fun QuickActionSelectorDialog(
     onDismiss: () -> Unit,
     onSelect: (String) -> Unit
 ) {
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).verticalScroll(rememberScrollState())

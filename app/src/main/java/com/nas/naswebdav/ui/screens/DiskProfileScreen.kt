@@ -3,6 +3,8 @@ package com.nas.naswebdav.ui.screens
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.dialogs.*
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
 
 import android.content.Context
 import kotlinx.coroutines.isActive
@@ -168,11 +170,13 @@ internal fun DiskProfileBottomSheet(
     val autoBackupVM = LocalAutoBackupVM.current
     val livestreamVM = LocalLivestreamVM.current
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("nas_hardware_profile", Context.MODE_PRIVATE) }
+    val hwPrefs = remember(context) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(context)
+    }
     var showTrackingConfirm by remember { mutableStateOf(false) }
     var showResetTrackingConfirm by remember { mutableStateOf(false) }
     var writePanelExpanded by remember { mutableStateOf(false) }
-    var operationMode by remember { mutableStateOf(prefs.getString("operation_mode", "balanced") ?: "balanced") }
+    var operationMode by remember { mutableStateOf(hwPrefs.getHardwareProfile("operation_mode", "balanced")) }
     val hddDisk = sysMonitorVM.systemStatus.diskParts
         .filter { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
         .sortedByDescending { it.mount.startsWith("/srv/dev-disk-by-label-data") }
@@ -180,12 +184,12 @@ internal fun DiskProfileBottomSheet(
     val omvDisk = selectNasTargetDisk(deviceVM.omvOverview.disks)
     val activeDiskKey = profileDiskKey(omvDisk, hddDisk?.mount ?: "unknown")
     var installedAt by remember(activeDiskKey) {
-        val serialValue = prefs.getLong("${activeDiskKey}_installed_at", 0L)
-        val legacyValue = prefs.getLong("toshiba_n300_installed_at", 0L)
+        val serialValue = hwPrefs.getHardwareProfileLong("${activeDiskKey}_installed_at", 0L)
+        val legacyValue = hwPrefs.getHardwareProfileLong("toshiba_n300_installed_at", 0L)
         val value = if (serialValue > 0L) serialValue else legacyValue
         val now = System.currentTimeMillis()
         if (value <= 0L) {
-            prefs.edit { putLong("${activeDiskKey}_installed_at", now) }
+            hwPrefs.setHardwareProfileLong("${activeDiskKey}_installed_at", now)
             mutableStateOf(now)
         } else {
             mutableStateOf(value)
@@ -364,11 +368,9 @@ internal fun DiskProfileBottomSheet(
             message = "Chỉ đặt mốc theo dõi sau khi đã xác nhận ổ dữ liệu hiện tại là ổ cần theo dõi. Mốc này gắn với model/serial ổ để tính checklist 24 giờ, 7 ngày và 30 ngày.",
             onConfirm = {
                 val now = System.currentTimeMillis()
-                prefs.edit {
-                    putLong("${activeDiskKey}_installed_at", now)
-                    putString("${activeDiskKey}_model", diskModel)
-                    putString("${activeDiskKey}_serial", diskSerial)
-                }
+                hwPrefs.setHardwareProfileLong("${activeDiskKey}_installed_at", now)
+                hwPrefs.setHardwareProfile("${activeDiskKey}_model", diskModel)
+                hwPrefs.setHardwareProfile("${activeDiskKey}_serial", diskSerial)
                 deviceVM.logUserAction("DiskProfile", "Thiết lập điểm kiểm soát ổ đĩa: $diskModel ($diskSerial).")
                 installedAt = now
                 showTrackingConfirm = false
@@ -381,11 +383,11 @@ internal fun DiskProfileBottomSheet(
             type = DialogType.WARNING,
             message = "Thao tác này đưa hồ sơ ổ mới về trạng thái chưa theo dõi và các số liệu sẽ trở lại 0 cho đến khi đặt mốc mới.",
             onConfirm = {
-                prefs.edit {
-                    remove("${activeDiskKey}_installed_at")
-                    remove("${activeDiskKey}_model")
-                    remove("${activeDiskKey}_serial")
-                }
+                hwPrefs.removeHardwareProfile(
+                    "${activeDiskKey}_installed_at",
+                    "${activeDiskKey}_model",
+                    "${activeDiskKey}_serial"
+                )
                 deviceVM.logUserAction("DiskProfile", "Đặt lại mốc theo dõi hồ sơ ổ đĩa.")
                 installedAt = 0L
                 showResetTrackingConfirm = false
@@ -394,11 +396,8 @@ internal fun DiskProfileBottomSheet(
         )
     }
 
-    ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF101216),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { DashboardCompactBottomSheetHandle() }
     ) {
         Column(
             Modifier
@@ -483,7 +482,7 @@ internal fun DiskProfileBottomSheet(
                     value = "$heavyWriteTasks tiến trình",
                     subtitle = "Ghi hình: $activeRecordings luồng • Tải xuống: $downloadTasks phiên",
                     icon = Icons.Default.VerifiedUser,
-                    color = Color(0xFF66BB6A),
+                    color = AccentGreen,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -545,7 +544,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -560,7 +559,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -573,15 +572,15 @@ internal fun DiskProfileBottomSheet(
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OperationModeChip("stream", "Ghi live", operationMode, prefs) {
+                    OperationModeChip("stream", "Ghi live", operationMode, hwPrefs) {
                         operationMode = it
                         deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
-                    OperationModeChip("balanced", "Cân bằng", operationMode, prefs) {
+                    OperationModeChip("balanced", "Cân bằng", operationMode, hwPrefs) {
                         operationMode = it
                         deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
-                    OperationModeChip("eco", "Tiết kiệm", operationMode, prefs) {
+                    OperationModeChip("eco", "Tiết kiệm", operationMode, hwPrefs) {
                         operationMode = it
                         deviceVM.logUserAction("DiskProfile", "Thay đổi hồ sơ hoạt động ổ cứng thành: $it.")
                     }
@@ -618,7 +617,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -642,7 +641,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -665,7 +664,7 @@ internal fun DiskProfileBottomSheet(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+                    .background(DarkCard, RoundedCornerShape(8.dp))
                     .padding(8.dp)
             ) {
                 Row(
@@ -712,19 +711,19 @@ private fun OperationModeChip(
     mode: String,
     label: String,
     selectedMode: String,
-    prefs: android.content.SharedPreferences,
+    hwPrefs: com.nas.naswebdav.utils.PreferencesRepository,
     onSelect: (String) -> Unit
 ) {
     val selected = mode == selectedMode
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) AccentCyan.copy(alpha = 0.18f) else Color(0xFF101216))
+            .background(if (selected) AccentCyan.copy(alpha = 0.18f) else DarkSurface)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) {
-                prefs.edit { putString("operation_mode", mode) }
+                hwPrefs.setHardwareProfile("operation_mode", mode)
                 onSelect(mode)
             }
             .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -743,7 +742,7 @@ private fun NewDiskChecklistItem(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .background(DarkCard, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -782,7 +781,7 @@ private fun HardwareMetricCell(
 ) {
     Column(
         modifier = modifier
-            .background(Color(0xFF171922), RoundedCornerShape(8.dp))
+            .background(DarkCard, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

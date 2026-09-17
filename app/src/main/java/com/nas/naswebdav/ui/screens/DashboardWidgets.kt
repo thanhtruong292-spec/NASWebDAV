@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -141,7 +142,7 @@ fun GaugeCard(
     value: String,
     subValue: String? = null,
     icon: ImageVector,
-    gradientColors: List<Color>,
+    gradientColors: kotlinx.collections.immutable.ImmutableList<Color>,
     modifier: Modifier = Modifier,
     overridePercent: Float? = null,
     label: String? = null,
@@ -317,7 +318,7 @@ fun QuickActionChip(label: String, icon: ImageVector, color: Color, modifier: Mo
 // ============ COMPONENT: Thẻ menu lớn (gradient) ============
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: List<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
+fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColors: kotlinx.collections.immutable.ImmutableList<Color>, modifier: Modifier = Modifier, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
         modifier = modifier
             .pointerInput(Unit) {
@@ -336,11 +337,11 @@ fun BigMenuTile(title: String, subtitle: String, icon: ImageVector, gradientColo
                 .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.SM)
         ) {
             Column(Modifier.fillMaxWidth()) {
-                Icon(icon, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
+                Icon(icon, null, tint = TextPrimary.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.height(AppSpacing.XS))
                 Column {
-                    Text(title, style = AppTypography.TitleMedium.copy(fontWeight = FontWeight.Bold, color = Color.White))
-                    Text(subtitle, style = AppTypography.BodySmall.copy(color = Color.White.copy(alpha = 0.7f)))
+                    Text(title, style = AppTypography.TitleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary))
+                    Text(subtitle, style = AppTypography.BodySmall.copy(color = TextPrimary.copy(alpha = 0.7f)))
                 }
             }
         }
@@ -417,19 +418,19 @@ fun DashboardWidgetsGetStatusColor(title: String, value: String, rawPercent: Str
         return when (title) {
             "Nhiệt độ" -> {
                 val t = extractNumber(value)
-                when { t >= 75f -> AccentRed; t >= 60f -> AccentOrange; t > 0f -> AccentGreen; else -> Color.Gray }
+                when { t >= 75f -> AccentRed; t >= 60f -> AccentOrange; t > 0f -> AccentGreen; else -> TextTertiary }
             }
             "CPU", "Ổ đĩa" -> {
                 val p = extractNumber(value)
-                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> TextTertiary }
             }
             "RAM" -> {
                 val p = if (rawPercent.isNotBlank()) extractNumber(rawPercent) else extractNumber(value)
-                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> Color.Gray }
+                when { p >= 90f -> AccentRed; p >= 75f -> AccentOrange; p > 0f -> AccentGreen; else -> TextTertiary }
             }
-            else -> Color.Gray
+            else -> TextTertiary
         }
-    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return Color.Gray }
+    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { return TextTertiary }
 }
 
 // Giữ lại MenuCard tương thích cho các file khác nếu cần
@@ -463,19 +464,19 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "BIỂU ĐỒ NHIỆT ĐỘ",
-                    style = AppTypography.LabelMedium.copy(color = Color.LightGray, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    style = AppTypography.LabelMedium.copy(color = TextSecondary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 )
                 // Legend
                 Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.MD)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(AccentOrange))
                         Spacer(Modifier.width(AppSpacing.XS))
-                        Text("CPU", style = AppTypography.LabelMedium.copy(color = Color.White))
+                        Text("CPU", style = AppTypography.LabelMedium.copy(color = TextPrimary))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(AccentCyan))
                         Spacer(Modifier.width(AppSpacing.XS))
-                        Text("HDD", style = AppTypography.LabelMedium.copy(color = Color.White))
+                        Text("HDD", style = AppTypography.LabelMedium.copy(color = TextPrimary))
                     }
                 }
             }
@@ -493,14 +494,14 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                 
                 // Đường lưới đứt nét ngang (Grid Lines)
                 val gridPaint = androidx.compose.ui.graphics.Paint().apply {
-                    color = Color.DarkGray
+                    color = TextTertiary
                     strokeWidth = 1f
                     pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
                 }
                 for (i in 0..4) {
                     val y = height - (i * (height / 4))
                     drawLine(
-                        color = Color.DarkGray.copy(alpha = 0.5f),
+                        color = TextTertiary.copy(alpha = 0.5f),
                         start = androidx.compose.ui.geometry.Offset(0f, y),
                         end = androidx.compose.ui.geometry.Offset(width, y),
                         strokeWidth = 1f,
@@ -573,11 +574,11 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                 
                 val lastCpuY = height - ((lastPoint.first.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
                 drawCircle(color = AccentOrange, radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
-                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
+                drawCircle(color = TextPrimary, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastCpuY))
                 
                 val lastHddY = height - ((lastPoint.second.coerceIn(minTemp, maxTemp) - minTemp) / range * height)
                 drawCircle(color = AccentCyan, radius = 6f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
-                drawCircle(color = Color.White, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
+                drawCircle(color = TextPrimary, radius = 3f, center = androidx.compose.ui.geometry.Offset(lastX, lastHddY))
                 
                 // Vẽ chữ hiển thị thông số tại thời điểm đo
                 val paint = android.graphics.Paint().apply {
@@ -591,7 +592,7 @@ fun TemperatureChartCard(history: List<Pair<Float, Float>>, modifier: Modifier =
                     lastCpuY - 15f,
                     paint
                 )
-                paint.color = "#03A9F4".toColorInt()
+                paint.color = AccentBlue500.toArgb()
                 drawContext.canvas.nativeCanvas.drawText(
                     "${String.format(java.util.Locale.US, "%.1f", lastPoint.second)}°C",
                     lastX - 15f,

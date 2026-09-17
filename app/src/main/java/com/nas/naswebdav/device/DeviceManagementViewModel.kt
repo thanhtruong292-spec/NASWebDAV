@@ -125,6 +125,123 @@ class DeviceManagementViewModel(
     var isFetchingLogs by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
+    // Failed uploads từ SyncAction table (actionType=UPLOAD_FAILED) — cho UI retry/delete
+    var failedUploads by androidx.compose.runtime.mutableStateOf<List<com.nas.naswebdav.SyncAction>>(emptyList())
+        internal set
+    var showFailedUploadsDialog by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+    var isLoadingFailedUploads by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    /**
+     * Tải danh sách UPLOAD_FAILED rows từ SyncAction table.
+     * Gọi khi user mở dialog hoặc pull-to-refresh.
+     */
+    fun loadFailedUploads(context: android.content.Context) {
+        isLoadingFailedUploads = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = (context.applicationContext as NasApplication).database
+                failedUploads = db.syncActionDao().getAllUploadFailed()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
+                    "Không tải được failed uploads: ${e.message}")
+            } finally {
+                isLoadingFailedUploads = false
+            }
+        }
+    }
+
+    /**
+     * Retry một UPLOAD_FAILED row cụ thể: enqueue OfflineSyncWorker với inputData
+     * chứa actionId. Worker sẽ ưu tiên xử lý đúng row đó trước khi đến các
+     * action khác trong queue.
+     */
+    fun retryFailedUpload(context: android.content.Context, actionId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val constraints = androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .build()
+                val inputData = androidx.work.workDataOf(
+                    com.nas.naswebdav.OfflineSyncWorker.KEY_RETRY_ACTION_ID to actionId
+                )
+                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
+                    .setConstraints(constraints)
+                    .setInputData(inputData)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
+                    )
+                    .build()
+                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
+                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    request
+                )
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Enqueue retry cho failed upload id=$actionId (priority)")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
+                    "Enqueue retry thất bại cho id=$actionId: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Xóa row UPLOAD_FAILED khỏi queue (user chấp nhận mất file, không muốn retry).
+     * Cũng xóa temp file nếu còn trong cacheDir.
+     */
+    fun deleteFailedUpload(context: android.content.Context, action: com.nas.naswebdav.SyncAction) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = (context.applicationContext as NasApplication).database
+                try { java.io.File(action.sourcePath).delete() } catch (_: Exception) {}
+                db.syncActionDao().deleteById(action.id)
+                failedUploads = db.syncActionDao().getAllUploadFailed()
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Đã xóa failed upload id=${action.id} (${action.sourcePath})")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
+                    "Xóa failed upload thất bại: ${e.message}")
+            }
+        }
+    }
+
+    /** Retry tất cả failed uploads cùng lúc */
+    fun retryAllFailedUploads(context: android.content.Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val constraints = androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .build()
+                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
+                    )
+                    .build()
+                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
+                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
+                    request
+                )
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
+                    "Enqueue retry-all failed uploads")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.nas.naswebdav.utils.SystemLogger.log("WARNING", "DeviceMgmt",
+                    "Retry-all failed: ${e.message}")
+            }
+        }
+    }
+
     // ═══ WIRED METHODS — Phase 2b: delegation pattern ═══
 
     /**
@@ -143,7 +260,9 @@ class DeviceManagementViewModel(
                     .url("$apiBase/api/smb/toggle")
                     .post(body)
                     .build()
-                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     isLoadingSmb = false
                 }
@@ -152,6 +271,7 @@ class DeviceManagementViewModel(
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     isSmbEnabled = !enabled // revert
                     isLoadingSmb = false
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Bật/tắt SMB thất bại: ${e.message}")
                 }
             }
         }
@@ -738,9 +858,17 @@ class DeviceManagementViewModel(
                 val req = okhttp3.Request.Builder()
                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/docker/control")
                     .post(body).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { }
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 loadDockerContainers()
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "controlDockerContainer $action failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR,
+                        "Điều khiển Docker ($action) thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -790,8 +918,15 @@ class DeviceManagementViewModel(
                     .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/control")
                     .post(requestBody)
                     .build()
-                NasApplication.instance.fastApiClient.newCall(request).execute().use { }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "controlTorrent failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Điều khiển torrent thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1125,11 +1260,18 @@ class DeviceManagementViewModel(
                     put("ip", ip); put("approved", true)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
-                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                WebDavManager.optimizedClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.SUCCESS, "Đã cấp quyền truy cập cho IP: $ip")
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "approveDeviceIp failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Cấp quyền IP thất bại: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1143,11 +1285,18 @@ class DeviceManagementViewModel(
                     put("ip", ip); put("approved", false)
                 }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$base/api/auth/approve_ip").post(body).build()
-                WebDavManager.optimizedClient.newCall(request).execute().use { }
+                WebDavManager.optimizedClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+                }
                 withContext(Dispatchers.Main) {
                     globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.WARNING, "Đã chặn quyền truy cập của IP: $ip")
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("DeviceMgmt", "denyDeviceIp failed: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    globalUi.show(com.nas.naswebdav.ui.dialogs.DialogType.ERROR, "Chặn IP thất bại: ${e.message}")
+                }
+            }
         }
     }
 }

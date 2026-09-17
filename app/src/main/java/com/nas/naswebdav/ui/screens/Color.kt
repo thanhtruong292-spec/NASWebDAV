@@ -1,0 +1,94 @@
+package com.nas.naswebdav.ui.screens
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
+
+// ════════════════════════════════════════════════════════════════════════════
+// NAS DESIGN TOKENS — AMOLED-OPTIMIZED dark palette (true black for OLED)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Surface hierarchy: pure black base, cards use 5–10% white tint for
+// visual separation without lighting the OLED pixel unnecessarily.
+internal val DarkSurface = Color(0xFF000000)    // true black — OLED off
+internal val DarkCard = Color(0xFF0A0A0A)       // ~4% gray — minimal light bleed
+internal val DarkCardHover = Color(0xFF141414)   // ~8% gray — hover state
+internal val DarkElevated = Color(0xFF1A1A1A)    // ~10% gray — sheets/dialogs
+internal val DarkInput = Color(0xFF0F0F0F)       // input field background
+
+// Semantic accents — bright vivid colors chosen for OLED contrast.
+internal val AccentCyan = Color(0xFF60A5FA)     // primary action / links
+internal val AccentGreen = Color(0xFF4ADE80)    // success / online
+internal val AccentOrange = Color(0xFFFB923C)   // warning / caution
+internal val AccentRed = Color(0xFFF87171)      // error / destructive
+internal val AccentPurple = Color(0xFFA78BFA)   // secondary feature
+internal val AccentPink = Color(0xFFF472B6)      // media accent
+internal val AccentBlue = Color(0xFF3B82F6)     // informational accent
+
+internal val StatusOnline = AccentGreen
+internal val StatusWarning = AccentOrange
+internal val StatusOffline = AccentRed
+internal val StatusInfo = AccentCyan
+
+// Text hierarchy — pure white primary, desaturated secondaries for OLED.
+internal val TextPrimary = Color(0xFFF8FAFC)
+internal val TextSecondary = Color(0xFFCBD5E1)
+internal val TextTertiary = Color(0xFF6B7280)
+
+// Panel titles and progress tracks.
+internal val PanelTitleCyan = Color(0xFF93C5FD)
+internal val PanelTitleGreen = Color(0xFF86EFAC)
+internal val PanelTitlePurple = Color(0xFFC4B5FD)
+internal val PanelTitleSize = 11.sp
+internal val PanelTitleLetterSpacing = 1.5.sp
+internal val TrackGray = Color(0xFF1F2937)
+internal val TrackGreen = Color(0xFF14532D)
+internal val TrackCyan = Color(0xFF1E3A8A)
+
+// On-dark text/icon colors used on bright accent backgrounds
+// (kept on pure black for AMOLED contrast on saturated accents).
+internal val OnDarkPrimary = Color(0xFF000000)
+internal val OnDarkSecondary = Color(0xFF000000)
+internal val OnDarkTertiary = Color(0xFF000000)
+internal val OnDarkError = Color(0xFF000000)
+
+// Subtle outline / track on AMOLED surfaces (slightly cooler than TrackGray).
+internal val OutlineVariantDark = Color(0xFF1F2937)
+
+// Chart series palette — Material-500 brightness band for OLED legibility.
+internal val ChartRed500 = Color(0xFFEF5350)
+internal val ChartAmber500 = Color(0xFFFFC400)
+internal val ChartGreen500 = Color(0xFF66BB6A)
+internal val ChartCoral500 = Color(0xFFFF5252)
+internal val ChartOrange500 = Color(0xFFFF9100)
+internal val ChartCyan500 = Color(0xFF00E5FF)
+internal val ChartBlue500 = Color(0xFF00B0FF)
+internal val ChartGridline = Color(0xB48892B0) // #8892B0 @ 70% alpha
+
+// Recording-overlay accents — brighter than the regular AccentRed so the
+// active-recording banner stays unmistakable on AMOLED dark UI.
+internal val RecordingOverlayBg = Color(0xFF1F1F1F)
+internal val RecordingOverlayBorder = Color(0xFFFF1744)
+
+// One-off Material Light Blue 500 used as a chart accent line in two
+// dashboard widgets. Kept as a token so future palette tweaks happen once.
+internal val AccentBlue500 = Color(0xFF03A9F4)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SEMANTIC CONTAINER COLORS — 12% alpha on accent for badge/chip backgrounds
+// ════════════════════════════════════════════════════════════════════════════
+internal val SuccessContainer = AccentGreen.copy(alpha = 0.12f)
+internal val WarningContainer = AccentOrange.copy(alpha = 0.12f)
+internal val ErrorContainer = AccentRed.copy(alpha = 0.12f)
+internal val InfoContainer = AccentCyan.copy(alpha = 0.12f)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SURFACE BORDERS — subtle elevation cues without lighting OLED pixels
+// ════════════════════════════════════════════════════════════════════════════
+internal val DarkCardBorder = Color(0xFF1A1A1A)
+internal val DarkDivider = Color(0xFF1F2937)
+
+// ════════════════════════════════════════════════════════════════════════════
+// SKELETON SHIMMER — loading placeholder gradient endpoints
+// ════════════════════════════════════════════════════════════════════════════
+internal val SkeletonBase = Color(0xFF0A0A0A)
+internal val SkeletonHighlight = Color(0xFF1A1A1A)

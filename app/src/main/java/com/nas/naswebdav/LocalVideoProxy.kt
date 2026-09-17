@@ -51,8 +51,9 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         // FIX: đóng proxy cũ (nếu có) trước khi tạo mới để tránh leak
         // thread/socket khi caller goi start() nhieu lan tren cung instance.
         stop()
-        // Mở ServerSocket trên port bất kỳ do OS cấp (tránh conflict)
-        val server = ServerSocket(0).also { serverSocket = it }
+        // Mở ServerSocket chỉ trên loopback (127.0.0.1) — tránh LAN peer dùng proxy
+        // để forward NAS Basic Auth và đọc dữ liệu trái phép.
+        val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).also { serverSocket = it }
         val port = server.localPort
         lastActivityAtMs = System.currentTimeMillis()
 
@@ -137,9 +138,15 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
 
                 val method = requestLine.split(" ").firstOrNull() ?: "GET"
 
-                // Kết nối tới NAS
-                nasConnection = URL(nasUrl).openConnection() as java.net.HttpURLConnection
-                nasConnection!!.apply {
+                // Kết nối tới NAS — dùng local non-null val để tránh NPE từ !!
+                val conn = try {
+                    (URL(nasUrl).openConnection() as java.net.HttpURLConnection).also { nasConnection = it }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Cannot open NAS connection: ${e.message}")
+                    sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
+                    return
+                }
+                conn.apply {
                     requestMethod = method
                     connectTimeout = CONNECT_TIMEOUT_MS
                     readTimeout = READ_TIMEOUT_MS
@@ -161,7 +168,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
 
                 val nasResponseCode = try {
-                    nasConnection!!.responseCode
+                    conn.responseCode
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     Log.e(TAG, "Cannot connect to NAS: ${e.message}")
                     sendErrorResponse(output, 502, "Lỗi proxy video: ${e.message}")
@@ -170,7 +177,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
 
                 // Build HTTP response header cho VLC
                 val responseHeaders = StringBuilder()
-                responseHeaders.append("HTTP/1.1 $nasResponseCode ${nasConnection!!.responseMessage}\r\n")
+                responseHeaders.append("HTTP/1.1 $nasResponseCode ${conn.responseMessage}\r\n")
 
                 // Chuyển tiếp các headers quan trọng từ NAS sang VLC
                 val importantHeaders = listOf(
@@ -179,7 +186,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 )
 
                 for (header in importantHeaders) {
-                    nasConnection!!.getHeaderField(header)?.let { value ->
+                    conn.getHeaderField(header)?.let { value ->
                         responseHeaders.append("${header.replaceFirstChar { it.uppercase() }}: $value\r\n")
                     }
                 }
@@ -192,7 +199,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 // Stream body (chỉ với GET, không với HEAD)
                 if (method != "HEAD" && nasResponseCode in 200..299) {
                     try {
-                        nasConnection!!.inputStream.use { nasBody ->
+                        conn.inputStream.use { nasBody ->
                             val buffer = ByteArray(BUFFER_SIZE)
                             var bytesRead: Int
                             while (nasBody.read(buffer).also { bytesRead = it } != -1) {

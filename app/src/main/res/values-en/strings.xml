@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NAS WebDAV</string>
+    <string name="social_share_target_label">Download to NAS</string>
+    <string name="action_close">Close</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_ok">OK</string>
+    <string name="action_save">Save</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_copy_link">Copy link</string>
+    <string name="action_create_folder">Create folder</string>
+    <string name="action_delete_file">Delete file</string>
+    <string name="action_download">Download</string>
+    <string name="action_extract_nas">Extract on NAS</string>
+    <string name="action_move">Move</string>
+    <string name="action_open_external">Open with another app</string>
+    <string name="action_properties">Properties</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_restore">Restore</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_run_nas">Run on NAS</string>
+
+    <!-- Accessibility labels for icon-only controls -->
+    <string name="a11y_back">Back</string>
+    <string name="a11y_close">Close</string>
+    <string name="a11y_menu">Open menu</string>
+    <string name="a11y_more_options">More options</string>
+    <string name="a11y_search">Search</string>
+    <string name="a11y_refresh">Refresh</string>
+    <string name="a11y_delete">Delete</string>
+    <string name="a11y_edit">Edit</string>
+    <string name="a11y_save">Save</string>
+    <string name="a11y_add">Add</string>
+    <string name="a11y_remove">Remove item</string>
+    <string name="a11y_download">Download</string>
+    <string name="a11y_upload">Upload</string>
+    <string name="a11y_play">Play</string>
+    <string name="a11y_pause">Pause</string>
+    <string name="a11y_stop">Stop</string>
+    <string name="a11y_expand">Expand</string>
+    <string name="a11y_collapse">Collapse</string>
+    <string name="a11y_copy">Copy</string>
+    <string name="a11y_settings">Settings</string>
+    <string name="a11y_show_password">Show password</string>
+    <string name="a11y_hide_password">Hide password</string>
+    <string name="a11y_mute">Mute</string>
+    <string name="a11y_unmute">Unmute</string>
+
+    <string name="error_cannot_connect_nas">Cannot connect to NAS</string>
+    <string name="error_cannot_load_file">Cannot load file</string>
+    <string name="label_folder_empty">Folder is empty</string>
+    <string name="label_recent_searches">Recent searches</string>
+    <string name="label_search_placeholder">Search…</string>
+    <string name="label_selected_count_with_count">%1$d items selected</string>
+    <string name="label_days_left">%1$d days left</string>
+
+    <string name="menu_find_duplicates">Find duplicates</string>
+    <string name="menu_login">Sign in</string>
+    <string name="menu_organize_videos">Organize videos</string>
+    <string name="menu_random_photo">Random photo</string>
+
+    <string name="cd_close">Close</string>
+    <string name="cd_back">Back</string>
+    <string name="cd_search">Search</string>
+    <string name="cd_delete">Delete</string>
+    <string name="cd_refresh">Refresh</string>
+    <string name="cd_more_options">More options</string>
+    <string name="cd_clear">Clear content</string>
+    <string name="cd_copy">Copy</string>
+    <string name="cd_hide">Hide</string>
+    <string name="cd_move">Move</string>
+    <string name="cd_not_selected">Not selected</string>
+    <string name="cd_pause">Pause</string>
+    <string name="cd_play">Play</string>
+    <string name="cd_restore">Restore</string>
+    <string name="cd_seek_backward">Seek backward</string>
+    <string name="cd_seek_forward">Seek forward</string>
+    <string name="cd_select_file">Select file</string>
+    <string name="cd_selected">Selected</string>
+    <string name="cd_skip_next">Skip next</string>
+    <string name="cd_skip_previous">Skip previous</string>
+    <string name="cd_sort">Sort</string>
+    <string name="cd_tools">Tools</string>
+
+    <string name="dialog_duplicate_config">Duplicate scan configuration</string>
+    <string name="dialog_duplicate_config_desc">Configure scan mode and auto cleanup.</string>
+    <string name="dialog_duplicate_fast_mode">Fast mode</string>
+    <string name="dialog_duplicate_fast_desc">Quick match by size and name.</string>
+    <string name="dialog_duplicate_rescan">Rescan everything</string>
+    <string name="dialog_duplicate_rescan_desc">Skip cache; re-read from NAS.</string>
+    <string name="dialog_duplicate_auto_clean">Auto-clean duplicates</string>
+    <string name="dialog_duplicate_auto_clean_desc">Automatically delete duplicates after scan.</string>
+    <string name="dialog_start_scan">Start scan</string>
+    <string name="dialog_organize_title">Organize files</string>
+    <string name="dialog_organize_loading">Organizing…</string>
+    <string name="dialog_organize_confirm">Confirm organization</string>
+
+    <string name="backup_schedule_title">Backup schedule</string>
+    <string name="backup_schedule_frequency">Frequency</string>
+    <string name="backup_schedule_hour">Run hour</string>
+    <string name="backup_schedule_hour_format">Run hour: %1$d</string>
+
+    <string name="recording_overlay_initial">Preparing recording…</string>
+    <string name="recording_overlay_format">Recording: %1$d:%2$02d</string>
+
+    <string name="social_share_invalid">Invalid share URL</string>
+    <string name="social_share_login_required">Sign in to NAS before sharing</string>
+    <string name="social_share_queued">Added to queue</string>
+
+    <!-- Batch operation notifications -->
+    <string name="batch_channel_name">Batch tasks</string>
+    <string name="batch_channel_description">Progress for Copy/Move/Delete files on NAS</string>
+    <string name="batch_operation_copy">Copy</string>
+    <string name="batch_operation_move">Move</string>
+    <string name="batch_operation_delete">Delete</string>
+    <string name="batch_operation_restore">Restore</string>
+    <string name="batch_operation_process">Process</string>
+    <string name="batch_operation_count">%1$s %2$d files</string>
+    <string name="batch_operation_progress">%1$s (%2$d/%3$d)</string>
+    <string name="batch_operation_complete">Complete</string>
+    <string name="batch_operation_success_log">%1$s succeeded %2$d/%3$d files.</string>
+    <string name="batch_operation_partial_log">%1$s: %2$d succeeded, %3$d failed.</string>
+    <string name="batch_operation_complete_success">Completed %1$s %2$d files!</string>
+    <string name="batch_operation_complete_partial">%1$s: %2$d succeeded, %3$d errors</string>
+    <string name="batch_operation_some_failed">Some files could not be processed.</string>
+    <string name="batch_operation_all_success">All files processed successfully!</string>
+    <string name="batch_operation_module">Batch</string>
+
+    <!-- Long-running NAS API notifications -->
+    <string name="long_api_channel_name">Heavy NAS task</string>
+    <string name="long_api_channel_description">Progress for extracting/organizing files on NAS</string>
+    <string name="long_api_default_task_label">Processing…</string>
+    <string name="long_api_waiting">Waiting for NAS…</string>
+    <string name="long_api_unzip_success">Extraction completed! ✅</string>
+    <string name="long_api_unzip_failure">Extraction failed: %1$s</string>
+    <string name="long_api_organize_success">Completed! Collected %1$d videos. ✅</string>
+    <string name="long_api_organize_failure">Organization error: %1$s</string>
+    <string name="long_api_success">Completed! ✅</string>
+    <string name="long_api_failure_code">Error: Code %1$d</string>
+    <string name="long_api_connection_error">Connection error: %1$s</string>
+    <string name="long_api_failed_title">%1$s — Failed</string>
+    <string name="long_api_error_short">Error: %1$s</string>
+    <string name="long_api_failed_log">%1$s failed: %2$s</string>
+
+    <!-- FileBrowser error messages -->
+    <string name="browser_folder_access_error">Cannot access %1$d subfolder(s) — NAS may refuse permissions or network is slow</string>
+    <string name="browser_error_prefix">Error: %1$s</string>
+    <string name="browser_delete_success">Deleted %1$s</string>
+    <string name="browser_webdav_system_error">WebDAV system error</string>
+    <string name="browser_delete_failure">Cannot delete %1$s: %2$s</string>
+    <string name="browser_batch_prepare_error">Cannot prepare batch task: %1$s</string>
+    <string name="browser_rename_failure">Rename failed: %1$s</string>
+    <string name="browser_create_folder_failure">Create folder failed: %1$s</string>
+    <string name="browser_restore_failure">Restore failed: %1$s</string>
+    <string name="browser_extract_failure">Extract failed: %1$s</string>
+
+    <!-- AutoDuplicateScanWorker -->
+    <string name="autodup_maintenance_window">Paused: outside maintenance window 2-5 AM (current hour %1$dh). Will retry later.</string>
+    <string name="autodup_system_busy">System under load (%1$s) — pause 5 min, retry attempt %2$d/5</string>
+    <string name="autodup_idle_check_error">Cannot reach /api/system/idle: %1$s</string>
+    <string name="autodup_not_idle_cancel">System not idle after 25 min wait — maintenance session cancelled, will retry next cycle.</string>
+    <string name="autodup_busy_pause">System under load — pausing auto-scan</string>
+    <string name="autodup_idle_resume">System idle — resuming scan</string>
+    <string name="autodup_launch_cleanup">Launching scheduled duplicate cleanup.</string>
+    <string name="autodup_auto_schedule_log">Auto duplicate cleanup ran on schedule</string>
+    <string name="autodup_no_fastpath">Cannot reach FastPath API</string>
+    <string name="autodup_maintenance_complete">Maintenance done: %1$d duplicates found, %2$d processed, %3$s freed, completed in %4$d min.</string>
+
+    <!-- Shared status dialog titles -->
+    <string name="dialog_status_success">Success</string>
+    <string name="dialog_status_error">Failed</string>
+    <string name="dialog_status_warning">Warning</string>
+    <string name="dialog_status_confirm">Confirm</string>
+    <string name="dialog_close_button">Close</string>
+    <string name="dialog_confirm_button">Confirm</string>
+
+    <!-- Reboot / Shutdown confirm dialogs -->
+    <string name="reboot_confirm_message">Are you sure you want to reboot NAS Chainedbox? All running processes will be stopped.</string>
+    <string name="shutdown_confirm_message">Switch NAS to sleep instead of full power off. LAN LED must remain lit for Wake-on-LAN to wake it.</string>
+
+    <!-- BitTorrent download dialog -->
+    <string name="dl_title">Download BitTorrent</string>
+    <string name="dl_link_tab">Link / Magnet</string>
+    <string name="dl_torrent_tab">File .torrent</string>
+    <string name="dl_link_description">Paste a Magnet link or HTTP URL to a .torrent file. NAS will download via qBittorrent.</string>
+    <string name="dl_link_placeholder">magnet:?xt=... or https://...torrent</string>
+    <string name="dl_add_queue">ADD TO QUEUE</string>
+    <string name="dl_pick_torrent_desc">Pick one .torrent file from your phone to upload to NAS. qBittorrent will start downloading immediately.</string>
+    <string name="dl_pick_torrent_button">CHOOSE .TORRENT FILE</string>
+    <string name="dl_pick_torrent_note">After choosing, the file uploads and the form closes automatically.</string>
+    <string name="dl_cancel">CANCEL</string>
+
+    <!-- Wake-on-LAN dialog -->
+    <string name="wol_title">Wake-on-LAN</string>
+    <string name="wol_description">Enter the MAC address of the NAS network port (e.g. 00:1A:2B:3C:4D:5E). The app saves it for next time and sends the wake signal over LAN.</string>
+    <string name="wol_mac_placeholder">e.g. AA:BB:CC:DD:EE:FF</string>
+    <string name="wol_confirm">Wake up NAS</string>
+
+    <!-- Folder picker dialog -->
+    <string name="folder_picker_title">Select destination folder</string>
+    <string name="folder_picker_root">/ (Root folder)</string>
+    <string name="folder_picker_parent">.. (Back)</string>
+    <string name="folder_picker_empty">(Empty folder)</string>
+    <string name="folder_picker_select_here">Copy/Move here</string>
+    <string name="folder_picker_folder_cd">Folder</string>
+
+    <!-- Biometric lock -->
+    <string name="biometric_prompt_title">NAS security lock</string>
+    <string name="biometric_prompt_subtitle">Authenticate with fingerprint/face to access data</string>
+    <string name="biometric_finger_cd">Scan fingerprint to unlock</string>
+    <string name="biometric_error_with_count">Error: %1$s (Failed %2$d/3 times)</string>
+    <string name="biometric_finger_mismatch">Fingerprint mismatch! (Failed %1$d/3 times)</string>
+    <string name="biometric_open_fingerprint_failed">Cannot open fingerprint scanner</string>
+
+    <!-- IP approval -->
+    <string name="ip_risk_local">Local network</string>
+    <string name="ip_risk_external">External IP (%1$s)</string>
+
+    <!-- Remote crash reporting (Sentry self-hosted, opt-in) -->
+    <string name="crash_remote_title">Send remote crash reports</string>
+    <string name="crash_remote_desc">Off by default. Only redacted crashes go to self-hosted Sentry.</string>
+    <string name="crash_dsn_hint">https://key@sentry.local/1</string>
+    <string name="crash_dsn_label">Sentry DSN (self-hosted)</string>
+    <string name="crash_dsn_saved">Reporting config saved</string>
+    <string name="crash_dsn_need">Enter DSN before enabling</string>
+</resources>

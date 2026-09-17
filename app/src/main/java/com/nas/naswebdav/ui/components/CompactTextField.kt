@@ -3,14 +3,20 @@ package com.nas.naswebdav.ui.components
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.nas.naswebdav.ui.screens.AccentCyan
+import com.nas.naswebdav.ui.screens.DarkCardHover
+import com.nas.naswebdav.ui.screens.TextPrimary
 
 /**
  * CompactTextField — wrapper `OutlinedTextField` với các tham số optional mà
@@ -30,20 +36,27 @@ fun CompactTextField(
     enabled: Boolean = true,
     isError: Boolean = false,
     singleLine: Boolean = true,
+    readOnly: Boolean = false,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     textStyle: TextStyle? = null,
-    accentColor: Color = Color.Unspecified,
+    accentColor: Color = AccentCyan,
     shape: Shape = RoundedCornerShape(8.dp),
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    focusRequester: FocusRequester? = null,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier,
+        modifier = modifier.then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
         enabled = enabled,
+        readOnly = readOnly,
         singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
         isError = isError,
         textStyle = textStyle ?: TextStyle.Default,
         label = label?.let { { Text(it) } },
@@ -51,6 +64,16 @@ fun CompactTextField(
         leadingIcon = leadingIcon,
         trailingIcon = trailingIcon,
         shape = shape,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = accentColor,
+            unfocusedBorderColor = DarkCardHover,
+            focusedLabelColor = accentColor,
+            cursorColor = accentColor,
+            focusedContainerColor = DarkCardHover,
+            unfocusedContainerColor = DarkCardHover,
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+        ),
         keyboardOptions = keyboardOptions,
         visualTransformation = visualTransformation,
     )

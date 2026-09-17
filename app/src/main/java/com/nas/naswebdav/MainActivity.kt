@@ -26,6 +26,8 @@ import com.nas.naswebdav.ui.screens.SocialExtractorScreen
 import com.nas.naswebdav.ui.screens.SmartOrganizerScreen
 
 import com.nas.naswebdav.ui.screens.NasTheme
+import com.nas.naswebdav.ui.screens.RecordingOverlayBg
+import com.nas.naswebdav.ui.screens.RecordingOverlayBorder
 
 import com.nas.naswebdav.ui.screens.DarkSurface
 
@@ -216,9 +218,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // AutoBackup feature (optional) requires MANAGE_EXTERNAL_STORAGE on Android 11+;
-        // we now request it lazily from AutoBackupViewModel only when the user actually
-        // enables backup — never auto-open Settings on every app start (broke UX).
+        // AutoBackup dùng READ_MEDIA_* + SAF (P0-6). Không cần MANAGE_EXTERNAL_STORAGE nữa.
 
         requestMediaReadPermissionsIfNeeded()
 
@@ -468,7 +468,9 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
 
     val mContext = androidx.compose.ui.platform.LocalContext.current
 
-    val sharedPrefs = mContext.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+    val prefsRepo = androidx.compose.runtime.remember(mContext) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(mContext)
+    }
 
     // Phase 7d.7: NasAppNavigation reads directly from domain VMs via the CompositionLocals
     // that MainActivity's setContent provides — no more facade pass-through.
@@ -509,7 +511,7 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                     com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND = false
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
-                    val biometricEnabled = sharedPrefs.getBoolean("biometric_enabled", false)
+                    val biometricEnabled = prefsRepo.isBiometricEnabled()
                     if (biometricEnabled && !isLoginScreen && !showBiometricLock) {
                         requireBiometricOnReturn = true
                     }
@@ -529,7 +531,7 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                         return@LifecycleEventObserver
                     }
                     if (requireBiometricOnReturn) {
-                        if (!isLoginScreen && sharedPrefs.getBoolean("biometric_enabled", false)) {
+                        if (!isLoginScreen && prefsRepo.isBiometricEnabled()) {
                             showBiometricLock = true
                         }
                         requireBiometricOnReturn = false
@@ -966,9 +968,9 @@ fun ScreenRecordFloatingOverlay() {
             contentAlignment = Alignment.BottomCenter
         ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F1F1F).copy(alpha = 0.95f)),
+                colors = CardDefaults.cardColors(containerColor = RecordingOverlayBg.copy(alpha = 0.95f)),
                 shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF1744)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, RecordingOverlayBorder),
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer(shadowElevation = 8f)
@@ -986,7 +988,7 @@ fun ScreenRecordFloatingOverlay() {
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFFF1744).copy(alpha = alpha))
+                                .background(RecordingOverlayBorder.copy(alpha = alpha))
                         )
                         Spacer(Modifier.width(8.dp))
                         Column {
@@ -1010,7 +1012,7 @@ fun ScreenRecordFloatingOverlay() {
                             }
                             context.startService(stopIntent)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744)),
+                        colors = ButtonDefaults.buttonColors(containerColor = RecordingOverlayBorder),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {

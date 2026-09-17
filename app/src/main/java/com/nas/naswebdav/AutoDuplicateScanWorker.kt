@@ -51,7 +51,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         // -> retry sau ~1h. NAS user dang ngu, network/CPU thuong ranh.
         val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         if (nowHour !in 2..5) {
-            SystemLogger.log("INFO", "AutoClean", "Tạm hoãn: Ngoài khung giờ bảo trì 2h-5h sáng (hiện tại ${nowHour}h). Sẽ thử lại sau.")
+            SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_maintenance_window, nowHour))
             return@withContext Result.retry()
         }
 
@@ -76,15 +76,15 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     idleOk = true; break
                 }
                 val reason = idleJson.optString("reason", "không rõ")
-                SystemLogger.log("INFO", "AutoClean", "Hệ thống đang chịu tải (${reason}) — tạm hoãn 5 phút, tiến hành kiểm tra lại (lần thứ $attempts/5)")
+                SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_system_busy, reason, attempts))
                 kotlinx.coroutines.delay(5 * 60 * 1000L)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                SystemLogger.log("WARNING", "AutoClean", "Lỗi kết nối /api/system/idle: ${e.message}")
+                SystemLogger.log("WARNING", "AutoClean", applicationContext.getString(R.string.autodup_idle_check_error, e.message.orEmpty()))
                 break
             }
         }
         if (!idleOk) {
-            SystemLogger.log("INFO", "AutoClean", "Hệ thống không đạt trạng thái rảnh sau 25 phút chờ — phiên bảo trì bị huỷ bỏ, sẽ thực thi ở chu kỳ kế tiếp.")
+            SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_not_idle_cancel))
             return@withContext Result.retry()
         }
 
@@ -112,21 +112,29 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         if (!isIdle && !DuplicateProgressState.isPaused.value) {
                             DuplicateProgressState.isPaused.value = true
                             wasAutoPaused = true
-                            SystemLogger.log("INFO", "AutoClean", "Hệ thống đang chịu tải — tạm dừng tiến trình quét tự động")
+                            SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_busy_pause))
                         } else if (isIdle && DuplicateProgressState.isPaused.value && wasAutoPaused) {
                             DuplicateProgressState.isPaused.value = false
                             wasAutoPaused = false
-                            SystemLogger.log("INFO", "AutoClean", "Hệ thống đạt trạng thái rảnh — tiếp tục phiên quét")
+                            SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_idle_resume))
                         }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    android.util.Log.w("AutoDuplicate", "idle poll failed: ${e.message}")
+                }
                 kotlinx.coroutines.delay(60 * 1000L)
             }
         }
 
         try {
-            SystemLogger.log("INFO", "AutoClean", "Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.")
-            db.logDao().insertLog(SystemLog(type = "INFO", module = "DuplicateScan", message = "Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ"))
+            SystemLogger.log("INFO", "AutoClean", applicationContext.getString(R.string.autodup_launch_cleanup))
+            db.logDao().insertLog(
+                SystemLog(
+                    type = "INFO",
+                    module = "DuplicateScan",
+                    message = applicationContext.getString(R.string.autodup_auto_schedule_log)
+                )
+            )
             // Incremental index — KHÔNG clearAllFiles() vì Fast-Path API dùng INSERT OR REPLACE,
             // avoids DB churn (hàng triệu row xóa + chèn lại mỗi lần auto-scan).
             var totalFiles = 0
@@ -157,7 +165,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         }
                         reader.endObject()
                     }
-                } else throw Exception("Không thể kết nối FastPath API")
+                } else throw Exception(applicationContext.getString(R.string.autodup_no_fastpath))
             }
             val duplicateSizes = db.fileDao().getDuplicateSizes()
             var movedCount = 0; var savedBytes = 0L; var totalDuplicatesFound = 0
@@ -190,7 +198,17 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 }
             }
             val durationMin = (System.currentTimeMillis() - startTime) / 60000
-            SystemLogger.log("SUCCESS", "AutoClean", "Hoàn tất bảo trì: Phát hiện $totalDuplicatesFound tập tin trùng lặp, $movedCount đã được xử lý, ${com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes)} dung lượng được giải phóng, hoàn tất trong $durationMin phút.")
+            SystemLogger.log(
+                "SUCCESS",
+                "AutoClean",
+                applicationContext.getString(
+                    R.string.autodup_maintenance_complete,
+                    totalDuplicatesFound,
+                    movedCount,
+                    com.nas.naswebdav.utils.FormatUtils.formatBytes(savedBytes),
+                    durationMin
+                )
+            )
             throttleJob.cancel()
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -199,10 +217,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             // P1-14: Cap retries at 3 to prevent infinite retry loop
             if (runAttemptCount < 3) {
                 SystemLogger.log("ERROR", "AutoClean", "Lỗi tiến trình dọn dẹp: ${e.message}")
-                Result.retry()
+                return@withContext Result.retry()
             } else {
                 SystemLogger.log("ERROR", "AutoClean", "Dọn dẹp thất bại sau 3 lần thử: ${e.message}")
-                Result.failure()
+                return@withContext Result.failure()
             }
         }
     }

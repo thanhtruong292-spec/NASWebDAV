@@ -1,6 +1,3 @@
 package com.nas.naswebdav.ui.theme
-
-import androidx.compose.material3.Typography
-
-/** Single typography entry point retained for callers that import Type.kt. */
-val AppTypography: Typography = Typography()
+// AppTypography lives in DashboardTheme.kt (ui.screens package).
+// This file is intentionally minimal to avoid duplicate symbols.

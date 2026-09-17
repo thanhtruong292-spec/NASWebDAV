@@ -2,6 +2,7 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -61,11 +62,11 @@ fun DuplicateConfigDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Bolt, null, tint = Color(0xFFFFC107), modifier = Modifier.size(36.dp)) },
+        icon = { Icon(Icons.Default.Bolt, null, tint = AccentOrange, modifier = Modifier.size(36.dp)) },
         title = { Text("Cấu hình quét trùng lặp", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = Color.Gray)
+                Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = TextTertiary)
                 
                 // Option 1: Lightning Mode
                 Row(
@@ -75,11 +76,11 @@ fun DuplicateConfigDialog(
                     Checkbox(
                         checked = isLightningMode,
                         onCheckedChange = { isLightningMode = it },
-                        colors = CheckboxDefaults.colors(checkedColor = Color(0xFFFFC107))
+                        colors = CheckboxDefaults.colors(checkedColor = AccentOrange)
                     )
                     Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) Color(0xFFFFC107) else Color.White)
-                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) AccentOrange else TextPrimary)
+                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = TextTertiary, lineHeight = 14.sp)
                     }
                 }
 
@@ -90,13 +91,13 @@ fun DuplicateConfigDialog(
                 ) {
                     Checkbox(checked = isForceRestartDuplicate, onCheckedChange = { isForceRestartDuplicate = it })
                     Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text("Quét lại từ đầu", fontSize = 14.sp, color = Color.White)
-                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = Color.Gray)
+                        Text("Quét lại từ đầu", fontSize = 14.sp, color = TextPrimary)
+                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = TextTertiary)
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = Color.DarkGray)
+                HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
                 Spacer(Modifier.height(8.dp))
 
                 // Option 3: Tự động chạy ngầm (Auto Clean)
@@ -106,13 +107,13 @@ fun DuplicateConfigDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4FC3F7))
-                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = Color.Gray, lineHeight = 14.sp)
+                        Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = TextTertiary, lineHeight = 14.sp)
                     }
                     Switch(
                         checked = viewModel.autoCleanEnabled,
                         onCheckedChange = { viewModel.toggleAutoClean(context, it) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF4FC3F7), checkedTrackColor = Color(0xFF4FC3F7).copy(alpha = 0.5f))
+                        colors = SwitchDefaults.colors(checkedThumbColor = AccentBlue, checkedTrackColor = AccentBlue.copy(alpha = 0.5f))
                     )
                 }
             }
@@ -123,13 +124,13 @@ fun DuplicateConfigDialog(
                     onStartScan(isForceRestartDuplicate, isLightningMode)
                     onDismiss()
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
             ) {
                 Text("🚀 Bắt đầu quét")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Hủy", color = Color.Gray) }
+            TextButton(onClick = onDismiss) { Text("Hủy", color = TextTertiary) }
         }
     )
 }
@@ -141,7 +142,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
         onDismissRequest = { onDismiss() },
         title = {
             Column {
-                Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = Color.Red)
+                Text("Tệp trùng lặp", style = MaterialTheme.typography.titleMedium, color = AccentRed)
                 // BỔ SUNG: Hiển thị tổng số file rác phát hiện được nếu danh sách không trống
                 if (viewModel.duplicateFilesList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
@@ -156,7 +157,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
         },
         text = {
             if (viewModel.duplicateFilesList.isEmpty()) {
-                Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = Color.Green)
+                Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = AccentGreen)
             } else {
                 // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
                 // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
@@ -220,16 +221,16 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF2196F3))
+                        Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentBlue)
                         Spacer(Modifier.width(4.dp))
-                        Text("Chọn thông minh", fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                        Text("Chọn thông minh", fontWeight = FontWeight.Bold, color = AccentBlue)
                     }
 
                     androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
                         items(items = filteredGroups, key = { it.first().contentLength }) { group ->
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.2f)),
+                                colors = CardDefaults.cardColors(containerColor = DarkCardHover),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Column(Modifier.padding(12.dp)) {
@@ -255,7 +256,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                 modifier = Modifier
                                                     .width(130.dp).height(150.dp) // Kích thước Thumbnail to rõ ràng
                                                     .clip(RoundedCornerShape(8.dp))
-                                                    .background(if (isSelected) Color.Red.copy(alpha = 0.2f) else Color.Black)
+                                                    .background(if (isSelected) AccentRed.copy(alpha = 0.2f) else DarkSurface)
                                                     .clickable {
                                                         if (isSelected) viewModel.selectedDuplicates.remove(dupFile)
                                                         else viewModel.selectedDuplicates.add(dupFile)
@@ -267,12 +268,12 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                     }
                                                 } else {
-                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center).size(40.dp))
+                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = TextTertiary, modifier = Modifier.align(Alignment.Center).size(40.dp))
                                                 }
 
                                                 // 2. Lớp phủ đỏ mờ nếu đang được tick chọn xóa
                                                 if (isSelected) {
-                                                    Box(modifier = Modifier.fillMaxSize().background(Color.Red.copy(alpha = 0.4f)))
+                                                    Box(modifier = Modifier.fillMaxSize().background(AccentRed.copy(alpha = 0.4f)))
                                                 }
 
                                                 // 3. Checkbox nằm góc trên phải
@@ -283,7 +284,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         else viewModel.selectedDuplicates.remove(dupFile)
                                                     },
                                                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
-                                                    colors = CheckboxDefaults.colors(checkedColor = Color.Red, uncheckedColor = Color.White)
+                                                    colors = CheckboxDefaults.colors(checkedColor = AccentRed, uncheckedColor = TextPrimary)
                                                 )
 
                                                 // 4. Tên file + thư mục cha đè ở dưới cùng (Để phân biệt các file)
@@ -291,14 +292,14 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                     modifier = Modifier
                                                         .align(Alignment.BottomCenter)
                                                         .fillMaxWidth()
-                                                        .background(Color.Black.copy(alpha = 0.75f))
+                                                        .background(DarkSurface.copy(alpha = 0.75f))
                                                         .padding(horizontal = 4.dp, vertical = 3.dp)
                                                 ) {
                                                     Text(
                                                         text = dupFile.name,
                                                         fontSize = 8.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color.White,
+                                                        color = TextPrimary,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
                                                         lineHeight = 10.sp
@@ -307,7 +308,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                     Text(
                                                         text = "📁 $parentFolder",
                                                         fontSize = 7.sp,
-                                                        color = Color.Gray,
+                                                        color = TextTertiary,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -327,7 +328,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                 // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
                 if (viewModel.selectedDuplicates.isNotEmpty()) {
                     TextButton(onClick = { viewModel.deleteSelectedDuplicates(viewModel.selectedDuplicates.toList()) }) {
-                        Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = Color.Red, fontWeight = FontWeight.Bold)
+                        Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = AccentRed, fontWeight = FontWeight.Bold)
                     }
                 }
                 TextButton(onClick = {

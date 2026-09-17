@@ -2,6 +2,10 @@
 package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
+import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.NasBottomSheetHandle
+import com.nas.naswebdav.ui.components.NasGradientButton
+import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
 
 import android.content.Context
@@ -63,14 +67,14 @@ import androidx.core.content.edit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BiometricSettingsDialogCompat(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
     val autoBackupVM = LocalAutoBackupVM.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var enabled by remember { mutableStateOf(sharedPrefs.getBoolean("biometric_enabled", false)) }
-    var delaySec by remember { mutableStateOf(sharedPrefs.getInt("biometric_lock_delay_sec", 10)) }
+    var enabled by remember { mutableStateOf(prefsRepo.isBiometricEnabled()) }
+    var delaySec by remember { mutableStateOf(prefsRepo.getBiometricLockDelaySec()) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // Check biometric availability
@@ -89,12 +93,9 @@ fun BiometricSettingsDialogCompat(
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { "error: ${e.message}" }
     }
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -103,18 +104,18 @@ fun BiometricSettingsDialogCompat(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.Lock, null, tint = Color(0xFF9C27B0), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Lock, null, tint = AccentPurple, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Khóa Sinh trắc học", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Khóa Sinh trắc học", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             // Availability badge
             val (bioColor, bioText) = when (bioStatus) {
-                "available" -> Color(0xFF66BB6A) to "Sinh trắc học sẵn sàng (vân tay/khuôn mặt đã đăng ký)"
-                "no_hardware" -> Color(0xFFEF5350) to "Thiết bị không hỗ trợ sinh trắc"
-                "hw_unavailable" -> Color(0xFFFFA726) to "Phần cứng sinh trắc tạm thời không khả dụng"
-                "none_enrolled" -> Color(0xFFFFA726) to "Chưa đăng ký vân tay/khuôn mặt nào. Vào Cài đặt → Sinh trắc để thêm."
-                else -> Color(0xFF8892B0) to "Trạng thái: $bioStatus"
+                "available" -> AccentGreen to "Sinh trắc học sẵn sàng (vân tay/khuôn mặt đã đăng ký)"
+                "no_hardware" -> AccentRed to "Thiết bị không hỗ trợ sinh trắc"
+                "hw_unavailable" -> AccentOrange to "Phần cứng sinh trắc tạm thời không khả dụng"
+                "none_enrolled" -> AccentOrange to "Chưa đăng ký vân tay/khuôn mặt nào. Vào Cài đặt → Sinh trắc để thêm."
+                else -> TextTertiary to "Trạng thái: $bioStatus"
             }
             Row(
                 Modifier.fillMaxWidth()
@@ -136,7 +137,7 @@ fun BiometricSettingsDialogCompat(
 
             // Enable toggle
             Spacer(Modifier.height(5.dp))
-            HorizontalDivider(color = Color(0xFF2A2A3E))
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(4.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -153,22 +154,22 @@ fun BiometricSettingsDialogCompat(
                     onCheckedChange = { enabled = it },
                     enabled = bioStatus == "available",
                     modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF9C27B0), checkedTrackColor = Color(0xFF9C27B0).copy(alpha = 0.3f))
+                    colors = SwitchDefaults.colors(checkedThumbColor = AccentPurple, checkedTrackColor = AccentPurple.copy(alpha = 0.3f))
                 )
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Bật khoá sinh trắc", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Bật khoá sinh trắc", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (enabled) "Khoá khi app vào nền theo thời gian dưới"
                         else "Tắt — app không bao giờ tự khoá",
-                        color = Color(0xFF8892B0), fontSize = 11.sp
+                        color = TextTertiary, fontSize = 11.sp
                     )
                 }
             }
 
             // Delay picker
             Spacer(Modifier.height(5.dp))
-            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             val delayOptions = listOf(
                 0 to "Khoá NGAY",
@@ -185,7 +186,7 @@ fun BiometricSettingsDialogCompat(
                         modifier = Modifier.fillMaxWidth()
                             .height(44.dp)
                             .background(
-                                if (isSel) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                if (isSel) AccentPurple.copy(alpha = 0.15f) else DarkSurface,
                                 RoundedCornerShape(6.dp)
                             )
                             .clickable(
@@ -201,15 +202,15 @@ fun BiometricSettingsDialogCompat(
                             onClick = { delaySec = sec },
                             enabled = enabled,
                             modifier = Modifier.scale(0.7f),
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF9C27B0))
+                            colors = RadioButtonDefaults.colors(selectedColor = AccentPurple)
                         )
                         Spacer(Modifier.width(2.dp))
                         Text(
                             label,
                             color = when {
-                                !enabled -> Color(0xFF8892B0).copy(alpha = 0.5f)
-                                isSel -> Color(0xFF9C27B0)
-                                else -> Color(0xFFE8E8E8)
+                                !enabled -> TextTertiary.copy(alpha = 0.5f)
+                                isSel -> AccentPurple
+                                else -> TextPrimary
                             },
                             fontSize = 13.sp,
                             fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
@@ -220,26 +221,24 @@ fun BiometricSettingsDialogCompat(
 
             Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
-                        sharedPrefs.edit {
-                            putBoolean("biometric_enabled", enabled)
-                            putInt("biometric_lock_delay_sec", delaySec)
-                        }
+                        prefsRepo.setBiometricEnabled(enabled)
+                        prefsRepo.setBiometricLockDelaySec(delaySec)
                         deviceVM.logUserAction("Security", "cập nhật khóa sinh trắc (${if (enabled) "bật" else "tắt"}, trễ ${delaySec}s).")
                         onDismiss()
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0)),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f), AccentPurple),
+                )
                 OutlinedButton(
                     onClick = {
                         // Save first, then trigger lock
-                        sharedPrefs.edit {
-                            putBoolean("biometric_enabled", true)
-                            putInt("biometric_lock_delay_sec", delaySec)
-                        }
+                        prefsRepo.setBiometricEnabled(true)
+                        prefsRepo.setBiometricLockDelaySec(delaySec)
                         deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
                         autoBackupVM.lockNowRequested = true
                         onDismiss()
@@ -247,14 +246,14 @@ fun BiometricSettingsDialogCompat(
                     enabled = bioStatus == "available",
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9C27B0).copy(alpha = 0.6f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF9C27B0))
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentPurple.copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
                 ) { Text("KHOÁ NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: \"Khoá NGAY\" trong delay = không có buffer khi switch app/đọc thông báo. Đề xuất 5-30 giây.",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -270,7 +269,7 @@ fun BiometricSettingsDialogCompat(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BandwidthThrottleDialog(
-    sharedPrefs: android.content.SharedPreferences,
+    prefsRepo: com.nas.naswebdav.utils.PreferencesRepository,
     onDismiss: () -> Unit
 ) {
     val deviceVM = LocalDeviceManagementVM.current
@@ -282,15 +281,12 @@ fun BandwidthThrottleDialog(
         20L * 1024 * 1024 to "20 MB/s",
         50L * 1024 * 1024 to "50 MB/s",
     )
-    var selected by remember { mutableStateOf(sharedPrefs.getLong("upload_speed_limit_bps", 0L)) }
+    var selected by remember { mutableStateOf(prefsRepo.getUploadSpeedLimit()) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             modifier = Modifier.fillMaxWidth()
@@ -299,14 +295,14 @@ fun BandwidthThrottleDialog(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-                Icon(Icons.Default.Speed, null, tint = Color(0xFF42A5F5), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Speed, null, tint = AccentBlue, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Giới hạn tốc độ upload", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Giới hạn tốc độ upload", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
             Text(
                 "Áp dụng cho tất cả upload qua WebDAV (auto-backup ảnh, share file, batch ops). " +
                     "Dùng để tránh app chiếm hết băng thông Wi-Fi/LAN.",
-                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+                color = TextTertiary, fontSize = 11.sp, lineHeight = 14.sp
             )
 
             Spacer(Modifier.height(6.dp))
@@ -317,12 +313,12 @@ fun BandwidthThrottleDialog(
                         modifier = Modifier.fillMaxWidth()
                             .height(44.dp)
                             .background(
-                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.15f) else Color(0xFF15151D),
+                                if (isSelected) AccentBlue.copy(alpha = 0.15f) else DarkSurface,
                                 RoundedCornerShape(8.dp)
                             )
                             .border(
                                 1.dp,
-                                if (isSelected) Color(0xFF42A5F5).copy(alpha = 0.6f) else Color.Transparent,
+                                if (isSelected) AccentBlue.copy(alpha = 0.6f) else Color.Transparent,
                                 RoundedCornerShape(8.dp)
                             )
                             .clickable { selected = value }
@@ -333,12 +329,12 @@ fun BandwidthThrottleDialog(
                             selected = isSelected,
                             onClick = { selected = value },
                             modifier = Modifier.scale(0.7f),
-                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF42A5F5))
+                            colors = RadioButtonDefaults.colors(selectedColor = AccentBlue)
                         )
                         Spacer(Modifier.width(2.dp))
                         Text(
                             label,
-                            color = if (isSelected) Color(0xFF42A5F5) else Color(0xFFE8E8E8),
+                            color = if (isSelected) AccentBlue else TextPrimary,
                             fontSize = 14.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                         )
@@ -347,22 +343,23 @@ fun BandwidthThrottleDialog(
             }
 
             Spacer(Modifier.height(8.dp))
-            Button(
+            NasGradientButton(
                 onClick = {
-                    sharedPrefs.edit { putLong("upload_speed_limit_bps", selected) }
+                    prefsRepo.setUploadSpeedLimit(selected)
                     com.nas.naswebdav.AppConfig.UPLOAD_SPEED_LIMIT_BYTES_PER_SEC = selected
                     val selectedLabel = presets.firstOrNull { it.first == selected }?.second ?: "${selected / 1024 / 1024} MB/s"
                     deviceVM.logUserAction("Bandwidth", "Thiết lập giới hạn băng thông tải lên: $selectedLabel.")
                     onDismiss()
                 },
-                modifier = Modifier.fillMaxWidth().height(40.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF42A5F5)),
+                text = "ÁP DỤNG",
+                height = 40.dp,
                 shape = RoundedCornerShape(10.dp),
-            ) { Text("ÁP DỤNG", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                gradientColors = listOf(AccentBlue, AccentBlue.copy(alpha = 0.8f), AccentCyan),
+            )
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -393,12 +390,9 @@ fun SleepScheduleDialog(
     var localIdleOnly by remember(sched.idleOnly) { mutableStateOf(sched.idleOnly) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    androidx.compose.material3.ModalBottomSheet(
+    NasModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF0F0F0F),
-        scrimColor = Color.Black.copy(alpha = 0.6f),
-        dragHandle = { CompactBottomSheetHandle() }
     ) {
         Column(
             // Bỏ fillMaxHeight(0.6f): trước đây ép cao 60% màn hình -> thừa khoảng trống
@@ -410,26 +404,26 @@ fun SleepScheduleDialog(
         ) {
             // Header
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Icon(Icons.Default.Bedtime, null, tint = Color(0xFF7E57C2), modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.Bedtime, null, tint = AccentPurple, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Lịch ngủ NAS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("Lịch ngủ NAS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { autoBackupVM.fetchSleepSchedule() }, modifier = Modifier.size(28.dp)) {
-                    Icon(Icons.Default.Refresh, null, tint = Color(0xFF8892B0), modifier = Modifier.size(16.dp))
+                IconButton(onClick = { autoBackupVM.fetchSleepSchedule() }, modifier = Modifier.minimumInteractiveComponentSize()) {
+                    Icon(Icons.Default.Refresh, null, tint = TextTertiary, modifier = Modifier.size(16.dp))
                 }
             }
             Text(
                 "Tự động parking head + ngừng quay HDD ngoài giờ dùng → giảm hao mòn (đặc biệt với ổ đã già). " +
                     "NAS vẫn online (ping/SSH OK), chỉ HDD spindown. Khi có request đụng disk → tự wake.",
-                color = Color(0xFF8892B0), fontSize = 11.sp, lineHeight = 14.sp
+                color = TextTertiary, fontSize = 11.sp, lineHeight = 14.sp
             )
 
             // Current HDD state badge
             Spacer(Modifier.height(6.dp))
             val stateColor = when {
-                sched.currentHddState.contains("active", true) -> Color(0xFF66BB6A)
-                sched.currentHddState.contains("standby", true) || sched.currentHddState.contains("sleeping", true) -> Color(0xFF7E57C2)
-                else -> Color(0xFF8892B0)
+                sched.currentHddState.contains("active", true) -> AccentGreen
+                sched.currentHddState.contains("standby", true) || sched.currentHddState.contains("sleeping", true) -> AccentPurple
+                else -> TextTertiary
             }
             Row(
                 Modifier.fillMaxWidth()
@@ -444,66 +438,66 @@ fun SleepScheduleDialog(
                     Text("HDD: ${sched.currentHddState}", color = stateColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text(
                         if (sched.inWindowNow) "Đang trong khung giờ ngủ" else "Ngoài khung giờ ngủ",
-                        color = Color(0xFF8892B0), fontSize = 11.sp
+                        color = TextTertiary, fontSize = 11.sp
                     )
                 }
             }
 
             // Enable toggle
             Spacer(Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF2A2A3E))
+            HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { localEnabled = !localEnabled }) {
                 Switch(
                     checked = localEnabled,
                     onCheckedChange = { localEnabled = it },
                     modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
+                    colors = SwitchDefaults.colors(checkedThumbColor = AccentPurple, checkedTrackColor = AccentPurple.copy(alpha = 0.3f))
                 )
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Bật lịch ngủ", color = Color(0xFFE8E8E8), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("Bật lịch ngủ", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = TextTertiary, fontSize = 11.sp)
                 }
             }
 
             // Time range
             Spacer(Modifier.height(8.dp))
-            Text("KHUNG GIỜ NGỦ (24h)", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("KHUNG GIỜ NGỦ (24h)", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                Text("Từ", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("Từ", color = TextTertiary, fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = localStartHour.toString(),
                     onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localStartHour = it } },
-                    accentColor = Color(0xFF7E57C2),
+                    accentColor = AccentPurple,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                     modifier = Modifier.width(60.dp)
                 )
-                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("h", color = TextTertiary, fontSize = 13.sp)
                 Spacer(Modifier.width(8.dp))
-                Text("→", color = Color(0xFF8892B0), fontSize = 16.sp)
+                Text("→", color = TextTertiary, fontSize = 16.sp)
                 Spacer(Modifier.width(8.dp))
-                Text("Đến", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("Đến", color = TextTertiary, fontSize = 13.sp)
                 com.nas.naswebdav.ui.components.CompactTextField(
                     value = localEndHour.toString(),
                     onValueChange = { v -> v.toIntOrNull()?.let { if (it in 0..23) localEndHour = it } },
-                    accentColor = Color(0xFF7E57C2),
+                    accentColor = AccentPurple,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                     modifier = Modifier.width(60.dp)
                 )
-                Text("h", color = Color(0xFF8892B0), fontSize = 13.sp)
+                Text("h", color = TextTertiary, fontSize = 13.sp)
             }
             Text(
                 if (localStartHour < localEndHour) "Trong ngày (${localStartHour}h-${localEndHour}h)"
                 else "Qua đêm (${localStartHour}h-${localEndHour}h sáng hôm sau)",
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp,
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp,
                 modifier = Modifier.padding(top = 3.dp)
             )
 
             // Mode picker
             Spacer(Modifier.height(8.dp))
-            Text("CHẾ ĐỘ NGỦ", color = Color(0xFF8892B0), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("CHẾ ĐỘ NGỦ", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 listOf(
@@ -516,14 +510,14 @@ fun SleepScheduleDialog(
                         onClick = { localMode = value },
                         label = { Text(label, fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = Color(0xFF7E57C2).copy(alpha = 0.2f),
-                            selectedLabelColor = Color(0xFF7E57C2),
+                            selectedContainerColor = AccentPurple.copy(alpha = 0.2f),
+                            selectedLabelColor = AccentPurple,
                             containerColor = Color.Transparent,
-                            labelColor = Color(0xFF8892B0)
+                            labelColor = TextTertiary
                         ),
                         border = FilterChipDefaults.filterChipBorder(
-                            borderColor = Color(0xFF8892B0).copy(alpha = 0.3f),
-                            selectedBorderColor = Color(0xFF7E57C2).copy(alpha = 0.6f),
+                            borderColor = TextTertiary.copy(alpha = 0.3f),
+                            selectedBorderColor = AccentPurple.copy(alpha = 0.6f),
                             enabled = true, selected = selected
                         ),
                         modifier = Modifier.weight(1f).height(32.dp)
@@ -535,7 +529,7 @@ fun SleepScheduleDialog(
                     "spindown" -> "HDD ngừng quay, NAS vẫn online (mạng, SSH, ping OK). Wake tự động khi có request."
                     else -> "NAS suspend hoàn toàn — cần WoL để đánh thức. KHÔNG khuyến nghị khi đang theo dõi TikTok live."
                 },
-                color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp,
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp,
                 modifier = Modifier.padding(top = 3.dp)
             )
 
@@ -546,19 +540,19 @@ fun SleepScheduleDialog(
                     checked = localIdleOnly,
                     onCheckedChange = { localIdleOnly = it },
                     modifier = Modifier.scale(0.85f),
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF7E57C2), checkedTrackColor = Color(0xFF7E57C2).copy(alpha = 0.3f))
+                    colors = SwitchDefaults.colors(checkedThumbColor = AccentPurple, checkedTrackColor = AccentPurple.copy(alpha = 0.3f))
                 )
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Chỉ ngủ khi NAS rảnh", color = Color(0xFFE8E8E8), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("CPU<30% + không có recording + không backup chạy", color = Color(0xFF8892B0), fontSize = 11.sp)
+                    Text("Chỉ ngủ khi NAS rảnh", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("CPU<30% + không có recording + không backup chạy", color = TextTertiary, fontSize = 11.sp)
                 }
             }
 
             // Save + test buttons
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
+                NasGradientButton(
                     onClick = {
                         autoBackupVM.saveSleepSchedule(
                             SleepSchedule(
@@ -570,32 +564,34 @@ fun SleepScheduleDialog(
                             )
                         )
                     },
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7E57C2)),
+                    text = "LƯU",
+                    modifier = Modifier.weight(1f),
+                    height = 40.dp,
                     shape = RoundedCornerShape(10.dp),
-                ) { Text("LƯU", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+                    gradientColors = listOf(AccentPurple, AccentPurple.copy(alpha = 0.8f), AccentCyan),
+                )
                 OutlinedButton(
                     onClick = {
                         autoBackupVM.spindownHddNow()
                     },
                     modifier = Modifier.weight(1f).height(40.dp),
                     shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7E57C2).copy(alpha = 0.6f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF7E57C2))
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentPurple.copy(alpha = 0.6f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentPurple)
                 ) { Text("SPINDOWN NGAY", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
 
             // Status message
             if (autoBackupVM.sleepScheduleMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
-                val msgColor = if (autoBackupVM.sleepScheduleMessage.startsWith("Lỗi")) Color(0xFFEF5350) else Color(0xFF66BB6A)
+                val msgColor = if (autoBackupVM.sleepScheduleMessage.startsWith("Lỗi")) AccentRed else AccentGreen
                 Text(autoBackupVM.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
             }
             if (sched.lastActionState.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Lần ngủ cuối: ${sched.lastActionState}",
-                    color = Color(0xFF8892B0).copy(alpha = 0.7f), fontSize = 10.sp
+                    color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp
                 )
             }
             Spacer(Modifier.height(8.dp))
