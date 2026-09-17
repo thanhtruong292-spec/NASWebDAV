@@ -30,6 +30,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -202,6 +203,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 label = { Text("Địa chỉ IP / DDNS của NAS") },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag("login_host")
                     .onGloballyPositioned { ipFieldWidthPx = it.size.width }
                     .menuAnchor(),
                 singleLine = true,
@@ -259,9 +261,9 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth().focusRequester(userFocusRequester), singleLine = true)
+        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth().testTag("login_user").focusRequester(userFocusRequester), singleLine = true)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth().testTag("login_pass"), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
         Spacer(Modifier.height(14.dp))
         val interactionSource = remember { MutableInteractionSource() }
         val btnContent: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
@@ -289,6 +291,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 }
             },
             text = "Kết nối NAS",
+            modifier = Modifier.testTag("login_connect"),
             enabled = authVM.isLoading || ipInput.isNotEmpty(),
             height = 50.dp,
             interactionSource = interactionSource,

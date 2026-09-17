@@ -5,6 +5,32 @@
 
 ---
 
+## [2026-09-16] Backend hardening + data-safety audit (PR #3 #4 #5 #6)
+
+### Backend (nas_api_server.py, live tren NAS)
+- Log rotation 5MBx3 -> 1MBx2 + logrotate zram (het ENOSPC /var/log).
+- Livestream wrapper sang HDD tmp, don khi job xong (het Errno 28).
+- Thumb negative-cache 7 ngay + rescan 300s -> 1800s (het AV1 retry storm).
+- API v1 dual-serve (/api/v1/ping,status,auth/authorize) + envelope ok/data/error.
+- Hardware caps rk3328: transcode 4, livestream 2, social 2 (429 khi day).
+- Da deploy NAS 2026-09-15/16, verify song (qua Tailscale).
+
+### App an toan du lieu (audit F1-F6 + review S1-S10 + R2 + R4 + R5)
+- Provider: bitmask mode, preload wa/rw, auth chup rieng moi op (GET/PUT/DELETE/HEAD/list/create).
+- Autoclean: full-verify SHA-256 + byte count, khu alias endpoint, TOCTOU revalidate, bo DELETE fallback.
+- Backup: skip khi hash+size+dest khop+HEAD, chong va cham ten, ETag + retry 412, verify size truoc xoa nguon.
+- Queue: getById, continuation vet het, pushBack + park/unpark, bind NAS+user (DB v17).
+- PROPFIND: dem byte thuc, root multistatus validation, giu cache cu khi hong.
+- UI: group hash that, key hash, toggle prefs snapshot, pause gate.
+- Test: 56 unit xanh (DocumentProviderMode, ReviewSeam, DAO park, Utils search, cancel production).
+
+### Dong bo + contract
+- docs/API_ENDPOINT_MAP.md regenerate 2026-09-16 (104 server routes, 0 mismatch that).
+- docs/FRONTEND_BACKEND_CONTRACT.md + docs/NAS_HARDWARE_BUDGET.md moi.
+- CI: release chi khi co secrets, khong thi verify R8 unsigned.
+
+- **Model**: agentgw-gpt-5.5-xhigh
+
 ## [2026-04-20] Fix Memory Leak — LeakCanary "1 leaks at AndroidComposeView.legacyTextIn..."
 
 ### Nguyên nhân
