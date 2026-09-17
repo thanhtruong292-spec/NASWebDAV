@@ -94,6 +94,26 @@ fun scheduleFingerprintWorker(context: Context) {
     )
 }
 
+/** Task 7: schedule kiểm tra ngưỡng cảnh báo (1h, cần mạng). */
+fun scheduleAlertCheck(context: Context) {
+    val workManager = androidx.work.WorkManager.getInstance(context)
+    val constraints = androidx.work.Constraints.Builder()
+        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+        .build()
+    val req = androidx.work.PeriodicWorkRequestBuilder<AlertCheckWorker>(
+        1, java.util.concurrent.TimeUnit.HOURS
+    ).setConstraints(constraints)
+        .setBackoffCriteria(
+            androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS
+        )
+        .build()
+    workManager.enqueueUniquePeriodicWork(
+        AlertCheckWorker.UNIQUE_WORK_NAME,
+        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+        req
+    )
+}
+
 suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
     coroutineScope {
         urlList.distinct().map { url ->

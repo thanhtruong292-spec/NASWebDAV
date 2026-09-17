@@ -240,11 +240,18 @@ object MediaUtils {
 // SystemLogger — ghi log vào Room DB qua application scope (không dùng GlobalScope)
 // ─────────────────────────────────────────────────────────────────────────────
 object SystemLogger {
-    fun log(type: String, module: String, message: String) {
+    /** Tao traceId 8 ky tu cho mot luot worker. */
+    fun newTraceId(): String =
+        java.util.UUID.randomUUID().toString().take(8)
+
+    // Task 7: traceId tuy chon de tuong quan log trong mot luot worker
+    // (vd OfflineSync batch). Khong migration — ghep vao message text.
+    fun log(type: String, module: String, message: String, traceId: String? = null) {
         NasApplication.applicationScope.launch(Dispatchers.IO) {
             try {
+                val tagged = if (!traceId.isNullOrBlank()) "[$traceId] $message" else message
                 NasApplication.instance.database.logDao().insertLog(
-                    SystemLog(type = type, module = module, message = message)
+                    SystemLog(type = type, module = module, message = tagged)
                 )
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.e("SystemLogger", "Lỗi ghi log: ${e.message}")

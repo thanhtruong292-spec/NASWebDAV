@@ -5,7 +5,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -203,15 +206,63 @@ private val NasShapes = Shapes(
 )
 
 // ════════════════════════════════════════════════════════════════════════════
-// THEME COMPOSABLE — always dark
+// MATERIAL 3 LIGHT COLOR SCHEME (Task 6)
+// Dùng Material3 colorScheme chuẩn cho màn hình mới; token trực tiếp trong
+// Color.kt vẫn là dark palette (migrate 41 refs là nợ riêng, không làm ở đây).
+// ════════════════════════════════════════════════════════════════════════════
+
+private val NasLightColorScheme = lightColorScheme(
+    primary = Color(0xFF0B6BCB),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD6E9FF),
+    onPrimaryContainer = Color(0xFF0B3D66),
+    secondary = Color(0xFF6D4FC2),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE6DEFF),
+    onSecondaryContainer = Color(0xFF3A2A73),
+    tertiary = Color(0xFF1E7E34),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFCDEACD),
+    onTertiaryContainer = Color(0xFF0F3D1A),
+    error = Color(0xFFB3261E),
+    onError = Color.White,
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF410E0B),
+    background = Color(0xFFF7F9FC),
+    onBackground = Color(0xFF191C20),
+    surface = Color.White,
+    onSurface = Color(0xFF191C20),
+    surfaceVariant = Color(0xFFE4E8EE),
+    onSurfaceVariant = Color(0xFF44474E),
+    outline = Color(0xFF73777F),
+    outlineVariant = Color(0xFFC3C6CF)
+)
+
+// ════════════════════════════════════════════════════════════════════════════
+// THEME COMPOSABLE — theo prefs (mặc định dark)
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
 internal fun NasTheme(content: @Composable () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = rememberRepo(context)
+    val mode by prefs.themeMode.collectAsState()
     MaterialTheme(
-        colorScheme = NasDarkColorScheme,
+        colorScheme = if (mode == "light") NasLightColorScheme else NasDarkColorScheme,
         typography = NasTypography,
         shapes = NasShapes,
         content = content
     )
+}
+
+/**
+ * Lấy PreferencesRepository theo context, cache theo application.
+ * Tách helper để NasTheme không phụ thuộc ViewModel.
+ */
+@Composable
+private fun rememberRepo(context: android.content.Context): com.nas.naswebdav.utils.PreferencesRepository {
+    val app = context.applicationContext
+    return androidx.compose.runtime.remember(app) {
+        com.nas.naswebdav.utils.PreferencesRepository.get(app)
+    }
 }

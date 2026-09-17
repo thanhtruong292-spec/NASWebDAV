@@ -132,6 +132,19 @@ class PreferencesRepository(context: Context) {
         _autoCleanEnabled.value = enabled
     }
 
+    // Task 6: che do sang/toi (mac dinh toi). Light scheme dung Material3
+    // colorScheme; token truc tiep trong Color.kt van la dark palette.
+    private val _themeMode = MutableStateFlow(
+        prefs(PREFS_NAS).getString(KEY_THEME_MODE, "dark") ?: "dark"
+    )
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    fun setThemeMode(mode: String) {
+        val m = if (mode == "light") "light" else "dark"
+        prefs(PREFS_NAS).edit().putString(KEY_THEME_MODE, m).apply()
+        _themeMode.value = m
+    }
+
     // ─── Login: WoL MAC ───
     fun getMacAddress(): String =
         prefs(PREFS_NAS).getString(KEY_MAC_ADDRESS, "") ?: ""
@@ -257,6 +270,7 @@ class PreferencesRepository(context: Context) {
         const val KEY_FILE_SORT = "file_sort"
         const val KEY_VIEW_MODE = "view_mode"
         const val KEY_AUTO_CLEAN = "auto_clean_enabled"
+        const val KEY_THEME_MODE = "theme_mode"
         const val KEY_VIEWED_FILES = "viewed_files"
         const val KEY_VIEWED_ORDER = "viewed_files_order"
         const val KEY_SEARCH_HISTORY = "history"
