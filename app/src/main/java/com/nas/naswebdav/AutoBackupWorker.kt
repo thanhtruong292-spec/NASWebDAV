@@ -338,15 +338,32 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
 
                             // ── Upload: SMB (with retry) → WebDAV fallback (with retry) ──
                             var smbUploadOk = false
-                            val smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
+                            var smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
+                            // REVIEW-R6: SMB phải tôn trọng mã hóa — encrypt vào temp trước,
+                            // upload temp qua SMB với tên .nasenc. Nếu không, bật mã hóa mà
+                            // file đi đường SMB vẫn nằm plaintext trên NAS.
+                            var smbEncTemp: java.io.File? = null
+                            if (com.nas.naswebdav.utils.BackupCrypto.isEnabled(applicationContext)) {
+                                smbRemotePath += com.nas.naswebdav.utils.BackupCrypto.ENCRYPTED_SUFFIX
+                            }
                             if (smbEnabled && smbHost.isNotBlank()) {
                                 // FIX-LARGE-FILE-SMB: retry ở caller — mỗi lượt mở InputStream mới.
                                 // SmbManager.uploadFile throw exception khi fail → catch ở đây, fallback WebDAV.
                                 for (smbAttempt in 1..3) {
                                     try {
-                                        val smbInput = applicationContext.contentResolver.openInputStream(
+                                        val rawSmbInput = applicationContext.contentResolver.openInputStream(
                                             ContentUris.withAppendedId(mediaUri, id)
                                         ) ?: error("ContentResolver trả null cho $fileName")
+                                        // Encrypt trước khi đẩy SMB nếu bật mã hóa.
+                                        val smbInput: java.io.InputStream = if (com.nas.naswebdav.utils.BackupCrypto.isEnabled(applicationContext)) {
+                                            smbEncTemp = java.io.File.createTempFile("nasenc_smb_", ".bin", applicationContext.cacheDir)
+                                            val encOut = com.nas.naswebdav.utils.BackupCrypto.encryptingStream(applicationContext, smbEncTemp!!.outputStream())
+                                            rawSmbInput.use { it.copyTo(encOut) }
+                                            try { encOut.close() } catch (_: Exception) {}
+                                            smbEncTemp!!.inputStream()
+                                        } else {
+                                            rawSmbInput
+                                        }
                                         smbUploadOk = smbInput.use { input ->
                                             com.nas.naswebdav.SmbManager.uploadFile(
                                                 host = smbHost,
@@ -401,6 +418,14 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                     } catch (e: Exception) {
                                         android.util.Log.w("AutoBackup", "SMB attempt $smbAttempt failed for $fileName: ${e.message}")
                                     }
+                                }
+                                // Don temp mã hóa SMB (chứa plaintext-derived ciphertext — không để lại cache).
+                                try { smbEncTemp?.delete() } catch (_: Exception) {}
+                                smbEncTemp = null
+                                // REVIEW-R6: SMB mã hóa ghi bản .nasenc — record/verify phải
+                                // theo dest này, không phải tên plaintext.
+                                if (smbUploadOk && com.nas.naswebdav.utils.BackupCrypto.isEnabled(applicationContext)) {
+                                    targetFileNasPath = targetFileNasPath + com.nas.naswebdav.utils.BackupCrypto.ENCRYPTED_SUFFIX
                                 }
                             }
 
@@ -511,11 +536,16 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // Phone only uploads the file and lets NAS pick it up.
                             // R4-P1: verify ĐÚNG BẢN — HEAD tồn tại VÀ size khớp mới xóa nguồn.
                             // Tồn tại mà size lệch (va chạm tên, upload dở) → giữ nguồn.
-                            val remoteLen = if (smbUploadOk) fileSize else try {
-                                webDavManager.headFileHeaders(targetFileNasPath)?.get("Content-Length")?.toLongOrNull()
+                            // REVIEW-R6: SMB cũng phải HEAD qua WebDAV (cùng file trên NAS).
+                            // Tin mù smbUploadOk = xóa nguồn khi SMB ghi dở mà không báo lỗi.
+                            // Mã hóa: dest/size thực là bản .nasenc.
+                            val effectiveDest = targetFileNasPath
+                            val effectiveSize = fileSize
+                            val remoteLen = try {
+                                webDavManager.headFileHeaders(effectiveDest)?.get("Content-Length")?.toLongOrNull()
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (_: Exception) { null }
-                            val uploadVerified = remoteLen != null && remoteLen == fileSize
+                            val uploadVerified = remoteLen != null && remoteLen == effectiveSize
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             backupCount++

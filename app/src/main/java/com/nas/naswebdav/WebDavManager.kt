@@ -167,7 +167,15 @@ internal fun buildWebDavTrashTargetUrl(baseUrl: String, sourcePath: String, file
 
 internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fileName: String, isDirectory: Boolean): String {
     val normalizedBase = baseUrl.trimEnd('/')
-    val relativePath = sourcePath.removePrefix(baseUrl).removePrefix(normalizedBase).trimStart('/')
+    // REVIEW-R6: same canonical-path fix as trash builder (S3) — cross-endpoint
+    // source otherwise yields drive "http:" and a garbage restore target.
+    val canonical = canonicalNasPath(sourcePath)
+    val basePath = canonicalNasPath(normalizedBase)
+    val relativePath = if (basePath.isNotEmpty() && canonical.startsWith(basePath)) {
+        canonical.removePrefix(basePath).trimStart('/')
+    } else {
+        canonical.trimStart('/')
+    }
     val driveName = relativePath.substringBefore('/')
     val encodedDriveName = encodeWebDavSegment(driveName)
     val encodedName = encodeWebDavSegment(fileName)
@@ -1209,7 +1217,18 @@ object WebDavManager {
 
 
 
-    suspend fun downloadFile(url: String, destFile: java.io.File, auth: AuthState? = null) = withContext(Dispatchers.IO) {
+    /**
+     * REVIEW-R6: tự giải mã file .nasenc khi tải qua helper này.
+     * Tải qua system DownloadManager (BrowserScreen/BrowserComponents) vẫn trả
+     * file mã hóa nguyên — user mở bằng app sẽ thấy ciphertext. Giai đoạn sau:
+     * chặn tải .nasenc qua DownloadManager hoặc thêm action "giải mã".
+     */
+    suspend fun downloadFile(
+        url: String,
+        destFile: java.io.File,
+        auth: AuthState? = null,
+        decryptIfEncrypted: Boolean = true
+    ) = withContext(Dispatchers.IO) {
 
         val request = Request.Builder().withAuth(auth ?: authState).url(url)
             .withCallGroup(CALL_GROUP_TRANSFER).build()
@@ -1221,9 +1240,19 @@ object WebDavManager {
             val body = response.body ?: throw Exception("Empty body")
 
             java.io.FileOutputStream(destFile).use { fos ->
-
-                body.byteStream().copyTo(fos)
-
+                val input = body.byteStream()
+                if (decryptIfEncrypted && url.substringBefore('?').endsWith(".nasenc")) {
+                    val ctx = NasApplication.instance.applicationContext
+                    try {
+                        com.nas.naswebdav.utils.BackupCrypto.decryptingStream(ctx, input).use { dec ->
+                            dec.copyTo(fos)
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                        throw java.io.IOException("Giải mã thất bại (sai khóa máy?): ${e.message}")
+                    }
+                } else {
+                    input.copyTo(fos)
+                }
             }
 
         }
