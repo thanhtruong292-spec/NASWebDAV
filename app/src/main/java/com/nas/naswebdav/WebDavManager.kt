@@ -1209,9 +1209,9 @@ object WebDavManager {
 
 
 
-    suspend fun downloadFile(url: String, destFile: java.io.File) = withContext(Dispatchers.IO) {
+    suspend fun downloadFile(url: String, destFile: java.io.File, auth: AuthState? = null) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(url)
+        val request = Request.Builder().withAuth(auth ?: authState).url(url)
             .withCallGroup(CALL_GROUP_TRANSFER).build()
 
         optimizedClient.newCall(request).execute().use { response ->

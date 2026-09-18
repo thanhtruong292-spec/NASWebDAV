@@ -62,6 +62,16 @@ class AlertCheckWorker(appContext: Context, workerParams: WorkerParameters) :
 
     private fun notifyAlert(msg: String) {
         try {
+            // POST_NOTIFICATIONS (API 33+): thiếu quyền thì bỏ qua im lặng —
+            // log Room vẫn giữ cảnh báo, không crash worker.
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
             val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE)
                 as NotificationManager
             nm.createNotificationChannel(
