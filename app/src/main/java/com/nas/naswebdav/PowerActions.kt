@@ -36,8 +36,16 @@ private fun extractHost(url: String): String? {
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
 }
 
+/**
+ * FIX-SYNC-S2 (gop tu frontback-sync): mot schedule quet trung duy nhat.
+ * Periodic DuplicateScanWorker 168h cu chay song song AutoDuplicateScanWorker —
+ * double I/O, mot ben trash file ben kia dang hash. Ham nay dam bao
+ * AutoDuplicateScanWorker periodic + huy schedule cu. Quet tay van qua
+ * DuplicateScanWorker OneTime "Unique_Scan_V3" (user bam tay).
+ */
 fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
     val workManager = androidx.work.WorkManager.getInstance(context)
+    try { workManager.cancelUniqueWork("Auto_Idle_Duplicate_Scan") } catch (_: Exception) {}
     val constraints = androidx.work.Constraints.Builder()
         .setRequiresDeviceIdle(true)
         .setRequiresCharging(true)
@@ -46,14 +54,17 @@ fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
         .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
         .build()
     val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
-    val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
-        168, java.util.concurrent.TimeUnit.HOURS
+    val req = androidx.work.PeriodicWorkRequestBuilder<AutoDuplicateScanWorker>(
+        30, java.util.concurrent.TimeUnit.DAYS
     ).setConstraints(constraints).setInputData(inputData)
+        .setBackoffCriteria(
+            androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS
+        )
         .build()
     workManager.enqueueUniquePeriodicWork(
-        "Auto_Idle_Duplicate_Scan",
+        "AutoCleanDuplicates",
         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicScanRequest
+        req
     )
 }
 

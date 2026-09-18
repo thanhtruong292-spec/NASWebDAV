@@ -32,6 +32,14 @@ object OnDemandThumbGenerator {
         maxImageBytes: Long = IMAGE_LIMIT_BYTES,
         maxVideoBytes: Long = VIDEO_LIMIT_BYTES
     ): File? = withContext(Dispatchers.IO) {
+        // FIX-SYNC-S3: ranh giới phone/NAS — NAS daemon là nguồn thumb chính.
+        // Phone chỉ decode khi NAS fail. Bỏ qua ngay codec phone không decode
+        // được (AV1 — cả ffmpeg NAS 3.2 lẫn MediaMetadataRetriever cũ đều fail),
+        // khỏi tải tối đa 100MB vô ích rồi mới fail ở decodeVideo.
+        if (isVideo) {
+            val lower = sourceUrl.substringBefore('?').lowercase()
+            if (lower.endsWith(".av1") || lower.endsWith(".avif")) return@withContext null
+        }
         val limit = if (isVideo) maxVideoBytes else maxImageBytes
         val safeHash = Integer.toHexString(sourceUrl.hashCode())
         val thumbDir = context.getDir("persistent_thumbnails", Context.MODE_PRIVATE)
