@@ -447,11 +447,10 @@ fun BrowserScreen(
                                         .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
                                         .build()
                                         
-                                    // Tăng timeout lên 5 phút vì thao tác quét và chép file toàn bộ NAS có thể lâu hơn 30s
-                                    val client = NasApplication.instance.sharedHttpClient.newBuilder()
-                                        .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
-                                        .build()
-                                    client.newCall(request).execute().use { response ->
+                                    // Tăng timeout lên 5 phút vì thao tác quét và chép file toàn bộ NAS có thể lâu hơn 30s.
+                                    // REVIEW-R6: shared client + withTimeout (het leak pool).
+                                    kotlinx.coroutines.withTimeout(310_000L) {
+                                    NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                                         val body = response.body?.string()
                                         
                                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -469,6 +468,7 @@ fun BrowserScreen(
                                                 organizeResult = "Lỗi NAS: ${response.code}"
                                             }
                                         }
+                                    }
                                     }
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {

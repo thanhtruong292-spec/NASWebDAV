@@ -75,10 +75,9 @@ fun downloadAndPlay(
                 // AUTH FIX: videoStreamingClient injects UTF-8 Authorization header centrally.
                 .build()
 
+            // REVIEW-R6: shared videoStreamingClient + withTimeout (het leak pool).
+            kotlinx.coroutines.withTimeout(610_000L) {
             NasApplication.instance.videoStreamingClient
-                .newBuilder()
-                .readTimeout(600, java.util.concurrent.TimeUnit.SECONDS)
-                .build()
                 .newCall(request)
                 .execute()
                 .use { response ->
@@ -120,6 +119,7 @@ fun downloadAndPlay(
                         openLocalFile(context, targetFile)
                     }
                 }
+            }
         } catch (e: CancellationException) {
             Log.d("MediaUtils", "Đã hủy tải xuống")
         } catch (e: Exception) {

@@ -763,17 +763,24 @@ class SystemMonitorViewModel(
                 val encoded = java.net.URLEncoder.encode(filename, "UTF-8").replace("+", "%20")
                 val url = "$base/api/backup/download?filename=$encoded"
                 val req = okhttp3.Request.Builder().url(url).let(WebDavManager::tagCurrentAuth).build()
-                val client = NasApplication.instance.fastApiClient.newBuilder()
-                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build()
-                client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@withContext null
-                    val src = resp.body?.byteStream() ?: return@withContext null
-                    val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
-                    val safe = filename.replace("/", "_").replace("\\", "_")
-                    val out = java.io.File(outDir, safe)
-                    out.outputStream().use { o -> src.copyTo(o) }
-                    out
+                // REVIEW-R6: shared client + withTimeout.
+                // withTimeout lambda khong cho return@withContext — gan bien.
+                var downloaded: java.io.File? = null
+                kotlinx.coroutines.withTimeout(130_000L) {
+                    NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val src = resp.body?.byteStream()
+                            if (src != null) {
+                                val outDir = java.io.File(context.cacheDir, "nas_backups").apply { mkdirs() }
+                                val safe = filename.replace("/", "_").replace("\\", "_")
+                                val out = java.io.File(outDir, safe)
+                                out.outputStream().use { o -> src.copyTo(o) }
+                                downloaded = out
+                            }
+                        }
+                    }
                 }
+                downloaded
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "download err: ${e.message}")
                 null

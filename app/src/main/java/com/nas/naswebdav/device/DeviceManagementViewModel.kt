@@ -817,9 +817,9 @@ class DeviceManagementViewModel(
                 val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder()
                     .url("$apiBaseUrl/api/disk/speedtest").post(ByteArray(0).toRequestBody(null, 0, 0)).build()
-                val speedTestClient = NasApplication.instance.fastApiClient.newBuilder()
-                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
-                speedTestClient.newCall(request).execute().use { response ->
+                // REVIEW-R6: shared client + withTimeout.
+                kotlinx.coroutines.withTimeout(70_000L) {
+                NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val json = org.json.JSONObject(response.body?.string() ?: "")
                         withContext(Dispatchers.Main) {
@@ -833,6 +833,7 @@ class DeviceManagementViewModel(
                             speedTestResult = SpeedTestResult("Thất bại", "Thất bại")
                         }
                     }
+                }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

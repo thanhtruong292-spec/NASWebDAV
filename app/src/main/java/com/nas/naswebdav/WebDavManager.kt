@@ -436,12 +436,8 @@ object WebDavManager {
 
             val isTailscale = isTailscaleUrl(auth.baseUrl)
             val timeoutMs = if (isTailscale) 2500L else 800L
-            val pingClient = optimizedClient.newBuilder()
-                .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                .build()
-
+            // REVIEW-R6: shared optimizedClient + withTimeout — newBuilder moi ping
+            // leak pool (ping chay song song moi URL moi 5s cache).
             var best = Long.MAX_VALUE
             repeat(if (isTailscale) 1 else 3) {
                 val requestBuilder = Request.Builder().withAuth(auth)
@@ -455,10 +451,12 @@ object WebDavManager {
                     requestBuilder.header("Authorization", auth.authHeader)
                 }
                 val start = android.os.SystemClock.elapsedRealtime()
-                pingClient.newCall(requestBuilder.build()).execute().use { response ->
+                kotlinx.coroutines.withTimeout(timeoutMs) {
+                optimizedClient.newCall(requestBuilder.build()).execute().use { response ->
                     if (response.isSuccessful) {
                         best = minOf(best, android.os.SystemClock.elapsedRealtime() - start)
                     }
+                }
                 }
             }
 

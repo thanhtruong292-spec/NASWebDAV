@@ -120,11 +120,7 @@ class AuthSessionViewModel(
 
                         try {
                             val timeoutMs = adaptiveTimeoutMs(safeUrl)
-                            val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                                .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .build()
+                            // REVIEW-R6: shared client + withTimeout (het leak pool moi lan ping).
 
                             val request = okhttp3.Request.Builder()
                                 .tag(String::class.java, "login")
@@ -134,13 +130,15 @@ class AuthSessionViewModel(
                                 .build()
 
                             val t0 = android.os.SystemClock.elapsedRealtime()
-                            pingClient.newCall(request).execute().use { response ->
+                            kotlinx.coroutines.withTimeout(timeoutMs) {
+                            NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                                 if (response.isSuccessful) {
                                     recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
                                     channel.send(Pair(true, safeUrl))
                                 } else {
                                     channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
                                 }
+                            }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                             android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
@@ -187,16 +185,15 @@ class AuthSessionViewModel(
                         NasApplication.applicationScope.launch(Dispatchers.IO) {
                             try {
                                 val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
-                                val cleanClient = NasApplication.instance.fastApiClient.newBuilder()
-                                    .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                                    .build()
                                 val request = okhttp3.Request.Builder()
                                     .url("${successUrl.toApiBaseUrl()}/api/auth/authorize")
                                     .header("Authorization", authHeader)
                                     .post(ByteArray(0).toRequestBody(null, 0, 0))
                                     .build()
-                                cleanClient.newCall(request).execute().use { }
+                                // REVIEW-R6: shared client + withTimeout.
+                                kotlinx.coroutines.withTimeout(10_000L) {
+                                    NasApplication.instance.fastApiClient.newCall(request).execute().use { }
+                                }
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                                 android.util.Log.w("NAS_AUTH", "API Phụ Warning: ${e.message}")
                             }

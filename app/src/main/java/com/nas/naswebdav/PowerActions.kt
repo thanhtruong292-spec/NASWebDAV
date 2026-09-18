@@ -242,9 +242,10 @@ fun uploadTorrentFileToNas(
                 .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/add_file")
                 .post(filePart)
                 .build()
-            val client = NasApplication.instance.fastApiClient.newBuilder()
-                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
-            val text = client.newCall(req).execute().use { it.body?.string() ?: "" }
+            // REVIEW-R6: shared client + withTimeout.
+            val text = kotlinx.coroutines.withTimeout(70_000L) {
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { it.body?.string() ?: "" }
+            }
             val o = try { org.json.JSONObject(text) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { org.json.JSONObject() }
             withContext(Dispatchers.Main) {
                 val ok = o.optString("result") == "ok"
