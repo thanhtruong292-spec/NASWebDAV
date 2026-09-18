@@ -406,8 +406,11 @@ class SmartToolsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status").let(WebDavManager::tagCurrentAuth).build()
-                NasApplication.instance.fastApiClient.newBuilder().readTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
-                    .newCall(request).execute().use { response ->
+                // REVIEW-R6: dùng fastApiClient dùng chung — newBuilder() mỗi lần gọi
+                // tạo pool/thread riêng không bao giờ đóng (leak mỗi lần resume).
+                // Timeout qua withTimeout thay vì client riêng.
+                kotlinx.coroutines.withTimeout(15_000L) {
+                    NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val json = org.json.JSONObject(response.body?.string() ?: "{}")
                         withContext(Dispatchers.Main) {
@@ -423,6 +426,7 @@ class SmartToolsViewModel(
                             thumbEtaFmt = json.optString("eta_fmt", "--:--")
                         }
                     }
+                }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { android.util.Log.w("SmartToolsVM", "fetchThumbStatus: ${e.message}") }
         }
@@ -450,9 +454,11 @@ class SmartToolsViewModel(
             try {
                 val body = org.json.JSONObject().put("action", action).toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/control").post(body).build()
-                NasApplication.instance.fastApiClient.newBuilder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
-                    .newCall(request).execute().use { resp ->
+                // REVIEW-R6: shared client + withTimeout (het leak pool moi lan goi).
+                kotlinx.coroutines.withTimeout(35_000L) {
+                    NasApplication.instance.fastApiClient.newCall(request).execute().use { resp ->
                     if (!resp.isSuccessful) withContext(Dispatchers.Main) { thumbPaused = action != "pause" }
+                }
                 }
                 kotlinx.coroutines.delay(1500)
                 fetchThumbStatus()
@@ -527,8 +533,8 @@ class SmartToolsViewModel(
                 val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
                 val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/scan").post(body).let(WebDavManager::tagCurrentAuth).build()
-                val scanClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(3, java.util.concurrent.TimeUnit.MINUTES).build()
-                scanClient.newCall(request).execute().use { response ->
+                kotlinx.coroutines.withTimeout(200_000L) {
+                    NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string()
                     withContext(Dispatchers.Main) {
                         if (response.isSuccessful && responseBody != null) {
@@ -549,6 +555,7 @@ class SmartToolsViewModel(
                         } else { organizerError = "Lỗi NAS: ${response.code}" }
                     }
                 }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
             finally { withContext(Dispatchers.Main) { organizerScanning = false } }
         }
@@ -562,8 +569,8 @@ class SmartToolsViewModel(
                 val filterStr = when (filter) { OrganizerFilter.IMAGE -> "image"; OrganizerFilter.VIDEO -> "video"; OrganizerFilter.ALL -> "all" }
                 val body = org.json.JSONObject().apply { put("filter", filterStr) }.toString().toRequestBody("application/json".toMediaTypeOrNull())
                 val request = okhttp3.Request.Builder().url("$apiBase/api/tools/smart_organize/execute").post(body).let(WebDavManager::tagCurrentAuth).build()
-                val execClient = NasApplication.instance.fastApiClient.newBuilder().readTimeout(30, java.util.concurrent.TimeUnit.SECONDS).callTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
-                execClient.newCall(request).execute().use { response ->
+                kotlinx.coroutines.withTimeout(35_000L) {
+                    NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string() ?: throw Exception("Empty response body")
                     val json = org.json.JSONObject(responseBody)
                     val queued = response.code == 202 || json.optBoolean("queued", false)
@@ -588,6 +595,7 @@ class SmartToolsViewModel(
                     } else if (response.isSuccessful) {
                         withContext(Dispatchers.Main) { organizerResult = "Hoàn tất — ${json.optInt("moved_count", 0)} tệp"; organizerScanResult = null }
                     } else { throw Exception("Lỗi NAS: ${response.code}") }
+                }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { withContext(Dispatchers.Main) { organizerError = "Lỗi kết nối: ${e.message}" } }
             finally { withContext(Dispatchers.Main) { organizerExecuting = false } }
