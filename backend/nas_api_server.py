@@ -10919,6 +10919,13 @@ def _generate_image_thumb(src_path, dst_path):
     except Exception as e:
         log.warning("[ThumbImg] Failed %s: %s (size=%d, PIL=%s)",
                     os.path.basename(src_path), e, src_sz, pil_version)
+        # FIX-TRUNCATED-STORM: file truncated/corrupt khong bao gio decode duoc —
+        # mark neg-cache de daemon bo qua 7 ngay (nhu AV1 video). Log 2026-09-19:
+        # 1085 warning/ngay toan "image file is truncated" tu FB_IMG tai do.
+        try:
+            _thumb_neg_mark(src_path)
+        except Exception:
+            pass
         return False
 
 def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
@@ -11205,10 +11212,53 @@ def _create_placeholder_thumb(dst_path):
 _THUMB_NEG_CACHE = {}
 _THUMB_NEG_CACHE_LOCK = threading.Lock()
 _THUMB_NEG_CACHE_TTL = 7 * 24 * 3600
+# FIX-PERSIST-NEG: cache memory-only mat khi restart -> rescan dau spam lai.
+# Persist xuong SQLite (DB_PATH), load luc start, prune TTL.
+_THUMB_NEG_CACHE_LOADED = False
+
+def _thumb_neg_db():
+    try:
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
+        conn.commit()
+        return conn
+    except Exception:
+        return None
+
+def _thumb_neg_load():
+    global _THUMB_NEG_CACHE_LOADED
+    if _THUMB_NEG_CACHE_LOADED:
+        return
+    _THUMB_NEG_CACHE_LOADED = True
+    try:
+        conn = _thumb_neg_db()
+        if not conn:
+            return
+        cur = conn.cursor()
+        now = time.time()
+        cur.execute("SELECT path, ts FROM thumb_neg_cache")
+        rows = cur.fetchall()
+        with _THUMB_NEG_CACHE_LOCK:
+            for path, ts in rows:
+                try:
+                    if now - float(ts) <= _THUMB_NEG_CACHE_TTL:
+                        if len(_THUMB_NEG_CACHE) < _THUMB_NEG_CACHE_MAX:
+                            _THUMB_NEG_CACHE[path] = float(ts)
+                    else:
+                        cur.execute("DELETE FROM thumb_neg_cache WHERE path=?", (path,))
+                except Exception:
+                    continue
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 _THUMB_NEG_CACHE_MAX = 5000
 
 def _thumb_neg_cached(real_path):
     """True nếu file đã fail gần đây — daemon bỏ qua không probe lại."""
+    _thumb_neg_load()
     try:
         with _THUMB_NEG_CACHE_LOCK:
             ts = _THUMB_NEG_CACHE.get(real_path)
@@ -11230,6 +11280,15 @@ def _thumb_neg_mark(real_path):
                 for k, _ in oldest:
                     _THUMB_NEG_CACHE.pop(k, None)
             _THUMB_NEG_CACHE[real_path] = time.time()
+            try:
+                conn = _thumb_neg_db()
+                if conn:
+                    conn.execute("INSERT OR REPLACE INTO thumb_neg_cache (path, ts) VALUES (?, ?)",
+                                 (real_path, time.time()))
+                    conn.commit()
+                    conn.close()
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -12243,6 +12302,22 @@ _livestream_recent_error_cooldown_sec = 300
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
 
+
+def _livestream_kill_pid(pid, jid=""):
+    """SIGTERM process livestream treo; best-effort, khong throw."""
+    try:
+        if not pid:
+            return
+        try:
+            os.killpg(int(pid), signal.SIGTERM)
+        except Exception:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def _detect_platform(url):
     """Nhan dien nen tang tu URL."""
     if not url:
@@ -12746,15 +12821,53 @@ def _livestream_watchdog():
                         continue
 
                     # Kiểm tra timeout (12 gio)
-                    started = info.get("started_ts", 0)
+                    # FIX-HANG: (1) started_ts thieu -> dung thoi diem watchdog thay vi fail-open
+                    # vinh vien; (2) SIGTERM xong phai SIGKILL o vong sau neu process li;
+                    # (3) stall detector: file khong lon sau _STALL_MIN thi kill.
+                    started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
+                    if not info.get("_watch_first_seen"):
+                        info["_watch_first_seen"] = time.time()
+                        started = started or time.time()
                     if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
                         log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
                         _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
+                        _livestream_kill_pid(pid, jid)
+                        info["status"] = "timeout"
+                        info["_kill_ts"] = time.time()
+                    elif info.get("status") in ("timeout", "stopping") and info.get("_kill_ts"):
+                        # Vong sau: process li sau SIGTERM -> SIGKILL.
                         try:
-                            os.kill(pid, signal.SIGTERM)
+                            os.kill(pid, 0)
+                            if time.time() - float(info.get("_kill_ts", 0)) > 60:
+                                log.warning("[Livestream] Job %s li don sau SIGTERM, SIGKILL.", jid)
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                        info["status"] = "timeout"
+                    else:
+                        # Stall detector: file output khong lon sau 20 phut -> ket luan treo.
+                        try:
+                            cur_size = info.get("file_size", 0) or 0
+                            last = float(info.get("_stall_check_size", -1))
+                            last_ts = float(info.get("_stall_check_ts", 0))
+                            now = time.time()
+                            if last < 0:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif cur_size != last:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif now - last_ts > 20 * 60:
+                                log.warning("[Livestream] Job %s dung tien trien %d phut (size=%d), kill.",
+                                            jid, 20, cur_size)
+                                _log_livestream_event("WARNING", jid, info, "Tu dong dung vi stream dung tien trien.", "stalled")
+                                _livestream_kill_pid(pid, jid)
+                                info["status"] = "timeout"
+                                info["_kill_ts"] = now
+                        except Exception:
+                            pass
 
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
             try:
