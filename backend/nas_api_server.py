@@ -12299,6 +12299,10 @@ _livestream_jobs = {}  # {job_id: {url, platform, pid, output_file, started_at, 
 _livestream_lock = threading.Lock()
 _livestream_starting_claims = {}
 _livestream_recent_error_cooldown_sec = 300
+# FIX-STALL-BACKOFF: stall kill dat cooldown dai rieng (2h). Cooldown chung 5p
+# khien watcher ghi lai ngay stream dang dung -> vong lap kill-ghi-kill spam
+# log + ton CPU + rac file ca dem (my.coffee79 2026-09-21).
+_LIVESTREAM_STALL_COOLDOWN_SEC = 2 * 3600
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
 
@@ -12866,6 +12870,8 @@ def _livestream_watchdog():
                                 _livestream_kill_pid(pid, jid)
                                 info["status"] = "timeout"
                                 info["_kill_ts"] = now
+                                # Backoff dai: watcher khong ghi lai user nay trong 2h.
+                                info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
                         except Exception:
                             pass
 
@@ -14655,6 +14661,22 @@ while True:
                     "duplicate": True,
                     "message": "Phiên ghi của user này đang chạy, không tạo phiên trùng."
                 })
+            # Stall backoff: user vua bi kill vi dung tien trien -> tu choi 2h.
+            with _livestream_lock:
+                for _oj, _oi in list(_livestream_jobs.items()):
+                    if _oi.get("recording_key", "") == recording_key:
+                        _until = float(_oi.get("_stall_cooldown_until", 0) or 0)
+                        if _until and time.time() < _until:
+                            _left = int((_until - time.time()) / 60)
+                            return jsonify({
+                                "job_id": _oj,
+                                "platform": platform,
+                                "save_folder": "Livestream/",
+                                "status": "cooldown",
+                                "duplicate": True,
+                                "reason": "stall_cooldown",
+                                "message": "Stream dung tien trien, tam nghi %d phut truoc khi thu lai." % _left,
+                            })
             recent_job_id, recent_info = _livestream_recent_job_for_key_locked(recording_key)
             if recent_job_id:
                 recent_status = recent_info.get("status", "")
@@ -14823,7 +14845,7 @@ def api_livestream_status():
 
         # 2. Kiểm tra process con chay khong va set status dua vao file_size
         if status == "recording":
-            now_time = __import__('time').time()
+            now_time = time.time()
             last_size = info.get("last_size", -1)
             last_size_time = info.get("last_size_time", 0)
             
@@ -14869,7 +14891,7 @@ def api_livestream_status():
                 else:
                     status = "finished"
                 updates[jid]["status"] = status
-                updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                updates[jid]["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 if info.get("logged_start"):
                     if status == "error":
                         msg = "User hiện không live hoặc đã tắt live (dung lượng: %s)" % format_bytes(file_size) if file_size == 0 else "Lỗi ghi hình (dung lượng: %s)" % format_bytes(file_size)
@@ -14885,7 +14907,7 @@ def api_livestream_status():
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
-        duration_sec = int(__import__('time').time() - started_ts) if started_ts > 0 else 0
+        duration_sec = int(time.time() - started_ts) if started_ts > 0 else 0
 
         # Tinh toc do ghi trung binh
         avg_speed = ""
