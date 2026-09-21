@@ -495,13 +495,33 @@ object WebDavManager {
                 throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
             }
 
-            // OOM guard: từ chối PROPFIND quá lớn trước khi parse.
+            // OOM guard: tu choi PROPFIND qua lon truoc khi parse.
             val declaredLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
             if (declaredLength > MAX_PROPFIND_BYTES) {
                 throw Exception("Thư mục quá lớn (${declaredLength / 1024 / 1024}MB), dùng tìm kiếm hoặc chia nhỏ thư mục")
             }
 
-            val byteStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
+            val rawStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
+            // Chan byte thuc doc — chunked vuot cap khong bi lot.
+            var bytesRead = 0L
+            val byteStream = object : java.io.FilterInputStream(rawStream) {
+                override fun read(): Int {
+                    val b = super.read()
+                    if (b >= 0) {
+                        bytesRead++
+                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception("Thư mục quá lớn, dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    return b
+                }
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    val n = super.read(b, off, len)
+                    if (n > 0) {
+                        bytesRead += n
+                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception("Thư mục quá lớn, dùng tìm kiếm hoặc chia nhỏ thư mục")
+                    }
+                    return n
+                }
+            }
 
             // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS (Sử dụng luồng trực tiếp để chống OOM)
             try {
@@ -598,9 +618,9 @@ object WebDavManager {
                         }
                     }
                     eventType = runCatching { parser.next() }.getOrElse {
-                        // Tolerant: chunk XML hỏng giữa chừng → giữ entries đã parse.
-                        android.util.Log.w("NAS_XML", "XML PROPFIND hỏng giữa chừng, giữ ${result.size} entries đã parse")
-                        org.xmlpull.v1.XmlPullParser.END_DOCUMENT
+                        // XML hong giua chung -> throw de caller giu cache cu.
+                        // Ban cu nuot partial roi thay cache bang danh sach thieu.
+                        throw Exception("Danh sách thư mục bị cắt giữa chừng, giữ cache cũ và thử tải lại")
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

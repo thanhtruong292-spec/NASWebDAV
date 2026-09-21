@@ -881,38 +881,8 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                 showBiometricLock = false
                 requireBiometricOnReturn = false
 
-                // BỎ QUA LOGIN: Nếu vừa khởi động app và quét vân tay đúng, tự động kết nối luôn
-
-                if (navController.currentDestination?.route == "login" || navController.currentDestination == null) {
-
-                    val urlList = SecurePrefsHelper.getUrlList(mContext)
-
-                    val user = SecurePrefsHelper.getUser(mContext)
-
-                    val pass = SecurePrefsHelper.getPass(mContext)
-
-                    if (urlList.isNotEmpty() && user.isNotEmpty()) {
-
-                        domainProvider.authSession.connect(urlList, user, pass)
-
-                        com.nas.naswebdav.scheduleIdleDuplicateScan(mContext, urlList.firstOrNull() ?: "")
-
-                        com.nas.naswebdav.scheduleIdleSpeedTest(mContext, urlList.firstOrNull() ?: "")
-
-                        com.nas.naswebdav.scheduleFingerprintWorker(mContext)
-
-
-
-                        navController.navigate("main_menu") {
-
-                            popUpTo("login") { inclusive = true }
-
-                        }
-
-                    }
-
-                }
-
+                // Mo app mac dinh dung o login — biometric lock chi mo khoa,
+                // khong tu connect/navigate. User nhap tay o man hinh dang nhap.
             },
 
             onFallbackToLogin = {

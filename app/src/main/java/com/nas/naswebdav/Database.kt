@@ -274,6 +274,10 @@ interface FingerprintDao {
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash LIMIT 1")
     fun findByExactHash(hash: String): FileFingerprint?
 
+    // Tim theo hash + size (phien ban nguon) — aHash va cham duoc.
+    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size LIMIT 5")
+    fun findByHashAndSize(hash: String, size: Long): List<FileFingerprint>
+
     // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker
     @Query("SELECT * FROM file_fingerprints LIMIT 10000")
     fun getAllFingerprints(): List<FileFingerprint>
@@ -342,6 +346,10 @@ interface SyncActionDao {
 
     @Query("DELETE FROM sync_queue WHERE id = :id")
     fun deleteById(id: Int)
+
+    // Retry theo ID truc tiep — khong tim trong top 200.
+    @Query("SELECT * FROM sync_queue WHERE id = :id LIMIT 1")
+    fun getById(id: Int): SyncAction?
 }
 
 // ================= TRASH META — Lưu path gốc để restore đúng vị trí =================

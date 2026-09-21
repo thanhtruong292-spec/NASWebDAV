@@ -658,7 +658,9 @@ object NetworkMonitor {
             }
 
             override fun onLost(network: android.net.Network) {
-                _isOnline.value = cm.activeNetwork == null
+                // onLost chi nghia network nay mat — online con hay khong hoi
+                // activeNetwork != null (ban cu == null dao nguoc ca 2 nhanh).
+                _isOnline.value = cm.activeNetwork != null
                 SmartNetworkManager.invalidateCache()
             }
         })

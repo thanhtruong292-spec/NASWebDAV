@@ -257,9 +257,18 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
-                            if (fileHash != null) { 
-                                val existingFp = db.fingerprintDao().findByExactHash(fileHash); 
-                                if (existingFp != null) isSkipped = true 
+                            // aHash va cham duoc — chi skip khi cung hash + cung size
+                            // + remote HEAD con ton tai (doi NAS/thu muc van backup lai).
+                            if (fileHash != null) {
+                                val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
+                                for (fp in candidates) {
+                                    if (fp.filePath.isEmpty()) continue
+                                    val remoteExists = try {
+                                        webDavManager.headFileHeaders(fp.filePath) != null
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { false }
+                                    if (remoteExists) { isSkipped = true; break }
+                                }
                             }
                             
                             if (isSkipped) {

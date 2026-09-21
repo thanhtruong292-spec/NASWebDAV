@@ -315,7 +315,6 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         if (biometricEnabled && hasSavedCreds && biometricAvailable) {
             Spacer(Modifier.height(12.dp))
             val activity = context as? androidx.fragment.app.FragmentActivity
-            var autoTriggered by remember { mutableStateOf(false) }
             val triggerBiometric: () -> Unit = {
                 if (activity != null) {
                     val executor = androidx.core.content.ContextCompat.getMainExecutor(activity)
@@ -346,15 +345,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     prompt.authenticate(info)
                 }
             }
-            // Auto-trigger 1 lan khi screen vua compose (chi khi user chua login va da co credentials)
-            // Kept as Unit: one-shot auto-trigger biometric on first composition.
-            LaunchedEffect(Unit) {
-                if (!autoTriggered && !authVM.isLoading) {
-                    autoTriggered = true
-                    kotlinx.coroutines.delay(300)  // cho UI settle
-                    triggerBiometric()
-                }
-            }
+            // BO AUTO-TRIGGER: mo app mac dinh dung o man hinh dang nhap.
+            // User bam nut "Dang nhap bang van tay" moi hien prompt.
             OutlinedButton(
                 onClick = triggerBiometric,
                 modifier = Modifier.fillMaxWidth().height(48.dp),

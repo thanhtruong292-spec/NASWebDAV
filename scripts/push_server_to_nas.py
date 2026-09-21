@@ -13,7 +13,9 @@ import os
 NAS_HOST = os.environ.get("NAS_HOST", "192.168.100.254")
 NAS_USER = os.environ.get("NAS_USER", "root")
 NAS_PATH = "/opt/nas_api_server.py"
-LOCAL_PATH = os.path.join(os.path.dirname(__file__), "..", "nas_api_server.py")
+LOCAL_PATH = os.path.join(os.path.dirname(__file__), "..", "backend", "nas_api_server.py")
+if not os.path.exists(LOCAL_PATH):
+    LOCAL_PATH = os.path.join(os.path.dirname(__file__), "..", "nas_api_server.py")
 
 def run(cmd, check=True):
     print(f"  > {' '.join(cmd)}")
@@ -31,14 +33,11 @@ def main():
         print(f"ERROR: {LOCAL_PATH} not found")
         sys.exit(1)
 
-    print(f"1. Uploading {LOCAL_PATH} → {NAS_USER}@{NAS_HOST}:{NAS_PATH}")
+    print(f"1. Uploading {LOCAL_PATH} -> {NAS_USER}@{NAS_HOST}:{NAS_PATH}")
     run(["scp", LOCAL_PATH, f"{NAS_USER}@{NAS_HOST}:{NAS_PATH}"])
 
     print(f"2. Restarting nas_api_server daemon...")
-    run(["ssh", f"{NAS_USER}@{NAS_HOST}",
-         "kill $(pgrep -f nas_api_server) 2>/dev/null; "
-         "nohup python3 /srv/dev-disk-by-label-data/New\\ folder/nas_api_server.py "
-         ">> /var/log/nasapi.log 2>&1 &"])
+    run(["ssh", f"{NAS_USER}@{NAS_HOST}", "systemctl restart nas_api"])
 
     print(f"3. Verifying daemon is up...")
     import time

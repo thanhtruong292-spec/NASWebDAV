@@ -1998,11 +1998,11 @@ fun DialogsDuplicateFilesDialog(onDismiss: () -> Unit) {
                 Text("Xin chúc mừng! Không có dữ liệu trùng lặp nào.", color = AccentGreen)
             } else {
                 // GIAO DIỆN CHUẨN SAMSUNG GALLERY: Phân nhóm trực quan và hiển thị Thumbnail
-                // SỬA LỖI: Nhóm theo Hash/Fingerprint thay vì chỉ theo Size để đảm bảo tuyệt đối file có nội dung giống nhau mới nằm chung nhóm
-                // BỔ SUNG: Nhóm theo Hash/Fingerprint để đảm bảo hiển thị đúng file trùng,
-                // dùng contentLength làm fallback dự phòng.
+                // Chi nhom theo partialHash THAT (giong DuplicateDialogs).
                 val groupedDuplicates = remember(smartToolsVM.duplicateFilesList) {
-                    smartToolsVM.duplicateFilesList.groupBy { it.partialHash ?: it.contentLength }.values.filter { it.size >= 2 }.toList()
+                    smartToolsVM.duplicateFilesList
+                        .filter { !it.partialHash.isNullOrEmpty() && !it.partialHash.startsWith("LGH_") }
+                        .groupBy { it.partialHash }.values.filter { it.size >= 2 }.toList()
                 }
 
                 // ═══ BỘ LỌC NHANH ═══

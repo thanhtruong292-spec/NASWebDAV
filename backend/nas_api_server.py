@@ -8716,6 +8716,7 @@ def _social_worker(job_id, url, folder):
         )
 
     tmp_dir = None
+    proc = None
     try:
         if not _social_validate_url(url):
             _set_error('URL khong con tro toi dia chi public hop le.')
@@ -9800,32 +9801,6 @@ def api_screen_record_finish():
         _write_screen_manifest(session_dir, manifest)
     threading.Thread(target=_screen_record_finish_worker, args=(session_dir, sid, total), daemon=True).start()
     return jsonify({"ok": True, "session_id": sid, "status": "processing", "segments": total}), 202
-    if False:
-        segments_dir = os.path.join(session_dir, "segments")
-        final_ts = os.path.join(session_dir, "%s.ts" % sid)
-        tmp_ts = final_ts + ".part"
-        with open(tmp_ts, "wb") as out:
-            for i in range(total):
-                part = os.path.join(segments_dir, "part_%06d.ts" % i)
-                with open(part, "rb") as f:
-                    shutil.copyfileobj(f, out, 1024 * 1024)
-        os.replace(tmp_ts, final_ts)
-        
-        # Xóa các segment riêng lẻ để giải phóng bộ nhớ đĩa ngay lập tức
-        try:
-            shutil.rmtree(segments_dir)
-            log.info("[ScreenRecord] Đã dọn dẹp thư mục segments tạm thời: %s", segments_dir)
-        except Exception as e:
-            log.warning("[ScreenRecord] Không thể xóa thư mục segments tạm thời: %s", e)
-
-        manifest["status"] = "done"
-        manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
-        manifest["missing"] = []
-        manifest["completed_at"] = int(time.time())
-        _write_screen_manifest(session_dir, manifest)
-    # KHÔNG giải phóng block thumbnail ở đây, remux_worker sẽ giải phóng trong khối finally khi xong
-    threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
-    return jsonify({"ok": True, "session_id": sid, "final_ts": manifest["final_ts"], "segments": total})
 
 
 @app.route("/api/screen_record/status", methods=["GET"])
@@ -11301,6 +11276,7 @@ def _thumbnail_generator():
     # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
     # which caused5 minutes of dead sleep before the first scan could run.
     last_full_scan = 0.0
+    _last_gate_logged_state = None
     while True:
         try:
             now = time.time()
@@ -11308,15 +11284,20 @@ def _thumbnail_generator():
             # stale activity block would never expire because the worker only slept.
             with _thumb_gate_lock:
                 _apply_thumbnail_gate_locked()
-            # Gate check FIRST (so pause takes effect immediately, not5 min later).
+            # Gate check FIRST (so pause takes effect immediately, not 5 min later).
             if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
                     _thumb_stats["paused"] = True
-                log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — sleeping 5s.",
-                         _thumb_paused.is_set(), _background_heavy_work_allowed(), sorted(_thumb_auto_block_reasons))
+                gate_state = (_thumb_paused.is_set(), _background_heavy_work_allowed(), tuple(sorted(_thumb_auto_block_reasons)))
+                if gate_state != _last_gate_logged_state:
+                    _last_gate_logged_state = gate_state
+                    log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — waiting for gate to reopen.",
+                             gate_state[0], gate_state[1], list(gate_state[2]))
                 time.sleep(5)
                 continue
+            else:
+                _last_gate_logged_state = None
 
             # Full re-scan every5 minutes to pick up new uploads.
             if now - last_full_scan < _RESCAN_INTERVAL_S:
@@ -14025,6 +14006,7 @@ def api_livestream_record():
             )
         direct_tiktok_flv = False
         direct_output_file = ""
+        _wrapper_dir = ""
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         original_record_url = body.get("url", "").strip() or live_url
 
@@ -14846,6 +14828,16 @@ def api_ytdlp_download():
     try:
         body = request.get_json(force=True) or {}
         video_url = body.get("url", "").strip()
+        if not video_url:
+            return jsonify({"error": "Thiếu URL video"}), 400
+
+        ytdlp_bin = _find_ytdlp_bin()
+        if not ytdlp_bin:
+            return jsonify({
+                "error": "yt-dlp chưa được cài đặt trên NAS",
+                "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
+            }), 503
+
         save_folder_input = body.get("save_folder", "Downloads/social/")
         save_folder = _social_sanitize_folder(save_folder_input)
         dest_dir = _resolve_webdav_request_path(save_folder)

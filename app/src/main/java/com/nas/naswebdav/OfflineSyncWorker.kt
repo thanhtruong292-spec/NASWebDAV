@@ -44,7 +44,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         val retryActionId = inputData.getInt(KEY_RETRY_ACTION_ID, 0)
         var priorityAction: com.nas.naswebdav.SyncAction? = null
         if (retryActionId > 0) {
-            priorityAction = db.syncActionDao().getAllPendingActions().find { it.id == retryActionId }
+            priorityAction = db.syncActionDao().getById(retryActionId)
             if (priorityAction == null) {
                 SystemLogger.log("WARNING", "OfflineSync",
                     "Retry request id=$retryActionId: row đã bị xóa hoặc không tồn tại")
@@ -168,11 +168,11 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                 if (runAttemptCount >= 3) Result.failure() else Result.retry()
             }
 
-            // P2 Continuation: nếu queue còn nhiều hơn 200 action, enqueue worker tiếp theo.
-            // Tránh backlog tích lũy vĩnh viễn khi normal actions liên tục được thêm vào.
+            // P2 Continuation: vet het queue (remaining > 0).
+            // Ban cu remaining > 200 bo sot duoi (201 muc -> con 1 khong chay tiep).
             try {
                 val remaining = db.syncActionDao().countAll()
-                if (remaining > 200) {
+                if (remaining > 0) {
                     SystemLogger.log("INFO", "OfflineSync",
                         "Queue còn $remaining action — enqueue continuation work")
                     val constraints = Constraints.Builder()

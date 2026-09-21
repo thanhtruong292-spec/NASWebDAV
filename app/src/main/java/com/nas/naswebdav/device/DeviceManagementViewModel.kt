@@ -668,7 +668,10 @@ class DeviceManagementViewModel(
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val body = resp.body?.string() ?: "[]"
-                    val arr = org.json.JSONArray(body)
+                    // Backend tra object {"folders":[...]} (khong phai array tran).
+                    val arr = runCatching { org.json.JSONObject(body).optJSONArray("folders") }
+                        .getOrNull() ?: runCatching { org.json.JSONArray(body) }.getOrNull()
+                        ?: org.json.JSONArray()
                     withContext(Dispatchers.Main) {
                         storageFolderUsage = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             StorageFolderUsage(
