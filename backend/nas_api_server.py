@@ -422,6 +422,9 @@ except ImportError:
     from urlparse import urlparse as _social_urlparse
 
 SOCIAL_MAX_CONCURRENT = 2
+# HW-BUDGET (rk3328 4xA53/1GB): mỗi livestream = 1 ffmpeg + 1 yt-dlp.
+# Không cap tổng thì 10 user live cùng lúc giết NAS — cap 2 job recording.
+LIVESTREAM_MAX_CONCURRENT = 2
 SOCIAL_MAX_FILESIZE = "2G"
 SOCIAL_YTDLP_TIMEOUT = 300
 SOCIAL_DEFAULT_FOLDER = "Downloads/social/"
@@ -1710,6 +1713,50 @@ def requires_auth(f):
         return jsonify({"detail": "Chua xac thuc"}), 401
 
     return decorated
+
+# ============ API VERSIONING (B1) ============
+# Route cũ /api/* giữ nguyên (app cũ vẫn chạy). Route mới dual-serve thêm
+# dưới /api/v1/* — cùng handler, response thêm "api_version": "v1".
+# Quy ước: endpoint mới chỉ tạo dưới /api/v1, không tạo /api/* phẳng nữa.
+# Khi đủ app mới, route /api/* phẳng gắn header Deprecated rồi gỡ sau.
+API_VERSION = "v1"
+
+def _versioned(path):
+    """'/api/ping' -> '/api/v1/ping'. Chỉ dùng cho path bắt đầu /api/."""
+    assert path.startswith("/api/"), path
+    return "/api/v1" + path[4:]
+
+def api_route(path, **kwargs):
+    """Dual-serve: đăng ký cả /api/* (legacy) và /api/v1/* (mới)."""
+    def deco(f):
+        app.route(path, **kwargs)(f)
+        app.route(_versioned(path), **kwargs)(f)
+        return f
+    return deco
+
+# ============ RESPONSE ENVELOPE (B3) ============
+# Chuẩn mới cho mọi endpoint TẠO MỚI dưới /api/v1:
+#   success: {"ok": true, "data": {...}, "api_version": "v1"}
+#   error:   {"ok": false, "error": "<message>", "code": "<snake_code>", "api_version": "v1"}
+# Route legacy /api/* GIỮ NGUYÊN shape cũ (app cũ parse trực tiếp) — không migrate
+# hàng loạt để tránh vỡ client. Chỉ route mới + route auth core dùng envelope.
+def api_ok(data=None, status=200):
+    payload = {"ok": True, "data": data if data is not None else {}}
+    return jsonify(_with_version(payload)), status
+
+def api_fail(message, code="error", status=400):
+    payload = {"ok": False, "error": message, "code": code}
+    return jsonify(_with_version(payload)), status
+
+def _with_version(payload):
+    """Gắn api_version vào dict response (route v1 gọi qua cùng handler)."""
+    try:
+        if request.path.startswith("/api/v1/") and isinstance(payload, dict):
+            payload = dict(payload)
+            payload.setdefault("api_version", API_VERSION)
+    except Exception:
+        pass
+    return payload
 
 # ============ TIEN ICH ============
 
@@ -3454,7 +3501,14 @@ def api_status():
     except NameError:
         pass
         
-    return jsonify(data)
+    return jsonify(_with_version(data))
+
+
+@app.route("/api/v1/status")
+@requires_auth
+def api_status_v1():
+    """Alias versioned cua /api/status (B1)."""
+    return api_status()
 
 
 def _metric_float(raw, default=0.0):
@@ -3542,7 +3596,14 @@ def api_ping():
     """Lightweight authenticated ping endpoint for LAN/Tailscale latency checks."""
     if request.method == "HEAD":
         return ("", 204)
-    return jsonify({"ok": True, "ts": time.time()})
+    return jsonify(_with_version({"ok": True, "ts": time.time()}))
+
+
+@app.route("/api/v1/ping", methods=["GET", "HEAD"])
+@requires_auth
+def api_ping_v1():
+    """Alias versioned của /api/ping (B1)."""
+    return api_ping()
 
 
 @app.route("/api/system/idle")
@@ -4663,12 +4724,14 @@ def api_shutdown():
 
 
 @app.route("/api/auth/authorize", methods=["POST"])
+@app.route("/api/v1/auth/authorize", methods=["POST"])
 @requires_auth
 def api_auth_authorize():
     """Xac thuc va cap phep IP ket noi (Android handshake)."""
     ip = _request_client_ip()
     if not ip:
-        return jsonify({"error": "Khong xac dinh duoc client IP sau trusted proxy"}), 400
+        return api_fail("Khong xac dinh duoc client IP sau trusted proxy",
+                        code="no_client_ip", status=400)
 
     # 1. Mo khoa firewall (iptables) lap tuc cho IP nay (Bypass moi rule chan WebDAV LAN)
     try:
@@ -4699,6 +4762,9 @@ def api_auth_authorize():
     finally:
         conn.close()
 
+    # B3: envelope mới cho route v1, shape cũ cho legacy (app cũ parse trực tiếp).
+    if request.path.startswith("/api/v1/"):
+        return api_ok({"status": "Trusted", "ip": ip})
     return jsonify({"status": "Trusted", "result": "ok"})
 
 # ============ DOCKER ============
@@ -8716,7 +8782,6 @@ def _social_worker(job_id, url, folder):
         )
 
     tmp_dir = None
-    proc = None
     try:
         if not _social_validate_url(url):
             _set_error('URL khong con tro toi dia chi public hop le.')
@@ -9801,6 +9866,32 @@ def api_screen_record_finish():
         _write_screen_manifest(session_dir, manifest)
     threading.Thread(target=_screen_record_finish_worker, args=(session_dir, sid, total), daemon=True).start()
     return jsonify({"ok": True, "session_id": sid, "status": "processing", "segments": total}), 202
+    if False:
+        segments_dir = os.path.join(session_dir, "segments")
+        final_ts = os.path.join(session_dir, "%s.ts" % sid)
+        tmp_ts = final_ts + ".part"
+        with open(tmp_ts, "wb") as out:
+            for i in range(total):
+                part = os.path.join(segments_dir, "part_%06d.ts" % i)
+                with open(part, "rb") as f:
+                    shutil.copyfileobj(f, out, 1024 * 1024)
+        os.replace(tmp_ts, final_ts)
+        
+        # Xóa các segment riêng lẻ để giải phóng bộ nhớ đĩa ngay lập tức
+        try:
+            shutil.rmtree(segments_dir)
+            log.info("[ScreenRecord] Đã dọn dẹp thư mục segments tạm thời: %s", segments_dir)
+        except Exception as e:
+            log.warning("[ScreenRecord] Không thể xóa thư mục segments tạm thời: %s", e)
+
+        manifest["status"] = "done"
+        manifest["final_ts"] = os.path.relpath(final_ts, WEBDAV_FILE_ROOT).replace(os.sep, "/")
+        manifest["missing"] = []
+        manifest["completed_at"] = int(time.time())
+        _write_screen_manifest(session_dir, manifest)
+    # KHÔNG giải phóng block thumbnail ở đây, remux_worker sẽ giải phóng trong khối finally khi xong
+    threading.Thread(target=_screen_record_remux_worker, args=(session_dir, sid, final_ts), daemon=True).start()
+    return jsonify({"ok": True, "session_id": sid, "final_ts": manifest["final_ts"], "segments": total})
 
 
 @app.route("/api/screen_record/status", methods=["GET"])
@@ -9861,7 +9952,8 @@ def api_screen_record_cancel():
 _transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen, "lock": Lock }
 _transcode_sessions_lock = threading.Lock()
 _TRANSCODE_SESSION_TTL_SEC = 2 * 3600
-_TRANSCODE_SESSION_MAX = 20
+# HW-BUDGET (rk3328 4xA53/1GB): mỗi session giữ 1 ffmpeg HLS — cap 4.
+_TRANSCODE_SESSION_MAX = 4
 
 
 def _cleanup_transcode_sessions(force_limit=False):
@@ -10827,6 +10919,13 @@ def _generate_image_thumb(src_path, dst_path):
     except Exception as e:
         log.warning("[ThumbImg] Failed %s: %s (size=%d, PIL=%s)",
                     os.path.basename(src_path), e, src_sz, pil_version)
+        # FIX-TRUNCATED-STORM: file truncated/corrupt khong bao gio decode duoc —
+        # mark neg-cache de daemon bo qua 7 ngay (nhu AV1 video). Log 2026-09-19:
+        # 1085 warning/ngay toan "image file is truncated" tu FB_IMG tai do.
+        try:
+            _thumb_neg_mark(src_path)
+        except Exception:
+            pass
         return False
 
 def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
@@ -11113,10 +11212,53 @@ def _create_placeholder_thumb(dst_path):
 _THUMB_NEG_CACHE = {}
 _THUMB_NEG_CACHE_LOCK = threading.Lock()
 _THUMB_NEG_CACHE_TTL = 7 * 24 * 3600
+# FIX-PERSIST-NEG: cache memory-only mat khi restart -> rescan dau spam lai.
+# Persist xuong SQLite (DB_PATH), load luc start, prune TTL.
+_THUMB_NEG_CACHE_LOADED = False
+
+def _thumb_neg_db():
+    try:
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
+        conn.commit()
+        return conn
+    except Exception:
+        return None
+
+def _thumb_neg_load():
+    global _THUMB_NEG_CACHE_LOADED
+    if _THUMB_NEG_CACHE_LOADED:
+        return
+    _THUMB_NEG_CACHE_LOADED = True
+    try:
+        conn = _thumb_neg_db()
+        if not conn:
+            return
+        cur = conn.cursor()
+        now = time.time()
+        cur.execute("SELECT path, ts FROM thumb_neg_cache")
+        rows = cur.fetchall()
+        with _THUMB_NEG_CACHE_LOCK:
+            for path, ts in rows:
+                try:
+                    if now - float(ts) <= _THUMB_NEG_CACHE_TTL:
+                        if len(_THUMB_NEG_CACHE) < _THUMB_NEG_CACHE_MAX:
+                            _THUMB_NEG_CACHE[path] = float(ts)
+                    else:
+                        cur.execute("DELETE FROM thumb_neg_cache WHERE path=?", (path,))
+                except Exception:
+                    continue
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 _THUMB_NEG_CACHE_MAX = 5000
 
 def _thumb_neg_cached(real_path):
     """True nếu file đã fail gần đây — daemon bỏ qua không probe lại."""
+    _thumb_neg_load()
     try:
         with _THUMB_NEG_CACHE_LOCK:
             ts = _THUMB_NEG_CACHE.get(real_path)
@@ -11138,6 +11280,15 @@ def _thumb_neg_mark(real_path):
                 for k, _ in oldest:
                     _THUMB_NEG_CACHE.pop(k, None)
             _THUMB_NEG_CACHE[real_path] = time.time()
+            try:
+                conn = _thumb_neg_db()
+                if conn:
+                    conn.execute("INSERT OR REPLACE INTO thumb_neg_cache (path, ts) VALUES (?, ?)",
+                                 (real_path, time.time()))
+                    conn.commit()
+                    conn.close()
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -11276,7 +11427,6 @@ def _thumbnail_generator():
     # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
     # which caused5 minutes of dead sleep before the first scan could run.
     last_full_scan = 0.0
-    _last_gate_logged_state = None
     while True:
         try:
             now = time.time()
@@ -11284,20 +11434,15 @@ def _thumbnail_generator():
             # stale activity block would never expire because the worker only slept.
             with _thumb_gate_lock:
                 _apply_thumbnail_gate_locked()
-            # Gate check FIRST (so pause takes effect immediately, not 5 min later).
+            # Gate check FIRST (so pause takes effect immediately, not5 min later).
             if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
                     _thumb_stats["paused"] = True
-                gate_state = (_thumb_paused.is_set(), _background_heavy_work_allowed(), tuple(sorted(_thumb_auto_block_reasons)))
-                if gate_state != _last_gate_logged_state:
-                    _last_gate_logged_state = gate_state
-                    log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — waiting for gate to reopen.",
-                             gate_state[0], gate_state[1], list(gate_state[2]))
+                log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — sleeping 5s.",
+                         _thumb_paused.is_set(), _background_heavy_work_allowed(), sorted(_thumb_auto_block_reasons))
                 time.sleep(5)
                 continue
-            else:
-                _last_gate_logged_state = None
 
             # Full re-scan every5 minutes to pick up new uploads.
             if now - last_full_scan < _RESCAN_INTERVAL_S:
@@ -12154,8 +12299,28 @@ _livestream_jobs = {}  # {job_id: {url, platform, pid, output_file, started_at, 
 _livestream_lock = threading.Lock()
 _livestream_starting_claims = {}
 _livestream_recent_error_cooldown_sec = 300
+# FIX-STALL-BACKOFF: stall kill dat cooldown dai rieng (2h). Cooldown chung 5p
+# khien watcher ghi lai ngay stream dang dung -> vong lap kill-ghi-kill spam
+# log + ton CPU + rac file ca dem (my.coffee79 2026-09-21).
+_LIVESTREAM_STALL_COOLDOWN_SEC = 2 * 3600
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
+
+
+def _livestream_kill_pid(pid, jid=""):
+    """SIGTERM process livestream treo; best-effort, khong throw."""
+    try:
+        if not pid:
+            return
+        try:
+            os.killpg(int(pid), signal.SIGTERM)
+        except Exception:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 def _detect_platform(url):
     """Nhan dien nen tang tu URL."""
@@ -12660,15 +12825,55 @@ def _livestream_watchdog():
                         continue
 
                     # Kiểm tra timeout (12 gio)
-                    started = info.get("started_ts", 0)
+                    # FIX-HANG: (1) started_ts thieu -> dung thoi diem watchdog thay vi fail-open
+                    # vinh vien; (2) SIGTERM xong phai SIGKILL o vong sau neu process li;
+                    # (3) stall detector: file khong lon sau _STALL_MIN thi kill.
+                    started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
+                    if not info.get("_watch_first_seen"):
+                        info["_watch_first_seen"] = time.time()
+                        started = started or time.time()
                     if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
                         log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
                         _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
+                        _livestream_kill_pid(pid, jid)
+                        info["status"] = "timeout"
+                        info["_kill_ts"] = time.time()
+                    elif info.get("status") in ("timeout", "stopping") and info.get("_kill_ts"):
+                        # Vong sau: process li sau SIGTERM -> SIGKILL.
                         try:
-                            os.kill(pid, signal.SIGTERM)
+                            os.kill(pid, 0)
+                            if time.time() - float(info.get("_kill_ts", 0)) > 60:
+                                log.warning("[Livestream] Job %s li don sau SIGTERM, SIGKILL.", jid)
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                        info["status"] = "timeout"
+                    else:
+                        # Stall detector: file output khong lon sau 20 phut -> ket luan treo.
+                        try:
+                            cur_size = info.get("file_size", 0) or 0
+                            last = float(info.get("_stall_check_size", -1))
+                            last_ts = float(info.get("_stall_check_ts", 0))
+                            now = time.time()
+                            if last < 0:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif cur_size != last:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif now - last_ts > 20 * 60:
+                                log.warning("[Livestream] Job %s dung tien trien %d phut (size=%d), kill.",
+                                            jid, 20, cur_size)
+                                _log_livestream_event("WARNING", jid, info, "Tu dong dung vi stream dung tien trien.", "stalled")
+                                _livestream_kill_pid(pid, jid)
+                                info["status"] = "timeout"
+                                info["_kill_ts"] = now
+                                # Backoff dai: watcher khong ghi lai user nay trong 2h.
+                                info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
+                        except Exception:
+                            pass
 
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
             try:
@@ -14006,7 +14211,6 @@ def api_livestream_record():
             )
         direct_tiktok_flv = False
         direct_output_file = ""
-        _wrapper_dir = ""
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         original_record_url = body.get("url", "").strip() or live_url
 
@@ -14457,6 +14661,22 @@ while True:
                     "duplicate": True,
                     "message": "Phiên ghi của user này đang chạy, không tạo phiên trùng."
                 })
+            # Stall backoff: user vua bi kill vi dung tien trien -> tu choi 2h.
+            with _livestream_lock:
+                for _oj, _oi in list(_livestream_jobs.items()):
+                    if _oi.get("recording_key", "") == recording_key:
+                        _until = float(_oi.get("_stall_cooldown_until", 0) or 0)
+                        if _until and time.time() < _until:
+                            _left = int((_until - time.time()) / 60)
+                            return jsonify({
+                                "job_id": _oj,
+                                "platform": platform,
+                                "save_folder": "Livestream/",
+                                "status": "cooldown",
+                                "duplicate": True,
+                                "reason": "stall_cooldown",
+                                "message": "Stream dung tien trien, tam nghi %d phut truoc khi thu lai." % _left,
+                            })
             recent_job_id, recent_info = _livestream_recent_job_for_key_locked(recording_key)
             if recent_job_id:
                 recent_status = recent_info.get("status", "")
@@ -14478,6 +14698,21 @@ while True:
                     "error": "Phiên ghi của user này đang được khởi tạo, vui lòng chờ trạng thái cập nhật.",
                     "reason": "recording_starting",
                 }), 409
+            # HW-BUDGET: cap tổng recording đồng thời (dedup trên chỉ chặn trùng
+            # cùng user). Vượt cap → 429, watcher retry sau.
+            _live_active = sum(
+                1 for _j in _livestream_jobs.values()
+                if _j.get("status") in ("recording", "starting"))
+            _live_starting = sum(
+                1 for _c in _livestream_starting_claims.values()
+                if time.time() - float(_c.get("ts", 0) or 0) < 180)
+            if _live_active + _live_starting >= LIVESTREAM_MAX_CONCURRENT:
+                log.warning("[Livestream] Từ chối phiên mới (%s): đã %d recording (cap %d)",
+                            recording_key, _live_active, LIVESTREAM_MAX_CONCURRENT)
+                return jsonify({
+                    "error": "NAS đang ghi tối đa %d luồng, thử lại sau." % LIVESTREAM_MAX_CONCURRENT,
+                    "reason": "max_concurrent",
+                }), 429
             _livestream_starting_claims[recording_key] = {"ts": time.time(), "url": original_record_url}
             claimed_recording_key = recording_key
 
@@ -14610,7 +14845,7 @@ def api_livestream_status():
 
         # 2. Kiểm tra process con chay khong va set status dua vao file_size
         if status == "recording":
-            now_time = __import__('time').time()
+            now_time = time.time()
             last_size = info.get("last_size", -1)
             last_size_time = info.get("last_size_time", 0)
             
@@ -14656,7 +14891,7 @@ def api_livestream_status():
                 else:
                     status = "finished"
                 updates[jid]["status"] = status
-                updates[jid]["finished_at"] = __import__('datetime').datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                updates[jid]["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 if info.get("logged_start"):
                     if status == "error":
                         msg = "User hiện không live hoặc đã tắt live (dung lượng: %s)" % format_bytes(file_size) if file_size == 0 else "Lỗi ghi hình (dung lượng: %s)" % format_bytes(file_size)
@@ -14672,7 +14907,7 @@ def api_livestream_status():
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
-        duration_sec = int(__import__('time').time() - started_ts) if started_ts > 0 else 0
+        duration_sec = int(time.time() - started_ts) if started_ts > 0 else 0
 
         # Tinh toc do ghi trung binh
         avg_speed = ""
@@ -14828,16 +15063,6 @@ def api_ytdlp_download():
     try:
         body = request.get_json(force=True) or {}
         video_url = body.get("url", "").strip()
-        if not video_url:
-            return jsonify({"error": "Thiếu URL video"}), 400
-
-        ytdlp_bin = _find_ytdlp_bin()
-        if not ytdlp_bin:
-            return jsonify({
-                "error": "yt-dlp chưa được cài đặt trên NAS",
-                "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
-            }), 503
-
         save_folder_input = body.get("save_folder", "Downloads/social/")
         save_folder = _social_sanitize_folder(save_folder_input)
         dest_dir = _resolve_webdav_request_path(save_folder)
