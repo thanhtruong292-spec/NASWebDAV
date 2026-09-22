@@ -12334,14 +12334,20 @@ def _livestream_current_output_size(info):
     Quan trong: nhanh yt-dlp thong thuong khong luu ten file cu the vao
     info['output_file']/info['direct_output_path'] (de trong) luc dang ghi —
     no chi ghi qua output_template "%(ext)s" nen ten file thuc te chua
-    timestamp_str cua job. Vi vay ngoai 2 duong dan da biet, helper con quet
-    thu muc output_dir de tim file bat dau bang timestamp_str cua job nay
-    (khong lay file moi nhat toan thu muc de tranh nham file cua job khac).
+    file_stem cua job. Vi vay ngoai 2 duong dan da biet, helper con quet
+    thu muc output_dir de tim file BAT DAU BANG file_stem cua job nay.
+
+    FIX-P2-1: dung file_stem (prefix duy nhat: platform[_stable_id]_timestamp)
+    thay vi substring timestamp_str. timestamp_str chi den GIÂY nen 2 job cua 2
+    user khac nhau khoi cung giay se co chung substring -> quet theo 'in' lay
+    ca file cua job khac (va lay max size) -> watchdog do sai size, hoac khong
+    bao gio kill duoc job treo, hoac kill nham job khoe. file_stem gom ca
+    stable_id nen phan biet duoc 2 user cung giay.
     """
     out_dir = info.get("output_dir", _LIVESTREAM_DIR)
     out_file = info.get("output_file", "")
     direct_path = info.get("direct_output_path", "")
-    ts_str = info.get("timestamp_str", "")
+    stem = info.get("file_stem", "")
     best = 0
 
     def _consider(cand):
@@ -12358,14 +12364,12 @@ def _livestream_current_output_size(info):
     # 1) Duong dan file da biet (nhanh TikTok FLV / file da remux xong)
     _consider(direct_path)
     _consider(os.path.join(out_dir, out_file) if out_file else "")
-    # 2) Nhanh yt-dlp: ten file thuc te la output_template
-    #    "<platform>_<stable_id>_<timestamp>.%(ext)s" -> timestamp nam GIUA
-    #    ten file, khong o dau. Quet theo substring 'timestamp_str in fn'
-    #    (timestamp la duy nhat theo giay + random nen khong trung job khac).
-    if ts_str and os.path.isdir(out_dir):
+    # 2) Nhanh yt-dlp / file thuc te: match chinh xac file cua job nay bang
+    #    file_stem (startswith), KHONG dung substring timestamp_str.
+    if stem and os.path.isdir(out_dir):
         try:
             for fn in os.listdir(out_dir):
-                if ts_str in fn and os.path.isfile(os.path.join(out_dir, fn)):
+                if fn.startswith(stem) and os.path.isfile(os.path.join(out_dir, fn)):
                     _consider(os.path.join(out_dir, fn))
         except Exception:
             pass
@@ -12764,14 +12768,16 @@ def _livestream_watchdog():
                         # Process da ket thuc tu nhien (stream het hoac lỗi)
                         try:
                             out_pattern = info.get("output_dir", "")
-                            timestamp_str = info.get("timestamp_str", "")
-                            # Tim dung file cua job nay. Khong l?y file mới nh?t toan thư mục,
-                            # vi job fail/offline se bi gan nham MP4 cu va bao sai trạng thái.
+                            file_stem = info.get("file_stem", "")
+                            # FIX-P2-1: match bang file_stem (prefix duy nhat) thay vi
+                            # substring timestamp_str, tranh lay nham file cua job khac
+                            # cung giay. Khong lay file moi nhat toan thu muc vi job
+                            # fail/offline se bi gan nham MP4 cu va bao sai trang thai.
                             if os.path.isdir(out_pattern):
                                 files = sorted(
                                     [os.path.join(out_pattern, f) for f in os.listdir(out_pattern)
                                      if os.path.isfile(os.path.join(out_pattern, f))
-                                     and (not timestamp_str or timestamp_str in f)],
+                                     and (not file_stem or f.startswith(file_stem))],
                                     key=os.path.getmtime, reverse=True
                                 )
                                 if files:
@@ -12902,11 +12908,16 @@ def _livestream_watchdog():
                         try:
                             os.kill(pid, 0)
                             if time.time() - float(info.get("_kill_ts", 0)) > 60:
-                                log.warning("[Livestream] Job %s li don sau SIGTERM, SIGKILL.", jid)
+                                log.warning("[Livestream] Job %s li don sau SIGTERM, SIGKILL ca cay process.", jid)
                                 try:
-                                    os.kill(pid, signal.SIGKILL)
+                                    # FIX-P2-2: kill ca process group (pid==PGID vi
+                                    # Popen start_new_session=True) de diet ffmpeg con.
+                                    os.killpg(int(pid), signal.SIGKILL)
                                 except Exception:
-                                    pass
+                                    try:
+                                        os.kill(int(pid), signal.SIGKILL)
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                     else:
@@ -13467,6 +13478,61 @@ def _extract_tiktok_live_flv_urls(html):
         return 9
     return sorted(flv_urls, key=_flv_rank)
 
+def _tiktok_sigi_object_slice(html):
+    """Return the JSON object (balanced braces) starting right after a
+    SIGI_STATE marker, or '' if no marker / no object found.
+
+    FIX-P2-3: giới hạn fallback trong CHÍNH object JSON của phòng đích,
+    không quét 50k ký tự raw hay toàn bộ HTML. Nếu không có marker (HTML
+    lỗi/truncated) thì trả '' để không leak status của phòng khác nằm ngoài
+    object — trước đây slice 50k từ marker hoặc quét toàn HTML có thể trả
+    'live' từ một <script> khác chứa liveRoomStatus của phòng không liên quan.
+    """
+    if not html:
+        return ""
+    lowered = html.lower()
+    idx = -1
+    for marker in ("window.__SIGI_STATE__=", "window.SIGI_STATE=", "SIGI_STATE="):
+        idx = lowered.find(marker.lower())
+        if idx >= 0:
+            break
+    if idx < 0:
+        return ""
+    start = html.find("{", idx)
+    if start < 0:
+        return ""
+    depth = 0
+    i = start
+    n = len(html)
+    while i < n:
+        c = html[i]
+        if c == '"':
+            i += 1
+            while i < n:
+                if html[i] == "\\":
+                    i += 2
+                    continue
+                if html[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "'":
+            i += 1
+            while i < n and html[i] != "'":
+                i += 1
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start:i + 1]
+        i += 1
+    return ""
+
+
 def _parse_tiktok_live_room_state(html):
     """Extract live-room status from TikTok HTML embedded JSON state.
 
@@ -13530,26 +13596,18 @@ def _parse_tiktok_live_room_state(html):
                         return _eval_tiktok_room(room)
                 except Exception:
                     pass
-        # FIX-TIKTOK: fallback regex chi quet tren phan SIGI_STATE gan nhat
-        # (khong quet toan bo HTML) de tranh lay status cua phong khac.
-        slice_txt = ""
-        mi = -1
-        for marker in ("window.__SIGI_STATE__=", "window.SIGI_STATE=", "SIGI_STATE="):
-            mi = lowered.find(marker.lower())
-            if mi >= 0:
-                break
-        if mi >= 0:
-            slice_txt = html[mi: mi + 50000]
-        else:
-            slice_txt = html
-        m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', slice_txt)
-        if m:
-            status = int(m.group(1))
-            rid = ""
-            rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', slice_txt)
-            if rm:
-                rid = rm.group(1)
-            return _eval_tiktok_status(status, rid)
+        # FIX-TIKTOK / P2-3: fallback CHI trong object JSON cua SIGI_STATE
+        # (khong quet 50k raw hay toan HTML) -> khong leak status phong khac.
+        slice_txt = _tiktok_sigi_object_slice(html)
+        if slice_txt:
+            m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', slice_txt)
+            if m:
+                status = int(m.group(1))
+                rid = ""
+                rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', slice_txt)
+                if rm:
+                    rid = rm.group(1)
+                return _eval_tiktok_status(status, rid)
         return False, "", -1, "no embedded live room state"
     except Exception as e:
         return False, "", -1, "parse error: %s" % str(e)[:120]
@@ -14417,6 +14475,16 @@ def api_livestream_record():
             )
         direct_tiktok_flv = False
         direct_output_file = ""
+        # FIX-P2-1: file_stem la prefix ten file THUC te cua job nay (khong
+        # duoi, khong chua random cua job_id). Duy nhat theo gioi han cua
+        # timestamp_str (giay) + stable_id. Dung de match chinh xac file cua
+        # job nay khi quet output_dir, tranh lay nhầm file cua job khac cung
+        # giay (timestamp_str chi den giay, 2 user khac nhau khoi cung giay se
+        # co chung substring -> size helper lay max size la SAI).
+        if stable_id:
+            file_stem = "%s_%s_%s" % (platform, stable_id, timestamp_str)
+        else:
+            file_stem = "%s_%s" % (platform, timestamp_str)
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         original_record_url = body.get("url", "").strip() or live_url
 
@@ -14929,10 +14997,15 @@ while True:
             lf.write("CMD: %s\n\n" % " ".join(cmd))
             if tmp_dir:
                 lf.write("TMPDIR: %s\n\n" % tmp_dir)
+            # FIX-P2-2: start_new_session=True -> Popen tao process group rieng
+            # (proc.pid == PGID). Khi do _livestream_kill_pid dung os.killpg()
+            # moi thuc su ket ca cay (yt-dlp -> ffmpeg con). Neu khong, killpg
+            # luon fail va chi kill duoc PID cha, ffmpeg con song sot giu file.
             proc = subprocess.Popen(
                 cmd,
                 stdout=lf, stderr=lf,
                 close_fds=True,
+                start_new_session=True,
                 env=_job_env_with_tmp(tmp_dir)
             )
 
@@ -14957,6 +15030,7 @@ while True:
                 "quality": quality,
                 "log_file": log_file,
                 "timestamp_str": timestamp_str,
+                "file_stem": file_stem,
                 "direct_tiktok_flv": direct_tiktok_flv,
                 "direct_output_path": direct_output_file,
                 "watch_username": watch_username,
@@ -15035,14 +15109,15 @@ def api_livestream_status():
         out_dir = info.get("output_dir", _LIVESTREAM_DIR)
         try:
             if os.path.isdir(out_dir):
-                # Tim file mới nh?t trong thư mục Livestream cua luồng nay
-                platform = info.get("platform", "")
-                timestamp_str = info.get("timestamp_str", "")
+                # FIX-P2-1: match bang file_stem (prefix duy nhat) thay vi
+                # substring timestamp_str, tranh lay nham file cua job khac
+                # cung giay. Chi tim file thuoc luong nay.
+                file_stem = info.get("file_stem", "")
                 all_files = []
                 for f in os.listdir(out_dir):
                     fp = os.path.join(out_dir, f)
                     if os.path.isfile(fp) and not f.endswith(".log"):
-                        if timestamp_str and timestamp_str not in f:
+                        if file_stem and not f.startswith(file_stem):
                             continue
                         all_files.append(fp)
                 if all_files:

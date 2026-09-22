@@ -41,7 +41,7 @@ def _extract_funcs(names):
 # Load the parser functions together (they reference each other).
 _PARSER_NS = _extract_funcs(
     ["_parse_tiktok_live_room_state", "_dig_tiktok_room",
-     "_eval_tiktok_room", "_eval_tiktok_status"]
+     "_eval_tiktok_room", "_eval_tiktok_status", "_tiktok_sigi_object_slice"]
 )
 
 
@@ -57,32 +57,51 @@ class TestP1SizeHelper(unittest.TestCase):
             f.write(b"x" * size)
         return p
 
-    def test_ytdlp_timestamp_file_is_found_not_other_job(self):
-        # Realistic yt-dlp filename: platform_stableid_timestamp.mp4 (timestamp mid-string).
+    def test_ytdlp_stem_file_found_not_other_job(self):
+        # Realistic yt-dlp filename: platform_stableid_timestamp.mp4.
+        # file_stem (platform_stableid_timestamp) uniquely identifies the job,
+        # unlike a bare timestamp substring shared by jobs starting same second.
         ts = "20260922_131500"
+        stem = "tiktok_alice_%s" % ts
         self._write("tiktok_alice_%s.mp4" % ts, 4096)
-        self._write("tiktok_bob_20260101_000000.mp4", 999999)
+        self._write("tiktok_bob_%s.mp4" % ts, 999999)  # same second, different user
         info = {"output_dir": self.dir, "output_file": "",
-                "direct_output_path": "", "timestamp_str": ts}
+                "direct_output_path": "", "file_stem": stem}
         self.assertEqual(self.S(info), 4096)
 
-    def test_no_timestamp_match_returns_zero(self):
+    def test_same_second_collision_picks_own_file(self):
+        # P2-1 regression: two different users start in the same second, so
+        # their filenames share the timestamp substring. The size helper must
+        # NOT aggregate the other job's file (the old 'timestamp_str in fn'
+        # + max() logic would return 999999 and mislead the watchdog).
+        ts = "20260922_131500"
+        self._write("tiktok_alice_%s.mp4" % ts, 5000)
+        self._write("tiktok_bob_%s.mp4" % ts, 999999)
+        info = {"output_dir": self.dir, "output_file": "",
+                "direct_output_path": "", "file_stem": "tiktok_alice_%s" % ts}
+        self.assertEqual(self.S(info), 5000)
+        # And the other way around.
+        info2 = dict(info)
+        info2["file_stem"] = "tiktok_bob_%s" % ts
+        self.assertEqual(self.S(info2), 999999)
+
+    def test_no_stem_match_returns_zero(self):
         ts = "20260922_131500"
         self._write("tiktok_alice_%s.mp4" % ts, 4096)
         info = {"output_dir": self.dir, "output_file": "",
-                "direct_output_path": "", "timestamp_str": "NOPE"}
+                "direct_output_path": "", "file_stem": "tiktok_NOPE_20260101_000000"}
         self.assertEqual(self.S(info), 0)
 
     def test_known_direct_path_wins(self):
         dp = self._write("direct.mp4", 2048)
         info = {"output_dir": self.dir, "output_file": "",
-                "direct_output_path": dp, "timestamp_str": ""}
+                "direct_output_path": dp, "file_stem": ""}
         self.assertEqual(self.S(info), 2048)
 
     def test_known_output_file_wins(self):
         self._write("job.mp4", 1024)
         info = {"output_dir": self.dir, "output_file": "job.mp4",
-                "direct_output_path": "", "timestamp_str": ""}
+                "direct_output_path": "", "file_stem": ""}
         self.assertEqual(self.S(info), 1024)
 
 
@@ -105,11 +124,31 @@ class TestP3TikTokParser(unittest.TestCase):
         self.assertEqual(self.P(sig)[0], False)
         self.assertEqual(self.P(sig)[2], 4)
 
-    def test_fallback_scoped_to_sigi_slice(self):
-        # liveRoomStatus present only in a non-SIGI tail; since there is no SIGI
-        # marker, the fallback scans all HTML and should still find it.
+    def test_fallback_does_not_leak_status_outside_sigi_object(self):
+        # P2-3 regression: liveRoomStatus present only in a tail with NO SIGI
+        # marker. The fallback must be scoped to the SIGI_STATE object only, so
+        # it must NOT leak the stray status and must return not-live.
         html = 'prefix junk <div "liveRoomStatus":1, "roomId":"55"'
-        self.assertEqual(self.P(html), (True, "55", 1, ""))
+        self.assertEqual(self.P(html)[0], False)
+
+    def test_fallback_scoped_to_sigi_object(self):
+        # Status lives inside the (possibly truncated) SIGI_STATE object; the
+        # fallback must read it from the object slice, not the whole doc.
+        sig = ('prefix junk window.SIGI_STATE=' + json.dumps({
+            "LiveRoom": {"liveRoom": {"liveRoomStatus": 1, "roomId": "7001"}}}))
+        self.assertEqual(self.P(sig), (True, "7001", 1, ""))
+
+    def test_sigi_object_slice_helper(self):
+        S = _PARSER_NS["_tiktok_sigi_object_slice"]
+        # Extracts the balanced object starting after the marker.
+        sig = 'window.SIGI_STATE=' + json.dumps(
+            {"LiveRoom": {"liveRoomStatus": 4, "roomId": "123"}})
+        self.assertEqual(json.loads(S(sig)),
+                         {"LiveRoom": {"liveRoomStatus": 4, "roomId": "123"}})
+        # No marker -> empty (no leak from unrelated tail).
+        self.assertEqual(S('junk "liveRoomStatus":1'), "")
+        # Empty input.
+        self.assertEqual(S(""), "")
 
     def test_empty_html(self):
         self.assertEqual(self.P(""), (False, "", -1, "empty html"))
