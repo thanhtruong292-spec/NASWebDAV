@@ -13419,6 +13419,93 @@ def _extract_tiktok_live_flv_urls(html):
         return 9
     return sorted(flv_urls, key=_flv_rank)
 
+def _parse_tiktok_live_room_state(html):
+    """Extract live-room status from TikTok HTML embedded JSON state.
+
+    TikTok no longer inlines raw .flv/.m3u8 URLs in the live page HTML; the
+    authoritative signal lives in the embedded app state (SIGI_STATE / webapp
+    sharing / __INITIAL_STATE__) as a LiveRoom object with liveRoomStatus
+    (1=live, 2=preparing, 3=replay/paused, 4=ended) and roomId.
+    Returns (is_live, room_id, status, detail).
+    """
+    if not html:
+        return False, "", -1, "empty html"
+    lowered = html.lower()
+    try:
+        for marker in ("window.__SIGI_STATE__=", "window.SIGI_STATE=", "SIGI_STATE="):
+            idx = lowered.find(marker.lower())
+            if idx < 0:
+                continue
+            start = html.find("{", idx)
+            if start < 0:
+                continue
+            depth = 0
+            end = -1
+            for i in range(start, min(start + 3000000, len(html))):
+                c = html[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if end > start:
+                try:
+                    state = json.loads(html[start:end])
+                    room = _dig_tiktok_room(state)
+                    if room is not None:
+                        return _eval_tiktok_room(room)
+                except Exception:
+                    pass
+        m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', html)
+        if m:
+            status = int(m.group(1))
+            rid = ""
+            rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', html)
+            if rm:
+                rid = rm.group(1)
+            return _eval_tiktok_status(status, rid)
+        return False, "", -1, "no embedded live room state"
+    except Exception as e:
+        return False, "", -1, "parse error: %s" % str(e)[:120]
+
+
+def _dig_tiktok_room(state):
+    cand = state.get("LiveRoom") if isinstance(state, dict) else None
+    if isinstance(cand, dict):
+        if "liveRoom" in cand:
+            return cand["liveRoom"]
+        if "liveRoomUserInfo" in cand and isinstance(cand["liveRoomUserInfo"], dict):
+            return cand["liveRoomUserInfo"].get("liveRoom")
+    if isinstance(state, dict) and ("roomId" in state or "liveRoomStatus" in state):
+        return state
+    return None
+
+
+def _eval_tiktok_room(room):
+    status = -1
+    try:
+        status = int(room.get("liveRoomStatus", room.get("status", -1)))
+    except Exception:
+        status = -1
+    rid = str(room.get("roomId", room.get("id", "")) or "")
+    return _eval_tiktok_status(status, rid)
+
+
+def _eval_tiktok_status(status, rid):
+    if status == 1:
+        return True, rid, status, ""
+    if status in (2, 3):
+        return False, rid, status, "preparing/replay"
+    if status == 4:
+        return False, rid, status, "offline"
+    return False, rid, status, "unknown status %s" % status
+
+
+
+
+
 def _extract_tiktok_live_media_urls(html):
     """Extract direct livestream media URLs from TikTok HTML without probing codec.
 
@@ -13597,6 +13684,11 @@ def _check_tiktok_user_live(username):
             # Trang trong thuong la TikTok bot-block tam thoi — không ph?i lỗi that su.
             # Coi la offline de watcher tiep tuc kiểm tra lan sau (không l?u last_error).
             return False, "unknown: TikTok trả trang rỗng hoặc challenge tạm thời"
+        # NEW: parse embedded live-room JSON state (SIGI_STATE). TikTok no longer
+        # inlines raw flv/m3u8 URLs, so the HTML-pattern check below false-negative.
+        room_live, room_id, room_status, room_detail = _parse_tiktok_live_room_state(html)
+        if room_live:
+            return True, ""
         lowered = html.lower()
         media_urls = _extract_tiktok_live_media_urls(html)
         live_title = " is live" in lowered and "tiktok" in lowered
