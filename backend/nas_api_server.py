@@ -12175,6 +12175,33 @@ _livestream_starting_claims = {}
 _livestream_recent_error_cooldown_sec = 300
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
+# FIX-STALL-BACKOFF: stall kill dat cooldown dai rieng (2h). Cooldown chung 5p
+# khien watcher ghi lai ngay stream dang dung -> vong lap kill-ghi-kill spam
+# log + ton CPU + rac file ca dem.
+_LIVESTREAM_STALL_COOLDOWN_SEC = 2 * 3600
+
+def _livestream_current_output_size(info):
+    """Doc dung luong thuc te cua file dang ghi tu dia (KHONG dung info['file_size']).
+
+    info['file_size'] chi duoc cap nhat o nhanh xu ly process da ket thuc, nen
+    trong luc dang ghi luon bang 0. Watchdog phai doc truc tiep tu dia de danh
+    gia tien trinh ghi — neu khong se ket luan sai la stream dung tien trien
+    va kill nham mot phien dang ghi khoe.
+    """
+    out_dir = info.get("output_dir", _LIVESTREAM_DIR)
+    out_file = info.get("output_file", "")
+    direct_path = info.get("direct_output_path", "")
+    best = 0
+    for cand in (direct_path, os.path.join(out_dir, out_file) if out_file else ""):
+        if cand and os.path.exists(cand) and os.path.isfile(cand):
+            try:
+                sz = os.path.getsize(cand)
+                if sz > best:
+                    best = sz
+            except Exception:
+                pass
+    return best
+
 
 def _detect_platform(url):
     """Nhan dien nen tang tu URL."""
@@ -12679,15 +12706,62 @@ def _livestream_watchdog():
                         continue
 
                     # Kiểm tra timeout (12 gio)
-                    started = info.get("started_ts", 0)
+                    # FIX-HANG: (1) started_ts thieu -> dung thoi diem watchdog thay vi fail-open
+                    # vinh vien; (2) SIGTERM xong phai SIGKILL o vong sau neu process li;
+                    # (3) stall detector: file khong lon sau _STALL_MIN thi kill.
+                    started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
+                    if not info.get("_watch_first_seen"):
+                        info["_watch_first_seen"] = time.time()
+                        started = started or time.time()
                     if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
                         log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
                         _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
+                        _livestream_kill_pid(pid, jid)
+                        info["status"] = "timeout"
+                        info["_kill_ts"] = time.time()
+                    elif info.get("status") in ("timeout", "stopping") and info.get("_kill_ts"):
+                        # Vong sau: process li sau SIGTERM -> SIGKILL.
+                        # FIX-SIGKILL: dung elif (khong phai if) — neu dung if,
+                        # moi tick lai SIGTERM + reset _kill_ts, nhanh elif SIGKILL
+                        # khong bao gio tich luy du 60s => SIGKILL khong toi duoc.
                         try:
-                            os.kill(pid, signal.SIGTERM)
+                            os.kill(pid, 0)
+                            if time.time() - float(info.get("_kill_ts", 0)) > 60:
+                                log.warning("[Livestream] Job %s li don sau SIGTERM, SIGKILL.", jid)
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
-                        info["status"] = "timeout"
+                    else:
+                        # Stall detector: file output khong lon sau 20 phut -> ket luan treo.
+                        # FIX-WATCHDOG: doc dung luong THUC te tu dia (file dang ghi),
+                        # khong doc info['file_size'] vi truong nay chi cap nhat khi
+                        # process da chet (luon = 0 luc dang ghi) -> watchdog ket luan
+                        # sai stream dung tien trien va kill nham phien dang ghi khoe.
+                        try:
+                            cur_size = _livestream_current_output_size(info)
+                            last = float(info.get("_stall_check_size", -1))
+                            last_ts = float(info.get("_stall_check_ts", 0))
+                            now = time.time()
+                            if last < 0:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif cur_size != last:
+                                info["_stall_check_size"] = float(cur_size)
+                                info["_stall_check_ts"] = now
+                            elif now - last_ts > 20 * 60:
+                                log.warning("[Livestream] Job %s dung tien trien %d phut (size=%d), kill.",
+                                            jid, 20, cur_size)
+                                _log_livestream_event("WARNING", jid, info, "Tu dong dung vi stream dung tien trien.", "stalled")
+                                _livestream_kill_pid(pid, jid)
+                                info["status"] = "timeout"
+                                info["_kill_ts"] = now
+                                # Backoff dai: watcher khong ghi lai user nay trong 2h.
+                                info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
+                        except Exception:
+                            pass
 
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
             try:
@@ -14490,6 +14564,25 @@ while True:
                         "reason": "same_live_session_cooldown",
                         "message": "Phiên live của user này vừa được xử lý, không tạo thêm phiên 0B trùng lặp. Watcher sẽ thử lại sau."
                     })
+            # Stall backoff: user vua bi kill vi dung tien trien -> tu choi 2h.
+            # FIX-DEADLOCK: bo 'with _livestream_lock' lồng — dang o trong khoá
+            # ngoai (line tren) va threading.Lock khong reentrant => thread bi ke
+            # tai lan lay khoa thu 2, ke ca watchdog/status cung bi chan. Duyet
+            # truc tiep _livestream_jobs (da duoc bao ve boi khoa ngoai).
+            for _oj, _oi in list(_livestream_jobs.items()):
+                if _oi.get("recording_key", "") == recording_key:
+                    _until = float(_oi.get("_stall_cooldown_until", 0) or 0)
+                    if _until and time.time() < _until:
+                        _left = int((_until - time.time()) / 60)
+                        return jsonify({
+                            "job_id": _oj,
+                            "platform": platform,
+                            "save_folder": "Livestream/",
+                            "status": "cooldown",
+                            "duplicate": True,
+                            "reason": "stall_cooldown",
+                            "message": "Stream dung tien trien, tam nghi %d phut truoc khi thu lai." % _left,
+                        })
             claim = _livestream_starting_claims.get(recording_key)
             if claim and time.time() - float(claim.get("ts", 0) or 0) < 180:
                 return jsonify({
@@ -14526,6 +14619,11 @@ while True:
                 "output_dir": _LIVESTREAM_DIR,
                 "output_file": os.path.basename(direct_output_file) if direct_output_file else "",
                 "file_size": 0,
+                "started_ts": time.time(),
+                "last_size": -1,
+                "last_size_time": 0,
+                "_stall_check_size": -1,
+                "_stall_check_ts": 0,
                 "started_at": now_str,
                 "started_ts": time.time(),
                 "quality": quality,
