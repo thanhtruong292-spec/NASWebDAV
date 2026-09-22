@@ -12330,19 +12330,45 @@ def _livestream_current_output_size(info):
     trong luc dang ghi luon bang 0. Watchdog phai doc truc tiep tu dia de danh
     gia tien trinh ghi — neu khong se ket luan sai la stream dung tien trien
     va kill nham mot phien dang ghi khoe.
+
+    Quan trong: nhanh yt-dlp thong thuong khong luu ten file cu the vao
+    info['output_file']/info['direct_output_path'] (de trong) luc dang ghi —
+    no chi ghi qua output_template "%(ext)s" nen ten file thuc te chua
+    timestamp_str cua job. Vi vay ngoai 2 duong dan da biet, helper con quet
+    thu muc output_dir de tim file bat dau bang timestamp_str cua job nay
+    (khong lay file moi nhat toan thu muc de tranh nham file cua job khac).
     """
     out_dir = info.get("output_dir", _LIVESTREAM_DIR)
     out_file = info.get("output_file", "")
     direct_path = info.get("direct_output_path", "")
+    ts_str = info.get("timestamp_str", "")
     best = 0
-    for cand in (direct_path, os.path.join(out_dir, out_file) if out_file else ""):
-        if cand and os.path.exists(cand) and os.path.isfile(cand):
-            try:
-                sz = os.path.getsize(cand)
-                if sz > best:
-                    best = sz
-            except Exception:
-                pass
+
+    def _consider(cand):
+        nonlocal best
+        if not cand or not os.path.isfile(cand):
+            return
+        try:
+            sz = os.path.getsize(cand)
+            if sz > best:
+                best = sz
+        except Exception:
+            pass
+
+    # 1) Duong dan file da biet (nhanh TikTok FLV / file da remux xong)
+    _consider(direct_path)
+    _consider(os.path.join(out_dir, out_file) if out_file else "")
+    # 2) Nhanh yt-dlp: ten file thuc te la output_template
+    #    "<platform>_<stable_id>_<timestamp>.%(ext)s" -> timestamp nam GIUA
+    #    ten file, khong o dau. Quet theo substring 'timestamp_str in fn'
+    #    (timestamp la duy nhat theo giay + random nen khong trung job khac).
+    if ts_str and os.path.isdir(out_dir):
+        try:
+            for fn in os.listdir(out_dir):
+                if ts_str in fn and os.path.isfile(os.path.join(out_dir, fn)):
+                    _consider(os.path.join(out_dir, fn))
+        except Exception:
+            pass
     return best
 
 def _detect_platform(url):
@@ -12694,6 +12720,13 @@ def _livestream_watchdog():
                         _pinfo = _livestream_jobs.get(_pjid) or {}
                         _pstatus = _pinfo.get("status", "")
                         _pstarted = float(_pinfo.get("started_ts", 0) or 0)
+                        # FIX-SIGKILL: job dang trong qua trinh ket thuc (timeout/
+                        # stopping + _kill_ts) CHUA chet han toan (process co the
+                        # con song, dang cho SIGKILL) -> khong purge voi, de
+                        # watchdog xac nhan process chet roi moi remove.
+                        _terminating = _pstatus in ("timeout", "stopping") and _pinfo.get("_kill_ts")
+                        if _terminating:
+                            continue
                         if _pstatus not in ("recording", "starting") and _purge_now - _pstarted > 21600:
                             _livestream_jobs.pop(_pjid, None)
                     for _ck in list(_livestream_starting_claims.keys()):
@@ -12704,8 +12737,20 @@ def _livestream_watchdog():
                 log.warning("[Livestream] Auto-purge job lỗi: %s", _pe)
             with _livestream_lock:
                 for jid, info in list(_livestream_jobs.items()):
-                    if info.get("status", "") in ("finished", "error", "timeout", "stopped", "cancelled"):
+                    # FIX-SIGKILL: job dang trong qua trinh ket thuc (timeout/
+                    # stopping) KHONG duoc bo qua — phai di tiep den nhanh
+                    # escalation de SIGKILL process con song. Truoc day "timeout"
+                    # nam trong skip-set o day -> vong lap continue truoc khi
+                    # toi nhanh SIGKILL o duoi, nen process bi treo kho khong
+                    # bao gio bi kill cung.
+                    _st = info.get("status", "")
+                    if _st in ("finished", "error", "stopped", "cancelled"):
                         continue
+                    if _st in ("timeout", "stopping"):
+                        # Job dang cho process chet: xu ly o nhanh escalation
+                        # (SIGKILL neu qua 60s) DUOI cung, khong re va nhanh
+                        # 12h SIGTERM o day.
+                        pass
                     pid = info.get("pid")
                     # Kiểm tra process con song khong
                     is_running = False
@@ -12847,25 +12892,13 @@ def _livestream_watchdog():
                             pass
                         continue
 
-                    # Kiểm tra timeout (12 gio)
-                    # FIX-HANG: (1) started_ts thieu -> dung thoi diem watchdog thay vi fail-open
-                    # vinh vien; (2) SIGTERM xong phai SIGKILL o vong sau neu process li;
-                    # (3) stall detector: file khong lon sau _STALL_MIN thi kill.
-                    started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
-                    if not info.get("_watch_first_seen"):
-                        info["_watch_first_seen"] = time.time()
-                        started = started or time.time()
-                    if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
-                        log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
-                        _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
-                        _livestream_kill_pid(pid, jid)
-                        info["status"] = "timeout"
-                        info["_kill_ts"] = time.time()
-                    elif info.get("status") in ("timeout", "stopping") and info.get("_kill_ts"):
+                    # FIX-SIGKILL (thu tu): phai kiem tra escalation (timeout/
+                    # stopping + _kill_ts) TRUOC nhanh 12h SIGTERM. Neu de nhanh
+                    # 12h o tren, job da vuot 12h van vao lai block do moi tick
+                    # => SIGTERM + reset _kill_ts lien tuc => SIGKILL (o elif cu)
+                    # khong bao gio tich luy du 60s. Dat escalation len dau tien.
+                    if info.get("status") in ("timeout", "stopping") and info.get("_kill_ts"):
                         # Vong sau: process li sau SIGTERM -> SIGKILL.
-                        # FIX-SIGKILL: dung elif (khong phai if) — neu dung if,
-                        # moi tick lai SIGTERM + reset _kill_ts, nhanh elif SIGKILL
-                        # khong bao gio tich luy du 60s => SIGKILL khong toi duoc.
                         try:
                             os.kill(pid, 0)
                             if time.time() - float(info.get("_kill_ts", 0)) > 60:
@@ -12877,33 +12910,48 @@ def _livestream_watchdog():
                         except Exception:
                             pass
                     else:
-                        # Stall detector: file output khong lon sau 20 phut -> ket luan treo.
-                        # FIX-WATCHDOG: doc dung luong THUC te tu dia (file dang ghi),
-                        # khong doc info['file_size'] vi truong nay chi cap nhat khi
-                        # process da chet (luon = 0 luc dang ghi) -> watchdog ket luan
-                        # sai stream dung tien trien va kill nham phien dang ghi khoe.
-                        try:
-                            cur_size = _livestream_current_output_size(info)
-                            last = float(info.get("_stall_check_size", -1))
-                            last_ts = float(info.get("_stall_check_ts", 0))
-                            now = time.time()
-                            if last < 0:
-                                info["_stall_check_size"] = float(cur_size)
-                                info["_stall_check_ts"] = now
-                            elif cur_size != last:
-                                info["_stall_check_size"] = float(cur_size)
-                                info["_stall_check_ts"] = now
-                            elif now - last_ts > 20 * 60:
-                                log.warning("[Livestream] Job %s dung tien trien %d phut (size=%d), kill.",
-                                            jid, 20, cur_size)
-                                _log_livestream_event("WARNING", jid, info, "Tu dong dung vi stream dung tien trien.", "stalled")
-                                _livestream_kill_pid(pid, jid)
-                                info["status"] = "timeout"
-                                info["_kill_ts"] = now
-                                # Backoff dai: watcher khong ghi lai user nay trong 2h.
-                                info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
-                        except Exception:
-                            pass
+                        # Kiểm tra timeout (12 gio) — chi SIGTERM + dat _kill_ts,
+                        # KHONG reset _kill_ts cua nhanh escalation o tren.
+                        # FIX-HANG: started_ts thieu -> dung thoi diem watchdog.
+                        started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
+                        if not info.get("_watch_first_seen"):
+                            info["_watch_first_seen"] = time.time()
+                            started = started or time.time()
+                        if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
+                            log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
+                            _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
+                            _livestream_kill_pid(pid, jid)
+                            if not info.get("_kill_ts"):
+                                info["_kill_ts"] = time.time()
+                            info["status"] = "timeout"
+                        else:
+                            # Stall detector: file output khong lon sau 20 phut -> ket luan treo.
+                            # FIX-WATCHDOG: doc dung luong THUC te tu dia (file dang ghi),
+                            # khong doc info['file_size'] vi truong nay chi cap nhat khi
+                            # process da chet (luon = 0 luc dang ghi) -> watchdog ket luan
+                            # sai stream dung tien trien va kill nham phien dang ghi khoe.
+                            try:
+                                cur_size = _livestream_current_output_size(info)
+                                last = float(info.get("_stall_check_size", -1))
+                                last_ts = float(info.get("_stall_check_ts", 0))
+                                now = time.time()
+                                if last < 0:
+                                    info["_stall_check_size"] = float(cur_size)
+                                    info["_stall_check_ts"] = now
+                                elif cur_size != last:
+                                    info["_stall_check_size"] = float(cur_size)
+                                    info["_stall_check_ts"] = now
+                                elif now - last_ts > 20 * 60:
+                                    log.warning("[Livestream] Job %s dung tien trien %d phut (size=%d), kill.",
+                                                jid, 20, cur_size)
+                                    _log_livestream_event("WARNING", jid, info, "Tu dong dung vi stream dung tien trien.", "stalled")
+                                    _livestream_kill_pid(pid, jid)
+                                    info["status"] = "timeout"
+                                    info["_kill_ts"] = now
+                                    # Backoff dai: watcher khong ghi lai user nay trong 2h.
+                                    info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
+                            except Exception:
+                                pass
 
                 active = any(j.get("status") == "recording" for j in _livestream_jobs.values())
             try:
@@ -13439,10 +13487,33 @@ def _parse_tiktok_live_room_state(html):
             start = html.find("{", idx)
             if start < 0:
                 continue
-            depth = 0
+            # FIX-TIKTOK: quet ngoac nhaubiet chuoi JSON. Trinh duyet naive dem
+            # '{'/'}' trong chuoi (VD "...}...") nen cat nhầm doan JSON, lay
+            # phong khac. Quet tung ky tu, bo qua trong "..." va '...'.
             end = -1
-            for i in range(start, min(start + 3000000, len(html))):
+            depth = 0
+            i = start
+            n = len(html)
+            while i < n:
                 c = html[i]
+                if c == '"':
+                    # bo qua ca chuoi, xu ly escape \\
+                    i += 1
+                    while i < n:
+                        if html[i] == "\\":
+                            i += 2
+                            continue
+                        if html[i] == '"':
+                            i += 1
+                            break
+                        i += 1
+                    continue
+                if c == "'":
+                    i += 1
+                    while i < n and html[i] != "'":
+                        i += 1
+                    i += 1
+                    continue
                 if c == "{":
                     depth += 1
                 elif c == "}":
@@ -13450,6 +13521,7 @@ def _parse_tiktok_live_room_state(html):
                     if depth == 0:
                         end = i + 1
                         break
+                i += 1
             if end > start:
                 try:
                     state = json.loads(html[start:end])
@@ -13458,11 +13530,23 @@ def _parse_tiktok_live_room_state(html):
                         return _eval_tiktok_room(room)
                 except Exception:
                     pass
-        m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', html)
+        # FIX-TIKTOK: fallback regex chi quet tren phan SIGI_STATE gan nhat
+        # (khong quet toan bo HTML) de tranh lay status cua phong khac.
+        slice_txt = ""
+        mi = -1
+        for marker in ("window.__SIGI_STATE__=", "window.SIGI_STATE=", "SIGI_STATE="):
+            mi = lowered.find(marker.lower())
+            if mi >= 0:
+                break
+        if mi >= 0:
+            slice_txt = html[mi: mi + 50000]
+        else:
+            slice_txt = html
+        m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', slice_txt)
         if m:
             status = int(m.group(1))
             rid = ""
-            rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', html)
+            rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', slice_txt)
             if rm:
                 rid = rm.group(1)
             return _eval_tiktok_status(status, rid)

@@ -558,9 +558,13 @@ object SecurePrefsHelper {
         try {
             val jsonArray = org.json.JSONArray()
             urlList.forEach { jsonArray.put(it) }
+            // Tự động tách URL Tailscale (IP CGNAT / chứa "tailscale") để lưu riêng
+            // KEY_TAILSCALE_URL — dùng làm candidate fallback khi LAN mất kết nối.
+            val tailUrl = urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: ""
             getSecurePrefs(context).edit {
                 putString(KEY_URL_LIST, jsonArray.toString())
-                putString(KEY_URL, urlList.firstOrNull() ?: "")
+                putString(KEY_URL, urlList.firstOrNull { !com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.firstOrNull() ?: "")
+                if (tailUrl.isNotEmpty()) putString(KEY_TAILSCALE_URL, tailUrl)
                 putString(KEY_USER, user)
                 putString(KEY_PASS, pass)
             }
@@ -576,9 +580,11 @@ object SecurePrefsHelper {
                 val prefs = getSecurePrefs(context)
                 val jsonArray = org.json.JSONArray()
                 urlList.forEach { jsonArray.put(it) }
+                val tailUrl = urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: ""
                 prefs.edit {
                     putString(KEY_URL_LIST, jsonArray.toString())
-                    putString(KEY_URL, urlList.firstOrNull() ?: "")
+                    putString(KEY_URL, urlList.firstOrNull { !com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.firstOrNull() ?: "")
+                    if (tailUrl.isNotEmpty()) putString(KEY_TAILSCALE_URL, tailUrl)
                     putString(KEY_USER, user)
                     putString(KEY_PASS, pass)
                 }
@@ -681,18 +687,28 @@ object SmartNetworkManager {
 
     suspend fun getActiveBaseUrl(context: Context): String =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val urlList = SecurePrefsHelper.getUrlList(context)
-            if (urlList.isEmpty()) return@withContext ""
-            if (urlList.size == 1) return@withContext urlList[0]
+            val savedList = SecurePrefsHelper.getUrlList(context)
+            if (savedList.isEmpty()) return@withContext ""
+
+            // ÉP FALLBACK TAILSCALE: luôn đưa URL Tailscale đã cấu hình vào danh sách
+            // ứng viên (kể cả khi user chỉ lưu 1 URL LAN). Khi LAN mất, SmartSwitch
+            // sẽ tự chuyển sang Tailscale thay vì kẹt ở URL LAN chết.
+            val tailUrl = SecurePrefsHelper.getTailscaleBaseUrl(context)
+            val urlList = if (tailUrl.isNotEmpty() && !savedList.contains(tailUrl)) {
+                savedList + tailUrl
+            } else {
+                savedList
+            }
+
             // Offline: không ping mù — trả URL đầu tiên ngay.
             if (!NetworkMonitor.isOnline.value) return@withContext urlList.first()
             val now = System.currentTimeMillis()
-            
+
             // Nếu cache còn hạn, trả về kết quả đã đánh giá ĐÚNG NHẤT thay vì lấy đại urlList.first()
             if (now - lastPingTime < CACHE_DURATION_MS && lastPingResult && cachedActiveUrl != null) {
                 return@withContext cachedActiveUrl ?: urlList.first()
             }
-            
+
             val user = SecurePrefsHelper.getUser(context)
             val pass = SecurePrefsHelper.getPass(context)
             val reachableUrls = coroutineScope {
@@ -703,12 +719,12 @@ object SmartNetworkManager {
                 // TÍNH NĂNG: Ưu tiên mạng LAN - Tốc độ Gigabit (Nếu có cả LAN và Tailscale đều kết nối thành công, Tự Động Gạch Bỏ Tailscale)
                 val lanResult = reachableUrls.find { !com.nas.naswebdav.isTailscaleUrl(it) }
                 val bestResult = lanResult ?: reachableUrls.first()
-                
+
                 synchronized(this) {
                     lastPingResult = true; lastPingTime = now
                     cachedActiveUrl = bestResult
                 }
-                
+
                 android.util.Log.i(TAG, "✅ Chọn mạng tốt nhất: $bestResult")
                 return@withContext bestResult
             }
@@ -716,9 +732,11 @@ object SmartNetworkManager {
                 lastPingResult = false
                 cachedActiveUrl = null
             }
-            // Tất cả URL đều không phản hồi → thử dùng URL đầu tiên nhưng log cảnh báo
-            android.util.Log.w(TAG, "⚠️ Không ping được bất kỳ URL NAS nào! Fallback: ${urlList.first()}")
-            urlList.first()
+            // Tất cả URL LAN đều không phản hồi → ÉP FALLBACK Tailscale (nếu có) thay vì
+            // trả URL LAN chết gây kẹt kết nối.
+            val fallback = urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first()
+            android.util.Log.w(TAG, "⚠️ Không ping được URL LAN nào! Fallback: $fallback")
+            fallback
         }
 
     suspend fun getActiveApiHost(context: Context): String =
