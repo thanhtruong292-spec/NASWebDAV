@@ -239,11 +239,19 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             backupFolderBase
                         }
                         
+                        // FIX-REVIEW-24/09-#5/#12: remote name on dinh theo NGUON + giu
+                        // extension dung (suffix truoc extension). Ban cu
+                        // `photo.jpg__id42` lam hong nhan dien extension phia
+                        // scanner/thumbnail (phan loai theo extension). Dinh dang
+                        // moi: `photo__id42.jpg` — vua tach biet vua giu type.
                         val encodedFileName = java.net.URLEncoder.encode(fileName, "UTF-8").replace("+", "%20")
-                        val targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + encodedFileName else "$targetFolder/$encodedFileName"
-                        
-                        // Bỏ qua kiểm tra existingRemoteFiles dạng list toàn bộ vì giờ cấu trúc thành dạng Tree,
-                        // thay vào đó chúng ta sẽ rely vào Database / Hash hoặc Head Request để tránh trùng
+                        val dotIdx = encodedFileName.lastIndexOf('.')
+                        val stableRemoteName = if (dotIdx > 0) {
+                            encodedFileName.substring(0, dotIdx) + "__id" + id + encodedFileName.substring(dotIdx)
+                        } else {
+                            encodedFileName + "__id" + id
+                        }
+                        val targetFileNasPath = if (targetFolder.endsWith("/")) targetFolder + stableRemoteName else "$targetFolder/$stableRemoteName"
 
                         val fileSize = cursor.getLong(sizeIndex)
                         if (fileSize == 0L) {
@@ -371,14 +379,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 if (smbEnabled && smbHost.isNotBlank()) {
                                     android.util.Log.w("AutoBackup", "SMB upload failed for $fileName — falling back to WebDAV")
                                 }
-                                // FIX-LARGE-FILE-2: retry WebDAV upload lên đến 3 lần khi gặp lỗi 500/502/503.
-                                // Mỗi lần retry cần mở lại InputStream vì stream cũ đã bị consume.
+                                // FIX-REVIEW-24/09-#5: luan create-only temp+MOVE.
+                                // Upload len duong tam duy nhat (__upload_<id>_<ts>),
+                                // roi MOVE khong overwrite (Overwrite: F) ve dich.
+                                // Dich da ton tai (nguoi dung/file khac) -> 412,
+                                // giu nguyen ban co san, KHONG ghi de. 412 khong
+                                // duoc bien thanh lay ETag moi roi ghi de.
+                                val tmpRemoteName = stableRemoteName + "__upload" + id + "_" + System.currentTimeMillis()
+                                val tmpNasPath = if (targetFolder.endsWith("/")) targetFolder + tmpRemoteName else "$targetFolder/$tmpRemoteName"
                                 var lastWebDavException: Exception? = null
                                 for (webDavAttempt in 1..3) {
                                     try {
-                                        // ETag precondition: tránh ghi đè file NAS đã đổi bởi
-                                        // client khác giữa lúc scan và upload (412 → retry).
-                                        val preETag = runCatching { webDavManager.getFileETag(targetFileNasPath) }.getOrNull()
                                         val rawStream = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
                                             ?: error("Không đọc được file $fileName (ContentResolver trả null)")
                                         rawStream.use { input2 ->
@@ -424,10 +435,21 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 }
                                             }
                                             if (useCompression) {
-                                                webDavManager.uploadCompressedStream(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress)
+                                                webDavManager.uploadCompressedStream(tmpNasPath, input2, fileSize, mimeType, onUploadProgress)
                                             } else {
-                                                webDavManager.uploadStreamWithProgress(targetFileNasPath, input2, fileSize, mimeType, onUploadProgress, preETag)
+                                                // FIX-REVIEW-24/09-#5: PUT len DUONG TAM (khong
+                                                // If-Match len dich — tranh thay the file co san).
+                                                webDavManager.uploadStreamWithProgress(tmpNasPath, input2, fileSize, mimeType, onUploadProgress, null)
                                             }
+                                        }
+                                        // MOVE khong overwrite ve dich chinh. Dich da co
+                                        // (412) -> giu ban co san, bao loi ro, khong retry
+                                        // ghi de. Temp thua duoc don o finally duoi.
+                                        try {
+                                            webDavManager.moveFileNoOverwrite(tmpNasPath, targetFileNasPath)
+                                        } catch (e: Exception) {
+                                            try { webDavManager.deleteFile(tmpNasPath, false) } catch (_: Exception) {}
+                                            throw e
                                         }
                                         break // upload thành công → thoát retry loop
                                     } catch (e: Exception) {
@@ -447,9 +469,31 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images for thumbnails.
                             // NAS daemon handles ALL thumbnail generation (idle 24/7 + 5-min rescan +
                             // on-demand /api/thumb). Phone only uploads the file and lets NAS pick it up.
-                            val uploadVerified = if (smbUploadOk) true else try { webDavManager.headFileHeaders(targetFileNasPath) != null } catch (_: Exception) { false }
+                            // FIX-REVIEW-24/09-#5: verify NOI DUNG + PHIEN BAN truoc
+                            // xoa nguon. HEAD size/ETag sau MOVE phai khop ky vong:
+                            // khong nen -> size==fileSize; nen gzip -> size>0.
+                            // ETag doi giua PUT va HEAD -> co the bi thay the giua
+                            // chung -> khong xoa nguon. SMB van chi check ton tai
+                            // (khong verify duoc tu client) -> giu nguon khi SMB.
+                            var uploadVerified = false
+                            if (smbUploadOk) {
+                                uploadVerified = false
+                            } else {
+                                try {
+                                    val headers = webDavManager.headFileHeaders(targetFileNasPath)
+                                    val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
+                                    uploadVerified = if (headers != null && remoteLen != null) {
+                                        if (com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)) remoteLen > 0
+                                        else remoteLen == fileSize
+                                    } else false
+                                } catch (_: Exception) { uploadVerified = false }
+                            }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
+                            if (!uploadVerified && !smbUploadOk) {
+                                SystemLogger.log("WARNING", "AutoBackup",
+                                    "Upload chua xac minh duoc noi dung/phien ban ($fileName) — giu nguon, khong xoa.")
+                            }
                             backupCount++
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e

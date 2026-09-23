@@ -155,6 +155,11 @@ class LivestreamViewModel(
                         tiktokWatchDaemonLastTick = json.optString("last_tick", "")
                         tiktokWatchDaemonSummary = json.optString("summary", "")
                         tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
+                        // FIX-AUDIT-L7: hydrate ca gio bat dau/ket thuc (truoc day
+                        // fetch thieu -> mo lai man hinh hien gia tri cu du backend
+                        // da luu moi).
+                        tiktokExcludeStart = json.optString("exclude_start", "23:00")
+                        tiktokExcludeEnd = json.optString("exclude_end", "07:00")
                         tiktokLiveWatchError = json.optString("error").ifEmpty { null }
                         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
                         tiktokCookiesMessage = json.optString("cookies_message", "")

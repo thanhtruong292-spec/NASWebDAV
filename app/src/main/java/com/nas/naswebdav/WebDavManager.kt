@@ -1068,6 +1068,53 @@ object WebDavManager {
         }
     }
 
+    // FIX-REVIEW-24/09-#5: MOVE khong ghi de (Overwrite: F) — dung cho luan
+    // temp+MOVE create-only cua backup: dich da ton tai -> 412, giu nguyen ban
+    // co san thay vi ghi de mat du lieu nguoi dung.
+    suspend fun moveFileNoOverwrite(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
+
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
+
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
+                val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
+                throw java.io.IOException("MOVE failed: ${response.code}$suffix")
+            }
+        }
+    }
+
+    // FIX-REVIEW-24/09-#5: PUT create-only (If-None-Match: *) — dich da ton tai
+    // -> 412 Precondition Failed, khong ghi de. Dung de danh dich truoc khi MOVE.
+    suspend fun uploadStreamIfAbsent(
+        fileUrl: String, inputStream: InputStream, totalContentLength: Long,
+        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val requestBody = object : RequestBody() {
+            override fun contentType() = contentType.toMediaTypeOrNull()
+            override fun contentLength() = totalContentLength
+            override fun writeTo(sink: BufferedSink) {
+                inputStream.source().use { source ->
+                    var totalBytesRead = 0L
+                    var readCount = 0L
+                    while (source.read(sink.buffer, 262144L).also { readCount = it } != -1L) {
+                        sink.emit()
+                        totalBytesRead += readCount
+                        onProgress(totalBytesRead, totalContentLength)
+                    }
+                }
+            }
+        }
+        val request = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
+            .header("If-None-Match", "*")
+            .withCallGroup(CALL_GROUP_TRANSFER)
+            .build()
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
+        }
+    }
+
     suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
         val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()

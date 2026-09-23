@@ -52,7 +52,21 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             }
         }
 
-        val pendingActions = db.syncActionDao().getAllPendingActions()
+        // FIX-REVIEW-24/09-#6/#13: identity DAY DU account+endpoint (host, user,
+        // port, root) de loc row foreign trong SQL truoc LIMIT. Legacy khong xac
+        // dinh nguon chi duoc chay cho tac vu KHONG pha huy; DELETE/MOVE/RENAME
+        // legacy phai cho xac nhan (park + log), khong tu rebind sang endpoint moi.
+        val preUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
+            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val activeHost = runCatching { java.net.URL(preUrl).host ?: preUrl }.getOrDefault(preUrl)
+        val activePort = runCatching { java.net.URL(preUrl).port.takeIf { it > 0 } ?: java.net.URL(preUrl).defaultPort }.getOrDefault(-1)
+        val activeRoot = runCatching {
+            val p = java.net.URL(preUrl).path.trimEnd('/')
+            if (p.isEmpty()) "/" else p
+        }.getOrDefault("/")
+        val preUser = SecurePrefsHelper.getUser(applicationContext)
+
+        val pendingActions = db.syncActionDao().getAllPendingActionsScoped(activeHost, preUser, activePort, activeRoot, 200)
         if (pendingActions.isEmpty() && priorityAction == null) return@withContext Result.success()
 
         // Sắp xếp: priority action (nếu có) xếp đầu, các action khác theo thứ tự bình thường
@@ -66,16 +80,42 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
-        val url = SmartNetworkManager.getActiveBaseUrl(applicationContext)
-            .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val url = preUrl
         if (user.isEmpty() || pass.isEmpty() || url.isEmpty()) return@withContext Result.failure()
+        // R4-P1: bỏ qua row của NAS/user khác — không phát lại thao tác sang máy
+        // khác khi đổi endpoint. Row cũ (nasHost rỗng, trước v17) vẫn xử lý để
+        // tương thích, nhưng KHÔNG rewrite authority sang host hiện tại.
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
         setThumbnailActivity("sync", true)
         try {
             var allSuccess = true
+            var skippedForeign = 0
             for (action in sortedActions) {
+                // FIX-REVIEW-24/09-#6/#13: SQL da loc account+endpoint truoc
+                // LIMIT; day chi con luoi phong thu + legacy destructive phai
+                // PARK cho xac nhan (khong tu rebind tac vu pha huy sang
+                // endpoint moi).
+                val isLegacy = action.nasHost.isEmpty() && action.nasUser.isEmpty() && action.nasPort == -1 && action.nasRoot.isEmpty()
+                val isDestructive = action.actionType == "DELETE" || action.actionType == "RENAME" || action.actionType == "MOVE"
+                if (isLegacy && isDestructive) {
+                    try { db.syncActionDao().park(action.id) } catch (_: Exception) {}
+                    SystemLogger.log("WARNING", "OfflineSync",
+                        "Action ${action.id} (${action.actionType}) legacy khong ro nguon — park cho xac nhan, khong tu chay.")
+                    skippedForeign++
+                    continue
+                }
+                if (action.nasHost.isNotEmpty() &&
+                    (action.nasHost != activeHost || (action.nasUser.isNotEmpty() && action.nasUser != user))) {
+                    skippedForeign++
+                    continue
+                }
+                // FIX-REVIEW-24/09-#13: phan biet outcomes — completed chi khi
+                // handled thanh cong; parked (mat temp/du nguong) GIU ban ghi,
+                // KHONG xoa. trackedOutcome=null nghia la retry (gi row).
+                var trackedOutcome: String? = null // "completed" | "parked" | null=retry
                 try {
                     var handled = false
+                    var parkedHere = false
                     when (action.actionType) {
                         "DELETE" -> {
                             val sourceUrl = resolveQueuedWebDavPath(action.sourcePath, url)
@@ -125,7 +165,9 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                         // UPLOAD_FAILED = metadata ghi bởi NasDocumentProvider.
                         // Retry upload nếu file temp vẫn còn trong cacheDir.
                         // Sau khi upload thành công → xóa row + file temp.
-                        // File không còn → xóa row (OS đã dọn cache).
+                        // FIX-REVIEW-24/09-D6: file khong con (OS don cache) →
+                        // PARK + GIU ban ghi (trackedOutcome="parked"), KHONG
+                        // handled=true roi delete (ban cu park xong van xoa).
                         "UPLOAD_FAILED" -> {
                             val tempPath = action.sourcePath
                             if (tempPath != null && action.destPath != null) {
@@ -141,21 +183,59 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     }
                                     webDavManager.uploadFile(encodedDest, file, mime)
                                     file.delete() // dọn temp sau khi upload thành công
+                                    handled = true
+                                } else {
+                                    // Temp bị OS dọn — park + log trạng thái cuối, giữ bản ghi.
+                                    try { db.syncActionDao().park(action.id) } catch (_: Exception) {}
+                                    com.nas.naswebdav.utils.SystemLogger.log("WARNING", "OfflineSync",
+                                        "Dữ liệu nguồn đã mất (cache bị dọn): ${action.destPath} — giữ bản ghi để kiểm tra")
+                                    parkedHere = true
                                 }
+                            } else {
+                                handled = true
                             }
-                            // Luôn xóa row: upload thành công hoặc file đã bị OS xóa
-                            handled = true
                         }
                         // Action không nhận ra → bỏ qua (không xóa để user/dev inspect qua System Logs)
                         else -> { /* skip unknown action */ }
                     }
-                    if (handled) db.syncActionDao().deleteById(action.id)
+                    // FIX-REVIEW-24/09-#13: chi xoa row khi completed that su.
+                    // Parked giu ban ghi; loi thuong (handled=false) gi row + pushBack.
+                    if (parkedHere) {
+                        trackedOutcome = "parked"
+                    } else if (handled) {
+                        db.syncActionDao().deleteById(action.id)
+                        trackedOutcome = "completed"
+                    } else {
+                        try { db.syncActionDao().pushBack(action.id, System.currentTimeMillis()) } catch (_: Exception) {}
+                        trackedOutcome = null
+                        allSuccess = false
+                    }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     // P0-4: user cancel → failure, KHÔNG retry
                     if (isStopped) {
                         return@withContext Result.failure()
+                    }
+                    // FIX-REVIEW-24/09-#13: pushBack MOI loi thuong (khong chi khi
+                    // metadata fail) de batch sau vet muc khac truoc. Park sau 5
+                    // loi lien tiep. trackedOutcome=null=retry (giu row).
+                    try {
+                        val now = System.currentTimeMillis()
+                        db.syncActionDao().bumpFail(action.id, now)
+                        try { db.syncActionDao().pushBack(action.id, now) } catch (_: Exception) {}
+                        val fails = db.syncActionDao().getFailCount(action.id) ?: 0
+                        if (fails >= 5) {
+                            db.syncActionDao().park(action.id)
+                            SystemLogger.log("WARNING", "OfflineSync",
+                                "Action ${action.id} (${action.actionType}) park sau $fails lỗi — không chặn queue")
+                            trackedOutcome = "parked"
+                        } else {
+                            trackedOutcome = null
+                        }
+                    } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 }
+                    catch (_: Exception) {
+                        trackedOutcome = null
                     }
                     SystemLogger.log("WARNING", "OfflineSync",
                         "Action ${action.id} (${action.actionType}) failed: ${e.message} — row giữ lại để retry")
@@ -168,13 +248,15 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                 if (runAttemptCount >= 3) Result.failure() else Result.retry()
             }
 
-            // P2 Continuation: vet het queue (remaining > 0).
-            // Ban cu remaining > 200 bo sot duoi (201 muc -> con 1 khong chay tiep).
+            // FIX-REVIEW-24/09-#13: continuation dung countLocal DUNG scope
+            // account+endpoint (khong phai global tru batch-skip). Chi enqueue
+            // khi batch SACH (allSuccess); khi co loi, Result.retry() quay lai
+            // vet tiep (muc loi da pushBack xuong cuoi).
             try {
-                val remaining = db.syncActionDao().countAll()
-                if (remaining > 0) {
+                val localRemaining = db.syncActionDao().countLocal(activeHost, user, activePort, activeRoot)
+                if (localRemaining > 0 && allSuccess) {
                     SystemLogger.log("INFO", "OfflineSync",
-                        "Queue còn $remaining action — enqueue continuation work")
+                        "Queue còn $localRemaining action local ($skippedForeign foreign/legacy-park giữ lại) — enqueue continuation work")
                     val constraints = Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
                         .build()
@@ -191,6 +273,12 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 SystemLogger.log("WARNING", "OfflineSync",
                     "Enqueue continuation work thất bại: ${e.message}")
+            }
+            // R4-P1: row khác NAS/user bị bỏ qua (giữ lại, không xóa) — log để user
+            // biết khi về đúng NAS chúng sẽ được xử lý.
+            if (skippedForeign > 0) {
+                com.nas.naswebdav.utils.SystemLogger.log("INFO", "OfflineSync",
+                    "$skippedForeign action thuộc NAS khác — giữ lại, xử lý khi về đúng NAS")
             }
             result
         } finally {
