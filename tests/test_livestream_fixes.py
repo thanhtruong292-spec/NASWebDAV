@@ -271,5 +271,130 @@ class TestP2WatchdogControlFlow(unittest.TestCase):
         self.assertNotIn("info['_kill_ts'] = time.time()", before_guard)
 
 
+class TestReview20260924Regression(unittest.TestCase):
+    """Regression cho review 24/09/2026 (15 muc).
+
+    Kiem tra production seam that (import ham that, fixture that), khong kiem
+    tra chuoi AST/do xuat hien don thuan.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        # Load module that de goi ham that (khong chay server). Module nang
+        # (Flask + thread khoi dong) nen exec co the chet giua chung; dung
+        # namespace rieng va bat moi ngoai le de van lay duoc ham da dinh nghia.
+        spec = importlib.util.spec_from_file_location("nas_api_server", str(SERVER_PATH))
+        cls.mod = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(cls.mod)
+        except BaseException:
+            pass
+        if not hasattr(cls.mod, "_extract_tiktok_live_media_urls_scoped"):
+            # Fallback: trich ham standalone tu source (khong phu thuoc import).
+            # Ham goi 2 ten module-scope (_extract_tiktok_live_flv_urls,
+            # _re_module) nen cap stub trong namespace.
+            import re as _re
+            import types
+            src = SOURCE
+            start = src.find("def _extract_tiktok_live_media_urls_scoped(html, room_id):")
+            assert start > 0
+            # Lay den het ham (den dinh nghia def tiep theo o cung cap).
+            nxt = src.find("\ndef ", start + 10)
+            fn_src = src[start:nxt]
+            ns = {
+                "_extract_tiktok_live_flv_urls": lambda html: [],
+                "_re_module": _re,
+            }
+            exec(compile(fn_src, "<scoped_extractor>", "exec"), ns)
+            cls.mod = types.SimpleNamespace(
+                _extract_tiktok_live_media_urls_scoped=ns["_extract_tiktok_live_media_urls_scoped"])
+
+    def test_restore_no_rename_before_stage(self):
+        # R1: trong vong lap file, khong duoc os.replace(dest -> .pre-restore)
+        # TRUOC khi copy .restore-tmp xong. Tim cau lenh that (os.replace),
+        # khong tim chuoi ".pre-restore" tran (comment FIX cung chua chuoi do).
+        src = SOURCE
+        loop_start = src.find("for member in tar.getmembers():")
+        self.assertGreater(loop_start, 0)
+        loop = src[loop_start:loop_start + 6000]
+        first_replace = loop.find("os.replace(dest")
+        first_tmp_copy = loop.find("shutil.copyfileobj")
+        self.assertGreater(first_tmp_copy, 0, "thieu copy staging")
+        self.assertGreater(first_replace, 0, "thieu backup .pre-restore")
+        self.assertLess(first_tmp_copy, first_replace,
+                        "R1: phai copy staging TRUOC khi rename ban goc")
+
+    def test_restore_rollback_covers_attempted(self):
+        src = SOURCE
+        self.assertIn("attempted.append(dest)", src,
+                      "R1: phai ghi nhan moi dest da thu")
+        rb = src[src.find("for dest in list(attempted)"):src.find("for dest in list(attempted)") + 400]
+        self.assertIn(".pre-restore", rb, "R1: rollback phai dung file loi")
+
+    def test_ownership_includes_direct_child(self):
+        # #2: _livestream_pids_in_group KHONG loai PPID==API.
+        fn = next(n for n in TREE.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_livestream_pids_in_group")
+        body = ast.unparse(fn)
+        self.assertNotIn("!= me", body,
+                         "#2: phai bao gom leader/direct child (PPID==API)")
+
+    def test_ownership_prefers_proc_handle(self):
+        fn = next(n for n in TREE.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_livestream_group_owned_by_job")
+        body = ast.unparse(fn)
+        self.assertIn("_proc", body, "#2: phai uu tien Popen handle")
+        self.assertIn("poll()", body, "#2: phai poll handle")
+
+    def test_get_no_terminal_with_writers(self):
+        fn = next(n for n in TREE.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "api_livestream_status")
+        body = ast.unparse(fn)
+        self.assertIn("_group_writers", body, "#3: GET phai kiem tra group writers")
+        # ast.unparse render string bang single-quote.
+        self.assertIn("'stopping'", body, "#3: con writer -> stopping, khong terminal")
+
+    def test_scoped_extractor_exists_and_used(self):
+        # #9: extractor room-bound ton tai va duoc dung o checker/retry/rescrape.
+        names = {n.name for n in TREE.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn("_extract_tiktok_live_media_urls_scoped", names)
+        self.assertGreater(SOURCE.count("_extract_tiktok_live_media_urls_scoped(html"), 0)
+        self.assertGreater(SOURCE.count("_extract_tiktok_live_media_urls_scoped(html2"), 0)
+
+    def test_scoped_extractor_offline_target(self):
+        # Fixture that: target offline (status 4) + recommendation live.
+        # Scoped extractor voi room target chi thay media cua target (o day:
+        # khong co media trong slice target -> rong), khong lay media phong khac.
+        P = self.mod._extract_tiktok_live_media_urls_scoped
+        target_slice = ('"LiveRoom":{"roomId":"7001","liveRoomStatus":4}'
+                        '"extra":{"roomId":"9999","liveRoomStatus":1,'
+                        '"flv":"https://cdn.example.com/live9999_hd.flv"}')
+        res = P(target_slice, "7001")
+        for u in res:
+            self.assertNotIn("9999", u, "khong duoc lay media phong khac")
+
+    def test_remux_commit_sets_terminal(self):
+        # #10: commit remux phai gan finished/error (khong giu nguyen).
+        idx = SOURCE.find("FIX-REVIEW-24/09-#10: commit remux")
+        self.assertGreater(idx, 0)
+        block = SOURCE[idx:idx + 2500]
+        self.assertIn('"finished"', block)
+        self.assertIn('"error"', block)
+
+    def test_reservation_covers_finalizing(self):
+        # #11: dedup + capacity giu reservation den het writer.
+        self.assertIn('"stopping", "timeout", "finalizing"', SOURCE)
+
+    def test_queue_scope_excludes_parked(self):
+        # #13: SQL scope loai PARKED/COMPLETED.
+        import pathlib
+        db_src = (Path(__file__).resolve().parents[1] / "app" / "src" / "main" /
+                  "java" / "com" / "nas" / "naswebdav" / "Database.kt").read_text(encoding="utf-8")
+        self.assertIn("runState = 'PENDING'", db_src)
+        self.assertIn("nasPort", db_src)
+        self.assertIn("nasRoot", db_src)
+
+
 if __name__ == "__main__":
     unittest.main()
