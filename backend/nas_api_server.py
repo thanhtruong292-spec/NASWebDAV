@@ -12773,31 +12773,37 @@ def _livestream_watchdog():
                         # rong (da chet han toan) thi binh thuong tiep tuc.
                         try:
                             _pgid = int(pid)
-                            _alive_in_pg = False
-                            try:
-                                _me = os.getpid()
-                                for _p in os.listdir("/proc"):
-                                    if not _p.isdigit():
-                                        continue
-                                    try:
-                                        with open("/proc/%s/stat" % _p) as _sf:
-                                            _parts = _sf.read().split()
-                                        # ppid o field 4, pgid o field 5 (trong ngoac)
-                                        _ppid = int(_parts[3])
-                                        _pgrp = int(_parts[4])
-                                        if _pgrp == _pgid and int(_p) != _me and _ppid != _me:
-                                            _alive_in_pg = True
-                                            break
-                                    except Exception:
-                                        continue
-                            except Exception:
+                            # FIX-P2-1 (safe): chi xu ly KHI _pgid CHINH LA PGID cua
+                            # job nay (pid==PGID do start_new_session=True). Neu khong
+                            # gioi han nay, mot PGID cung so nhung thuoc process group
+                            # KHAC (vi du chinh nas_api_server sau khi PID duoc tai su
+                            # dung) se bi killpg nham -> tu sat service.
+                            if _pgid == int(pid):
                                 _alive_in_pg = False
-                            if _alive_in_pg:
-                                log.warning("[Livestream] Job %s: cha da chet nhung group %d van con tien trinh, killpg de diet sach.", jid, _pgid)
                                 try:
-                                    os.killpg(_pgid, signal.SIGKILL)
+                                    _me = os.getpid()
+                                    for _p in os.listdir("/proc"):
+                                        if not _p.isdigit():
+                                            continue
+                                        try:
+                                            with open("/proc/%s/stat" % _p) as _sf:
+                                                _parts = _sf.read().split()
+                                            # ppid o field 4, pgid o field 5 (trong ngoac)
+                                            _ppid = int(_parts[3])
+                                            _pgrp = int(_parts[4])
+                                            if _pgrp == _pgid and int(_p) != _me and _ppid != _me:
+                                                _alive_in_pg = True
+                                                break
+                                        except Exception:
+                                            continue
                                 except Exception:
-                                    pass
+                                    _alive_in_pg = False
+                                if _alive_in_pg:
+                                    log.warning("[Livestream] Job %s: cha da chet nhung group %d van con tien trinh, killpg de diet sach.", jid, _pgid)
+                                    try:
+                                        os.killpg(_pgid, signal.SIGKILL)
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                         # Process da ket thuc tu nhien (stream het hoac lỗi)
