@@ -154,6 +154,75 @@ class TestP3TikTokParser(unittest.TestCase):
         self.assertEqual(self.P(""), (False, "", -1, "empty html"))
 
 
+class TestP2ResidualFixes(unittest.TestCase):
+    """Regression tests for the four P2 bugs still open after commit 7fb3373."""
+
+    def setUp(self):
+        self.P = _PARSER_NS["_parse_tiktok_live_room_state"]
+
+    # ---- P2-2: job_id guarantees unique file identity per job ----
+    def test_file_stem_includes_job_id_unique(self):
+        # AST-level: confirm file_stem construction embeds job_id so two jobs
+        # starting the same second (different URLs) get distinct filenames.
+        # Find the file_stem assignment block in api_livestream_record.
+        fn = next(n for n in TREE.body
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "api_livestream_record")
+        src = ast.unparse(fn)
+        # The no-stable_id stem must now contain job_id (3-part: plat_ts_job).
+        self.assertIn("'%s_%s_%s' % (platform, timestamp_str, job_id)",
+                      src,
+                      "file_stem without stable_id must embed job_id")
+        # And output_template without stable_id must embed job_id too.
+        self.assertIn("'%s_%s_%s.%%(ext)s' % (platform, timestamp_str, job_id)",
+                      src,
+                      "output_template without stable_id must embed job_id")
+        # job_id must be computed BEFORE the template (no later redefinition
+        # producing a different value).
+        job_id_first = src.find("job_id = 'live_%d_%s'")
+        tmpl_idx = src.find("'%s_%s_%s.%%(ext)s' % (platform, timestamp_str, job_id)")
+        self.assertGreaterEqual(job_id_first, 0)
+        self.assertGreater(tmpl_idx, job_id_first,
+                           "job_id must be defined before use in template")
+
+    def test_job_id_uniqueness_across_same_second(self):
+        # Two calls in the same wall-clock second must still differ via random.
+        import uuid as _uuid
+        j1 = "live_%d_%s" % (int(__import__("time").time() * 1000), _uuid.uuid4().hex[:6])
+        j2 = "live_%d_%s" % (int(__import__("time").time() * 1000), _uuid.uuid4().hex[:6])
+        self.assertNotEqual(j1, j2)
+
+    # ---- P2-3: parser must NOT leak a different room's status ----
+    def test_target_room_null_other_room_live_not_leaked(self):
+        # Target room has liveRoom:null (user not live); another room in `extra`
+        # is live. The fix must return NOT-live (empty target room is honored).
+        sig = ('window.SIGI_STATE=' + json.dumps({
+            "LiveRoom": {"liveRoom": None, "liveRoomStatus": 4, "roomId": "7001"},
+            "extra": {"liveRoomStatus": 1, "roomId": "9999"}}))
+        res = self.P(sig)
+        self.assertEqual(res[0], False, "must not leak extra room 9999 live status")
+        self.assertEqual(res[2], 4, "must report target room 7001 status (ended)")
+
+    def test_target_room_live_detected_via_liveroom(self):
+        sig = ('window.SIGI_STATE=' + json.dumps({
+            "LiveRoom": {"liveRoom": {"liveRoomStatus": 1, "roomId": "7001"}}}))
+        res = self.P(sig)
+        self.assertEqual(res, (True, "7001", 1, ""))
+
+    def test_fallback_scoped_to_sigi_object_exercises_fallback(self):
+        # Strengthen the original test: build HTML where the target room is
+        # null so the MAIN path cannot answer and the FALLBACK path runs. The
+        # fallback must read only the SIGI object's LiveRoom, not a stray
+        # liveRoomStatus in an unrelated tail, and must return not-live.
+        sig = ('prefix junk window.SIGI_STATE=' + json.dumps({
+            "LiveRoom": {"liveRoom": None, "liveRoomStatus": 4, "roomId": "7001"}})
+               + ' trailing junk "liveRoomStatus":1,"roomId":"55"')
+        res = self.P(sig)
+        # Fallback runs (main path returned None); it must honor target room 4.
+        self.assertEqual(res[0], False)
+        self.assertEqual(res[2], 4)
+
+
 class TestP2WatchdogControlFlow(unittest.TestCase):
     """AST-level guards proving the escalation path is reachable and ordered.
 

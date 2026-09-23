@@ -12765,6 +12765,41 @@ def _livestream_watchdog():
                         pass
 
                     if not is_running:
+                        # FIX-P2-1: pid cha da chet, NHUNG process group co the van
+                        # con ffmpeg con song sot (truong hop hiem khi group khong
+                        # phai pid==PGID hoac con song lai sau SIGTERM cua cha).
+                        # Kiem tra group con tien trinh nao thi killpg de diet sach,
+                        # tranh ffmpeg giu file / ghi lan sau trung ten. Neu group
+                        # rong (da chet han toan) thi binh thuong tiep tuc.
+                        try:
+                            _pgid = int(pid)
+                            _alive_in_pg = False
+                            try:
+                                _me = os.getpid()
+                                for _p in os.listdir("/proc"):
+                                    if not _p.isdigit():
+                                        continue
+                                    try:
+                                        with open("/proc/%s/stat" % _p) as _sf:
+                                            _parts = _sf.read().split()
+                                        # ppid o field 4, pgid o field 5 (trong ngoac)
+                                        _ppid = int(_parts[3])
+                                        _pgrp = int(_parts[4])
+                                        if _pgrp == _pgid and int(_p) != _me and _ppid != _me:
+                                            _alive_in_pg = True
+                                            break
+                                    except Exception:
+                                        continue
+                            except Exception:
+                                _alive_in_pg = False
+                            if _alive_in_pg:
+                                log.warning("[Livestream] Job %s: cha da chet nhung group %d van con tien trinh, killpg de diet sach.", jid, _pgid)
+                                try:
+                                    os.killpg(_pgid, signal.SIGKILL)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                         # Process da ket thuc tu nhien (stream het hoac lỗi)
                         try:
                             out_pattern = info.get("output_dir", "")
@@ -13594,17 +13629,37 @@ def _parse_tiktok_live_room_state(html):
                     room = _dig_tiktok_room(state)
                     if room is not None:
                         return _eval_tiktok_room(room)
+                    # FIX-P2-3: target room (LiveRoom.liveRoom) co the la null
+                    # khi user chua live. Thu doc liveRoomStatus TRUC TIEP tu
+                    # chinh dict LiveRoom cua phong dich (khong phai extra hay
+                    # room khac). Neu co -> eval status cua DUNG phong dich.
+                    _lr = state.get("LiveRoom") if isinstance(state, dict) else None
+                    if isinstance(_lr, dict) and "liveRoomStatus" in _lr:
+                        return _eval_tiktok_room(_lr)
                 except Exception:
                     pass
-        # FIX-TIKTOK / P2-3: fallback CHI trong object JSON cua SIGI_STATE
-        # (khong quet 50k raw hay toan HTML) -> khong leak status phong khac.
+        # FIX-P2-3: fallback chi doc status cua DUNG phong dich (LiveRoom),
+        # KHONG quet regex liveRoomStatus trong toan bo object (se lay status
+        # cua room khac nhu extra.roomId=9999 dang live -> false-positive).
+        # Chi parse slice thanh JSON va doc truc tiep LiveRoom.liveRoomStatus
+        # / LiveRoom.roomId cua target room. Neu khong co -> khong leak.
         slice_txt = _tiktok_sigi_object_slice(html)
         if slice_txt:
-            m = _re_module.search(r'"liveRoomStatus"\s*:\s*(\d+)', slice_txt)
+            try:
+                _st = json.loads(slice_txt)
+                if isinstance(_st, dict):
+                    _lr = _st.get("LiveRoom")
+                    if isinstance(_lr, dict) and "liveRoomStatus" in _lr:
+                        return _eval_tiktok_room(_lr)
+            except Exception:
+                pass
+            # Cuoi cung: chi chap nhan liveRoomStatus nam NGAY SAU "LiveRoom":
+            # de tranh lay status cua room khac (extra/ShareModule...).
+            m = _re_module.search(r'"LiveRoom"\s*:\s*\{[^}]*"liveRoomStatus"\s*:\s*(\d+)', slice_txt)
             if m:
                 status = int(m.group(1))
                 rid = ""
-                rm = _re_module.search(r'"roomId"\s*:\s*["\']?(\d+)', slice_txt)
+                rm = _re_module.search(r'"LiveRoom"\s*:\s*\{[^}]*"roomId"\s*:\s*["\']?(\d+)', slice_txt)
                 if rm:
                     rid = rm.group(1)
                 return _eval_tiktok_status(status, rid)
@@ -14401,6 +14456,12 @@ def api_livestream_record():
 
         # Tao ten file output
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # FIX-P2-2: job_id (ms + random) tinh som de dung lam thanh phan dinh
+        # danh file. Duy nhat toan cuc, nen 2 URL khac nhau khoi cung giay
+        # (hoac cung URL yeu cau 2 lan) se co file name khong trung nhau,
+        # tranh ghi de/trung lap du lieu. Truoc day chi dung platform+giay,
+        # nen 2 job cung giay de trung duong dan.
+        job_id = "live_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
         # FIX: KHÔNG dùng %(title) trong output_template — title cua TikTok live
         # co the thay doi giua chung (host doi caption, hoac yt-dlp re-resolve
         # metadata sau khi mat ket noi). Moi lan title doi -> yt-dlp dong file
@@ -14466,12 +14527,12 @@ def api_livestream_record():
             stable_id = _re_module.sub(r"[^\w.\-]", "_", stable_id)[:40]
             output_template = os.path.join(
                 _LIVESTREAM_DIR,
-                "%s_%s_%s.%%(ext)s" % (platform, stable_id, timestamp_str)
+                "%s_%s_%s_%s.%%(ext)s" % (platform, stable_id, timestamp_str, job_id)
             )
         else:
             output_template = os.path.join(
                 _LIVESTREAM_DIR,
-                "%s_%s.%%(ext)s" % (platform, timestamp_str)
+                "%s_%s_%s.%%(ext)s" % (platform, timestamp_str, job_id)
             )
         direct_tiktok_flv = False
         direct_output_file = ""
@@ -14481,10 +14542,14 @@ def api_livestream_record():
         # job nay khi quet output_dir, tranh lay nhầm file cua job khac cung
         # giay (timestamp_str chi den giay, 2 user khac nhau khoi cung giay se
         # co chung substring -> size helper lay max size la SAI).
+        # FIX-P2-2: file_stem phai chua job_id (suffix) de khop voi ten file
+        # moi va duy tri dinh danh duy nhat theo job. Van bat dau bang
+        # platform[_stable_id]_timestamp de watchdog match dung file cua job
+        # nay qua startswith (giu hanh vi FIX-P2-1).
         if stable_id:
-            file_stem = "%s_%s_%s" % (platform, stable_id, timestamp_str)
+            file_stem = "%s_%s_%s_%s" % (platform, stable_id, timestamp_str, job_id)
         else:
-            file_stem = "%s_%s" % (platform, timestamp_str)
+            file_stem = "%s_%s_%s" % (platform, timestamp_str, job_id)
         tiktok_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         original_record_url = body.get("url", "").strip() or live_url
 
@@ -14621,12 +14686,12 @@ def api_livestream_record():
                     if stable_id:
                         direct_output_file = os.path.join(
                             _LIVESTREAM_DIR,
-                            "%s_%s_%s.mp4" % (platform, stable_id, timestamp_str)
+                            "%s_%s_%s_%s.mp4" % (platform, stable_id, timestamp_str, job_id)
                         )
                     else:
                         direct_output_file = os.path.join(
                             _LIVESTREAM_DIR,
-                            "%s_%s.mp4" % (platform, timestamp_str)
+                            "%s_%s_%s.mp4" % (platform, timestamp_str, job_id)
                         )
                     log.info("[Livestream] TikTok HTML fallback: dùng direct media URL để ghi MP4")
             except Exception as e:
@@ -15009,9 +15074,9 @@ while True:
                 env=_job_env_with_tmp(tmp_dir)
             )
 
-        # job_id voi millisecond + random suffix de trảnh trung khoa khi 2 job
-        # khoi cung giay (truong hop nhieu user TikTok cung len live gan nhau).
-        job_id = "live_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
+        # job_id da duoc tinh som o tren (FIX-P2-2) de dung lam dinh danh file;
+        # tai day chi reuse, khong tinh lai (tranh 2 gia tri khac nhau).
+        # job_id = "live_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
         now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
         with _livestream_lock:
@@ -15279,8 +15344,11 @@ def api_livestream_stop():
                 for jid, info in _livestream_jobs.items():
                     if info.get("status") == "recording":
                         try:
-                            os.kill(info["pid"], signal.SIGTERM)
-                            info["status"] = "stopped"
+                            # FIX-P2-1: kill ca process group thay vi chi PID cha,
+                            # de ffmpeg con cung duoc SIGTERM va finalize file.
+                            _livestream_kill_pid(info["pid"], jid)
+                            info["status"] = "stopping"
+                            info["_kill_ts"] = time.time()
                         except Exception:
                             pass
             return jsonify({"message": "Đã gửi lệnh dừng tất cả livestream."})
@@ -15293,8 +15361,15 @@ def api_livestream_stop():
 
         pid = info.get("pid")
         try:
-            os.kill(pid, signal.SIGTERM)  # SIGTERM de yt-dlp finalize file
-            info["status"] = "stopped"
+            # FIX-P2-1: dung _livestream_kill_pid de SIGTERM ca process group
+            # (pid==PGID vi start_new_session=True), diet ca ffmpeg con, khong
+            # chi kill PID cha nhu truoc. Giu status="stopping" + _kill_ts de
+            # watchdog tiep tuc theo doi group den khi that su chet (60s sau
+            # moi SIGKILL neu con song). Truoc day danh dau "stopped" ngay nen
+            # watchdog bo qua job -> ffmpeg con tiep tuc ghi sau khi cha chet.
+            _livestream_kill_pid(pid, job_id)
+            info["status"] = "stopping"
+            info["_kill_ts"] = time.time()
             info["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             log.info("[Livestream] Đã dừng tác vụ %s (PID %d) theo yêu cầu.", job_id, pid)
 
@@ -15312,8 +15387,8 @@ def api_livestream_stop():
 
             return jsonify({
                 "job_id": job_id,
-                "status": "stopped",
-                "message": "Đã dừng ghi hình. Tệp video sẽ được yt-dlp hoàn tất trong vài giây."
+                "status": "stopping",
+                "message": "Đã gửi lệnh dừng. Tệp video sẽ được yt-dlp hoàn tất trong vài giây."
             })
         except ProcessLookupError:
             info["status"] = "finished"
