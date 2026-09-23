@@ -5,6 +5,31 @@
 
 ---
 
+## [2026-09-23] Livestream / Log-Guard — đóng 4 lỗi P2 còn tồn tại sau 7fb3373
+
+### backend/nas_api_server.py (deploy `/opt/nas_api_server.py`)
+- **P2-1 (process-group gap on stop):** nút dừng + "dừng tất cả" giờ dùng
+  `_livestream_kill_pid` (killpg whole process group do `start_new_session=True`)
+  và giữ `status="stopping"` + `_kill_ts` để watchdog tiếp tục theo dõi group đến
+  khi chết. Thêm orphaned-child sweep khi cha chết nhưng group vẫn còn tiến trình.
+  - **Guard bổ sung:** sweep chỉ chạy khi `_pgid == int(pid)` (chính PGID của job),
+    tránh killpg nhầm process group khác (tái sử dụng PGID số) → tự sát service.
+- **P2-2 (định danh file):** `job_id` (ms + random) tính sớm và nhúng vào
+  `output_template`, `file_stem`, `direct_output_file` → 2 job cùng giây (URL khác
+  nhau) có tên file không trùng.
+- **P2-3 (parser TikTok):** fallback chỉ đọc `LiveRoom` của target room (parse JSON,
+  không regex quét toàn SIGI_STATE object) → không leak status phòng khác
+  (`extra.roomId=9999` đang live không làm báo nhầm live).
+
+### scripts/nas_log_guard.sh (deploy `/usr/local/bin/nas_log_guard.sh` + cài `/etc/cron.hourly/nas_log_guard`)
+- **P2-4 (backup trước truncate):** copy log sang HDD và verify size > 0 **trước**
+  khi truncate (trước đây truncate trước nên backup luôn rỗng 0–160 byte). Backup
+  mới ~13.7 MB. Giải phóng zram `/var/log` từ 100% → ~39%.
+
+### Tests
+- Thêm 7 regression test (P2-2/P2-3 + strengthen fallback). Toàn bộ suite: 99 passed.
+- **Model**: agentgw-gpt-5.6-sol
+
 ## [2026-04-20] Fix Memory Leak — LeakCanary "1 leaks at AndroidComposeView.legacyTextIn..."
 
 ### Nguyên nhân
