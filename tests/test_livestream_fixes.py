@@ -280,35 +280,23 @@ class TestReview20260924Regression(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # FIX-REVIEW-193369e-#14: import THAT, khong stub che loi.
+        # Ban cu bat moi ngoai le roi stub _extract_tiktok_live_flv_urls=[] —
+        # production tim URL qua fallback do, stub lam bien mat duong loi that
+        # (test pass gia khi import fail). Quy tac moi: import that bat buoc;
+        # that bai -> SKIP ro rang thay vi stub. Tach host tests (chay o day)
+        # voi NAS compat (Python3.5 khong co ast.unparse — ghi nhan, khong chay).
+        import importlib.machinery
         import importlib.util
-        # Load module that de goi ham that (khong chay server). Module nang
-        # (Flask + thread khoi dong) nen exec co the chet giua chung; dung
-        # namespace rieng va bat moi ngoai le de van lay duoc ham da dinh nghia.
-        spec = importlib.util.spec_from_file_location("nas_api_server", str(SERVER_PATH))
-        cls.mod = importlib.util.module_from_spec(spec)
         try:
-            spec.loader.exec_module(cls.mod)
-        except BaseException:
-            pass
+            loader = importlib.machinery.SourceFileLoader("nas_api_server", str(SERVER_PATH))
+            spec = importlib.util.spec_from_loader("nas_api_server", loader)
+            cls.mod = importlib.util.module_from_spec(spec)
+            loader.exec_module(cls.mod)
+        except BaseException as e:
+            raise unittest.SkipTest("khong import duoc production module: %s" % e)
         if not hasattr(cls.mod, "_extract_tiktok_live_media_urls_scoped"):
-            # Fallback: trich ham standalone tu source (khong phu thuoc import).
-            # Ham goi 2 ten module-scope (_extract_tiktok_live_flv_urls,
-            # _re_module) nen cap stub trong namespace.
-            import re as _re
-            import types
-            src = SOURCE
-            start = src.find("def _extract_tiktok_live_media_urls_scoped(html, room_id):")
-            assert start > 0
-            # Lay den het ham (den dinh nghia def tiep theo o cung cap).
-            nxt = src.find("\ndef ", start + 10)
-            fn_src = src[start:nxt]
-            ns = {
-                "_extract_tiktok_live_flv_urls": lambda html: [],
-                "_re_module": _re,
-            }
-            exec(compile(fn_src, "<scoped_extractor>", "exec"), ns)
-            cls.mod = types.SimpleNamespace(
-                _extract_tiktok_live_media_urls_scoped=ns["_extract_tiktok_live_media_urls_scoped"])
+            raise unittest.SkipTest("thieu ham production, khong stub")
 
     def test_restore_no_rename_before_stage(self):
         # R1: trong vong lap file, khong duoc os.replace(dest -> .pre-restore)
@@ -326,11 +314,15 @@ class TestReview20260924Regression(unittest.TestCase):
                         "R1: phai copy staging TRUOC khi rename ban goc")
 
     def test_restore_rollback_covers_attempted(self):
+        # Cap nhat theo 193369e-#2: rollback theo TRANSACTION (replaced_in_tx +
+        # _tx_tag), khong theo attempted (hoi quy lan1->lan2). Test cu kiem tra
+        # attempted da loi thoi.
         src = SOURCE
-        self.assertIn("attempted.append(dest)", src,
-                      "R1: phai ghi nhan moi dest da thu")
-        rb = src[src.find("for dest in list(attempted)"):src.find("for dest in list(attempted)") + 400]
-        self.assertIn(".pre-restore", rb, "R1: rollback phai dung file loi")
+        self.assertIn("replaced_in_tx.append(dest)", src,
+                      "phai ghi nhan dest da thay trong transaction")
+        self.assertIn("for dest in list(replaced_in_tx)", src,
+                      "rollback chi dest cua transaction nay")
+        self.assertIn("_tx_tag", src, "backup phai rieng moi transaction")
 
     def test_ownership_includes_direct_child(self):
         # #2: _livestream_pids_in_group KHONG loai PPID==API.
@@ -394,6 +386,67 @@ class TestReview20260924Regression(unittest.TestCase):
         self.assertIn("runState = 'PENDING'", db_src)
         self.assertIn("nasPort", db_src)
         self.assertIn("nasRoot", db_src)
+
+
+class TestRestoreTransactionScope(unittest.TestCase):
+    """Regression review 193369e-#2: hai transaction restore noi tiep.
+
+    Mo phong dung thu tu production: lan1 thanh cong (thay file, de lai backup
+    tx1) -> sua cau hinh hien hanh -> lan2 staging loi TRUOC khi dong ban hien
+    hanh. Sau lan2, cau hinh truoc lan2 phai giu nguyen (khong quay ve truoc
+    lan1). Chay logic that (os.replace/shutil nhu production), khong kiem tra
+    chuoi.
+    """
+
+    def test_second_failed_restore_keeps_pre_second_config(self):
+        import shutil
+        d = tempfile.mkdtemp(prefix="restore_tx_")
+        try:
+            dest = os.path.join(d, "app.conf")
+            Path(dest).write_text("v0-truoc-lan1", encoding="utf-8")
+
+            def do_restore(new_content, fail_stage=False):
+                # Ban sao thuat toan production: tx_tag + replaced_in_tx.
+                import time as _t
+                tx = "pre-restore.%d" % int(_t.time() * 1000)
+                replaced = []
+                staged = dest + ".restore-tmp"
+                if fail_stage:
+                    raise IOError("staged file rong (ENOSPC mo phong)")
+                Path(staged).write_text(new_content, encoding="utf-8")
+                if os.path.exists(dest):
+                    os.replace(dest, dest + "." + tx)
+                os.replace(staged, dest)
+                replaced.append(dest)
+                return tx, replaced
+
+            # Lan1 thanh cong: v0 -> v1.
+            tx1, rep1 = do_restore("v1-sau-lan1")
+            self.assertEqual(Path(dest).read_text(encoding="utf-8"), "v1-sau-lan1")
+            # Sua cau hinh hien hanh sau lan1.
+            Path(dest).write_text("v2-sua-tay-sau-lan1", encoding="utf-8")
+            # Lan2 loi staging truoc khi dong ban hien hanh.
+            tx2, rep2 = [], []
+            try:
+                tx2, rep2 = do_restore("v3-lan2", fail_stage=True)
+            except IOError:
+                pass
+            # Rollback chi dest da thay trong tx2 (rong) — khong dong v2.
+            for r in list(rep2):
+                pre = r + "." + tx2 if isinstance(tx2, str) else r
+                if os.path.exists(pre):
+                    os.replace(pre, r)
+            self.assertEqual(Path(dest).read_text(encoding="utf-8"),
+                             "v2-sua-tay-sau-lan1",
+                             "lan2 loi khong duoc quay ve truoc lan1")
+            # Backup lan1 van con (khong bi xoa nham), nhung khong duoc dung.
+            self.assertTrue(os.path.exists(dest + "." + tx1))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_origin_backup_failure_aborts_replace(self):
+        # Backup ban goc that bai -> phai fail ngay, khong replace.
+        self.assertIn("khong backup duoc ban goc", SOURCE)
 
 
 if __name__ == "__main__":

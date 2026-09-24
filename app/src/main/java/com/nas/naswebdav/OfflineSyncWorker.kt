@@ -40,22 +40,13 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         val db = (applicationContext as NasApplication).database
         val trashMetaDao = db.trashMetaDao()
 
-        // P1: Nếu user bấm retry một upload cụ thể, ưu tiên xử lý row đó trước
+        // P1: Nếu user bấm retry một upload cụ thể, ưu tiên xử lý row đó trước.
+        // FIX-REVIEW-193369e-#7: priority retry phai qua FULL predicate
+        // account+endpoint (khong chi getById + check host/user). Row khong
+        // khop scope hien tai -> giu, bao ro, khong tu replay.
         val retryActionId = inputData.getInt(KEY_RETRY_ACTION_ID, 0)
         var priorityAction: com.nas.naswebdav.SyncAction? = null
-        if (retryActionId > 0) {
-            priorityAction = db.syncActionDao().getById(retryActionId)
-            if (priorityAction == null) {
-                SystemLogger.log("WARNING", "OfflineSync",
-                    "Retry request id=$retryActionId: row đã bị xóa hoặc không tồn tại")
-                return@withContext Result.success()
-            }
-        }
-
-        // FIX-REVIEW-24/09-#6/#13: identity DAY DU account+endpoint (host, user,
-        // port, root) de loc row foreign trong SQL truoc LIMIT. Legacy khong xac
-        // dinh nguon chi duoc chay cho tac vu KHONG pha huy; DELETE/MOVE/RENAME
-        // legacy phai cho xac nhan (park + log), khong tu rebind sang endpoint moi.
+        // Identity tinh som de dung cho ca priority retry lan scoped query.
         val preUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
         val activeHost = runCatching { java.net.URL(preUrl).host ?: preUrl }.getOrDefault(preUrl)
@@ -65,6 +56,23 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             if (p.isEmpty()) "/" else p
         }.getOrDefault("/")
         val preUser = SecurePrefsHelper.getUser(applicationContext)
+        fun isInScope(a: com.nas.naswebdav.SyncAction): Boolean {
+            if (a.nasHost.isEmpty() && a.nasUser.isEmpty() && a.nasPort == -1 && a.nasRoot.isEmpty()) return true
+            return a.nasHost == activeHost && a.nasUser == preUser && a.nasPort == activePort && a.nasRoot == activeRoot
+        }
+        if (retryActionId > 0) {
+            priorityAction = db.syncActionDao().getById(retryActionId)
+            if (priorityAction == null) {
+                SystemLogger.log("WARNING", "OfflineSync",
+                    "Retry request id=$retryActionId: row đã bị xóa hoặc không tồn tại")
+                return@withContext Result.success()
+            }
+            if (!isInScope(priorityAction!!)) {
+                SystemLogger.log("WARNING", "OfflineSync",
+                    "Retry request id=$retryActionId khong thuoc endpoint hien tai — giu row, khong tu replay.")
+                return@withContext Result.success()
+            }
+        }
 
         val pendingActions = db.syncActionDao().getAllPendingActionsScoped(activeHost, preUser, activePort, activeRoot, 200)
         if (pendingActions.isEmpty() && priorityAction == null) return@withContext Result.success()
@@ -242,18 +250,45 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     allSuccess = false
                 }
             }
-            val result = if (allSuccess) Result.success() else {
-                // Tránh retry vô hạn: sau 3 lần thất bại liên tiếp, báo failure hẳn
-                // thay vì để WorkManager exponential-backoff retry mãi mãi.
+            // FIX-REVIEW-193369e-#9: tach budget worker khoi nguong park.
+            // Ban cu: runAttemptCount>=3 -> failure (toi da 4 executions) trong
+            // khi park can 5 loi/row -> queue lon khong bao gio vet het (park
+            // khong dat, continuation khi co loi bi chan). Quy tac moi: park
+            // nguong 5 doc lap theo row (failCount); het budget worker ma queue
+            // con PENDING -> enqueue continuation chain (moi execution vet tiep
+            // 200, khong phu thuoc retry cap 3). Chi failure that khi loi nghiem
+            // trong (user cancel da return o tren).
+            val localRemaining = try {
+                db.syncActionDao().countLocal(activeHost, user, activePort, activeRoot)
+            } catch (_: Exception) { 0 }
+            val result = if (allSuccess) {
+                Result.success()
+            } else if (localRemaining > 0) {
+                try {
+                    val constraints = Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                    val chainRequest = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
+                        .setConstraints(constraints)
+                        .setBackoffCriteria(
+                            androidx.work.BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.SECONDS
+                        )
+                        .build()
+                    WorkManager.getInstance(applicationContext).enqueueUniqueWork(
+                        UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, chainRequest
+                    )
+                    SystemLogger.log("INFO", "OfflineSync",
+                        "Het budget worker, queue con $localRemaining — enqueue chain vet tiep (park nguong 5 doc lap).")
+                } catch (_: Exception) {}
+                Result.success()
+            } else {
                 if (runAttemptCount >= 3) Result.failure() else Result.retry()
             }
 
             // FIX-REVIEW-24/09-#13: continuation dung countLocal DUNG scope
-            // account+endpoint (khong phai global tru batch-skip). Chi enqueue
-            // khi batch SACH (allSuccess); khi co loi, Result.retry() quay lai
-            // vet tiep (muc loi da pushBack xuong cuoi).
+            // (da tinh o localRemaining tren). Chi enqueue khi batch SACH
+            // (allSuccess); khi co loi, chain o tren da enqueue.
             try {
-                val localRemaining = db.syncActionDao().countLocal(activeHost, user, activePort, activeRoot)
                 if (localRemaining > 0 && allSuccess) {
                     SystemLogger.log("INFO", "OfflineSync",
                         "Queue còn $localRemaining action local ($skippedForeign foreign/legacy-park giữ lại) — enqueue continuation work")

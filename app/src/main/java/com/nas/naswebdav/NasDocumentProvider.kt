@@ -301,11 +301,15 @@ class NasDocumentProvider : DocumentsProvider() {
                                 val app = NasApplication.instance
                                 val db = app.database
                                 val failHost = runCatching { java.net.URL(url).host ?: "" }.getOrDefault("")
-                                // FIX-REVIEW-24/09-#6: luu endpoint day du.
-                                val failPort = runCatching { java.net.URL(url).port.takeIf { it > 0 } ?: java.net.URL(url).defaultPort }.getOrDefault(-1)
+                                // FIX-REVIEW-193369e-#8: lay root tu baseUrl chup
+                                // cung credentials (khong phai thu muc cha file
+                                // dich). Ban cu: base /dav + file /dav/docs/a.txt
+                                // -> root /dav/docs, worker activeRoot /dav ->
+                                // SQL loai hang, khong tu retry du dung endpoint.
+                                val failPort = runCatching { java.net.URL(baseUrl).port.takeIf { it > 0 } ?: java.net.URL(baseUrl).defaultPort }.getOrDefault(-1)
                                 val failRoot = runCatching {
-                                    val p = java.net.URL(url).path.trimEnd('/')
-                                    if (p.isEmpty()) "/" else p.substringBeforeLast("/", "/")
+                                    val p = java.net.URL(baseUrl).path.trimEnd('/')
+                                    if (p.isEmpty()) "/" else p
                                 }.getOrDefault("/")
                                 db.syncActionDao().insert(
                                     com.nas.naswebdav.SyncAction(

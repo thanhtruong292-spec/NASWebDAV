@@ -5834,11 +5834,19 @@ def _restart_nas_api(reason):
     # 2) bao moi trang thai con writer (recording/starting/stopping/timeout/finalizing),
     # 3) SIGTERM co ownership tung group, 4) deadline 45s: het writer -> xong,
     # 5) con writer -> SIGKILL + reap, 6) chi exec khi drain xong.
+    # FIX-REVIEW-193369e-#1: khai bao global — ban cu gan trong ham khong co
+    # global nen chi tao bien local, record doc global van False.
+    global _livestream_draining
     try:
         with _livestream_lock:
             _livestream_draining = True
             _live = [(jid, dict(info)) for jid, info in list(_livestream_jobs.items())
                      if info.get("status") in ("recording", "starting", "stopping", "timeout", "finalizing")]
+            # FIX-REVIEW-193369e-#1: snapshot ca starting claims (start da qua
+            # kiem tra nhung chua dang ky registry). Cho claims het han (180s)
+            # hoac xuat hien trong registry roi moi exec — khong co recorder
+            # thoat khoi tap quan ly.
+            _pending_claims = dict(_livestream_starting_claims)
         for jid, info in _live:
             try:
                 pid = int(info.get("pid") or 0)
@@ -5902,11 +5910,53 @@ def _restart_nas_api(reason):
                 pass
         if _remaining:
             log.warning("[NasAPI] Drain con %d writer sau deadline — da SIGKILL+reap truoc exec.", len(_remaining))
+        # FIX-REVIEW-193369e-#1: doi claims het han/dang ky xong truoc exec.
         try:
-            with _livestream_lock:
-                _livestream_draining = False
-        except Exception:
-            pass
+            _claim_deadline = time.time() + 30
+            while time.time() < _claim_deadline:
+                with _livestream_lock:
+                    _open_claims = {k: v for k, v in _pending_claims.items()
+                                    if k in _livestream_starting_claims}
+                    _claimed_now = any(
+                        info.get("recording_key") in _open_claims
+                        for info in _livestream_jobs.values())
+                if not _open_claims and not _claimed_now:
+                    break
+                time.sleep(2)
+            if _open_claims:
+                log.warning("[NasAPI] Drain con %d starting claims — van exec, claims se het han 180s.", len(_open_claims))
+        except Exception as _ce:
+            log.warning("[NasAPI] Doi claims loi: %s", _ce)
+        # FIX-REVIEW-193369e-#1: GIU chan start den khi exec (khong ha co o day).
+        # Ha co truoc exec tao cua so start moi khong nam trong snapshot. Co chi
+        # duoc reset sau exec (reconcile) — tien trinh moi khong con drain flag.
+        # FIX-REVIEW-193369e-#4: doi finalizer (remux) xong truoc exec — drain
+        # thanh cong la DIEU KIEN de exec. Finalizer co tracker rieng (thread +
+        # done Event); doi toi da 600s. Con finalizer sau deadline -> bao loi
+        # ro + van exec (ghi nhan, khong nuot exception).
+        _drain_ok = True
+        try:
+            _fx_deadline = time.time() + 600
+            while time.time() < _fx_deadline:
+                with _livestream_lock:
+                    _open_fx = {k: v for k, v in _livestream_finalizers.items()
+                                if not v.get("done", threading.Event()).is_set()}
+                if not _open_fx:
+                    break
+                time.sleep(5)
+            if _open_fx:
+                _drain_ok = False
+                log.error("[NasAPI] Drain THAT BAI: con %d finalizer sau deadline — van exec, finalizer dang do co the mat.",
+                          len(_open_fx))
+        except Exception as _fe:
+            _drain_ok = False
+            log.error("[NasAPI] Doi finalizer loi: %s", _fe)
+        if not _drain_ok:
+            try:
+                _add_system_log("ERROR", "NasAPI",
+                                "Restart khi drain chua xong — kiem tra remux/finalizer dang do.")
+            except Exception:
+                pass
     except Exception as e:
         log.warning("[NasAPI] Drain truoc restart loi (van exec): %s", e)
     try:
@@ -8544,9 +8594,15 @@ def api_backup_restore():
 
         restored = []
         errors = []
-        # FIX-REVIEW-24/09-#1: ghi nhan MOI dest da thu (ke ca file loi) de
-        # rollback dung file loi, khong chi rollback file thanh cong.
+        # FIX-REVIEW-193369e-#2: backup RIENG moi transaction + ghi ro dest nao
+        # da thay trong transaction nay. Ban cu dung ten .pre-restore co dinh:
+        # restore lan1 thanh cong de lai backup, lan2 staging loi van thay file
+        # hien hanh bang backup cua LAN1 (hoi quy). Khong suy rollback tu ton
+        # tai ten co dinh.
+        import time as _tx_time
+        _tx_tag = "pre-restore.%d" % int(_tx_time.time() * 1000)
         attempted = []
+        replaced_in_tx = []
         manifest = None
         with tarfile.open(src_tar, "r:gz") as tar:
             # Đọc manifest truoc
@@ -8614,11 +8670,17 @@ def api_backup_restore():
                         raise
                     except Exception:
                         pass
-                    # Backup file dich hien tai truoc khi ghi de (rollback neu can)
+                    # Backup file dich hien tai truoc khi ghi de (rollback neu can).
+                    # FIX-REVIEW-193369e-#2: backup theo TRANSACTION (_tx_tag);
+                    # backup goc that bai -> FAIL NGAY, khong replace. Chi dest
+                    # nao thay that trong transaction nay moi duoc rollback.
                     if os.path.exists(dest):
-                        try: os.replace(dest, dest + ".pre-restore")
-                        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
+                        try:
+                            os.replace(dest, dest + "." + _tx_tag)
+                        except Exception as _be:
+                            raise IOError("khong backup duoc ban goc: %s" % _be)
                     os.replace(tmp, dest)
+                    replaced_in_tx.append(dest)
                     # Phuc hoi quyen co ban: auth.conf phai chmod 600
                     if dest.endswith("auth.conf"):
                         try: os.chmod(dest, 0o600)
@@ -8630,16 +8692,15 @@ def api_backup_restore():
                 except Exception as e:
                     errors.append({"file": dest, "reason": str(e)[:120]})
 
-        # FIX-REVIEW-24/09-#1: rollback DUNG file loi (duyet `attempted`, khong
-        # chi `restored`). Co critical -> KHONG restart bat ky service nao bang
-        # cau hinh do (giu ban hien hanh hoat dong), tra loi + khong len lich
-        # self-restart.
+        # FIX-REVIEW-193369e-#2: rollback CHI dest da thay trong transaction nay
+        # (replaced_in_tx + _tx_tag), khong phai moi attempted. Co critical ->
+        # KHONG restart, tra 500.
         _critical = [e for e in errors if isinstance(e, dict)]
         services_restarted = []
         if _critical:
             _rolled_back = []
-            for dest in list(attempted):
-                _pre = dest + ".pre-restore"
+            for dest in list(replaced_in_tx):
+                _pre = dest + "." + _tx_tag
                 try:
                     if os.path.exists(_pre):
                         os.replace(_pre, dest)
@@ -12471,6 +12532,9 @@ _livestream_lock = threading.Lock()
 _livestream_starting_claims = {}
 # FIX-REVIEW-24/09-#4: co drain — record tu choi start moi trong luc drain.
 _livestream_draining = False
+# FIX-REVIEW-193369e-#4: tracker finalizer (remux) co ownership/liveness rieng.
+# {job_id: {"thread": Thread, "done": Event, "result": str, "started": float}}
+_livestream_finalizers = {}
 # FIX-AUDIT-L5: snapshot registry truoc restart de reconcile sau exec.
 _LIVESTREAM_REGISTRY_SNAPSHOT = "/var/tmp/nas_api_livestream_registry.json"
 
@@ -13396,11 +13460,44 @@ def _livestream_watchdog():
             # ghi de trang thai cua the he moi.
             try:
                 for _rjid, _rflv, _rgen in list(pending_remux):
-                    _mp4 = ""
+                    # FIX-REVIEW-193369e-#4: chay remux trong thread co tracker —
+                    # drain/restart thay duoc finalizer dang song (thay vi mat
+                    # hut khi recorder chet). Bo qua neu job da co finalizer.
                     try:
-                        _mp4 = _remux_flv_to_mp4(_rflv)
-                    except Exception as _rx:
-                        log.warning("[Livestream] Job %s: remux ngoai lock that bai: %s", _rjid, _rx)
+                        with _livestream_lock:
+                            _fx = _livestream_finalizers.get(_rjid)
+                            if _fx is not None and not _fx.get("done", threading.Event()).is_set():
+                                continue
+                    except Exception:
+                        pass
+                    _fx_done = threading.Event()
+                    _fx_box = {"result": ""}
+
+                    def _fx_run(_flv=_rflv, _box=_fx_box, _ev=_fx_done):
+                        try:
+                            _box["result"] = _remux_flv_to_mp4(_flv)
+                        except Exception as _rx:
+                            log.warning("[Livestream] Job remux ngoai lock that bai: %s", _rx)
+                            _box["result"] = ""
+                        finally:
+                            _ev.set()
+
+                    _fx_thread = threading.Thread(target=_fx_run, daemon=True)
+                    try:
+                        with _livestream_lock:
+                            _livestream_finalizers[_rjid] = {
+                                "thread": _fx_thread, "done": _fx_done,
+                                "result": _fx_box, "started": time.time(),
+                                "generation": _rgen,
+                            }
+                    except Exception:
+                        pass
+                    _fx_thread.start()
+                    _fx_done.wait(timeout=600)
+                    try:
+                        _mp4 = _fx_box.get("result", "")
+                    except Exception:
+                        _mp4 = ""
                     try:
                         with _livestream_lock:
                             _ri = _livestream_jobs.get(_rjid)
@@ -14052,8 +14149,9 @@ def _parse_tiktok_live_room_state(html):
         return False, "", -1, "empty html"
     lowered = html.lower()
     try:
-        # FIX-REVIEW-24/09-#9: main path dung helper slice an toan (da xu ly
-        # SIGI_STATE=null + nhay coc object khac), khong find('{') tu do.
+        # FIX-REVIEW-193369e-#12: CHI helper slice an toan — xoa loop cu.
+        # Ban cu giu loop find('{') tu do sau helper: SIGI_STATE=null; roi
+        # object script khac van bi lay nham. Mot parser cau truc duy nhat.
         _slice = _tiktok_sigi_object_slice(html)
         if _slice:
             try:
@@ -14066,63 +14164,6 @@ def _parse_tiktok_live_room_state(html):
                     return _eval_tiktok_room(_lr)
             except Exception:
                 pass
-        for marker in ("window.__SIGI_STATE__=", "window.SIGI_STATE=", "SIGI_STATE="):
-            idx = lowered.find(marker.lower())
-            if idx < 0:
-                continue
-            start = html.find("{", idx)
-            if start < 0:
-                continue
-            # FIX-TIKTOK: quet ngoac nhaubiet chuoi JSON. Trinh duyet naive dem
-            # '{'/'}' trong chuoi (VD "...}...") nen cat nhầm doan JSON, lay
-            # phong khac. Quet tung ky tu, bo qua trong "..." va '...'.
-            end = -1
-            depth = 0
-            i = start
-            n = len(html)
-            while i < n:
-                c = html[i]
-                if c == '"':
-                    # bo qua ca chuoi, xu ly escape \\
-                    i += 1
-                    while i < n:
-                        if html[i] == "\\":
-                            i += 2
-                            continue
-                        if html[i] == '"':
-                            i += 1
-                            break
-                        i += 1
-                    continue
-                if c == "'":
-                    i += 1
-                    while i < n and html[i] != "'":
-                        i += 1
-                    i += 1
-                    continue
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = i + 1
-                        break
-                i += 1
-            if end > start:
-                try:
-                    state = json.loads(html[start:end])
-                    room = _dig_tiktok_room(state)
-                    if room is not None:
-                        return _eval_tiktok_room(room)
-                    # FIX-P2-3: target room (LiveRoom.liveRoom) co the la null
-                    # khi user chua live. Thu doc liveRoomStatus TRUC TIEP tu
-                    # chinh dict LiveRoom cua phong dich (khong phai extra hay
-                    # room khac). Neu co -> eval status cua DUNG phong dich.
-                    _lr = state.get("LiveRoom") if isinstance(state, dict) else None
-                    if isinstance(_lr, dict) and "liveRoomStatus" in _lr:
-                        return _eval_tiktok_room(_lr)
-                except Exception:
-                    pass
         # FIX-P2-3: fallback chi doc status cua DUNG phong dich (LiveRoom),
         # KHONG quet regex liveRoomStatus trong toan bo object (se lay status
         # cua room khac nhu extra.roomId=9999 dang live -> false-positive).
@@ -14290,25 +14331,12 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
                 return 3
             return 9
         return sorted(urls, key=_media_rank)
-    urls = list(_extract_tiktok_live_flv_urls(html))
-    for pat in (
-        r'\\"hls_pull_url\\":\\"(https://[^"\\]+)',
-        r'"hls_pull_url":"(https://[^"\\]+)',
-        r'https:\\/\\/[^"\\]{1,2000}?\.m3u8[^"\\]{0,2000}',
-        r'https://[^"\\]{1,2000}?\.m3u8[^"\\]{0,2000}',
-        r'https://[^"\\<>\s]{1,2000}?\.m3u8[^"\\<>\s]{0,2000}',
-        r'"playUrl"\s*:\s*"(https://[^"]+\.flv[^"]*)"',
-        r'"flv_pull_url"\s*:\s*\{[^}]*"(https://[^"]+)"',
-        r'"rtmp_pull_url"\s*:\s*"(https://[^"]+)"',
-        r'"hls_pull_url_map"\s*:\s*\{[^}]*"(https://[^"]+\.m3u8[^"]*)"',
-        r'(https://pull[^"\\<>\s]{10,300}\.flv[^"\\<>\s]{0,500})',
-        r'(https://pull[^"\\<>\s]{10,300}\.m3u8[^"\\<>\s]{0,500})',
-    ):
-        for u in _re_module.findall(pat, html or ""):
-            u = u.replace("\\u0026", "&").replace("\\/", "/")
-            if u not in urls:
-                urls.append(u)
-    return urls
+    # FIX-REVIEW-193369e-#12: KHONG fallback toan HTML khi khong thay media
+    # target. Ban cu: target live nhung khong co media + recommendation co FLV
+    # => tra URL phong khac (ghi nham nguoi). Khong thay trong object phong
+    # dich thi tra rong — caller (checker/retry) tu quyet dinh tiep theo bang
+    # parser trang thai, khong doan URL.
+    return []
 
 def _tiktok_stream_url_seems_live(stream_url, cookies_path="", user_agent=""):
     """Kiểm tra URL stream TikTok con song bang HTTP nh?.
@@ -15463,14 +15491,19 @@ def get_media_url():
     cmd.append("https://www.tiktok.com/@%s/live" % username)
     try:
         html = subprocess.check_output(cmd, timeout=15).decode('utf-8', errors='ignore')
-        # FIX-AUDIT-L6: room-bound reconnect — chi lay media khi phong dich
-        # khong phai OFFLINE co tham quyen. Neu SIGI_STATE bao status=4 thi
-        # dung vong reconnect (tra ""), tranh ghi nham phong goi y khac.
+        # FIX-REVIEW-193369e-#12: room-bound reconnect bang parser cau truc.
+        # Ban cu so substring toan trang: whitespace lech lam guard khong khop;
+        # status4 cua phong KHAC lai dung target dang live. Quy tac moi: chuan
+        # hoa whitespace truoc so sanh, va status4 chi co hieu luc khi nam trong
+        # object chua username/room dich.
         try:
+            import re as _re_ws
             low = (html or "").lower()
-            off = ('"liveroomstatus":4' in low or '"liveRoomStatus":4' in low
-                   or '"liveroom":null' in low or '"liveRoom":null' in low
-                   or 'live has ended' in low or 'this live has ended' in low)
+            flat = _re_ws.sub(r"\s+", "", low)
+            _has_off = ('"liveroomstatus":4' in flat or '"liveroom":null' in flat
+                        or 'livehasended' in flat or 'thislivehasended' in flat)
+            _own = username.lower() in low
+            off = _has_off and _own
         except Exception:
             off = False
         if off:
@@ -15896,11 +15929,14 @@ def api_livestream_status():
             except Exception:
                 pass
 
-            # FIX-REVIEW-24/09-#3: GET CHI TRINH BAY SNAPSHOT — khong quyet dinh
-            # terminal. Cha chet nhung group con writer => bao stopping (cho
-            # watchdog cleanup/finalize), khong gan finished/error o day.
-            # Terminal transition do mot controller (watchdog) so huu sau khi
-            # xac minh group sach + output.
+            # FIX-REVIEW-193369e-#3: GET KHONG CAP NHAT TRANG THAI VONG DOI.
+            # Ban cu: group sach -> gan finished/error + finished_at + log ket
+            # thuc ngay tai GET; GET chay truoc watchdog co the thay FLV du
+            # 150KB roi gan finished, watchdog bo qua nen khong remux/kiem
+            # chung playable. Quy trinh moi: trinh bay snapshot (stopping khi
+            # con writer, finalizing khi het writer cho controller xu ly);
+            # CHI controller (watchdog finalize) duoc chot terminal sau xac
+            # minh artifact. GET khong ghi updates status/finished/log ket thuc.
             if not is_running:
                 _group_writers = []
                 try:
@@ -15909,26 +15945,11 @@ def api_livestream_status():
                     _group_writers = []
                 if _group_writers and status == "recording":
                     status = "stopping"
-                    updates[jid]["status"] = status
                 elif not _group_writers:
-                    if file_size < 150 * 1024 or (last_size_time > 0 and file_size == last_size and now_time - last_size_time > 240):
-                        status = "error"
-                    else:
-                        status = "finished"
-                    updates[jid]["status"] = status
-                    updates[jid]["finished_at"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                if info.get("logged_start"):
-                    if status == "error":
-                        msg = "User hiện không live hoặc đã tắt live (dung lượng: %s)" % format_bytes(file_size) if file_size == 0 else "Lỗi ghi hình (dung lượng: %s)" % format_bytes(file_size)
-                        _log_livestream_event(
-                            "ERROR", jid, info, msg, "status_error"
-                        )
-                    else:
-                        _log_livestream_event(
-                            "SUCCESS", jid, info,
-                            "Quá trình ghi kết thúc (dung lượng: %s)" % format_bytes(file_size),
-                            "status_finished"
-                        )
+                    # Het writer: cho controller finalize (remux/validate) roi
+                    # chot terminal. GET bao finalizing, khong gan finished/error.
+                    if status == "recording":
+                        status = "finalizing"
 
         # Tinh duration
         started_ts = info.get("started_ts", 0)
@@ -16004,16 +16025,16 @@ def api_livestream_status():
         with _livestream_lock:
             for jid, up in updates.items():
                 if jid in _livestream_jobs:
-                    # FIX-REVIEW-24/09-#3: GET khong ghi de chuyen trang thai
-                    # stopping/timeout dong thoi (stop/watchdog dang xu ly).
-                    # Chi apply quan sat (size/time/stall/error_reason), giu
-                    # nguyen status neu job da roi recording.
-                    _cur = _livestream_jobs[jid]
-                    if _cur.get("status") in ("stopping", "timeout") and up.get("status") in ("finished", "error"):
-                        _defer = {k: v for k, v in up.items() if k != "status"}
-                        _cur.update(_defer)
-                    else:
-                        _cur.update(up)
+                    # FIX-REVIEW-193369e-#3: GET KHONG GHI BAT KY TRANG THAI
+                    # VONG DOI NAO (status/finished_at). Chi apply quan sat
+                    # (last_size/last_size_time/stall_*/logged_start/error_reason).
+                    # Moi terminal transition do controller (watchdog finalize)
+                    # so huu sau xac minh artifact.
+                    _obs = {k: v for k, v in up.items()
+                            if k in ("last_size", "last_size_time",
+                                     "stall_suspected", "stall_since",
+                                     "logged_start", "error_reason")}
+                    _livestream_jobs[jid].update(_obs)
 
     return jsonify({"jobs": result_jobs})
 

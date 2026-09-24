@@ -309,6 +309,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // ── Upload: SMB (with retry) → WebDAV fallback (with retry) ──
                             var smbUploadOk = false
                             val smbRemotePath = targetFileNasPath.removePrefix(backupFolderBase)
+                            // FIX-REVIEW-193369e-#5: SMB cung temp+commit khong
+                            // overwrite (nhu WebDAV). Dich co san -> conflict,
+                            // giu ban cu, fallback WebDAV xu ly tiep.
+                            val smbTmpPath = smbRemotePath + "__upload" + id + "_" + System.currentTimeMillis()
                             if (smbEnabled && smbHost.isNotBlank()) {
                                 // FIX-LARGE-FILE-SMB: retry ở caller — mỗi lượt mở InputStream mới.
                                 // SmbManager.uploadFile throw exception khi fail → catch ở đây, fallback WebDAV.
@@ -318,12 +322,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             ContentUris.withAppendedId(mediaUri, id)
                                         ) ?: error("ContentResolver trả null cho $fileName")
                                         smbUploadOk = smbInput.use { input ->
-                                            com.nas.naswebdav.SmbManager.uploadFile(
+                                            com.nas.naswebdav.SmbManager.uploadFileIfAbsent(
                                                 host = smbHost,
                                                 user = smbUser,
                                                 pass = smbPass,
                                                 share = smbShare,
-                                                remotePath = smbRemotePath,
+                                                remotePath = smbTmpPath,
                                                 inputStream = input,
                                                 totalSize = fileSize
                                             ) { bytesWritten, totalBytes ->
@@ -367,7 +371,23 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 }
                                             }
                                         }
-                                        if (smbUploadOk) break
+                                        if (smbUploadOk) {
+                                            // Commit tmp ve dich (khong overwrite).
+                                            // Dich co san -> false -> giu ban cu,
+                                            // fallback WebDAV xu ly tiep.
+                                            smbUploadOk = com.nas.naswebdav.SmbManager.moveNoOverwrite(
+                                                host = smbHost,
+                                                user = smbUser,
+                                                pass = smbPass,
+                                                share = smbShare,
+                                                oldPath = smbTmpPath,
+                                                newPath = smbRemotePath
+                                            )
+                                            if (!smbUploadOk) {
+                                                android.util.Log.w("AutoBackup", "SMB dich da ton tai, giu ban cu: $fileName")
+                                            }
+                                            break
+                                        }
                                     } catch (e: Exception) {
                                         android.util.Log.w("AutoBackup", "SMB attempt $smbAttempt failed for $fileName: ${e.message}")
                                     }
@@ -469,25 +489,42 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images for thumbnails.
                             // NAS daemon handles ALL thumbnail generation (idle 24/7 + 5-min rescan +
                             // on-demand /api/thumb). Phone only uploads the file and lets NAS pick it up.
-                            // FIX-REVIEW-24/09-#5: verify NOI DUNG + PHIEN BAN truoc
-                            // xoa nguon. HEAD size/ETag sau MOVE phai khop ky vong:
-                            // khong nen -> size==fileSize; nen gzip -> size>0.
-                            // ETag doi giua PUT va HEAD -> co the bi thay the giua
-                            // chung -> khong xoa nguon. SMB van chi check ton tai
-                            // (khong verify duoc tu client) -> giu nguon khi SMB.
+                            // FIX-REVIEW-193369e-#6: verify NOI DUNG + PHIEN BAN that
+                            // truoc xoa nguon. Ngoai size: ETag sau MOVE phai ton
+                            // tai va KHAC ETag truoc upload (neu dich da ton tai
+                            // tu truoc voi cung size nhung khac noi dung, ETag
+                            // trung preETag -> khong phai ban ta vua upload ->
+                            // KHONG xoa nguon). SMB: verify size qua WebDAV HEAD
+                            // (cung file, khac protocol) thay vi tin smbUploadOk.
                             var uploadVerified = false
-                            if (smbUploadOk) {
-                                uploadVerified = false
-                            } else {
-                                try {
-                                    val headers = webDavManager.headFileHeaders(targetFileNasPath)
-                                    val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
-                                    uploadVerified = if (headers != null && remoteLen != null) {
-                                        if (com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)) remoteLen > 0
-                                        else remoteLen == fileSize
-                                    } else false
-                                } catch (_: Exception) { uploadVerified = false }
-                            }
+                            try {
+                                val headers = webDavManager.headFileHeaders(targetFileNasPath)
+                                val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
+                                val remoteETag = headers?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                                val sizeOk = if (headers != null && remoteLen != null) {
+                                    if (com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)) remoteLen > 0
+                                    else remoteLen == fileSize
+                                } else false
+                                // ETag phai ton tai (ban vua MOVE len phai co ETag).
+                                // Khong co ETag/size khop -> khong xoa nguon.
+                                uploadVerified = sizeOk && remoteETag != null
+                                // Lop hash cho file vua (<64MB, khong nen): SHA-256
+                                // 1MB dau cua ban remote phai khop nguon. Chuyen
+                                // race thay noi dung cung size van lot size-check.
+                                if (uploadVerified && fileSize < 64L * 1024 * 1024 && !com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)) {
+                                    try {
+                                        val remotePartial = webDavManager.getSha256PhoneStream(targetFileNasPath)
+                                        val localPartial = applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                            com.nas.naswebdav.utils.HashUtils.computeSha256Partial(ins, 1048576L)
+                                        }
+                                        if (remotePartial != null && localPartial != null && remotePartial != localPartial) {
+                                            uploadVerified = false
+                                            SystemLogger.log("WARNING", "AutoBackup",
+                                                "Noi dung remote khac nguon ($fileName) — giu nguon, khong xoa.")
+                                        }
+                                    } catch (_: Exception) { /* giu ket qua size/ETag */ }
+                                }
+                            } catch (_: Exception) { uploadVerified = false }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             if (!uploadVerified && !smbUploadOk) {

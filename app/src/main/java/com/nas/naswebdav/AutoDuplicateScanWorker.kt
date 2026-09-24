@@ -240,6 +240,24 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             val verifiedFiles = identicalFiles.filter { it.path in paths }
                             if (verifiedFiles.size < 2) continue
                             val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
+                            // FIX-REVIEW-193369e-#10: rang buoc SURVIVOR (ban giu
+                            // lai = sorted.first()). Ban cu chi HEAD victim; neu
+                            // survivor bi sua/xoa sau hash ma van MOVE victim thi
+                            // ban can giu co the mat. Quy tac: HEAD survivor phai
+                            // khop snapshot hash; survivor doi/mat -> giu ca nhom.
+                            val survivor = sorted.first()
+                            val survivorSnap = hashSnapshot[survivor.path]
+                            val survivorHeaders = try {
+                                webDavManager.headFileHeaders(survivor.path)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                            val survivorLen = survivorHeaders?.get("Content-Length")?.toLongOrNull()
+                            val survivorOk = survivorSnap != null && survivorLen != null && survivorLen == survivorSnap.first
+                            if (!survivorOk) {
+                                SystemLogger.log("WARNING", "AutoClean",
+                                    "Bỏ qua nhóm (survivor đổi/mất sau hash): ${survivor.path}")
+                                continue
+                            }
                             val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
                             val authCtx = WebDavAuthContext(webDavManager, user, pass)
                             for (trashFile in filesToTrash) {

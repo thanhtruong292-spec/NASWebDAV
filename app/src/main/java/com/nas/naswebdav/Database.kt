@@ -345,17 +345,17 @@ interface SyncActionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(action: SyncAction)
 
-    // FIX-REVIEW-24/09-#6/#13: scope DAY DU account+endpoint trong SQL, truoc
-    // LIMIT; loai PARKED/COMPLETED. Ban cu chi loc host truoc LIMIT, user loc
-    // sau o worker: 200 hang cung host/user khac van chan hang hien tai; park
-    // du nguong van bi lay lai vi SQL khong loai runState.
+    // FIX-REVIEW-193369e-#7: wildcard port/root CHI khi host/user cung legacy.
+    // Ban cu: hang migration16 co host/user nhung port=-1/root='' van wildcard
+    // -> tu replay destructive khi doi port/root cung host/user. Quy tac moi:
+    // identity thieu bat ky thanh phan nao (port/root thieu ma host/user co)
+    // thi KHONG du dieu kien tu replay — worker park cho xac nhan.
     @Query("""
         SELECT * FROM sync_queue
         WHERE runState = 'PENDING'
           AND (
             (nasHost = :activeHost AND nasUser = :activeUser
-             AND (nasPort = :activePort OR nasPort = -1)
-             AND (nasRoot = :activeRoot OR nasRoot = ''))
+             AND nasPort = :activePort AND nasRoot = :activeRoot)
             OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
           )
         ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC
@@ -372,13 +372,14 @@ interface SyncActionDao {
     fun countAll(): Int
 
     // So action PENDING dung scope account+endpoint — dung cho continuation.
+    // FIX-REVIEW-193369e-#7: cung quy tac chat nhu selection (khong wildcard
+    // port/root khi host/user co gia tri).
     @Query("""
         SELECT COUNT(*) FROM sync_queue
         WHERE runState = 'PENDING'
           AND (
             (nasHost = :activeHost AND nasUser = :activeUser
-             AND (nasPort = :activePort OR nasPort = -1)
-             AND (nasRoot = :activeRoot OR nasRoot = ''))
+             AND nasPort = :activePort AND nasRoot = :activeRoot)
             OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
           )
     """)
