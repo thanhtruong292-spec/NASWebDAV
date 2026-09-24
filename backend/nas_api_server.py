@@ -12027,8 +12027,15 @@ def api_lan_whitelist_add():
     data = request.json or {}
     ip = data.get("ip", "").strip()
     subnet = data.get("subnet", "").strip()
-    
+
+    # FIX-AUDIT-BUG2: validate IP/CIDR truoc khi persist + ap iptables.
+    # Ban cu nhan gia tri thoa mai tu JSON -> ghi rác vao _lan_whitelist /
+    # _lan_subnets va ap iptables rule sai dinh dang. Dung validator co san
+    # (_RE_SAFE_IP / _RE_SAFE_CIDR) de reject input khong hop le.
     if subnet:
+        if not _validate_cidr(subnet):
+            return jsonify({"error": "Subnet không hợp lệ (mong đợi CIDR, vd 192.168.1.0/24)"}), 400
+
         if subnet not in _lan_subnets:
             _lan_subnets.append(subnet)
             _save_lan_whitelist()
@@ -12039,6 +12046,8 @@ def api_lan_whitelist_add():
         except Exception as e: log.debug("[M4] Ignored exception: %s", e)
         return jsonify({"result": "ok", "added_subnet": subnet})
     elif ip:
+        if not _validate_ip(ip):
+            return jsonify({"error": "IP không hợp lệ (mong đợi IPv4, vd 192.168.1.100)"}), 400
         _lan_whitelist.add(ip)
         _save_lan_whitelist()
         # ?p dùng iptables ACCEPT ngay lap tuc cho IP
@@ -14333,7 +14342,10 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
             else:
                 return []
         except Exception:
-            texts = [(html or "")[:786432]]
+            # FIX-AUDIT-BUG1: fail-CLOSED. Ban cu fallback quet toan trang HTML
+            # khi extractor throw -> ro URL media cua phong TikTok KHAC vao luong
+            # record. Khong co media nao khop room -> tra rong, khong quet lai.
+            return []
     urls = []
     for text in texts:
         urls.extend(_harvest(text))
