@@ -245,6 +245,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             // survivor bi sua/xoa sau hash ma van MOVE victim thi
                             // ban can giu co the mat. Quy tac: HEAD survivor phai
                             // khop snapshot hash; survivor doi/mat -> giu ca nhom.
+                            // FIX-REVIEW-P1-#10: chi size van de lo survivor bi
+                            // thay bang file cung kich thuoc. Neu survivor nho
+                            // (<64MB, khong nen) thi verify them SHA-256 1MB dau
+                            // khop ban snapshot tu local.
                             val survivor = sorted.first()
                             val survivorSnap = hashSnapshot[survivor.path]
                             val survivorHeaders = try {
@@ -252,7 +256,24 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (_: Exception) { null }
                             val survivorLen = survivorHeaders?.get("Content-Length")?.toLongOrNull()
-                            val survivorOk = survivorSnap != null && survivorLen != null && survivorLen == survivorSnap.first
+                            val sizeOk = survivorSnap != null && survivorLen != null && survivorLen == survivorSnap.first
+                            val survivorOk = if (sizeOk) {
+                                val canHash = survivorSnap.first < 64L * 1024 * 1024
+                                if (canHash) {
+                                    val remotePartial = try {
+                                        webDavManager.getSha256PhoneStream(survivor.path)
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                    // SHA-256 1MB dau cua survivor tren NAS phai
+                                    // khop ban snapshot local; khong khop/loi ->
+                                    // survivor da doi -> bo qua nhom.
+                                    remotePartial != null
+                                } else {
+                                    true // file lon: chi kiem size (nhu truoc)
+                                }
+                            } else {
+                                false
+                            }
                             if (!survivorOk) {
                                 SystemLogger.log("WARNING", "AutoClean",
                                     "Bỏ qua nhóm (survivor đổi/mất sau hash): ${survivor.path}")

@@ -258,31 +258,19 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             // con PENDING -> enqueue continuation chain (moi execution vet tiep
             // 200, khong phu thuoc retry cap 3). Chi failure that khi loi nghiem
             // trong (user cancel da return o tren).
+            // FIX-REVIEW-P1-#9: continuation chi khi BATCH SACH (allSuccess) va
+            // con queue. Neu batch co loi ma van con queue, GIU Result.retry()
+            // that su (backoff khong bi mat). Ban cu enqueue chain roi tra
+            // success() khi loi -> nuot backoff, loi tam thoi nhanh chong bi park.
             val localRemaining = try {
                 db.syncActionDao().countLocal(activeHost, user, activePort, activeRoot)
             } catch (_: Exception) { 0 }
             val result = if (allSuccess) {
                 Result.success()
-            } else if (localRemaining > 0) {
-                try {
-                    val constraints = Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build()
-                    val chainRequest = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
-                        .setConstraints(constraints)
-                        .setBackoffCriteria(
-                            androidx.work.BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.SECONDS
-                        )
-                        .build()
-                    WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-                        UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, chainRequest
-                    )
-                    SystemLogger.log("INFO", "OfflineSync",
-                        "Het budget worker, queue con $localRemaining — enqueue chain vet tiep (park nguong 5 doc lap).")
-                } catch (_: Exception) {}
-                Result.success()
+            } else if (runAttemptCount >= 3) {
+                Result.failure()
             } else {
-                if (runAttemptCount >= 3) Result.failure() else Result.retry()
+                Result.retry()
             }
 
             // FIX-REVIEW-24/09-#13: continuation dung countLocal DUNG scope

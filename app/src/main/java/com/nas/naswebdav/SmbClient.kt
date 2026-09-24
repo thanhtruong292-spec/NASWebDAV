@@ -126,6 +126,9 @@ object SmbManager {
 
     // FIX-REVIEW-193369e-#5: doi ten tren SMB khong ghi de — dich da ton tai thi
     // bao loi de caller giu ban co san.
+    // FIX-REVIEW-P1-#5: copy+delete khong nguyen tu -> neu loi giua chung, file
+    // tam (oldPath) bi de lai dang d? và chan retry sau. Bat buoc xoa oldPath
+    // khi that bai de khong de lai ban do.
     suspend fun moveNoOverwrite(
         host: String,
         user: String,
@@ -134,8 +137,13 @@ object SmbManager {
         oldPath: String,
         newPath: String
     ): Boolean {
+        val diskShare = try {
+            connectAndOpenShare(host, user, pass, share)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("SmbClient", "SMB move connect failed: ${e.message}")
+            return false
+        }
         return try {
-            val diskShare = connectAndOpenShare(host, user, pass, share)
             if (diskShare.fileExists(newPath)) return false
             // SMBJ khong co rename nguyen tu khong-overwrite: copy + delete khi
             // dich chua ton tai (da kiem tra o tren). Race hep van co the xay ra;
@@ -162,6 +170,8 @@ object SmbManager {
             diskShare.rm(oldPath)
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            // Xoa ban tam d? de retry sau khong bi ket o file do.
+            try { diskShare.rm(oldPath) } catch (_: Exception) {}
             android.util.Log.w("SmbClient", "SMB move failed: ${e.message}")
             false
         }
