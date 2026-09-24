@@ -993,9 +993,21 @@ def _load_lan_whitelist():
                         continue
                     if '/' in line:
                         # Subnet CIDR: 192.168.1.0/24
-                        _lan_subnets.append(line)
+                        # FIX-AUDIT-BUG2b: validate khi load tu disk. Ban cu nhan
+                        # nguyen cai line -> entry rach do bug cu (truoc BUG2) hoac
+                        # file bi sua tay sai dinh dang se persist va duoc
+                        # _apply_iptables_for_whitelist apply lai (iptables reject
+                        # nhung van nam trong _lan_whitelist -> match sai). Reject
+                        # entry khong hop le, ghi warning.
+                        if _validate_cidr(line):
+                            _lan_subnets.append(line)
+                        else:
+                            log.warning("[Firewall] Bo qua subnet whitelist sai dinh dang: %s", line)
                     else:
-                        _lan_whitelist.add(line)
+                        if _validate_ip(line):
+                            _lan_whitelist.add(line)
+                        else:
+                            log.warning("[Firewall] Bo qua IP whitelist sai dinh dang: %s", line)
     except Exception as e:
         log.error("Lỗi đọc danh sách LAN whitelist: %s", e)
 
