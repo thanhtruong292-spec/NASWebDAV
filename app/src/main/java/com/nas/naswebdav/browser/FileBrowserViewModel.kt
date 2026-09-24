@@ -822,7 +822,7 @@ class FileBrowserViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val trashMetaDao = NasApplication.instance.database.trashMetaDao()
             val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
-            val targetUrl = meta?.originalPath ?: file.path.replace(".trash/", "")
+            val targetUrl = meta?.originalPath ?: file.path.removePrefix(".trash/")
             try {
                 WebDavManager.renameFile(file.path, targetUrl)
                 trashMetaDao.deleteByTrashPath(file.path)
