@@ -245,10 +245,13 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             // survivor bi sua/xoa sau hash ma van MOVE victim thi
                             // ban can giu co the mat. Quy tac: HEAD survivor phai
                             // khop snapshot hash; survivor doi/mat -> giu ca nhom.
-                            // FIX-REVIEW-P1-#10: chi size van de lo survivor bi
-                            // thay bang file cung kich thuoc. Neu survivor nho
-                            // (<64MB, khong nen) thi verify them SHA-256 1MB dau
-                            // khop ban snapshot tu local.
+                            // P1-2: so FULL HASH that, khong chi size/partial.
+                            // Ban cu: `remotePartial != null` la du (khong so voi
+                            // hash da snapshot), file lon chi kiem size -> survivor
+                            // doi thanh file cung size van lot. Quy tac moi: lay
+                            // lai full hash hien tai cua survivor (getFull... da
+                            // siet: HTTP 200, du byte, tu choi 206) va SO SANH voi
+                            // fullHashes da verify trong nhom. Khac/null -> bo nhom.
                             val survivor = sorted.first()
                             val survivorSnap = hashSnapshot[survivor.path]
                             val survivorHeaders = try {
@@ -258,18 +261,17 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             val survivorLen = survivorHeaders?.get("Content-Length")?.toLongOrNull()
                             val sizeOk = survivorSnap != null && survivorLen != null && survivorLen == survivorSnap.first
                             val survivorOk = if (sizeOk) {
-                                val canHash = survivorSnap.first < 64L * 1024 * 1024
-                                if (canHash) {
-                                    val remotePartial = try {
-                                        webDavManager.getSha256PhoneStream(survivor.path)
+                                val expectedHash = fullHashes[survivor.path]
+                                if (expectedHash.isNullOrEmpty()) {
+                                    false
+                                } else {
+                                    val freshHash = try {
+                                        webDavManager.getFullSha256PhoneStream(survivor.path, survivorSnap.first)
                                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                     catch (_: Exception) { null }
-                                    // SHA-256 1MB dau cua survivor tren NAS phai
-                                    // khop ban snapshot local; khong khop/loi ->
-                                    // survivor da doi -> bo qua nhom.
-                                    remotePartial != null
-                                } else {
-                                    true // file lon: chi kiem size (nhu truoc)
+                                    // Hash hien tai phai KHOP hash da verify; null/
+                                    // khac -> survivor da doi/mat -> bo qua nhom.
+                                    freshHash != null && freshHash == expectedHash
                                 }
                             } else {
                                 false
