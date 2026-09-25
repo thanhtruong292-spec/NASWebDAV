@@ -372,9 +372,14 @@ class NasDocumentProvider : DocumentsProvider() {
 
             NasApplication.applicationScope.launch(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(authState)) {
                 try {
+                    // P2-3: gan Authorization TRUC TIEP tu credential snapshot.
+                    // Ban cu chi .tagCurrentAuth() (gan tag) nhung sharedHttpClient
+                    // KHONG co interceptor chuyen tag thanh header (chi
+                    // fastApiClient/optimizedClient co) -> NAS 401 khi mo file
+                    // bang ung dung khac. Dung authState.authHeader (UTF-8 Base64).
                     val request = okhttp3.Request.Builder()
                         .url(url)
-                        .let(WebDavManager::tagCurrentAuth)
+                        .header("Authorization", authState.authHeader)
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {

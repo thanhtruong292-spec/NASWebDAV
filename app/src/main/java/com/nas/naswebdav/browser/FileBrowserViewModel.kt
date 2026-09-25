@@ -14,6 +14,7 @@ import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.toApiBaseUrl
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.encodeWebDavSegment
+import com.nas.naswebdav.buildWebDavRestoreTargetUrl
 import com.nas.naswebdav.ThumbnailAuditData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -579,6 +580,20 @@ class FileBrowserViewModel(
                 launch(Dispatchers.IO) {
                     try {
                         repository.getRemoteFilesAndCache(currentUrl)
+                        // P2-7: refresh nen xong PHAl cap nhat fileList — ban cu chi
+                        // ghi Room, UI giu danh sach cu (file them/xoa tu may khac
+                        // khong hien). Generation guard + ton trong pendingDeletes.
+                        val fresh = repository.getCachedFiles(currentUrl)
+                        val activeDeletes = pendingDeletes.toSet()
+                        withContext(Dispatchers.Main) {
+                            if (gen == loadGeneration) {
+                                fileList = fresh.map {
+                                    NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+                                }
+                                    .filter { it.path !in activeDeletes }
+                                    .filter { !it.name.startsWith(".") || isSpecialMode }
+                            }
+                        }
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -858,15 +873,17 @@ class FileBrowserViewModel(
     }
 
     fun createFolder(context: Context, folderName: String) {
+        // P2-5: chup snapshot thu muc DANG DUYET (currentUrl) truoc khi launch —
+        // ban cu dung WebDavManager.currentBaseUrl (root) nen tao nham o root
+        // khi dang o thu muc con. Refresh sau thanh cong de hien thu muc moi.
+        val destDir = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val targetUrl = (context.applicationContext as NasApplication).let {
-                    val currentUrl = WebDavManager.currentBaseUrl
-                    val sep = if (currentUrl.endsWith("/")) "" else "/"
-                    val encodedName = encodeWebDavSegment(folderName)
-                    currentUrl + sep + encodedName + "/"
-                }
+                val sep = if (destDir.endsWith("/")) "" else "/"
+                val encodedName = encodeWebDavSegment(folderName)
+                val targetUrl = destDir + sep + encodedName + "/"
                 WebDavManager.createFolder(targetUrl)
+                refresh()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -882,7 +899,20 @@ class FileBrowserViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val trashMetaDao = NasApplication.instance.database.trashMetaDao()
             val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
-            val targetUrl = meta?.originalPath ?: file.path.removePrefix(".trash/")
+            // P2-6: thieu metadata -> dung ham restore chung (tach drive + ten,
+            // khong phai removePrefix). Neu dich trung nguon (URL tuyet doi,
+            // khong xac dinh duoc goc) -> BAO LOI ro, khong MOVE ve chinh no.
+            val targetUrl = meta?.originalPath
+                ?: buildWebDavRestoreTargetUrl(
+                    WebDavManager.currentBaseUrl, file.path, file.name, file.isDirectory)
+            if (targetUrl == file.path) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "FileBrowser",
+                    "Khôi phục thất bại (${file.path}): thiếu metadata gốc, không xác định được đích.")
+                withContext(Dispatchers.Main) {
+                    errorMessage = context.getString(R.string.browser_restore_failure, "thiếu thông tin gốc")
+                }
+                return@launch
+            }
             try {
                 WebDavManager.renameFile(file.path, targetUrl)
                 trashMetaDao.deleteByTrashPath(file.path)

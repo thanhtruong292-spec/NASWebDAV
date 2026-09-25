@@ -257,27 +257,20 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             // nguong 5 doc lap theo row (failCount); het budget worker ma queue
             // con PENDING -> enqueue continuation chain (moi execution vet tiep
             // 200, khong phu thuoc retry cap 3). Chi failure that khi loi nghiem
-            // trong (user cancel da return o tren).
-            // FIX-REVIEW-P1-#9: continuation chi khi BATCH SACH (allSuccess) va
-            // con queue. Neu batch co loi ma van con queue, GIU Result.retry()
-            // that su (backoff khong bi mat). Ban cu enqueue chain roi tra
-            // success() khi loi -> nuot backoff, loi tam thoi nhanh chong bi park.
+            // P2-4: thong nhat budget retry voi nguong park (5 loi/row).
+            // Ban cu: runAttemptCount>=3 -> failure (toi da 4 executions) trong
+            // khi batch co loi + con queue -> queue pending bi ket (khong tu chay
+            // tiep) du row chua du 5 loi de park. Quy tac moi:
+            // - Batch sach + het queue -> success.
+            // - Con queue -> enqueue continuation chain (chain vet tiep 200
+            //   row/execution, khong phu thuoc retry count) roi: batch sach thi
+            //   success, batch co loi thi retry (giu backoff cho loi tam thoi).
+            // - Batch co loi + het queue -> retry neu con budget, het -> failure.
             val localRemaining = try {
                 db.syncActionDao().countLocal(activeHost, user, activePort, activeRoot)
             } catch (_: Exception) { 0 }
-            val result = if (allSuccess) {
-                Result.success()
-            } else if (runAttemptCount >= 3) {
-                Result.failure()
-            } else {
-                Result.retry()
-            }
-
-            // FIX-REVIEW-24/09-#13: continuation dung countLocal DUNG scope
-            // (da tinh o localRemaining tren). Chi enqueue khi batch SACH
-            // (allSuccess); khi co loi, chain o tren da enqueue.
-            try {
-                if (localRemaining > 0 && allSuccess) {
+            if (localRemaining > 0) {
+                try {
                     SystemLogger.log("INFO", "OfflineSync",
                         "Queue còn $localRemaining action local ($skippedForeign foreign/legacy-park giữ lại) — enqueue continuation work")
                     val constraints = Constraints.Builder()
@@ -292,10 +285,21 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     WorkManager.getInstance(applicationContext).enqueueUniqueWork(
                         UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, continuationRequest
                     )
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                    SystemLogger.log("WARNING", "OfflineSync",
+                        "Enqueue continuation work thất bại: ${e.message}")
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                SystemLogger.log("WARNING", "OfflineSync",
-                    "Enqueue continuation work thất bại: ${e.message}")
+            }
+            val result = if (allSuccess) {
+                Result.success()
+            } else if (localRemaining > 0) {
+                // Con queue + chain da enqueue -> retry de backoff cho loi tam
+                // thoi; chain dam bao queue duoc vet tiep ke ca het budget.
+                Result.retry()
+            } else if (runAttemptCount >= 3) {
+                Result.failure()
+            } else {
+                Result.retry()
             }
             // R4-P1: row khác NAS/user bị bỏ qua (giữ lại, không xóa) — log để user
             // biết khi về đúng NAS chúng sẽ được xử lý.
