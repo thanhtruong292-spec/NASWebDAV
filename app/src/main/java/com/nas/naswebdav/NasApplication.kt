@@ -113,7 +113,8 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_13_14,
                 MIGRATION_14_15,
                 MIGRATION_15_16,
-                MIGRATION_16_17
+                MIGRATION_16_17,
+                MIGRATION_17_18 // P2-8: files_cache.accountKey
             )
             // FIX F1 CRITICAL: Không dùng fallbackToDestructiveMigration() nữa.
             // Migration v13→v14→v15 là no-op (cùng identityHash) — explicit migrations

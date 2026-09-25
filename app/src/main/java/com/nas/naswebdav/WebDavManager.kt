@@ -5,6 +5,7 @@ package com.nas.naswebdav
 import android.util.Xml
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.withContext
 
@@ -124,6 +125,22 @@ internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fi
     var targetUrl = "$normalizedBase/$encodedDriveName/$encodedName"
     if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
     return targetUrl
+}
+
+/**
+ * P2-8 (lop 2): dinh danh phien cho files_cache (user@host:port/root).
+ * Top-level de ca WebDavManager (object) va WebDavRepository (class) deu dung.
+ */
+internal fun currentAccountKey(): String {
+    val a = WebDavManager.currentAuthState()
+    if (a.baseUrl.isBlank()) return ""
+    val host = runCatching { java.net.URL(a.baseUrl).host ?: a.baseUrl }.getOrDefault(a.baseUrl)
+    val port = runCatching { java.net.URL(a.baseUrl).port.takeIf { it > 0 } ?: java.net.URL(a.baseUrl).defaultPort }.getOrDefault(-1)
+    val root = runCatching {
+        val p = java.net.URL(a.baseUrl).path.trimEnd('/')
+        if (p.isEmpty()) "/" else p
+    }.getOrDefault("/")
+    return "${a.user}@$host:$port$root"
 }
 
 object WebDavManager {
@@ -340,7 +357,22 @@ object WebDavManager {
 
         val safeUrl = if (url.isNotEmpty() && !url.endsWith("/")) "$url/" else url
 
+        // P2-8 (lop 1): doi phien (NAS/user khac) -> xoa cache file cu + reset
+        // QueryCache de phien sau khong thay ten/path cua phien truoc (lo metadata).
+        // Xoa async (khong block login); insert sau cua phien moi se nap lai.
+        val prev = authState
+        val identityChanged = prev.baseUrl.isNotEmpty() &&
+            (prev.baseUrl != safeUrl || prev.user != user)
         authState = AuthState(safeUrl, user, pass)
+        if (identityChanged) {
+            QueryCache.clear()
+            try {
+                val app = NasApplication.instance
+                NasApplication.applicationScope.launch(Dispatchers.IO) {
+                    runCatching { app.database.fileDao().clearAllFiles() }
+                }
+            } catch (_: Exception) {}
+        }
 
     }
 
@@ -1323,7 +1355,7 @@ class WebDavRepository(
 
     suspend fun getCachedFiles(url: String): List<CachedFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getFiles(url)
+        database.fileDao().getFiles(url, currentAccountKey())
 
     }
 
@@ -1331,11 +1363,12 @@ class WebDavRepository(
 
     fun getFilesStream(url: String): Flow<PagingData<NasFile>> {
 
+        val key = currentAccountKey()
         return Pager(
 
             config = PagingConfig(pageSize = 50, enablePlaceholders = false, prefetchDistance = 20, initialLoadSize = 150),
 
-            pagingSourceFactory = { database.fileDao().getFilesPaged(url) }
+            pagingSourceFactory = { database.fileDao().getFilesPaged(url, key) }
 
         ).flow.map { pagingData ->
 
@@ -1351,17 +1384,19 @@ class WebDavRepository(
 
         val remoteFiles = kotlinx.coroutines.withTimeout(120000L) { webDavManager.listFiles(url) }
 
+        // P2-8: ghi kem accountKey cua phien hien tai; xoa cu cung scope.
+        val key = currentAccountKey()
         kotlinx.coroutines.withTimeout(45000L) {
 
             database.withTransaction {
 
-                database.fileDao().deleteByParentPath(url)
+                database.fileDao().deleteByParentPath(url, key)
 
                 remoteFiles.chunked(500).forEach { batch ->
 
                     database.fileDao().insertFiles(batch.map {
 
-                        CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = url, contentLength = it.contentLength, lastModified = it.lastModified)
+                        CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = url, contentLength = it.contentLength, lastModified = it.lastModified, accountKey = key)
 
                     })
 
@@ -1391,7 +1426,7 @@ class WebDavRepository(
 
     suspend fun getLatestPhotos(): List<NasFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getLatestPhotos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().getLatestPhotos(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
@@ -1399,19 +1434,19 @@ class WebDavRepository(
 
     suspend fun getRecentVideos(): List<NasFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getRecentVideos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().getRecentVideos(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
 
 
     suspend fun searchGlobal(keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().searchFiles(keyword, currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
     // Tìm kiếm cache giới hạn trong root — thay full-table scan 25k rows.
     suspend fun searchCacheUnder(rootPrefix: String, keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().searchFilesUnder(rootPrefix, keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().searchFilesUnder(rootPrefix, keyword, currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
     @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")
@@ -1421,9 +1456,11 @@ class WebDavRepository(
 
     suspend fun saveDiscoveredFiles(files: List<NasFile>, parentUrl: String) = withContext(Dispatchers.IO) {
         if (files.isEmpty()) return@withContext
+        // P2-8: ghi kem accountKey phien hien tai.
+        val key = currentAccountKey()
         try {
             database.fileDao().insertFiles(files.map {
-                CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = parentUrl, contentLength = it.contentLength, lastModified = it.lastModified)
+                CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = parentUrl, contentLength = it.contentLength, lastModified = it.lastModified, accountKey = key)
             })
         } catch (_: Exception) {}
     }
@@ -1456,6 +1493,11 @@ object QueryCache {
     // Khi hai coroutine dong thoi thay cache miss -> deu goi loader() -> duplicate work.
     // ConcurrentHashMap chi an toan cho single operations, khong cho compound check-then-put.
     private val mutex = kotlinx.coroutines.sync.Mutex()
+
+    /** P2-8: xoa toan bo cache (goi khi doi phien dang nhap). */
+    fun clear() {
+        cache.clear()
+    }
 
     suspend fun <T> cached(key: String, loader: suspend () -> T): T {
 

@@ -309,7 +309,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                     CachedFile(
                                                         path = fullUrl, name = name, isDirectory = false,
                                                         contentType = "application/octet-stream", parentPath = parentUrl,
-                                                        contentLength = size, lastModified = mtime
+                                                        contentLength = size, lastModified = mtime,
+                                                        accountKey = currentAccountKey()
                                                     )
                                                 )
                                                 if (batchBuffer.size >= 2000) {
@@ -450,7 +451,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                             CachedFile(
                                                                 path = file.path, name = file.name, isDirectory = false,
                                                                 contentType = file.contentType, parentPath = folder,
-                                                                contentLength = file.contentLength, lastModified = file.lastModified
+                                                                contentLength = file.contentLength, lastModified = file.lastModified,
+                                                                accountKey = currentAccountKey()
                                                             )
                                                         )
                                                     }

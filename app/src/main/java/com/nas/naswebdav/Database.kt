@@ -22,23 +22,29 @@ data class CachedFile(
     val partialHash: String? = null, // Stage 2: Hash 1MB đầu tiên
     val fullHash: String? = null,    // Stage 3: SHA-256 toàn bộ
     val imageFingerprint: String? = null, // PHASE 5: pHash để tìm file mềm cực nhanh
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    // P2-8 (lop 2): dinh danh phien (user@host:port/root). Query doc loc theo
+    // key nay de phien sau khong doc du lieu phien truoc. Row cu (key rong)
+    // thuoc phien hien tai cho den khi connect() doi phien xoa sach.
+    val accountKey: String = "",
 )
 
 @Dao
 interface FileDao {
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
-    fun getFiles(path: String): List<CachedFile>
+    // P2-8: loc theo accountKey (phien hien tai). Row cu key rong van doc duoc
+    // trong phien hien tai (chua doi phien); doi phien -> connect() xoa sach.
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '') ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
+    fun getFiles(path: String, key: String = ""): List<CachedFile>
 
     // KIẾN TRÚC MỚI: Paging 3 cho hàng trăm ngàn tệp tin
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
-    fun getFilesPaged(path: String): androidx.paging.PagingSource<Int, CachedFile>
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '') ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
+    fun getFilesPaged(path: String, key: String = ""): androidx.paging.PagingSource<Int, CachedFile>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertFiles(files: List<CachedFile>): List<Long>
 
-    @Query("DELETE FROM files_cache WHERE parentPath = :path")
-    fun deleteByParentPath(path: String): Int
+    @Query("DELETE FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '')")
+    fun deleteByParentPath(path: String, key: String = ""): Int
 
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
@@ -56,31 +62,33 @@ interface FileDao {
 
     // TỐI ƯU SQL: Loại trừ thư mục .trash để ảnh/video đã xóa không xuất hiện
     @Query("""
-    SELECT * FROM files_cache 
-    WHERE isDirectory = 0 
-    AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%' 
-    AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic') 
+    SELECT * FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
+    AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
+    AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic')
     ORDER BY lastModified DESC LIMIT 100
 """)
-    fun getLatestPhotos(): List<CachedFile>
+    fun getLatestPhotos(key: String = ""): List<CachedFile>
 
     @Query("""
-    SELECT * FROM files_cache 
-    WHERE isDirectory = 0 
+    SELECT * FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
     AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
-    AND (name LIKE '%.mp4' OR name LIKE '%.mkv' OR name LIKE '%.mov' OR name LIKE '%.avi' OR name LIKE '%.mpg' OR name LIKE '%.mpeg' OR name LIKE '%.wmv' OR name LIKE '%.flv') 
+    AND (name LIKE '%.mp4' OR name LIKE '%.mkv' OR name LIKE '%.mov' OR name LIKE '%.avi' OR name LIKE '%.mpg' OR name LIKE '%.mpeg' OR name LIKE '%.wmv' OR name LIKE '%.flv')
     ORDER BY lastModified DESC LIMIT 100
 """)
-    fun getRecentVideos(): List<CachedFile>
+    fun getRecentVideos(key: String = ""): List<CachedFile>
 
     // TÍNH NĂNG TÌM KIẾM TOÀN CẦU (GLOBAL SEARCH)
-    @Query("SELECT * FROM files_cache WHERE name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
-    fun searchFiles(keyword: String): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    fun searchFiles(keyword: String, key: String = ""): List<CachedFile>
 
     // Tìm kiếm giới hạn trong một root path — thay thế pattern load
     // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
-    @Query("SELECT * FROM files_cache WHERE path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
-    fun searchFilesUnder(rootPrefix: String, keyword: String): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    fun searchFilesUnder(rootPrefix: String, keyword: String, key: String = ""): List<CachedFile>
 
     // DEAD QUERY (không còn caller): giữ để tương thích, không dùng cho flow mới.
     // Flow mới dùng searchFilesUnder() với LIMIT thay vì load full-table.
@@ -566,9 +574,16 @@ val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
     }
 }
 
+// P2-8 (lop 2): tach cache file theo phien dang nhap.
+val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.addColumnIfMissing("files_cache", "accountKey", "TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 17,
+    version = 18,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
