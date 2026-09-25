@@ -1158,9 +1158,14 @@ object WebDavManager {
         }
     }
 
+    // P1-4: MOVE mac dinh KHONG ghi de (Overwrite: F). Ban cu khong dat
+    // header -> server WebDAV ghi de am tham file dich cung ten. Tat ca caller
+    // (rename/move/restore/trash) deu khong muon ghi de am tham; dich ton tai
+    // -> 412 de caller giai quyet xung dot (doi ten duy nhat).
     suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -1219,9 +1224,11 @@ object WebDavManager {
         }
     }
 
+    // P1-4: COPY mac dinh KHONG ghi de (Overwrite: F). Ly do nhu renameFile.
     suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {

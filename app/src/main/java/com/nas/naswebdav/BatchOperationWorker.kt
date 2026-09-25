@@ -70,6 +70,20 @@ class BatchOperationWorker(
         return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
     }
 
+    // P1-4: ten dich duy nhat khi xung dot (them _timestamp truoc extension).
+    private fun uniqueBatchTargetUrl(safeDestUrl: String, fileName: String, isDirectory: Boolean): String {
+        val ts = System.currentTimeMillis()
+        val dot = fileName.lastIndexOf('.')
+        val unique = if (!isDirectory && dot > 0) {
+            fileName.substring(0, dot) + "_$ts" + fileName.substring(dot)
+        } else {
+            fileName + "_$ts"
+        }
+        var target = safeDestUrl + com.nas.naswebdav.encodeWebDavSegment(unique)
+        if (isDirectory && !target.endsWith("/")) target += "/"
+        return target
+    }
+
     private fun loadBatchFiles(): Pair<Array<String>, Array<String>> {
         val payloadFile = inputData.getString("payloadFile") ?: ""
         if (payloadFile.isNotEmpty()) {
@@ -211,7 +225,18 @@ class BatchOperationWorker(
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            webDavManager.copyFile(sourceUrl, targetUrl)
+                            // P1-4: COPY khong ghi de (Overwrite: F). Dich ton tai
+                            // (412) -> doi ten duy nhat + timestamp, giu ca hai.
+                            try {
+                                webDavManager.copyFile(sourceUrl, targetUrl)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) {
+                                if ((e.message ?: "").contains("412")) {
+                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
+                                    webDavManager.copyFile(sourceUrl, targetUrl)
+                                    android.util.Log.w(TAG, "COPY dich ton tai, doi ten: $fileName -> $targetUrl")
+                                } else throw e
+                            }
                             successCount++
                         }
                         "MOVE" -> {
@@ -219,7 +244,19 @@ class BatchOperationWorker(
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            webDavManager.renameFile(sourceUrl, targetUrl)
+                            // P1-4: MOVE khong ghi de. Dich ton tai (412) -> doi
+                            // ten duy nhat, giu ca hai (tru khi MOVE vao trash —
+                            // trash da co co che ten duy nhat rieng).
+                            try {
+                                webDavManager.renameFile(sourceUrl, targetUrl)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) {
+                                if ((e.message ?: "").contains("412") && !targetUrl.contains(trashFolderName)) {
+                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
+                                    webDavManager.renameFile(sourceUrl, targetUrl)
+                                    android.util.Log.w(TAG, "MOVE dich ton tai, doi ten: $fileName -> $targetUrl")
+                                } else throw e
+                            }
                             try {
                                 if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
                                     trashMetaDao.deleteByTrashPath(sourceUrl)
