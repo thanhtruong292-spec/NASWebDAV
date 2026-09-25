@@ -268,17 +268,38 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
-                            // aHash va cham duoc — chi skip khi cung hash + cung size
-                            // + remote HEAD con ton tai (doi NAS/thu muc van backup lai).
+                            // P2-1: aHash + size chi la UNG VIEN, khong du ket luan
+                            // "da backup". Ban cu skip khi HEAD thay file ton tai —
+                            // anh khac noi dung nhung cung aHash/size van bi skip.
+                            // Quy tac moi: ung vien phai la DUNG DICH backup cua
+                            // file nay (targetFileNasPath, ten on dinh __id) + HEAD
+                            // size khop + SHA-256 1MB dau remote khop local. Day la
+                            // nguong skip (khong xoa nguon) nen 1MB + dich dung la
+                            // du; quyet dinh XOA nguon van doi verifyBackupContent
+                            // toan noi dung (P1-1).
                             if (fileHash != null) {
                                 val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
                                 for (fp in candidates) {
-                                    if (fp.filePath.isEmpty()) continue
-                                    val remoteExists = try {
-                                        webDavManager.headFileHeaders(fp.filePath) != null
+                                    if (fp.filePath.isEmpty() || fp.filePath != targetFileNasPath) continue
+                                    val headers = try {
+                                        webDavManager.headFileHeaders(fp.filePath)
                                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { false }
-                                    if (remoteExists) { isSkipped = true; break }
+                                    catch (_: Exception) { null }
+                                    val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
+                                    if (headers == null || remoteLen != fileSize) continue
+                                    val remotePartial = try {
+                                        webDavManager.getSha256PhoneStream(fp.filePath)
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                    val localPartial = try {
+                                        applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                            com.nas.naswebdav.utils.HashUtils.computeSha256Partial(ins, 1048576L)
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                    if (remotePartial != null && localPartial != null && remotePartial == localPartial) {
+                                        isSkipped = true; break
+                                    }
                                 }
                             }
                             
@@ -302,6 +323,12 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             }
                             
                             val mimeType = try { applicationContext.contentResolver.getType(ContentUris.withAppendedId(mediaUri, id)) ?: "application/octet-stream" } catch (_: Exception) { "application/octet-stream" }
+                            // P2-2: khai bao som de nhanh 412 dung duoc.
+                            val isCompressedEarly = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
+                            // P2-2: dich verify/fingerprint theo ban that su duoc
+                            // dung (mac dinh = dich on dinh; doi sang versioned
+                            // khi phat hien nguon da sua).
+                            var effectiveTarget = targetFileNasPath
                             
                             // fileSize đã lấy từ cursor ở trên
                             var lastProgressTime = 0L
@@ -465,14 +492,76 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                                 webDavManager.uploadStreamWithProgress(tmpNasPath, input2, fileSize, mimeType, onUploadProgress, null)
                                             }
                                         }
-                                        // MOVE khong overwrite ve dich chinh. Dich da co
-                                        // (412) -> giu ban co san, bao loi ro, khong retry
-                                        // ghi de. Temp thua duoc don o finally duoi.
+                                        // MOVE khong overwrite ve dich chinh.
+                                        // P2-2: dich da co (412) co 2 nghia: (a) file
+                                        // khong doi — da backup dung, khong can upload;
+                                        // (b) file da sua — can phien ban moi. Phan biet
+                                        // bang verifyBackupContent: khop -> success
+                                        // (ghi fingerprint); khac -> upload phien ban
+                                        // moi (them __v<ts>), khong ghi de ban cu.
+                                        // Temp thua duoc don o finally duoi.
                                         try {
                                             webDavManager.moveFileNoOverwrite(tmpNasPath, targetFileNasPath)
                                         } catch (e: Exception) {
+                                            val isConflict = (e.message ?: "").contains("412")
+                                            if (!isConflict || isCompressedEarly) {
+                                                try { webDavManager.deleteFile(tmpNasPath, false) } catch (_: Exception) {}
+                                                throw e
+                                            }
+                                            val destMatches = try {
+                                                webDavManager.verifyBackupContent(targetFileNasPath, fileSize) {
+                                                    applicationContext.contentResolver.openInputStream(
+                                                        ContentUris.withAppendedId(mediaUri, id))
+                                                }
+                                            } catch (ce: kotlinx.coroutines.CancellationException) { throw ce }
+                                            catch (_: Exception) { false }
                                             try { webDavManager.deleteFile(tmpNasPath, false) } catch (_: Exception) {}
-                                            throw e
+                                            if (destMatches) {
+                                                SystemLogger.log("INFO", "AutoBackup",
+                                                    "Đích $fileName đã đúng nội dung — bỏ qua upload, không tạo bản trùng.")
+                                                break // coi nhu backup xong
+                                            }
+                                            // File da sua -> phien ban moi, khong de ban cu.
+                                            val dotIdx2 = stableRemoteName.lastIndexOf('.')
+                                            val ts = System.currentTimeMillis()
+                                            val versionedName = if (dotIdx2 > 0) {
+                                                stableRemoteName.substring(0, dotIdx2) + "__v" + ts + stableRemoteName.substring(dotIdx2)
+                                            } else {
+                                                stableRemoteName + "__v" + ts
+                                            }
+                                            var versionedPath = if (targetFolder.endsWith("/")) targetFolder + versionedName else "$targetFolder/$versionedName"
+                                            SystemLogger.log("INFO", "AutoBackup",
+                                                "Nguồn $fileName đã đổi so với bản backup — lưu phiên bản mới thay vì ghi đè.")
+                                            // Upload thang dich versioned (create-only, PUT
+                                            // thang dich moi; 412 cuc hiem -> doi ts).
+                                            var versionedOk = false
+                                            for (vAttempt in 1..2) {
+                                                try {
+                                                    val rawV = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
+                                                        ?: error("Không đọc được file $fileName")
+                                                    rawV.use { inv ->
+                                                        webDavManager.uploadStreamWithProgress(versionedPath, inv, fileSize, mimeType, { _, _ -> }, null)
+                                                    }
+                                                    versionedOk = true
+                                                    break
+                                                } catch (ve: Exception) {
+                                                    if ((ve.message ?: "").contains("412") && vAttempt < 2) {
+                                                        val ts2 = System.currentTimeMillis()
+                                                        val dot2 = versionedName.lastIndexOf('.')
+                                                        val altName = if (dot2 > 0) {
+                                                            versionedName.substring(0, dot2) + "_$ts2" + versionedName.substring(dot2)
+                                                        } else {
+                                                            versionedName + "_$ts2"
+                                                        }
+                                                        versionedPath = if (targetFolder.endsWith("/")) targetFolder + altName else "$targetFolder/$altName"
+                                                        kotlinx.coroutines.delay(5)
+                                                        continue
+                                                    } else throw ve
+                                                }
+                                            }
+                                            if (!versionedOk) throw IllegalStateException("Không lưu được phiên bản mới cho $fileName")
+                                            effectiveTarget = versionedPath
+                                            break // versioned xong -> qua buoc verify/fingerprint
                                         }
                                         break // upload thành công → thoát retry loop
                                     } catch (e: Exception) {
@@ -503,8 +592,11 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             //   quyet dinh), ghi log CANH BAO ro rang.
                             var uploadVerified = false
                             val isCompressed = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
+                            // P2-2: verify/fingerprint theo dich that su duoc dung
+                            // (effectiveTarget — versioned khi nguon da sua).
+                            val verifyTarget = effectiveTarget
                             if (isCompressed) {
-                                val headers = try { webDavManager.headFileHeaders(targetFileNasPath) } catch (_: Exception) { null }
+                                val headers = try { webDavManager.headFileHeaders(verifyTarget) } catch (_: Exception) { null }
                                 val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
                                 val remoteETag = headers?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
                                 if (remoteLen != null && remoteLen > 0 && remoteETag != null) {
@@ -517,7 +609,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                 uploadVerified = false // Bao gio cung giu nguon voi file nen.
                             } else {
                                 uploadVerified = try {
-                                    webDavManager.verifyBackupContent(targetFileNasPath, fileSize) {
+                                    webDavManager.verifyBackupContent(verifyTarget, fileSize) {
                                         applicationContext.contentResolver.openInputStream(fileUri)
                                     }
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -527,7 +619,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         "Noi dung/phien ban khong khop hoac khong du bang chung ($fileName) — giu nguon, khong xoa.")
                                 }
                             }
-                            if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
+                            if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = verifyTarget, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             if (!uploadVerified && !smbUploadOk) {
                                 SystemLogger.log("WARNING", "AutoBackup",
