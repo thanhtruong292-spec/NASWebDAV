@@ -5,6 +5,47 @@
 
 ---
 
+## [2026-09-25] Review độc lập P1 + R-hồi quy + P2 — sửa nhánh mất dữ liệu (main-fresh)
+
+Review độc lập đối chiếu SPEC_PRODUCTION.md phát hiện 8 P1 mất dữ liệu, 6 hồi quy/thiếu sót sau sửa, 9 P2 chức năng. Sửa theo đúng thứ tự báo cáo, mỗi mục commit riêng.
+
+### Đợt P1 — nhánh mất dữ liệu (8/8)
+- **P1-1** (`5e1c2c1`): `WebDavManager.verifyBackupContent()` mới — HEAD size + strong ETag → GET `If-Match` toàn nội dung → hash-stream so với nguồn → HEAD recheck ETag. `AutoBackupWorker` dùng thay logic 1MB/size+ETag cũ. File nén (gzip đổi byte) luôn giữ nguồn.
+- **P1-2** (`ecfb86d`): `getFullSha256PhoneStream` chỉ HTTP 200, đúng byte-count, từ chối 206; survivor dọn trùng so full-hash thật với hash đã verify (thay `!= null`).
+- **P1-3** (`3459082`): bỏ fallback DELETE vĩnh viễn khi MOVE trash fail ở `FileBrowserViewModel`, `BatchOperationWorker`, `SmartToolsViewModel` — giữ file + log.
+- **P1-4** (`a6f4a6f`): `renameFile`/`copyFile` mặc định `Overwrite: F`; batch COPY/MOVE xung đột 412 → tên duy nhất + timestamp.
+- **P1-5** (`cdbc244`): backend chỉ dọn file 0-byte khớp pattern tạm app + đủ tuổi; thư mục rỗng tạm/cũ; giữ file user (`.nomedia`, `empty.txt`...).
+- **P1-6** (`04c13f5`): trash retention dùng `max(mtime, ctime)` thay vì `mtime` (rename vào trash cập nhật ctime).
+- **P1-7** (`c3bacf9`): giữ phiên screen-record khi lỗi (timeout/finish-fail/failRecording), chỉ hủy khi user chủ động.
+- **P1-8** (`aea7298` + `d24e4e9`): SMB publish nguyên tử bằng `rename(..., false)`, giữ staged khi lỗi; `api_ytdlp_download` gọi `_find_ytdlp_bin()` + 503 rõ.
+
+### Đợt R — hồi quy + thiếu sót sau sửa (6/6)
+- **R1** (`4ba63d2`): `retainSpoolOnDestroy` — `onDestroy` không xóa spool khi giữ phiên lỗi; thêm `discardSession()` cho user chủ động bỏ.
+- **R2** (`9596065`): pattern temp chặt (suffix/prefix/delimited — `chapter.part1.txt` không còn khớp); thư mục chỉ xóa khi tên temp app-managed (bỏ nhánh "rỗng >24h").
+- **R3** (`c5cc886`): victim yêu cầu ETag strong + MOVE gửi `If-Match` + verify full-hash trash đích sau MOVE.
+- **R4** (`4065f11`): tách `deletePermanently()` khỏi `deleteFile()`; UI trong trash gọi đúng hàm (hết MOVE-về-chính-nó).
+- **R5** (`ec712b4`): tên trash chứa hash parent (`A/photo.jpg` ≠ `B/photo.jpg`); batch trash 412 → retry tên duy nhất + metadata đúng.
+- **R6** (`9596065`): `screen_record` block thumbnail có TTL 2h + heartbeat mỗi segment; app chết thì tự mở lại.
+
+### Đợt P2 — chức năng tồn đọng (9/9)
+- **P2-1+P2-2** (`312727f`): skip backup yêu cầu đúng đích `__id` + HEAD size + 1MB-hash khớp; 412 phân biệt không-đổi (success) / đã-sửa (phiên bản `__v<ts>` mới).
+- **P2-3→P2-7** (`6cbff82`): DocumentsProvider gắn `Authorization` trực tiếp; queue luôn continuation khi còn pending; `createFolder` đúng thư mục duyệt + refresh; restore thiếu metadata báo lỗi không MOVE; background refresh cập nhật `fileList`.
+- **P2-8** (`108b623` + `64b8641` + `11b8137`): `files_cache.accountKey` (DB v18) + scope toàn bộ query browser/search/photos/duplicate + xóa cache đổi phiên (drain đồng bộ, không coroutine lẻ gây flaky test).
+- **P2-9** (`986e1e8`): `api_unzip` ánh xạ relative WebDAV path + containment, giữ tương thích absolute.
+
+### Fix bảo mật kèm theo
+- `a8c7210` + `ec39df2`: `/api/search` thiếu `@requires_auth` (lộ cấu trúc file NAS cho LAN không auth) — bọc sau định nghĩa + patch `app.view_functions` (decorator trực tiếp gây `NameError` crash-loop, đã cứu). Verify live: no-auth → 401.
+- `ab5b770`: validate whitelist IP/CIDR khi load từ disk.
+
+### Verify
+- Backend pytest: 115 passed / 10 skipped. Android unit: DatabaseDao 3/3, BackupContent 8/8, FullContent 5/5, SMB 2/2 — 0 failure.
+- `compileDebugKotlin` + `assembleDebug` BUILD SUCCESSFUL (`app-debug.apk` ~38MB).
+- NAS deploy qua Tailscale (LAN vật lý 192.168.100.254 không thông): service `active`, 0 traceback.
+- Chưa nghiệm thu production-ready: cần cron 1–2 chu kỳ + test APK thực tế.
+- **Model**: agentgw-gpt-5.6-sol
+
+---
+
 ## [2026-09-23] Livestream / Log-Guard — đóng 4 lỗi P2 còn tồn tại sau 7fb3373
 
 ### backend/nas_api_server.py (deploy `/opt/nas_api_server.py`)
