@@ -362,6 +362,7 @@ def _file_indexer_watchdog():
         time.sleep(1800)
 
 @app.route('/api/search', methods=['GET'])
+@requires_auth
 def api_fast_search():
     query = request.args.get('q', '').strip()
     root_param = request.args.get('root', '').strip('/')
