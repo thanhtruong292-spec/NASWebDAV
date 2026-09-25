@@ -2858,7 +2858,14 @@ def _push_alert(alert_type, message, severity="INFO"):
 
 
 def _clean_trash(webdav_root, max_age_days=30):
-    """Xoá các file trong thư mục .trash/ quá N ngày. Không wake spin-up HDD không cần thiết."""
+    """Xoá các file trong thư mục .trash/ quá N ngày. Không wake spin-up HDD không cần thiết.
+
+    P1-6: moc thoi gian phai la LUC DUA VAO TRASH, khong phai mtime noi dung.
+    Ban cu dung mtime: os.rename() giu nguyen mtime -> anh sua tu thang truoc,
+    vua xoa hom nay, bi coi la "qua 30 ngay" ngay dot don sau. Quy tac moi:
+    dung max(mtime, ctime) — rename vao trash CAP NHAT ctime (= luc dua vao
+    trash). File cu trong trash tu truoc (chua tung rename lai) giu hanh vi cu.
+    """
     try:
         now = time.time()
         max_age_sec = max_age_days * 86400
@@ -2869,7 +2876,9 @@ def _clean_trash(webdav_root, max_age_days=30):
             for fname in os.listdir(trash_dir):
                 fpath = os.path.join(trash_dir, fname)
                 try:
-                    age = now - os.path.getmtime(fpath)
+                    st = os.stat(fpath)
+                    trashed_at = max(st.st_mtime, st.st_ctime)
+                    age = now - trashed_at
                     if age > max_age_sec:
                         if os.path.isdir(fpath):
                             shutil.rmtree(fpath, ignore_errors=True)
