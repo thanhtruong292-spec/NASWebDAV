@@ -643,7 +643,7 @@ class FileBrowserViewModel(
             var lastError: Exception? = null
 
             // 1. Thử chuyển file vào Thùng rác (.trash/) qua WebDAV MOVE
-            val trashUrl = file.path.toTrashUrl()
+            var trashUrl = file.path.toTrashUrl()
             if (trashUrl != null) {
                 try {
                     WebDavManager.renameFile(file.path, trashUrl)
@@ -656,13 +656,40 @@ class FileBrowserViewModel(
                         android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash", dbEx)
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    // P1-3: MOVE trash that bai -> GIU FILE + bao loi, KHONG
-                    // fallback DELETE vinh vien. File khong con trong trash nen
-                    // khong co TrashMeta; log ro de truy vet.
-                    android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, giu file: ${e.message}")
-                    com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
-                        "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e.message}")
-                    lastError = e
+                    // F8: dich trash trung ten (412 — xoa A/photo.jpg, tao lai,
+                    // xoa nua -> cung ten trash) -> doi ten duy nhat + timestamp
+                    // nhu batch, giu originalPath dung. Loi khac -> GIU FILE (P1-3).
+                    if ((e.message ?: "").contains("412")) {
+                        try {
+                            trashUrl = file.path.toTrashUrlUnique()
+                            if (trashUrl != null) {
+                                WebDavManager.renameFile(file.path, trashUrl)
+                                deletedSuccessfully = true
+                                try {
+                                    NasApplication.instance.database.trashMetaDao().insert(
+                                        com.nas.naswebdav.TrashMeta(trashPath = trashUrl, originalPath = file.path)
+                                    )
+                                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                                    android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash (unique)", dbEx)
+                                }
+                                android.util.Log.w("FileBrowser", "Trash dich ton tai, doi ten duy nhat: ${file.name}")
+                            } else {
+                                lastError = e
+                            }
+                        } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 } catch (e2: Exception) {
+                            android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash (unique) failed, giu file: ${e2.message}")
+                            com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
+                                "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e2.message}")
+                            lastError = e2
+                        }
+                    } else {
+                        // P1-3: MOVE trash that bai -> GIU FILE + bao loi, KHONG
+                        // fallback DELETE vinh vien.
+                        android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, giu file: ${e.message}")
+                        com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
+                            "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e.message}")
+                        lastError = e
+                    }
                 }
             }
 
@@ -768,6 +795,20 @@ class FileBrowserViewModel(
             }
             val safeName = uniqueName.replace('/', '_').take(200)
             "$normalizedBase/${encodeWebDavSegment(driveName)}/.trash/${encodeWebDavSegment(safeName)}"
+        }
+    }
+
+    // F8: ten trash duy nhat cho lan xoa LAP LAI cung duong dan (xoa -> tao lai
+    // -> xoa nua: cung parent hash -> trung ten). Them timestamp de phan biet.
+    private fun String.toTrashUrlUnique(): String? {
+        val base = toTrashUrl() ?: return null
+        val ts = System.currentTimeMillis()
+        val dot = base.lastIndexOf('.')
+        val slash = base.lastIndexOf('/')
+        return if (dot > slash) {
+            base.substring(0, dot) + "__" + ts + base.substring(dot)
+        } else {
+            base + "__" + ts
         }
     }
 
