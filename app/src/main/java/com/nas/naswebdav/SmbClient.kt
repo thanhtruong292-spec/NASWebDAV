@@ -124,11 +124,10 @@ object SmbManager {
         return uploadFileInternal(host, user, pass, share, remotePath, inputStream, totalSize, onProgress, true)
     }
 
-    // FIX-REVIEW-193369e-#5: doi ten tren SMB khong ghi de — dich da ton tai thi
-    // bao loi de caller giu ban co san.
-    // FIX-REVIEW-P1-#5: copy+delete khong nguyen tu -> neu loi giua chung, file
-    // tam (oldPath) bi de lai dang d? và chan retry sau. Bat buoc xoa oldPath
-    // khi that bai de khong de lai ban do.
+    // P1-8: publish NGUYEN TU bang rename khong ghi de — dich da ton tai thi
+    // bao loi de caller giu ban co san. Ban cu copy+delete: copy loi giua
+    // chung de lai dich do dang, ban tam lai bi xoa -> retry ket.
+    // SMBJ File.rename(target, replace=false) la rename nguyen tu phia server.
     suspend fun moveNoOverwrite(
         host: String,
         user: String,
@@ -145,34 +144,21 @@ object SmbManager {
         }
         return try {
             if (diskShare.fileExists(newPath)) return false
-            // SMBJ khong co rename nguyen tu khong-overwrite: copy + delete khi
-            // dich chua ton tai (da kiem tra o tren). Race hep van co the xay ra;
-            // caller phai verify noi dung/phien ban sau commit truoc khi xoa nguon.
             diskShare.openFile(
                 oldPath,
-                EnumSet.of(AccessMask.GENERIC_READ),
+                EnumSet.of(AccessMask.GENERIC_READ, AccessMask.DELETE),
                 null,
                 EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
                 SMB2CreateDisposition.FILE_OPEN,
                 null
             ).use { src ->
-                diskShare.openFile(
-                    newPath,
-                    EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.GENERIC_READ),
-                    null,
-                    EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
-                    SMB2CreateDisposition.FILE_CREATE,
-                    null
-                ).use { dst ->
-                    src.inputStream.copyTo(dst.outputStream)
-                }
+                // Rename nguyen tu, khong thay the dich da ton tai.
+                src.rename(newPath, false)
             }
-            diskShare.rm(oldPath)
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            // Xoa ban tam d? de retry sau khong bi ket o file do.
-            try { diskShare.rm(oldPath) } catch (_: Exception) {}
-            android.util.Log.w("SmbClient", "SMB move failed: ${e.message}")
+            // That bai -> GIU ban staged (khong rm) de retry sau; KHONG mo final.
+            android.util.Log.w("SmbClient", "SMB move failed (giu staged): ${e.message}")
             false
         }
     }
