@@ -96,65 +96,67 @@ interface FileDao {
     @Query("SELECT * FROM files_cache LIMIT 25000")
     fun getAllFilesForMap(): List<CachedFile>
 
-    // FIX FALSE POSITIVES & PHASE 8: Nhóm theo contentLength VÀ name riêng biệt (tránh collision chuỗi nối)
-    // PHASE 8: Loại bỏ thư mục và các file vụn vặt rác < 4KB (4096 bytes) để tăng tốc quét tối đa
-    // TỐI ƯU PHASE 15: Dùng CTE (Common Table Expression) thay vì subquery lồng
-    // SỬa LỖI: ETag trên NAS là unique/file, không phải content hash. Duy trì truy vấn theo contentLength để tìm nhóm ứng cử viên.
+    // P2-8 (lop 2, tiep): scope duplicate-scan theo phien. Row key rong van
+    // doc duoc trong phien hien tai; doi phien -> connect() xoa sach.
     @Query("""
     WITH duplicate_sizes AS (
-        SELECT contentLength FROM files_cache 
+        SELECT contentLength FROM files_cache
         WHERE isDirectory = 0 AND contentLength >= 4096
-        GROUP BY contentLength 
+        AND (accountKey = :key OR accountKey = '')
+        GROUP BY contentLength
         HAVING COUNT(*) > 1
     )
     SELECT f.* FROM files_cache f
     INNER JOIN duplicate_sizes ds ON f.contentLength = ds.contentLength
-    WHERE f.isDirectory = 0
+    WHERE f.isDirectory = 0 AND (f.accountKey = :key OR f.accountKey = '')
     ORDER BY f.contentLength DESC, f.name ASC
     LIMIT 1500
 """)
-    fun getDuplicateFiles(): List<CachedFile>
+    fun getDuplicateFiles(key: String = ""): List<CachedFile>
 
     // ĐẾM SỐ FILE TRÙNG LẶP (chỉ trả về Int, không load object vào RAM)
     @Query("""
-    SELECT COUNT(*) FROM files_cache 
-    WHERE isDirectory = 0 
+    SELECT COUNT(*) FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
     AND contentLength IN (
-        SELECT contentLength FROM files_cache 
+        SELECT contentLength FROM files_cache
         WHERE isDirectory = 0 AND contentLength >= 4096
-        GROUP BY contentLength 
+        AND (accountKey = :key OR accountKey = '')
+        GROUP BY contentLength
         HAVING COUNT(*) > 1
     )
     """)
-    fun countDuplicateFiles(): Int
+    fun countDuplicateFiles(key: String = ""): Int
 
     // LẤY DANH SÁCH CÁC KÍCH THƯỚC FILE BỊ TRÙNG (chỉ trả về Long, không load CachedFile)
     @Query("""
-    SELECT contentLength FROM files_cache 
+    SELECT contentLength FROM files_cache
     WHERE isDirectory = 0 AND contentLength >= 4096
-    GROUP BY contentLength 
+    AND (accountKey = :key OR accountKey = '')
+    GROUP BY contentLength
     HAVING COUNT(*) > 1
     ORDER BY contentLength DESC
     """)
-    fun getDuplicateSizes(): List<Long>
+    fun getDuplicateSizes(key: String = ""): List<Long>
 
     // LẤY FILES THEO TỪNG NHÓM SIZE (batch nhỏ, an toàn RAM)
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength = :size ORDER BY name ASC")
-    fun getFilesBySize(size: Long): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength = :size AND (accountKey = :key OR accountKey = '') ORDER BY name ASC")
+    fun getFilesBySize(size: Long, key: String = ""): List<CachedFile>
 
     // LẤY FILES THEO NHIỀU NHÓM SIZE MỘT LÚC (Tối ưu hóa cực độ tốc độ tải Bước 2)
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength IN (:sizes) ORDER BY name ASC")
-    fun getFilesBySizes(sizes: List<Long>): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength IN (:sizes) AND (accountKey = :key OR accountKey = '') ORDER BY name ASC")
+    fun getFilesBySizes(sizes: List<Long>, key: String = ""): List<CachedFile>
 
     // HASH STAGE 1: Tìm các file có cùng dung lượng byte (Cực nhanh)
     // TỐI ƯU PHASE 8: Loại bỏ file rác cỏn con < 4KB
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 1500")
-    fun getAllLargeFiles(): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 AND (accountKey = :key OR accountKey = '') LIMIT 1500")
+    fun getAllLargeFiles(key: String = ""): List<CachedFile>
 
-    // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM 
+    // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM
     // vì nếu có 500,000 file thì getAllLargeFiles() sẽ nổ tung bộ nhớ RAM (OutOfMemory) gây treo toàn bộ ứng dụng ở Bước 2.
-    fun getStage1Duplicates(): List<CachedFile> {
-        return getDuplicateFiles()
+    fun getStage1Duplicates(key: String = ""): List<CachedFile> {
+        return getDuplicateFiles(key)
     }
 
 

@@ -1433,7 +1433,7 @@ class WebDavRepository(
 
         QueryCache.cached("duplicates") {
 
-            database.fileDao().getDuplicateFiles().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.partialHash) }
+            database.fileDao().getDuplicateFiles(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.partialHash) }
 
         }
 

@@ -167,10 +167,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     }
                 } else throw Exception(applicationContext.getString(R.string.autodup_no_fastpath))
             }
-            val duplicateSizes = db.fileDao().getDuplicateSizes()
+            val duplicateSizes = db.fileDao().getDuplicateSizes(currentAccountKey())
             var movedCount = 0; var savedBytes = 0L; var totalDuplicatesFound = 0
             for (size in duplicateSizes) {
-                val group = db.fileDao().getFilesBySize(size)
+                val group = db.fileDao().getFilesBySize(size, currentAccountKey())
                 if (group.size < 2 || group.first().contentLength < 1024L) continue
                 // FIX-AUDIT-D3: khử alias endpoint — cùng file vật lý qua LAN và
                 // Tailscale là 2 row khác URL nhưng cùng canonical path. Giữ một
