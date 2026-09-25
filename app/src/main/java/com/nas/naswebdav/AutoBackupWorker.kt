@@ -268,19 +268,24 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
                             var isSkipped = false
-                            // P2-1: aHash + size chi la UNG VIEN, khong du ket luan
-                            // "da backup". Ban cu skip khi HEAD thay file ton tai —
-                            // anh khac noi dung nhung cung aHash/size van bi skip.
-                            // Quy tac moi: ung vien phai la DUNG DICH backup cua
-                            // file nay (targetFileNasPath, ten on dinh __id) + HEAD
-                            // size khop + SHA-256 1MB dau remote khop local. Day la
-                            // nguong skip (khong xoa nguon) nen 1MB + dich dung la
-                            // du; quyet dinh XOA nguon van doi verifyBackupContent
-                            // toan noi dung (P1-1).
+                            // F5: skip phai chung minh noi dung KHONG DOI, khong chi
+                            // 1MB dau. Ban cu: dich dung + size + 1MB khop la skip —
+                            // file doi phan cuoi van bi bo sot (khong luu ban moi).
+                            // Quy tac moi (2 vong, re dan dat):
+                            // vong 1 (re): dich dung + size khop + 1MB khop;
+                            // vong 2 (chot): full SHA-256 remote khop local.
+                            // Rot vong 2 -> khong skip -> upload lai, P2-2 phan
+                            // biet khong-doi/da-sua (verify dich -> versioned).
+                            // F6: ung vien la MOI fingerprint cung aHash+size (ke ca
+                            // ban versioned __v...), khong chi dich goc. Ban cu loc
+                            // fp.filePath == targetFileNasPath -> ban versioned bi
+                            // loai -> luot sau lai thay khac ban goc -> tao them
+                            // phien ban du nguon khong doi. Moi ung vien verify
+                            // full-hash voi nguon; khop bat ky ban nao -> skip.
                             if (fileHash != null) {
                                 val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
                                 for (fp in candidates) {
-                                    if (fp.filePath.isEmpty() || fp.filePath != targetFileNasPath) continue
+                                    if (fp.filePath.isEmpty()) continue
                                     val headers = try {
                                         webDavManager.headFileHeaders(fp.filePath)
                                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -297,7 +302,19 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         }
                                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                     catch (_: Exception) { null }
-                                    if (remotePartial != null && localPartial != null && remotePartial == localPartial) {
+                                    if (remotePartial == null || localPartial == null || remotePartial != localPartial) continue
+                                    // Vong 2: full-hash remote vs local.
+                                    val remoteFull = try {
+                                        webDavManager.getFullSha256PhoneStream(fp.filePath, fileSize)
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                    val localFull = try {
+                                        applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                            com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(ins)
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                    if (remoteFull != null && localFull != null && remoteFull == localFull) {
                                         isSkipped = true; break
                                     }
                                 }
@@ -532,15 +549,17 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             var versionedPath = if (targetFolder.endsWith("/")) targetFolder + versionedName else "$targetFolder/$versionedName"
                                             SystemLogger.log("INFO", "AutoBackup",
                                                 "Nguồn $fileName đã đổi so với bản backup — lưu phiên bản mới thay vì ghi đè.")
-                                            // Upload thang dich versioned (create-only, PUT
-                                            // thang dich moi; 412 cuc hiem -> doi ts).
+                                            // F4: upload versioned CREATE-ONLY (If-None-Match:
+                                            // *): dich da ton tai -> 412, khong ghi de.
+                                            // Ban cu PUT khong dieu kien -> co the de
+                                            // ban co san. 412 cuc hiem -> doi ts.
                                             var versionedOk = false
                                             for (vAttempt in 1..2) {
                                                 try {
                                                     val rawV = applicationContext.contentResolver.openInputStream(ContentUris.withAppendedId(mediaUri, id))
                                                         ?: error("Không đọc được file $fileName")
                                                     rawV.use { inv ->
-                                                        webDavManager.uploadStreamWithProgress(versionedPath, inv, fileSize, mimeType, { _, _ -> }, null)
+                                                        webDavManager.uploadStreamIfAbsent(versionedPath, inv, fileSize, mimeType, { _, _ -> })
                                                     }
                                                     versionedOk = true
                                                     break
