@@ -955,17 +955,121 @@ object WebDavManager {
     /**
      * Full-content SHA-256 on phone. Streams the entire file via WebDAV GET and hashes
      * locally — pushes work OFF the NAS CPU. Use only for files small enough to download.
+     *
+     * P1-2: nghiem ngat ve so byte va status. Ban cu chap nhan moi 2xx (ke ca
+     * 206 Partial) va khong dem byte -> noi dung thieu van cho ra hash "full".
+     * Quy tac moi: chi HTTP 200; so byte doc duoc phai DUNG totalSize
+     * (thieu/thua -> null); loi server -> null. Khong gui Range.
      */
     suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().withAuth(authState).url(url).build()
             optimizedClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
+                // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
+                if (response.code != 200) return@withContext null
                 val stream = response.body?.byteStream() ?: return@withContext null
-                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(it) }
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(65536)
+                var totalRead = 0L
+                stream.use {
+                    while (true) {
+                        val n = it.read(buffer)
+                        if (n == -1) break
+                        totalRead += n
+                        if (totalRead > totalSize) return@withContext null // thua byte
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                if (totalRead != totalSize) return@withContext null // thieu byte
+                digest.digest().joinToString("") { "%02x".format(it) }
                     .takeIf { it.isNotEmpty() }
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+    }
+
+    /**
+     * P1-1: xac minh TOAN BO noi dung backup truoc khi cho phep xoa nguon.
+     *
+     * Quy trinh (fail-closed, khong fallback metadata):
+     * 1) HEAD lay size + ETag. Size khac expectedSize -> false. ETag yeu
+     *    (W/...) hoac trong -> false (khong du bang chung phien ban).
+     * 2) GET toan bo voi `If-Match: <etag>` (conditional download, KHONG Range).
+     *    412/that bai -> false (phien ban da doi hoac khong doc duoc).
+     * 3) Stream so sanh byte-by-byte voi source (khong load het RAM).
+     *    Source null/throw (trừ Cancellation) -> false. So byte phai dung
+     *    expectedSize. CancellationException LUON propagate (khong bien thanh false).
+     * 4) HEAD lai sau download: ETag phai giu nguyen -> chong thay doi giua chung.
+     *
+     * @param sourceProvider mo InputStream cua file nguon moi lan goi. Co the
+     * tra null hoac throw khi khong doc duoc -> verify that bai (false).
+     * @return true chi khi toan bo noi dung khop + phien ban on dinh.
+     */
+    suspend fun verifyBackupContent(
+        url: String,
+        expectedSize: Long,
+        sourceProvider: () -> java.io.InputStream?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        // 1) HEAD: size + strong ETag.
+        val head1 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+            ?: return@withContext false
+        val remoteLen = head1["Content-Length"]?.toLongOrNull() ?: return@withContext false
+        if (remoteLen != expectedSize) return@withContext false
+        val etag = head1["ETag"]?.trim()?.takeIf { it.isNotEmpty() } ?: return@withContext false
+        if (etag.startsWith("W/")) return@withContext false // ETag yeu: khong du bang chung phien ban
+
+        // 2) GET conditional toan bo (khong Range): stream hash remote, dem byte.
+        // P1-1: hash streaming (khong nap het file vao RAM) de file lon khong OOM.
+        val request = Request.Builder().withAuth(authState).url(url)
+            .header("If-Match", etag)
+            .build()
+        val remoteDigest: String = try {
+            optimizedClient.newCall(request).execute().use { response ->
+                if (response.code != 200) return@withContext false // 412 = phien ban doi
+                val body = response.body ?: return@withContext false
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buf = ByteArray(65536)
+                var total = 0L
+                body.byteStream().use { ins ->
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n == -1) break
+                        total += n
+                        if (total > expectedSize) return@withContext false
+                        digest.update(buf, 0, n)
+                    }
+                }
+                if (total != expectedSize) return@withContext false
+                digest.digest().joinToString("") { "%02x".format(it) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return@withContext false }
+
+        // 3) Hash source (stream). Source null/throw -> false. Count phai dung.
+        // CancellationException LUON propagate (khong bien thanh false).
+        val sourceDigest: String = try {
+            val src = try { sourceProvider() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext false
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val buf = ByteArray(65536)
+            var total = 0L
+            src.use {
+                while (true) {
+                    val n = it.read(buf)
+                    if (n == -1) break
+                    total += n
+                    if (total > expectedSize) return@withContext false
+                    digest.update(buf, 0, n)
+                }
+            }
+            if (total != expectedSize) return@withContext false
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return@withContext false }
+        if (sourceDigest != remoteDigest) return@withContext false
+
+        // 4) HEAD lai: ETag phai giu nguyen sau download (chong thay doi giua chung).
+        val head2 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+            ?: return@withContext false
+        val etag2 = head2["ETag"]?.trim() ?: return@withContext false
+        etag2 == etag
     }
 
 

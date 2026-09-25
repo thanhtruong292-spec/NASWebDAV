@@ -492,59 +492,41 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                             // FIX-THUMB-DELEGATION: phone MUST NOT decode video/images for thumbnails.
                             // NAS daemon handles ALL thumbnail generation (idle 24/7 + 5-min rescan +
                             // on-demand /api/thumb). Phone only uploads the file and lets NAS pick it up.
-                            // FIX-REVIEW-P1-#6: verify NOI DUNG + PHIEN BAN that
-                            // truoc xoa nguon — fail-closed. Quy tac:
-                            // 1) HEAD phai tra size khop va ETag ton tai (ETag
-                            //    la bang chung ban vua MOVE len, khong phai ban
-                            //    cu cung size).
-                            // 2) File nho (<64MB, khong nen): bat buoc hash 1MB
-                            //    dau khop nguon; hash loi/null -> KHONG xoa.
-                            // 3) File lon (~64MB) hoac nen: khong hash duoc tren
-                            //    client -> chi duoc xoa khi size+ETag + ton tai
-                            //    (fallback co gioi han, ghi log CANH BAO).
-                            // KHONG bao gio coi hash loi/null la thanh cong.
+                            // P1-1: verify TOAN BO noi dung + phien ban truoc khi
+                            // xoa nguon — fail-closed, khong fallback metadata.
+                            // - File thuong: WebDavManager.verifyBackupContent
+                            //   (HEAD size+strong ETag -> GET If-Match -> stream
+                            //   hash-compare voi nguon -> HEAD recheck ETag).
+                            // - File NEN (gzip tren duong truyen): remote khac byte
+                            //   voi local nen KHONG the hash-compare; chi verify
+                            //   ton tai + ETag va KHONG xoa nguon (giu de user tu
+                            //   quyet dinh), ghi log CANH BAO ro rang.
                             var uploadVerified = false
-                            try {
-                                val headers = webDavManager.headFileHeaders(targetFileNasPath)
+                            val isCompressed = com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
+                            if (isCompressed) {
+                                val headers = try { webDavManager.headFileHeaders(targetFileNasPath) } catch (_: Exception) { null }
                                 val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
                                 val remoteETag = headers?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
-                                val sizeOk = if (headers != null && remoteLen != null) {
-                                    if (com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)) remoteLen > 0
-                                    else remoteLen == fileSize
-                                } else false
-                                // Dieu kien co so: size khop + ETag ton tai.
-                                val baseOk = sizeOk && remoteETag != null
-                                val canHash = fileSize < 64L * 1024 * 1024 && !com.nas.naswebdav.utils.HashUtils.shouldCompress(mimeType)
-                                if (baseOk && canHash) {
-                                    // File nho: bat buoc hash 1MB dau khop.
-                                    try {
-                                        val remotePartial = webDavManager.getSha256PhoneStream(targetFileNasPath)
-                                        val localPartial = applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
-                                            com.nas.naswebdav.utils.HashUtils.computeSha256Partial(ins, 1048576L)
-                                        }
-                                        if (remotePartial != null && localPartial != null && remotePartial == localPartial) {
-                                            uploadVerified = true
-                                        } else {
-                                            uploadVerified = false
-                                            SystemLogger.log("WARNING", "AutoBackup",
-                                                "Hash 1MB dau khong khop hoac loi ($fileName) — giu nguon, khong xoa.")
-                                        }
-                                    } catch (_: Exception) {
-                                        // Hash loi: fail-closed, giu nguon.
-                                        uploadVerified = false
-                                        SystemLogger.log("WARNING", "AutoBackup",
-                                            "Hash verify loi ($fileName) — giu nguon, khong xoa.")
-                                    }
-                                } else if (baseOk && !canHash) {
-                                    // File lon/nen: khong hash duoc -> fallback co
-                                    // gioi han (size+ETag+ton tai). Ghi canh bao.
-                                    uploadVerified = true
-                                    SystemLogger.log("INFO", "AutoBackup",
-                                        "Xac minh qua size+ETag (khong hash) file lon/nen ($fileName) — van xoa nguon.")
+                                if (remoteLen != null && remoteLen > 0 && remoteETag != null) {
+                                    SystemLogger.log("WARNING", "AutoBackup",
+                                        "File nen ($fileName) chi xac minh ton tai+ETag, KHONG du bang chung noi dung — giu nguon, khong xoa.")
                                 } else {
-                                    uploadVerified = false
+                                    SystemLogger.log("WARNING", "AutoBackup",
+                                        "File nen ($fileName) chua xac minh duoc — giu nguon, khong xoa.")
                                 }
-                            } catch (_: Exception) { uploadVerified = false }
+                                uploadVerified = false // Bao gio cung giu nguon voi file nen.
+                            } else {
+                                uploadVerified = try {
+                                    webDavManager.verifyBackupContent(targetFileNasPath, fileSize) {
+                                        applicationContext.contentResolver.openInputStream(fileUri)
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { false }
+                                if (!uploadVerified) {
+                                    SystemLogger.log("WARNING", "AutoBackup",
+                                        "Noi dung/phien ban khong khop hoac khong du bang chung ($fileName) — giu nguon, khong xoa.")
+                                }
+                            }
                             if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = targetFileNasPath, hash = fileHash, fileName = fileName, fileSize = fileSize))
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             if (!uploadVerified && !smbUploadOk) {
