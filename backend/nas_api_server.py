@@ -3048,11 +3048,33 @@ def _background_heavy_work_allowed():
         return False
 
 
-def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, max_seconds=15):
-    """Don dep tu dong file rong (0-byte), FLV hong cu va thư mục rong duoi root_dir.
-    B? qua cac thư mục h? thỏng: .trash, .nas_meta, .thumbnails, .git, .recycle.
+# P1-5: chi file TAM co nguon goc app ro moi duoc coi la rac 0-byte.
+# File 0-byte cua user (empty.txt chu y, file danh dau, .nomedia...) KHONG
+# phai rac — size 0 khong du ket luan. Pattern: upload tam (__upload*),
+# restore staging (.restore-tmp.*), segment tam, download dang do (.part,
+# .crdownload, .tmp), file lock/pid. File ngoai pattern -> GIU.
+_TEMP_ZERO_BYTE_PATTERNS = (
+    "__upload", ".restore-tmp.", ".part", ".crdownload", ".tmp",
+    ".segment", ".chunk", ".lock", ".pid", ".download",
+)
 
-    Tr? v? tuple (so file rong da xoa, so thư mục da xoa, so FLV hong da xoa).
+def _is_app_temp_zero_byte(fname):
+    lower = (fname or "").lower()
+    return any(p in lower for p in _TEMP_ZERO_BYTE_PATTERNS)
+
+def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, max_seconds=15, min_age_seconds=3600):
+    """Don dep file TAM 0-byte co nguon goc ro + FLV hong cu + thu muc rong.
+    B? qua cac thu muc h? thong: .trash, .nas_meta, .thumbnails, .git, .recycle.
+
+    P1-5: ban cu xoa MOI file 0-byte khong-dotfile (ke ca file cua user nhu
+    empty.txt, file danh dau) va moi thu muc rong (ke ca thu muc user vua tao
+    chua copy file vao). Quy tac moi:
+    - File 0-byte: chi xoa khi ten khop pattern tam app VA tuoi >= min_age
+      (mac dinh 1h, tranh dua voi upload dang chay).
+    - Thu muc rong: chi xoa khi ten khop pattern tam HOAC tuoi >= 24h (thu muc
+      user moi tao chua kip dung khong bi xoa).
+
+    Tr? v? tuple (so file rong da xoa, so thu muc da xoa, so FLV hong da xoa).
     """
     if exclude_dirs is None:
         exclude_dirs = {".trash", ".nas_meta", ".thumbnails", ".git", ".recycle", "@eaDir"}
@@ -3062,21 +3084,22 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, 
     deleted_dirs = 0
     deleted_broken_flv = 0
     scanned = 0
-    deadline = time.time() + max_seconds
-    # Walk bottom-up de xoá thư mục tu trong ra ngoai
+    now = time.time()
+    deadline = now + max_seconds
+    # Walk bottom-up de xoá thu muc tu trong ra ngoai
     for dirpath, dirnames, filenames in os.walk(root_dir, topdown=False):
         if scanned >= max_entries or time.time() >= deadline or not _background_heavy_work_allowed():
             break
         scanned += len(filenames) + 1
-        # B? qua cac thư mục system
+        # B? qua cac thu muc system
         rel = os.path.relpath(dirpath, root_dir)
         parts = rel.split(os.sep)
         if any(p in exclude_dirs for p in parts):
             continue
-        # 1) Xo? file 0-byte
+        # 1) Xo? file 0-byte TAM (co pattern + du tuoi)
         for fname in filenames:
             if fname.startswith("."):
-                continue  # b? qua dotfile (.DS_Store, .gitkeep, etc.)
+                continue  # b? qua dotfile (.DS_Store, .gitkeep, .nomedia, etc.)
             fpath = os.path.join(dirpath, fname)
             try:
                 if not os.path.isfile(fpath):
@@ -3084,20 +3107,35 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, 
                 lower_name = fname.lower()
                 is_broken_flv = lower_name.endswith(".broken.flv") or ".flv.broken" in lower_name
                 if is_broken_flv:
-                    os.remove(fpath)
-                    deleted_broken_flv += 1
-                elif os.path.getsize(fpath) == 0:
-                    os.remove(fpath)
-                    deleted_files += 1
+                    # FLV hong: chi xoa khi cu (>= 24h) de tranh dua voi recorder.
+                    try:
+                        if now - os.path.getmtime(fpath) >= 86400:
+                            os.remove(fpath)
+                            deleted_broken_flv += 1
+                    except (FileNotFoundError, PermissionError, OSError):
+                        pass
+                elif os.path.getsize(fpath) == 0 and _is_app_temp_zero_byte(fname):
+                    try:
+                        if now - os.path.getmtime(fpath) >= min_age_seconds:
+                            os.remove(fpath)
+                            deleted_files += 1
+                    except (FileNotFoundError, PermissionError, OSError):
+                        pass
             except Exception:
                 pass
-        # 2) Xo? thư mục rong (sau khi xoá file ben trong o vong tren)
+        # 2) Xo? thu muc rong TAM hoac CU (sau khi xoa file ben trong o vong tren)
         try:
             if dirpath == root_dir:
                 continue  # không xoá root
             if not os.listdir(dirpath):
-                os.rmdir(dirpath)
-                deleted_dirs += 1
+                dname = os.path.basename(dirpath)
+                try:
+                    dir_age = now - os.path.getmtime(dirpath)
+                except (FileNotFoundError, PermissionError, OSError):
+                    continue
+                if _is_app_temp_zero_byte(dname) or dir_age >= 86400:
+                    os.rmdir(dirpath)
+                    deleted_dirs += 1
         except Exception:
             pass
     return (deleted_files, deleted_dirs, deleted_broken_flv)
@@ -11133,7 +11171,11 @@ def _generate_image_thumb(src_path, dst_path):
         return False
 
 def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
-    """Remove settled 0-byte files from NAS roots without racing active uploads."""
+    """Remove settled 0-byte TEMP files from NAS roots without racing active uploads.
+
+    P1-5: ban cu xoa MOI file 0-byte (ke ca file user co y de trong). Quy tac
+    moi: chi xoa file khop pattern tam app (_is_app_temp_zero_byte) VA du tuoi.
+    """
     excluded = {THUMB_DIR_NAME, ".thumbs", ".thumbnails", ".trash", ".nas_meta", ".git", ".recycle", "@eaDir", "#recycle"}
     deadline = time.time() + max_seconds
     removed = 0
@@ -11158,7 +11200,7 @@ def _scrub_stale_zero_byte_files(roots, max_seconds=10, min_age_seconds=600):
                     path = os.path.join(dirpath, fname)
                     try:
                         stat = os.stat(path)
-                        if stat.st_size == 0 and time.time() - stat.st_mtime >= min_age_seconds:
+                        if stat.st_size == 0 and _is_app_temp_zero_byte(fname) and time.time() - stat.st_mtime >= min_age_seconds:
                             os.remove(path)
                             removed += 1
                     except (FileNotFoundError, PermissionError, OSError):
