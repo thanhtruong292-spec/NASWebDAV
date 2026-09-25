@@ -3059,17 +3059,49 @@ def _background_heavy_work_allowed():
 
 # P1-5: chi file TAM co nguon goc app ro moi duoc coi la rac 0-byte.
 # File 0-byte cua user (empty.txt chu y, file danh dau, .nomedia...) KHONG
-# phai rac — size 0 khong du ket luan. Pattern: upload tam (__upload*),
-# restore staging (.restore-tmp.*), segment tam, download dang do (.part,
-# .crdownload, .tmp), file lock/pid. File ngoai pattern -> GIU.
-_TEMP_ZERO_BYTE_PATTERNS = (
-    "__upload", ".restore-tmp.", ".part", ".crdownload", ".tmp",
-    ".segment", ".chunk", ".lock", ".pid", ".download",
+# phai rac — size 0 khong du ket luan.
+# R2: pattern CHAT (suffix/prefix voi delimiter), KHONG substring giua ten.
+# ".part" dang substring khop "chapter.part1.txt" cua user -> sai. Quy tac:
+# file tam app luon co dang: tien to/hau to tach biet (vd "__upload123",
+# "file.part", "file.tmp", "seg.chunk001", "x.restore-tmp.<tag>").
+_TEMP_ZERO_BYTE_SUFFIXES = (
+    ".part", ".crdownload", ".tmp", ".temp", ".segment", ".chunk",
+    ".download", ".lock", ".pid", ".broken.flv",
+)
+_TEMP_ZERO_BYTE_PREFIXES = (
+    "__upload", "tmp_", "temp_",
+)
+_TEMP_ZERO_BYTE_CONTAINS = (
+    ".restore-tmp.",  # staging restore co tx_tag giua ten
 )
 
 def _is_app_temp_zero_byte(fname):
+    """True chi khi ten file khop CHAT pattern tam app (suffix/prefix/delimited)."""
     lower = (fname or "").lower()
-    return any(p in lower for p in _TEMP_ZERO_BYTE_PATTERNS)
+    if not lower or lower.startswith("."):
+        return False
+    for suffix in _TEMP_ZERO_BYTE_SUFFIXES:
+        if lower.endswith(suffix):
+            stem = lower[: -len(suffix)] if len(suffix) < len(lower) else ""
+            # Chan "chapter.part1.txt" (suffix that la .txt) va ten rong.
+            if stem:
+                return True
+    for prefix in _TEMP_ZERO_BYTE_PREFIXES:
+        if lower.startswith(prefix):
+            return True
+    for infix in _TEMP_ZERO_BYTE_CONTAINS:
+        if infix in lower:
+            return True
+    return False
+
+def _is_app_temp_dirname(dname):
+    """Thu muc tam app: ten chat temp hoac nam trong vung temp app quan ly."""
+    lower = (dname or "").lower()
+    if not lower or lower.startswith("."):
+        return False
+    if lower in ("tmp", "temp", "cache", "staging", "upload_tmp", "segments_tmp"):
+        return True
+    return _is_app_temp_zero_byte(dname)
 
 def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, max_seconds=15, min_age_seconds=3600):
     """Don dep file TAM 0-byte co nguon goc ro + FLV hong cu + thu muc rong.
@@ -3132,19 +3164,21 @@ def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, 
                         pass
             except Exception:
                 pass
-        # 2) Xo? thu muc rong TAM hoac CU (sau khi xoa file ben trong o vong tren)
+        # 2) R2: chi xoa thu muc rong do APP quan ly (ten temp chat). Bo nhanh
+        # "rong >24h" — thu muc rong cua user (vua tao chua copy file vao, thu
+        # muc giu cau truc) khong phai rac. Thu muc tam that su co ten temp.
         try:
             if dirpath == root_dir:
                 continue  # không xoá root
             if not os.listdir(dirpath):
                 dname = os.path.basename(dirpath)
-                try:
-                    dir_age = now - os.path.getmtime(dirpath)
-                except (FileNotFoundError, PermissionError, OSError):
-                    continue
-                if _is_app_temp_zero_byte(dname) or dir_age >= 86400:
-                    os.rmdir(dirpath)
-                    deleted_dirs += 1
+                if _is_app_temp_dirname(dname):
+                    try:
+                        if now - os.path.getmtime(dirpath) >= min_age_seconds:
+                            os.rmdir(dirpath)
+                            deleted_dirs += 1
+                    except (FileNotFoundError, PermissionError, OSError):
+                        pass
         except Exception:
             pass
     return (deleted_files, deleted_dirs, deleted_broken_flv)
@@ -9930,7 +9964,10 @@ def api_screen_record_start():
                 "final_mp4": None,
             }
             _write_screen_manifest(session_dir, manifest)
-        _set_thumbnail_auto_block("screen_record", True)
+        # R6: block thumbnail co TTL (2h) thay vi vo han. Phien quay gui segment
+        # moi vai giay -> heartbeat refresh TTL o endpoint segment. Neu app chet
+        # / service loi khong finish/cancel, block tu het han thay vi ket vo han.
+        _set_thumbnail_auto_block("screen_record", True, ttl_seconds=7200)
         return jsonify({"ok": True, "session_id": sid, "path": "ScreenRecord/%s" % sid})
     except Exception as e:
         log.warning("[ScreenRecord] start lỗi: %s", e)
@@ -9997,6 +10034,8 @@ def api_screen_record_segment():
         manifest["total_segments"] = max(int(manifest.get("total_segments") or 0), idx + 1)
         manifest["status"] = "recording"
         _write_screen_manifest(session_dir, manifest)
+        # R6: heartbeat — phien van quay thi refresh TTL block thumbnail.
+        _set_thumbnail_auto_block("screen_record", True, ttl_seconds=7200)
     return jsonify({"ok": True, "session_id": sid, "index": idx, "bytes": written})
 
 
