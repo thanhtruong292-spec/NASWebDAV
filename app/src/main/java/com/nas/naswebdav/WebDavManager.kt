@@ -165,6 +165,23 @@ object WebDavManager {
     @Volatile
     private var authState = AuthState()
 
+    // P2-8: flag xoa cache khi doi phien. Duoc drain dong bo o dau moi lan
+    // doc/ghi files_cache (da o IO context) — khong launch coroutine le.
+    private val pendingCacheClear = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Drain flag doi-phien: xoa sach files_cache neu phien da doi. Goi o dau moi DB access (IO). */
+    internal fun drainPendingCacheClear() {
+        if (pendingCacheClear.compareAndSet(true, false)) {
+            try {
+                NasApplication.instance.database.fileDao().clearAllFiles()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) {
+                // Xoa that bai -> dat lai flag de lan sau thu lai (khong de lo).
+                pendingCacheClear.set(true)
+            }
+        }
+    }
+
     val currentBaseUrl: String
         get() = authState.baseUrl
 
@@ -366,12 +383,10 @@ object WebDavManager {
         authState = AuthState(safeUrl, user, pass)
         if (identityChanged) {
             QueryCache.clear()
-            try {
-                val app = NasApplication.instance
-                NasApplication.applicationScope.launch(Dispatchers.IO) {
-                    runCatching { app.database.fileDao().clearAllFiles() }
-                }
-            } catch (_: Exception) {}
+            // P2-8: danh dau dirty thay vi launch coroutine xoa DB (coroutine le
+            // gay race voi Robolectric SQLite trong unit test + kho kiem soat
+            // thread). Lan doc/ghi DB tiep theo (da o IO) se xoa dong bo truoc.
+            pendingCacheClear.set(true)
         }
 
     }
@@ -1355,6 +1370,7 @@ class WebDavRepository(
 
     suspend fun getCachedFiles(url: String): List<CachedFile> = withContext(Dispatchers.IO) {
 
+        WebDavManager.drainPendingCacheClear()
         database.fileDao().getFiles(url, currentAccountKey())
 
     }
@@ -1390,6 +1406,7 @@ class WebDavRepository(
 
             database.withTransaction {
 
+                WebDavManager.drainPendingCacheClear()
                 database.fileDao().deleteByParentPath(url, key)
 
                 remoteFiles.chunked(500).forEach { batch ->
