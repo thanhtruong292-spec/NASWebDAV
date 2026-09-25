@@ -246,10 +246,14 @@ class BatchOperationWorker(
                                 } catch (moveEx: kotlinx.coroutines.CancellationException) {
                                     throw moveEx
                                 } catch (moveEx: Exception) {
-                                    webDavManager.deleteFile(sourceUrl, isDirectory)
-                                    try {
-                                        trashMetaDao.deleteByTrashPath(sourceUrl)
-                                    } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (_: Exception) {}
+                                    // P1-3: MOVE trash that bai -> GIU FILE + bao loi,
+                                    // KHONG fallback DELETE vinh vien. Loi quyen
+                                    // thu muc dich hoac su co trash ma tu xoa vinh
+                                    // vien thi mat du lieu khong khoi phuc duoc.
+                                    android.util.Log.w(TAG, "MOVE to .trash failed for $fileName, giu file: ${moveEx.message}")
+                                    com.nas.naswebdav.utils.SystemLogger.log("WARNING", "BatchOperation",
+                                        "Khong chuyen duoc vao trash (giu file): $sourceUrl — ${moveEx.message}")
+                                    throw moveEx
                                 }
                             } else {
                                 webDavManager.deleteFile(sourceUrl, isDirectory)

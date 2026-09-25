@@ -641,19 +641,21 @@ class FileBrowserViewModel(
                         android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash", dbEx)
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, falling back to DELETE: ${e.message}")
-                    // FIX-AUDIT-#3: MOVE trash that bai -> DELETE vinh vien. Day la
-                    // hanh vi user yeu cau (da bam xoa), nhung phai ghi log CANH BAO
-                    // ro de truy vet (truoc day chi Log.w client-side, khong vao
-                    // System Logs). TrashMeta khong co vi file khong con trong trash.
+                    // P1-3: MOVE trash that bai -> GIU FILE + bao loi, KHONG
+                    // fallback DELETE vinh vien. File khong con trong trash nen
+                    // khong co TrashMeta; log ro de truy vet.
+                    android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, giu file: ${e.message}")
                     com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
-                        "MOVE trash that bai (${file.path}), DELETE vinh vien: ${e.message}")
+                        "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e.message}")
                     lastError = e
                 }
             }
 
-            // 2. Nếu MOVE thất bại hoặc không có trashUrl, thực hiện WebDAV DELETE trực tiếp
-            if (!deletedSuccessfully) {
+            // P1-3: KHONG con fallback DELETE vinh vien khi MOVE trash that bai.
+            // Chi DELETE truc tiep khi KHONG tinh duoc trashUrl (drive goc,
+            // khong co vi tri trash hop le) — day la truong hop cau truc,
+            // khong phai loi runtime, va da bao loi ro cho user.
+            if (!deletedSuccessfully && trashUrl == null) {
                 try {
                     WebDavManager.deleteFile(file.path, file.isDirectory)
                     deletedSuccessfully = true
