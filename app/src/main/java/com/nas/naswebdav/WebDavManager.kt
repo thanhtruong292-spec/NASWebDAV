@@ -1012,8 +1012,33 @@ object WebDavManager {
      * Quy tac moi: chi HTTP 200; so byte doc duoc phai DUNG totalSize
      * (thieu/thua -> null); loi server -> null. Khong gui Range.
      */
+    // P1-2: GET truc tiep + siet byte/status (khong precondition). Dung cho
+    // verify sau MOVE (da co If-Match o buoc MOVE) va test. Ban co precondition
+    // ETag day du la getFullSha256WithEtag ben duoi.
     suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
-        getFullSha256WithEtag(url, totalSize)?.first
+        try {
+            val request = Request.Builder().withAuth(authState).url(url).build()
+            optimizedClient.newCall(request).execute().use { response ->
+                // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
+                if (response.code != 200) return@withContext null
+                val stream = response.body?.byteStream() ?: return@withContext null
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(65536)
+                var totalRead = 0L
+                stream.use {
+                    while (true) {
+                        val n = it.read(buffer)
+                        if (n == -1) break
+                        totalRead += n
+                        if (totalRead > totalSize) return@withContext null // thua byte
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                if (totalRead != totalSize) return@withContext null // thieu byte
+                digest.digest().joinToString("") { "%02x".format(it) }
+                    .takeIf { it.isNotEmpty() }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
 
     /**

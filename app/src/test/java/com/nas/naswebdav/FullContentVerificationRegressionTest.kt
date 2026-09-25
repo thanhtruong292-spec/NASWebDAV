@@ -76,4 +76,55 @@ class FullContentVerificationRegressionTest {
             assertNull(WebDavManager.getFullSha256PhoneStream(server.url("/dav/a").toString(), 11))
         }
     }
+
+    // F3: hash gan ETag — HEAD truoc (size+ETag) -> GET If-Match -> HEAD recheck.
+    @Test
+    fun `etag-bound hash returns hash with matching etag`() = runTest {
+        val bytes = "versioned content".toByteArray()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200)
+                .addHeader("Content-Length", bytes.size).addHeader("ETag", "\"v9\""))
+            server.enqueue(MockResponse().setResponseCode(200).addHeader("ETag", "\"v9\"")
+                .setBody(Buffer().write(bytes)))
+            server.enqueue(MockResponse().setResponseCode(200)
+                .addHeader("Content-Length", bytes.size).addHeader("ETag", "\"v9\""))
+            server.start()
+            WebDavManager.connect(server.url("/dav/").toString(), "u", "p")
+            val result = WebDavManager.getFullSha256WithEtag(server.url("/dav/a").toString(), bytes.size.toLong())
+            assertEquals("\"v9\"", result?.second)
+            val expected = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            assertEquals(expected, result?.first)
+            val requests = List(server.requestCount) { server.takeRequest() }
+            assertEquals(listOf("HEAD", "GET", "HEAD"), requests.map { it.method })
+            assertEquals("\"v9\"", requests[1].getHeader("If-Match"))
+        }
+    }
+
+    @Test
+    fun `etag-bound hash rejects changed version after download`() = runTest {
+        val bytes = "versioned content".toByteArray()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200)
+                .addHeader("Content-Length", bytes.size).addHeader("ETag", "\"v9\""))
+            server.enqueue(MockResponse().setResponseCode(200).addHeader("ETag", "\"v9\"")
+                .setBody(Buffer().write(bytes)))
+            server.enqueue(MockResponse().setResponseCode(200)
+                .addHeader("Content-Length", bytes.size).addHeader("ETag", "\"v10\""))
+            server.start()
+            WebDavManager.connect(server.url("/dav/").toString(), "u", "p")
+            assertNull(WebDavManager.getFullSha256WithEtag(server.url("/dav/a").toString(), bytes.size.toLong()))
+        }
+    }
+
+    @Test
+    fun `etag-bound hash rejects weak etag`() = runTest {
+        val bytes = "bytes".toByteArray()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(200)
+                .addHeader("Content-Length", bytes.size).addHeader("ETag", "W/\"v9\""))
+            server.start()
+            WebDavManager.connect(server.url("/dav/").toString(), "u", "p")
+            assertNull(WebDavManager.getFullSha256WithEtag(server.url("/dav/a").toString(), bytes.size.toLong()))
+        }
+    }
 }
