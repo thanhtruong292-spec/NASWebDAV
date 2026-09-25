@@ -68,9 +68,10 @@ class ScreenRecordService : Service() {
     private lateinit var apiBase: String
     private lateinit var authHeader: String
     private lateinit var spoolDir: File
-    // R1: true = GIU spool + phien khi destroy (finish loi/timeout) de lan sau
-    // thu lai; chi false khi finish thanh cong hoac user chu dong bo (discard).
-    private val retainSpoolOnDestroy = AtomicBoolean(false)
+    // F1: mac dinh GIU spool — chi xoa khi finish OK hoac user chu dong bo
+    // (discardSession). Ban cu dung retain flag (default false) nen moi nhanh
+    // loi quen set flag (failRecording, catch ngoai stopRecording) deu mat spool.
+    private val spoolDeleteAllowed = AtomicBoolean(false)
     private var segmentIndex = 0
     private var currentSegmentFile: File? = null
     private var startedAtMs = 0L
@@ -528,9 +529,7 @@ class ScreenRecordService : Service() {
                     // xoa local ngay sau upload; cancel se xoa ca thu muc segment
                     // tren NAS -> mat du lieu. Giu phien + marker local de lan
                     // sau thu lai / ghep thu cong; chi huy khi user chu dong bo.
-                    // R1: set flag de onDestroy KHONG xoa spool (return@launch van
-                    // chay finally -> stopSelf -> onDestroy).
-                    retainSpoolOnDestroy.set(true)
+                    // F1: mac dinh giu spool (khong can set flag).
                     logWarn("Còn segment chưa upload sau 30 giây — GIỮ phiên $sessionId, marker và spool local để thử lại, không hủy dữ liệu đã upload.")
                     return@launch
                 }
@@ -538,16 +537,15 @@ class ScreenRecordService : Service() {
                     if (!finishNasSession()) {
                         // P1-7: finish that bai -> GIU phien, khong cancel (cancel
                         // xoa segment da upload trong khi local da xoa).
-                        // R1: giu ca spool nhu tren.
-                        retainSpoolOnDestroy.set(true)
                         Log.w(TAG, "Finish NAS session failed, GIU phien session=$sessionId de thu lai")
                         logWarn("NAS chưa hoàn tất phiên $sessionId — GIỮ phiên và segment đã upload để thử lại, không hủy.")
+                    } else {
+                        // F1: finish OK -> duoc phep xoa spool trong onDestroy.
+                        spoolDeleteAllowed.set(true)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Gặp lỗi khi thông báo hoàn tất phiên lên NAS", e)
                     // P1-7: nhu tren — giu phien, khong cancel.
-                    // R1: giu ca spool.
-                    retainSpoolOnDestroy.set(true)
                     logWarn("Lỗi hoàn tất phiên $sessionId (${e.message}) — GIỮ phiên để thử lại, không hủy.")
                 }
             } catch (e: Exception) {
@@ -568,12 +566,15 @@ class ScreenRecordService : Service() {
         try { stopSegment() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
         scope.cancel()
-        // R1: chi xoa spool khi KHONG giu phien loi (finish OK hoac discard).
-        // Giu spool + marker .ready de lan mo service sau co the thu lai upload.
-        if (!retainSpoolOnDestroy.get()) {
+        // F1: mac dinh GIU spool + marker .ready (de lan sau thu lai). Chi xoa
+        // khi finish OK hoac discardSession (user chu dong bo). Moi nhanh loi
+        // (failRecording, catch ngoai, timeout, finish fail) deu giu.
+        if (spoolDeleteAllowed.get()) {
             try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
         } else {
-            Log.w(TAG, "GIU spool session=$sessionId de thu lai (khong xoa trong onDestroy)")
+            try {
+                if (::spoolDir.isInitialized) Log.w(TAG, "GIU spool session=$sessionId de thu lai (khong xoa trong onDestroy)")
+            } catch (_: Exception) {}
         }
         super.onDestroy()
     }
@@ -583,7 +584,7 @@ class ScreenRecordService : Service() {
      * Day la DUY NHAT noi duoc phep cancel session (khong tu dong goi khi loi).
      */
     fun discardSession() {
-        retainSpoolOnDestroy.set(false)
+        spoolDeleteAllowed.set(true)
         try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
         scope.launch {
             try { cancelNasSession() } catch (e: Exception) {
