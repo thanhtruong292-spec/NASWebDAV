@@ -217,21 +217,20 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 for (file in uniqueGroup) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
                     if (identicalFiles.size > 1) {
-                        // Xác minh toàn bộ nội dung trước hành động phá hủy:
-                        // full SHA-256 khớp mới xóa, một file fail full-hash thì giữ cả nhóm.
-                        // TOCTOU: chụp size+mtime lúc hash, HEAD lại ngay trước MOVE.
-                        // Client khác sửa file giữa hai bước → size/mtime lệch → bỏ qua,
-                        // không xóa bản mới chưa kiểm tra.
-                        val fullHashes = mutableMapOf<String, String>()
+                        // F3: hash GAN VOI ETAG tu dau. Moi file: chup ETag truoc,
+                        // hash duoi ETag do (If-Match + recheck), nhom theo cap
+                        // (hash, etag). ETag lay sau hash co the la phien ban chua
+                        // duyet -> MOVE sai. Thieu/yeu ETag -> bo ca nhom.
+                        val fullHashes = mutableMapOf<String, Pair<String, String>>()
                         val hashSnapshot = mutableMapOf<String, Pair<Long, Long>>()
                         var fullOk = true
                         for (file in identicalFiles) {
                             if (!isActive) { fullOk = false; break }
-                            val full = webDavManager.getFullSha256PhoneStream(file.path, file.contentLength)
-                            if (full.isNullOrEmpty()) {
+                            val full = webDavManager.getFullSha256WithEtag(file.path, file.contentLength)
+                            if (full == null) {
                                 fullOk = false
                                 SystemLogger.log("WARNING", "AutoClean",
-                                    "Bỏ qua nhóm trùng (không verify full được): ${file.path}")
+                                    "Bỏ qua nhóm trùng (không verify full+ETag được): ${file.path}")
                                 break
                             }
                             fullHashes[file.path] = full
@@ -240,46 +239,27 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         if (!fullOk) continue
                         val verified = fullHashes.entries.groupBy({ it.value }, { it.key })
                             .filter { it.value.size > 1 }
-                        for ((_, paths) in verified) {
+                        for ((hashEtag, paths) in verified) {
+                            val (expectedHash, boundEtag) = hashEtag
                             val verifiedFiles = identicalFiles.filter { it.path in paths }
                             if (verifiedFiles.size < 2) continue
                             val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
-                            // FIX-REVIEW-193369e-#10: rang buoc SURVIVOR (ban giu
-                            // lai = sorted.first()). Ban cu chi HEAD victim; neu
-                            // survivor bi sua/xoa sau hash ma van MOVE victim thi
-                            // ban can giu co the mat. Quy tac: HEAD survivor phai
-                            // khop snapshot hash; survivor doi/mat -> giu ca nhom.
-                            // P1-2: so FULL HASH that, khong chi size/partial.
-                            // Ban cu: `remotePartial != null` la du (khong so voi
-                            // hash da snapshot), file lon chi kiem size -> survivor
-                            // doi thanh file cung size van lot. Quy tac moi: lay
-                            // lai full hash hien tai cua survivor (getFull... da
-                            // siet: HTTP 200, du byte, tu choi 206) va SO SANH voi
-                            // fullHashes da verify trong nhom. Khac/null -> bo nhom.
+                            // Survivor = sorted.first(). ETag hien tai phai DUNG
+                            // ETag da chup (khong hash lai, khong lay ETag moi) —
+                            // doi la bo nhom.
                             val survivor = sorted.first()
                             val survivorSnap = hashSnapshot[survivor.path]
-                            val survivorHeaders = try {
-                                webDavManager.headFileHeaders(survivor.path)
+                            val survivorEtagNow = try {
+                                webDavManager.headFileHeaders(survivor.path)?.get("ETag")?.trim()
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (_: Exception) { null }
-                            val survivorLen = survivorHeaders?.get("Content-Length")?.toLongOrNull()
-                            val sizeOk = survivorSnap != null && survivorLen != null && survivorLen == survivorSnap.first
-                            val survivorOk = if (sizeOk) {
-                                val expectedHash = fullHashes[survivor.path]
-                                if (expectedHash.isNullOrEmpty()) {
-                                    false
-                                } else {
-                                    val freshHash = try {
-                                        webDavManager.getFullSha256PhoneStream(survivor.path, survivorSnap.first)
-                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { null }
-                                    // Hash hien tai phai KHOP hash da verify; null/
-                                    // khac -> survivor da doi/mat -> bo qua nhom.
-                                    freshHash != null && freshHash == expectedHash
-                                }
-                            } else {
-                                false
-                            }
+                            val survivorLen = try {
+                                webDavManager.headFileHeaders(survivor.path)?.get("Content-Length")?.toLongOrNull()
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                            val survivorOk = survivorSnap != null &&
+                                survivorLen != null && survivorLen == survivorSnap.first &&
+                                survivorEtagNow != null && survivorEtagNow == boundEtag
                             if (!survivorOk) {
                                 SystemLogger.log("WARNING", "AutoClean",
                                     "Bỏ qua nhóm (survivor đổi/mất sau hash): ${survivor.path}")
@@ -293,41 +273,26 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     kotlinx.coroutines.delay(500)
                                 }
                                 if (!isActive) break
-                                // R3: rang buoc PHIEN BAN victim. Ban cu chi check size
-                                // + mtime (±2s, chap nhan mtime thieu) -> file sua sau
-                                // hash nhung giu size, khong vuot mtime van bi MOVE.
-                                // Quy tac moi: ETag phai ton tai + strong; luu ETag
-                                // de MOVE dung If-Match; thieu ETag -> bo qua.
+                                // Victim: ETag hien tai phai DUNG ETag da chup cung
+                                // hash (khong lay ETag moi). Size van check de loai
+                                // som. Thieu/khac -> bo qua, khong MOVE.
                                 val snap = hashSnapshot[trashFile.path]
-                                val freshHeaders = try {
+                                val victimHeaders = try {
                                     webDavManager.headFileHeaders(trashFile.path)
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                 catch (_: Exception) { null }
-                                val freshLen = freshHeaders?.get("Content-Length")?.toLongOrNull()
-                                val freshEtag = freshHeaders?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
-                                val freshMod = try {
-                                    freshHeaders?.get("Last-Modified")?.let {
-                                        java.text.SimpleDateFormat(
-                                            "EEE, dd MMM yyyy HH:mm:ss z", java.util.Locale.US).apply {
-                                            timeZone = java.util.TimeZone.getTimeZone("GMT")
-                                        }.parse(it)?.time
-                                    }
-                                } catch (_: Exception) { null }
-                                val modChanged = snap != null && snap.second > 0L && freshMod != null &&
-                                    kotlin.math.abs(freshMod - snap.second) > 2000L
-                                val victimEtagOk = freshEtag != null && !freshEtag.startsWith("W/")
-                                if (snap == null || freshLen == null || freshLen != snap.first || modChanged || !victimEtagOk) {
+                                val victimLen = victimHeaders?.get("Content-Length")?.toLongOrNull()
+                                val victimEtagNow = victimHeaders?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                                if (snap == null || victimLen == null || victimLen != snap.first ||
+                                    victimEtagNow == null || victimEtagNow != boundEtag) {
                                     SystemLogger.log("WARNING", "AutoClean",
-                                        "Bỏ qua (đổi sau hash / thiếu ETag): ${trashFile.path}")
+                                        "Bỏ qua (đổi phiên bản sau hash): ${trashFile.path}")
                                     continue
                                 }
-                                val expectedVictimHash = fullHashes[trashFile.path]
-                                if (expectedVictimHash.isNullOrEmpty()) {
-                                    SystemLogger.log("WARNING", "AutoClean",
-                                        "Bỏ qua (thiếu hash verify): ${trashFile.path}")
-                                    continue
-                                }
-                                if (moveFileToTrash(authCtx, trashFile.path, freshEtag, expectedVictimHash)) { movedCount++; savedBytes += trashFile.contentLength }
+                                // F3: MOVE voi CHINH ETag da chup cung hash (boundEtag).
+                                // Verify sau MOVE that bai -> moveFileToTrash tra
+                                // false (khong tinh success am tham).
+                                if (moveFileToTrash(authCtx, trashFile.path, boundEtag, expectedHash)) { movedCount++; savedBytes += trashFile.contentLength }
                             }
                         }
                     }
@@ -420,8 +385,10 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, *retryHeaders)
             }
             if (success) {
-                // R3: verify noi dung trong trash khop hash da verify. Neu server
-                // khong ap If-Match tren MOVE ma file doi giua chung, buoc nay bat.
+                // F3: verify noi dung trong trash khop hash da verify. That bai
+                // -> return FALSE (khong tinh success): file goc co the da doi
+                // ma ca If-Match + ETag check lot (server khong ho tro). Metadata
+                // van ghi de user thay + khoi phuc; worker khong tu xoa them.
                 if (!expectedHash.isNullOrEmpty()) {
                     val trashLen = try {
                         ctx.manager.headFileHeaders(destUrl)?.get("Content-Length")?.toLongOrNull()
@@ -433,10 +400,15 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                         catch (_: Exception) { null }
                     } else null
                     if (verifiedHash == null || verifiedHash != expectedHash) {
-                        android.util.Log.w("AutoCleanWorker", "Trash verify that bai cho $destUrl — noi dung trash khac hash da duyet, can kiem tra thu cong")
-                        SystemLogger.log("WARNING", "AutoClean",
-                            "Nội dung trong trash khác hash đã duyệt ($destUrl) — cần kiểm tra thủ công, không tự xóa thêm.")
-                        // Van ghi metadata de user thay + khoi phuc; khong coi la that bai MOVE.
+                        android.util.Log.w("AutoCleanWorker", "Trash verify that bai cho $destUrl — noi dung trash khac hash da duyet")
+                        SystemLogger.log("ERROR", "AutoClean",
+                            "Nội dung trong trash khác hash đã duyệt ($destUrl) — giữ nguyên, cần kiểm tra thủ công.")
+                        try {
+                            NasApplication.instance.database.trashMetaDao().insert(
+                                TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
+                            )
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                        return false
                     }
                 }
                 try {

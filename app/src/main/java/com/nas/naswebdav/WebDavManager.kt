@@ -380,8 +380,12 @@ object WebDavManager {
         val prev = authState
         val identityChanged = prev.baseUrl.isNotEmpty() &&
             (prev.baseUrl != safeUrl || prev.user != user)
+        // F7: lan connect DAU TIEN cua process (prev rong) cung drain — row
+        // legacy key rong tu DB cu khong ro chu, khong de doc chung. Cache
+        // rebuild sau vai giay duyet.
+        val firstConnect = prev.baseUrl.isEmpty()
         authState = AuthState(safeUrl, user, pass)
-        if (identityChanged) {
+        if (identityChanged || firstConnect) {
             QueryCache.clear()
             // P2-8: danh dau dirty thay vi launch coroutine xoa DB (coroutine le
             // gay race voi Robolectric SQLite trong unit test + kho kiem soat
@@ -1009,9 +1013,29 @@ object WebDavManager {
      * (thieu/thua -> null); loi server -> null. Khong gui Range.
      */
     suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
+        getFullSha256WithEtag(url, totalSize)?.first
+    }
+
+    /**
+     * F3: full-hash GAN VOI ETAG. Quy trinh: HEAD lay ETag (+ size) TRUOC ->
+     * GET toan bo voi If-Match ETag do -> HEAD lai, ETag doi -> null.
+     * Hash tra ve chi co nghia voi dung phien ban ETag kem theo; caller dung
+     * CHINH ETag nay cho MOVE If-Match. Thieu/yeu ETag -> null (bo qua).
+     *
+     * @return Pair(hash, etag) hoac null khi khong du bang chung phien ban.
+     */
+    suspend fun getFullSha256WithEtag(url: String, totalSize: Long): Pair<String, String>? = withContext(Dispatchers.IO) {
         try {
-            val request = Request.Builder().withAuth(authState).url(url).build()
-            optimizedClient.newCall(request).execute().use { response ->
+            val head1 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext null
+            val remoteLen = head1["Content-Length"]?.toLongOrNull() ?: return@withContext null
+            if (remoteLen != totalSize) return@withContext null
+            val etag = head1["ETag"]?.trim()?.takeIf { it.isNotEmpty() } ?: return@withContext null
+            if (etag.startsWith("W/")) return@withContext null
+            val request = Request.Builder().withAuth(authState).url(url)
+                .header("If-Match", etag)
+                .build()
+            val hash = optimizedClient.newCall(request).execute().use { response ->
                 // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
                 if (response.code != 200) return@withContext null
                 val stream = response.body?.byteStream() ?: return@withContext null
@@ -1030,8 +1054,14 @@ object WebDavManager {
                 if (totalRead != totalSize) return@withContext null // thieu byte
                 digest.digest().joinToString("") { "%02x".format(it) }
                     .takeIf { it.isNotEmpty() }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+            } ?: return@withContext null
+            // ETag phai giu nguyen sau download — doi giua chung -> bo.
+            val head2 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext null
+            val etag2 = head2["ETag"]?.trim() ?: return@withContext null
+            if (etag2 != etag) return@withContext null
+            Pair(hash, etag)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     /**
@@ -1398,10 +1428,13 @@ class WebDavRepository(
 
     suspend fun getRemoteFilesAndCache(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
+        // F7: chup key TRUOC request — doi phien giua chung thi du lieu van gan
+        // key phien da gui request (khong luu nham sang phien moi). Neu key doi
+        // giua chung, ket qua van nhat quan voi phien cu.
+        val key = currentAccountKey()
         val remoteFiles = kotlinx.coroutines.withTimeout(120000L) { webDavManager.listFiles(url) }
 
         // P2-8: ghi kem accountKey cua phien hien tai; xoa cu cung scope.
-        val key = currentAccountKey()
         kotlinx.coroutines.withTimeout(45000L) {
 
             database.withTransaction {
