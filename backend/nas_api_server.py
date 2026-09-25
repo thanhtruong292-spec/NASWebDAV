@@ -9430,9 +9430,19 @@ def api_torrent_add_file():
 def api_unzip():
     try:
         data = request.get_json(force=True) or {}
-        file_path = data.get("path", "") or data.get("file_path", "")
-        if not file_path or not os.path.exists(file_path):
+        raw_path = data.get("path", "") or data.get("file_path", "")
+        if not raw_path:
             return jsonify({"error": "Khong tim thay tep"}), 404
+        # P2-9: thong nhat hop dong path — Android gui relative WebDAV path
+        # ("/Documents/a.zip", sau /webdav), khong phai filesystem path. Anh xa
+        # ve WEBDAV_ROOT + kiem tra containment (chong traversal); giu tuong
+        # thich absolute cu (validate truc tiep).
+        file_path = _resolve_webdav_request_path(raw_path)
+        if not file_path:
+            if os.path.isabs(raw_path) and _validate_file_path(raw_path) and os.path.exists(raw_path):
+                file_path = os.path.realpath(raw_path)
+            else:
+                return jsonify({"error": "Khong tim thay tep"}), 404
         if not _validate_file_path(file_path):
             return jsonify({"error": "Duong dan tep khong hop le"}), 403
 
