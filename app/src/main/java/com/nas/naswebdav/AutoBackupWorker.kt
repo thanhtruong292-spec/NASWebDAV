@@ -99,6 +99,9 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         }
         val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "NASWebDAV:AutoBackupWakeLock")
+        // FIX-AUDIT-#2: non-reference-counted de acquire/release don khoi bi
+        // double-count (acquire 1 lan, release 1 lan trong finally).
+        wakeLock.setReferenceCounted(false)
         // FIX-THUMB-DELEGATION: own gate key "autobackup" so it doesn't collide with
         // DuplicateScan/OfflineSync "sync" — each worker manages its own block.
         setThumbnailActivity("autobackup", true)

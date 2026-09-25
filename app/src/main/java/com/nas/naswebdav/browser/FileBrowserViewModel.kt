@@ -642,6 +642,12 @@ class FileBrowserViewModel(
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, falling back to DELETE: ${e.message}")
+                    // FIX-AUDIT-#3: MOVE trash that bai -> DELETE vinh vien. Day la
+                    // hanh vi user yeu cau (da bam xoa), nhung phai ghi log CANH BAO
+                    // ro de truy vet (truoc day chi Log.w client-side, khong vao
+                    // System Logs). TrashMeta khong co vi file khong con trong trash.
+                    com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
+                        "MOVE trash that bai (${file.path}), DELETE vinh vien: ${e.message}")
                     lastError = e
                 }
             }

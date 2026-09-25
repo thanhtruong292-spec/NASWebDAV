@@ -47,16 +47,21 @@ fun NasGradientButton(
     interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
     customContent: (@Composable RowScope.() -> Unit)? = null,
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerOffset by infiniteTransition.animateFloat(
-        initialValue = -1f,
-        targetValue = 2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmerOffset"
-    )
+    // FIX-AUDIT-#5: tat shimmer lien tuc khi nut bi disable (perf — tranh
+    // nhieu infinite animation chay dong thoi tren cac man hinh nhieu nut).
+    val shimmerOffset = if (enabled) {
+        val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+        val offset by infiniteTransition.animateFloat(
+            initialValue = -1f,
+            targetValue = 2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "shimmerOffset"
+        )
+        offset
+    } else 0.5f
     val shimmerBrush = Brush.linearGradient(
         colors = gradientColors,
         start = Offset(shimmerOffset * 1000f, 0f),

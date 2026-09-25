@@ -71,6 +71,9 @@ private fun MenuItemRow(
 fun MoreSectionScreen(
     onOpenPerformance: () -> Unit = {},
     onLogout: () -> Unit = {},
+    // FIX-AUDIT-#6: het 2 TODO (settings/about chet). Caller truyen callback thuc.
+    onOpenSettings: () -> Unit = {},
+    onOpenAbout: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -101,13 +104,13 @@ fun MoreSectionScreen(
                 MenuItemRow(
                     icon = AppIcons.Settings,
                     label = "Cài đặt",
-                    onClick = { /* TODO: settings screen */ },
+                    onClick = onOpenSettings,
                 )
                 HorizontalDivider(color = DarkDivider, modifier = Modifier.padding(horizontal = AppSpacing.LG))
                 MenuItemRow(
                     icon = AppIcons.Info,
                     label = "Giới thiệu",
-                    onClick = { /* TODO: about dialog */ },
+                    onClick = onOpenAbout,
                 )
                 HorizontalDivider(color = DarkDivider, modifier = Modifier.padding(horizontal = AppSpacing.LG))
                 MenuItemRow(
