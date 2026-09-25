@@ -289,14 +289,18 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     kotlinx.coroutines.delay(500)
                                 }
                                 if (!isActive) break
-                                // TOCTOU revalidate: HEAD size VÀ mtime phải khớp snapshot
-                                // lúc hash. File bị sửa sau hash → bỏ qua, không MOVE.
+                                // R3: rang buoc PHIEN BAN victim. Ban cu chi check size
+                                // + mtime (±2s, chap nhan mtime thieu) -> file sua sau
+                                // hash nhung giu size, khong vuot mtime van bi MOVE.
+                                // Quy tac moi: ETag phai ton tai + strong; luu ETag
+                                // de MOVE dung If-Match; thieu ETag -> bo qua.
                                 val snap = hashSnapshot[trashFile.path]
                                 val freshHeaders = try {
                                     webDavManager.headFileHeaders(trashFile.path)
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                 catch (_: Exception) { null }
                                 val freshLen = freshHeaders?.get("Content-Length")?.toLongOrNull()
+                                val freshEtag = freshHeaders?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
                                 val freshMod = try {
                                     freshHeaders?.get("Last-Modified")?.let {
                                         java.text.SimpleDateFormat(
@@ -307,12 +311,19 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                 } catch (_: Exception) { null }
                                 val modChanged = snap != null && snap.second > 0L && freshMod != null &&
                                     kotlin.math.abs(freshMod - snap.second) > 2000L
-                                if (snap == null || freshLen == null || freshLen != snap.first || modChanged) {
+                                val victimEtagOk = freshEtag != null && !freshEtag.startsWith("W/")
+                                if (snap == null || freshLen == null || freshLen != snap.first || modChanged || !victimEtagOk) {
                                     SystemLogger.log("WARNING", "AutoClean",
-                                        "Bỏ qua (đổi sau hash): ${trashFile.path}")
+                                        "Bỏ qua (đổi sau hash / thiếu ETag): ${trashFile.path}")
                                     continue
                                 }
-                                if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength }
+                                val expectedVictimHash = fullHashes[trashFile.path]
+                                if (expectedVictimHash.isNullOrEmpty()) {
+                                    SystemLogger.log("WARNING", "AutoClean",
+                                        "Bỏ qua (thiếu hash verify): ${trashFile.path}")
+                                    continue
+                                }
+                                if (moveFileToTrash(authCtx, trashFile.path, freshEtag, expectedVictimHash)) { movedCount++; savedBytes += trashFile.contentLength }
                             }
                         }
                     }
@@ -362,16 +373,33 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
     }
 
-    private suspend fun moveFileToTrash(ctx: WebDavAuthContext, sourceUrl: String): Boolean {
+    // R3: MOVE rang buoc phien ban + verify sau MOVE.
+    // - Gui If-Match voi ETag lay luc revalidate: server doi version giua HEAD
+    //   va MOVE -> 412 -> giu file. (Server khong ho tro If-Match tren MOVE thi
+    //   header bi bo qua — buoc verify duoi van bat duoc.)
+    // - Sau MOVE thanh cong: doc lai full-hash cua file TRONG TRASH va so voi
+    //   hash da verify. Khac nhau (race ma ca hai lop phong thu lot) -> bao loi
+    //   ro, khong tinh la thanh cong am tham.
+    private suspend fun moveFileToTrash(
+        ctx: WebDavAuthContext,
+        sourceUrl: String,
+        ifMatchEtag: String? = null,
+        expectedHash: String? = null,
+    ): Boolean {
         try {
             val rootUrl = ctx.manager.currentBaseUrl.trimEnd('/')
             val fileName = sourceUrl.substringAfterLast("/")
             val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
             var destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
             executeWebDavRequest(trashFolderUrl, "MKCOL", ctx.authHeader)
-            var success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+            val versionHeaders: Array<Pair<String, String>> = if (!ifMatchEtag.isNullOrEmpty()) {
+                arrayOf("Destination" to destUrl, "Overwrite" to "F", "If-Match" to ifMatchEtag)
+            } else {
+                arrayOf("Destination" to destUrl, "Overwrite" to "F")
+            }
+            var success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, *versionHeaders)
             // FIX-AUDIT-D3: đích trash trùng tên (412) → đổi tên duy nhất + timestamp,
-            // không ghi đè bản trash cũ.
+            // không ghi đè bản trash cũ. Giành lại If-Match cho đích mới.
             if (!success) {
                 val dot = fileName.lastIndexOf('.')
                 val unique = if (dot > 0) {
@@ -380,9 +408,33 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     fileName + "_" + System.currentTimeMillis()
                 }
                 destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, unique, false)
-                success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+                val retryHeaders: Array<Pair<String, String>> = if (!ifMatchEtag.isNullOrEmpty()) {
+                    arrayOf("Destination" to destUrl, "Overwrite" to "F", "If-Match" to ifMatchEtag)
+                } else {
+                    arrayOf("Destination" to destUrl, "Overwrite" to "F")
+                }
+                success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, *retryHeaders)
             }
             if (success) {
+                // R3: verify noi dung trong trash khop hash da verify. Neu server
+                // khong ap If-Match tren MOVE ma file doi giua chung, buoc nay bat.
+                if (!expectedHash.isNullOrEmpty()) {
+                    val trashLen = try {
+                        ctx.manager.headFileHeaders(destUrl)?.get("Content-Length")?.toLongOrNull()
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (_: Exception) { null }
+                    val verifiedHash = if (trashLen != null && trashLen > 0) {
+                        try { ctx.manager.getFullSha256PhoneStream(destUrl, trashLen) }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) { null }
+                    } else null
+                    if (verifiedHash == null || verifiedHash != expectedHash) {
+                        android.util.Log.w("AutoCleanWorker", "Trash verify that bai cho $destUrl — noi dung trash khac hash da duyet, can kiem tra thu cong")
+                        SystemLogger.log("WARNING", "AutoClean",
+                            "Nội dung trong trash khác hash đã duyệt ($destUrl) — cần kiểm tra thủ công, không tự xóa thêm.")
+                        // Van ghi metadata de user thay + khoi phuc; khong coi la that bai MOVE.
+                    }
+                }
                 try {
                     NasApplication.instance.database.trashMetaDao().insert(
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
