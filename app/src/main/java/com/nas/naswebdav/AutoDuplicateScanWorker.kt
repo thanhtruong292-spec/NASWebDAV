@@ -150,6 +150,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             if (key == "total") { reader.nextInt() }
                             else if (key == "files") {
                                 reader.beginArray(); val batch = mutableListOf<CachedFile>()
+                                // P2-8: drain flag doi-phien 1 lan truoc batch dau
+                                // (worker co the chay lech phien voi UI).
+                                var drainedOnce = false
                                 while (reader.hasNext()) {
                                     reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
                                     while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
@@ -157,6 +160,7 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     val rootUrl = url.trimEnd('/'); val absolutePath = rootUrl + (if (path.startsWith("/")) path else "/$path"); val parentUrl = absolutePath.substringBeforeLast("/") + "/"
                                     batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime, accountKey = currentAccountKey()))
                                     totalFiles++
+                                    if (!drainedOnce) { drainedOnce = true; WebDavManager.drainPendingCacheClear() }
                                     if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
                                 }
                                 reader.endArray()

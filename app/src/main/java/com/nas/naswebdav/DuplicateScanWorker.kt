@@ -334,6 +334,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             progressPercent.set(stage1Progress * 0.5f)
 
                                             if (flushBatch.isNotEmpty()) {
+                                                // P2-8: drain flag doi-phien truoc khi ghi
+                                                // (worker co the chay lech phien voi UI).
+                                                WebDavManager.drainPendingCacheClear()
                                                 db.withTransaction { db.fileDao().insertFiles(flushBatch) }
                                             }
                                         }
