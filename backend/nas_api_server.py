@@ -3057,35 +3057,26 @@ def _background_heavy_work_allowed():
         return False
 
 
-# P1-5: chi file TAM co nguon goc app ro moi duoc coi la rac 0-byte.
-# File 0-byte cua user (empty.txt chu y, file danh dau, .nomedia...) KHONG
-# phai rac — size 0 khong du ket luan.
-# R2: pattern CHAT (suffix/prefix voi delimiter), KHONG substring giua ten.
-# ".part" dang substring khop "chapter.part1.txt" cua user -> sai. Quy tac:
-# file tam app luon co dang: tien to/hau to tach biet (vd "__upload123",
-# "file.part", "file.tmp", "seg.chunk001", "x.restore-tmp.<tag>").
-_TEMP_ZERO_BYTE_SUFFIXES = (
-    ".part", ".crdownload", ".tmp", ".temp", ".segment", ".chunk",
-    ".download", ".lock", ".pid", ".broken.flv",
-)
+# F2: vung TAM DO APP QUAN LY — khong doan bang ten tren toan WebDAV root.
+# - Backend tu tao tmp duoi _get_hdd_tmp_root() (nas_meta_tmp): toan bo vung
+#   nay la app-managed -> don theo tuoi, khong can pattern.
+# - Android dat tmp tren WebDAV qua ten co dinh: "__upload*" (prefix),
+#   ".restore-tmp.<tag>" (infix phan tach ro). Chi hai dang nay duoc don.
+# - Bo han cac pattern substring (.part/.tmp/.lock/.pid/.segment/.chunk/
+#   .download/.crdownload): "chapter.part1.txt", "temp_notes.txt" cua user
+#   khop nham -> mat du lieu. File ngoai hai dang tren -> GIU.
 _TEMP_ZERO_BYTE_PREFIXES = (
-    "__upload", "tmp_", "temp_",
+    "__upload",
 )
 _TEMP_ZERO_BYTE_CONTAINS = (
     ".restore-tmp.",  # staging restore co tx_tag giua ten
 )
 
 def _is_app_temp_zero_byte(fname):
-    """True chi khi ten file khop CHAT pattern tam app (suffix/prefix/delimited)."""
+    """True chi khi ten file khop CHAT pattern tam app (prefix/delimited)."""
     lower = (fname or "").lower()
     if not lower or lower.startswith("."):
         return False
-    for suffix in _TEMP_ZERO_BYTE_SUFFIXES:
-        if lower.endswith(suffix):
-            stem = lower[: -len(suffix)] if len(suffix) < len(lower) else ""
-            # Chan "chapter.part1.txt" (suffix that la .txt) va ten rong.
-            if stem:
-                return True
     for prefix in _TEMP_ZERO_BYTE_PREFIXES:
         if lower.startswith(prefix):
             return True
@@ -3095,13 +3086,55 @@ def _is_app_temp_zero_byte(fname):
     return False
 
 def _is_app_temp_dirname(dname):
-    """Thu muc tam app: ten chat temp hoac nam trong vung temp app quan ly."""
+    """Thu muc tam app: chi ten chat temp (khong nhan ten chung nhu tmp/temp)."""
     lower = (dname or "").lower()
     if not lower or lower.startswith("."):
         return False
-    if lower in ("tmp", "temp", "cache", "staging", "upload_tmp", "segments_tmp"):
+    if lower.startswith("__upload"):
         return True
-    return _is_app_temp_zero_byte(dname)
+    if ".restore-tmp." in lower:
+        return True
+    return False
+
+def _clean_managed_tmp_root(max_seconds=20, min_age_seconds=7200):
+    """F2: don vung tmp do app quan ly (_get_hdd_tmp_root + fallback /tmp).
+    Toan bo vung nay la app-managed nen don theo tuoi, khong doan ten.
+    Tra ve so entry da xoa."""
+    removed = 0
+    deadline = time.time() + max_seconds
+    roots = []
+    try:
+        roots.append(_get_hdd_tmp_root())
+    except Exception:
+        pass
+    if "/tmp/nas_meta_tmp" not in roots:
+        roots.append("/tmp/nas_meta_tmp")
+    for root in roots:
+        if time.time() >= deadline or not root:
+            continue
+        try:
+            real_root = os.path.realpath(root)
+            if not os.path.isdir(real_root):
+                continue
+            for entry in os.listdir(real_root):
+                if time.time() >= deadline:
+                    break
+                p = os.path.join(real_root, entry)
+                try:
+                    if time.time() - os.path.getmtime(p) < min_age_seconds:
+                        continue
+                    if os.path.isdir(p) and not os.path.islink(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
+                    removed += 1
+                except (FileNotFoundError, PermissionError, OSError):
+                    continue
+        except (PermissionError, OSError):
+            continue
+    if removed:
+        log.info("[NASCleanup] Removed %d stale managed-tmp entries", removed)
+    return removed
 
 def _clean_empty_files_and_dirs(root_dir, exclude_dirs=None, max_entries=12000, max_seconds=15, min_age_seconds=3600):
     """Don dep file TAM 0-byte co nguon goc ro + FLV hong cu + thu muc rong.
@@ -3327,17 +3360,18 @@ def _cron_worker():
                     trash_deleted_last=int(deleted or 0),
                 )
 
-            # --- 4b. Don dep file rong (0-byte), FLV hong cu + thư mục rong (mới 24h) ---
-            # Quet WEBDAV_FILE_ROOT, b? qua .trash/.nas_meta/.thumbnails va dotfile.
-            # File 0-byte thuong la rac tu download fail / FLV stream rong, thư mục
-            # rong sau khi xoá file lai cung không dùng gi -> don sach.
+            # --- 4b. Don dep file tam app-managed + FLV hong cu (moi 24h) ---
+            # F2: chi xoa tmp co nguon goc ro (__upload*, .restore-tmp.*) va vung
+            # tmp backend (nas_meta_tmp). File 0-byte / thu muc rong cua user
+            # KHONG bao gio bi xoa du ten co chua chuoi tam.
             with _alert_state_lock:
                 last_empty = _alert_states["empty_last_clean"]
             if (now_ts - last_empty) > 86400:  # 24h
                 try:
                     df, dd, db = _clean_empty_files_and_dirs(WEBDAV_FILE_ROOT)
-                    if df + dd + db > 0:
-                        msg = "Tự động dọn dẹp: Đã xóa %d tệp rỗng và %d thư mục rỗng." % (df, dd)
+                    dt = _clean_managed_tmp_root()
+                    if df + dd + db + dt > 0:
+                        msg = "Tự động dọn dẹp: Đã xóa %d tệp tạm, %d thư mục tạm (trong đó tmp backend: %d)." % (df, dd, dt)
                         if db > 0:
                             msg = msg + " FLV hỏng cũ: %d." % db
                         _push_alert("EMPTY_CLEANED", msg, "INFO")
