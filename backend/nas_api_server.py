@@ -16345,6 +16345,16 @@ def api_ytdlp_download():
         # Output template: ten file goc cua video, trong dest_dir
         output_template = os.path.join(dest_dir, "%(title).100s.%(ext)s")
 
+        # P1-8: ytdlp_bin CHUA duoc dinh nghia trong scope nay (NameError khi
+        # dung lenh). Cac endpoint khac (social/livestream) goi _find_ytdlp_bin()
+        # dung cach. Tra 503 ro rang neu chua cai dat.
+        ytdlp_bin = _find_ytdlp_bin()
+        if not ytdlp_bin:
+            return jsonify({
+                "error": "yt-dlp chưa được cài đặt trên NAS",
+                "install_hint": "wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -O /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"
+            }), 503
+
         # Khoi dong yt-dlp ngam (KHONG cho doi - tr? v? ngay cho Android)
         cmd = [
             ytdlp_bin,
