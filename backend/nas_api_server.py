@@ -362,7 +362,6 @@ def _file_indexer_watchdog():
         time.sleep(1800)
 
 @app.route('/api/search', methods=['GET'])
-@requires_auth
 def api_fast_search():
     query = request.args.get('q', '').strip()
     root_param = request.args.get('root', '').strip('/')
@@ -1726,6 +1725,21 @@ def requires_auth(f):
         return jsonify({"detail": "Chua xac thuc"}), 401
 
     return decorated
+
+# FIX-SECURITY-SEARCH-AUTH: api_fast_search (dang ky route o tren, dong 364)
+# duoc dinh nghia TRUOC requires_auth nen khong gan decorator truc tiep duoc
+# (NameError -> crash-loop NAS ngay khi restart). Boc decorator TAI DAY, sau
+# khi requires_auth da ton tai. Android app da gui Authorization header
+# (FileBrowserViewModel:236) nen khong break. Attacker LAN khong auth -> 401.
+_wrapped_search = requires_auth(api_fast_search)
+api_fast_search = _wrapped_search
+# Flask da dang ky ham GOC vao app.view_functions tai dong 364 (@app.route
+# chay truoc khi requires_auth ton tai). Patch view da dang ky sang ban boc
+# auth, neu khong endpoint van chay khong xac thuc du bien module da duoc boc.
+try:
+    app.view_functions[api_fast_search.__name__] = _wrapped_search
+except Exception as _e:
+    log.warning("[Auth] Khong patch duoc view auth cho /api/search: %s", _e)
 
 # ============ API VERSIONING (B1) ============
 # Route cũ /api/* giữ nguyên (app cũ vẫn chạy). Route mới dual-serve thêm
