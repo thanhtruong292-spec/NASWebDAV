@@ -692,6 +692,50 @@ class FileBrowserViewModel(
         }
     }
 
+    /**
+     * R4: xoa VINH VIEN file DANG O TRONG TRASH (da duoc user xac nhan o UI).
+     * Tach khoi deleteFile() — ham do dung cho file thuong (MOVE vao trash).
+     * Goi deleteFile() cho file trong trash se dung lai trash URL -> MOVE ve
+     * chinh no -> that bai (hoi quy P1-3). Ham nay DELETE truc tiep + xoa meta.
+     */
+    fun deletePermanently(context: Context, file: NasFile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pendingDeletes.add(file.path)
+            withContext(Dispatchers.Main) {
+                fileList = fileList.filter { it.path != file.path }
+            }
+            try {
+                WebDavManager.deleteFile(file.path, file.isDirectory)
+                try {
+                    NasApplication.instance.database.trashMetaDao().deleteByTrashPath(file.path)
+                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                    android.util.Log.w("FileBrowser", "DB sync failed after permanent delete", dbEx)
+                }
+                repository.removeDuplicateFromDb(file.path)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.browser_delete_success, file.name),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                pendingDeletes.remove(file.path)
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "FileBrowser",
+                    "Xóa vĩnh viễn thất bại (${file.path}): ${e.message}")
+                withContext(Dispatchers.Main) {
+                    errorMessage = context.getString(R.string.browser_delete_failure, file.name, e.message.orEmpty())
+                    fileList = fileList + file
+                }
+            }
+        }
+    }
+
+    // R5: ten trash DUY NHAT theo nguon. A/photo.jpg va B/photo.jpg khac
+    // parent -> ten trash khac nhau (them hash parent), khong dung do 412.
+    // TrashMeta luu originalPath day du de restore + hien thi ten goc.
     private fun String.toTrashUrl(): String? {
         val normalizedBase = WebDavManager.currentBaseUrl.trimEnd('/')
         val relativePath = removePrefix(normalizedBase).removePrefix("/").trimStart('/')
@@ -699,7 +743,15 @@ class FileBrowserViewModel(
         return if (driveName.isBlank()) null
         else {
             val fileName = substringAfterLast('/')
-            val safeName = fileName.replace('/', '_').take(200)
+            val parentPath = substringBeforeLast('/', "")
+            val parentHash = parentPath.hashCode().toUInt().toString(36)
+            val dot = fileName.lastIndexOf('.')
+            val uniqueName = if (dot > 0) {
+                fileName.substring(0, dot) + "__" + parentHash + fileName.substring(dot)
+            } else {
+                fileName + "__" + parentHash
+            }
+            val safeName = uniqueName.replace('/', '_').take(200)
             "$normalizedBase/${encodeWebDavSegment(driveName)}/.trash/${encodeWebDavSegment(safeName)}"
         }
     }

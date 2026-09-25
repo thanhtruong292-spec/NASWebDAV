@@ -1658,7 +1658,10 @@ fun BrowserScreenFileItemGridCell(
             message = if (isTrash) "Bạn có chắc chắn muốn xóa vĩnh viễn '${file.name}' không? Hành động này không thể hoàn tác." else "Bạn có chắc chắn muốn đưa '${file.name}' vào Thùng rác?",
             onConfirm = {
                 showDeleteDialog = false
-                fileBrowserVM.deleteFile(context, file)
+                // R4: trong trash -> xoa vinh vien (da xac nhan); ngoai trash ->
+                // dua vao trash (khoi phuc duoc). Khong dung chung deleteFile().
+                if (isTrash) fileBrowserVM.deletePermanently(context, file)
+                else fileBrowserVM.deleteFile(context, file)
                 onDelete?.invoke()
             },
             onDismiss = { showDeleteDialog = false }
