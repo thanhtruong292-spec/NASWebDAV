@@ -865,27 +865,27 @@ fun BrowserScreen(
                         // Đã xóa nút Đồng bộ thư mục
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_find_duplicates)) },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, stringResource(R.string.menu_find_duplicates)) },
                             onClick = { showMoreMenu = false; showDuplicateConfigDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.action_create_folder)) },
-                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, stringResource(R.string.action_create_folder)) },
                             onClick = { showMoreMenu = false; showCreateFolderDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_organize_videos)) },
-                            leadingIcon = { Icon(Icons.Default.SnippetFolder, null) },
+                            leadingIcon = { Icon(Icons.Default.SnippetFolder, stringResource(R.string.menu_organize_videos)) },
                             onClick = { showMoreMenu = false; showOrganizeDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.action_refresh)) },
-                            leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                            leadingIcon = { Icon(Icons.Default.Refresh, stringResource(R.string.action_refresh)) },
                             onClick = { showMoreMenu = false; fileBrowserVM.refresh() }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_random_photo)) },
-                            leadingIcon = { Icon(Icons.Default.Shuffle, null) },
+                            leadingIcon = { Icon(Icons.Default.Shuffle, stringResource(R.string.menu_random_photo)) },
                             onClick = {
                                 showMoreMenu = false
                                 val images = fileBrowserVM.fileList.filter { it.name.lowercase().run { endsWith(".jpg") || endsWith(".png") } }
@@ -894,7 +894,7 @@ fun BrowserScreen(
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_login), color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, stringResource(R.string.menu_login), tint = MaterialTheme.colorScheme.error) },
                             onClick = { showMoreMenu = false; onLogout() }
                         )
                     }
@@ -987,7 +987,7 @@ fun BrowserScreen(
                             onClick = {
                                 fileBrowserVM.setViewModeName(nextMode.name)
                             },
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(48.dp)
                         ) {
                             Icon(
                                 imageVector = currentIcon,
@@ -1005,7 +1005,7 @@ fun BrowserScreen(
                                 onClick = { showSortMenu = true },
                                 modifier = Modifier
                                     .padding(start = 4.dp)
-                                    .size(28.dp)
+                                    .size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Sort,
@@ -1039,13 +1039,13 @@ fun BrowserScreen(
                                         },
                                         leadingIcon = {
                                             Icon(
-                                                opt.icon, null,
+                                                opt.icon, opt.label,
                                                 tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         },
                                         trailingIcon = if (isActive) {
-                                            { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                                            { Icon(Icons.Default.Check, opt.label, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
                                         } else null,
                                         onClick = {
                                             fileBrowserVM.setFileSort(opt.key)
@@ -1063,7 +1063,7 @@ fun BrowserScreen(
                             onClick = { selectionMode = true },
                             modifier = Modifier
                                 .padding(start = 4.dp)
-                                .size(28.dp)
+                                .size(48.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CheckBox,

@@ -390,7 +390,7 @@ fun FileItemGridCell(
                 Text(
                     text = displaySize,
                     color = TextPrimary,
-                    fontSize = 8.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -662,7 +662,7 @@ fun WebDavCachedThumbnail(
                             .background(AccentRed, AppShapes.Badge)
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     ) {
-                        Text("!", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text("!", color = TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

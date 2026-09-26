@@ -298,17 +298,17 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                 ) {
                                                     Text(
                                                         text = dupFile.name,
-                                                        fontSize = 8.sp,
+                                                        fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = TextPrimary,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 10.sp
+                                                        lineHeight = 13.sp
                                                     )
                                                     val parentFolder = dupFile.path.substringBeforeLast("/").substringAfterLast("/")
                                                     Text(
                                                         text = "📁 $parentFolder",
-                                                        fontSize = 7.sp,
+                                                        fontSize = 10.sp,
                                                         color = TextTertiary,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
