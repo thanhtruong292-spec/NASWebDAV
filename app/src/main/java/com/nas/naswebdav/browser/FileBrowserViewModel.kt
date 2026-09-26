@@ -215,8 +215,13 @@ class FileBrowserViewModel(
             return
         }
         _isSearchActive.value = true
+        // Token chong job cu (bi cancel cham) de ket qua cu len sau khi job
+        // moi da xong — moi pass kiem tra token truoc khi post Main.
+        val searchToken = ++searchGeneration
         searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(80) // Debounce cực ngắn giúp phản hồi ngay lập tức
+            // Debounce 300ms: go "anh" lien tuc chi cham 1 lan BFS thay vi
+            // 3 lan (moi lan 3 luong PROPFIND khap NAS).
+            delay(300)
             if (!isActive) return@launch
 
             val results = ConcurrentHashMap<String, NasFile>()
@@ -261,7 +266,9 @@ class FileBrowserViewModel(
                                         }
                                         repository.saveDiscoveredFiles(apiFiles, searchRootUrl)
                                         val apiList = results.values.toList()
+                                        if (searchToken != searchGeneration) return@launch // query moi da chay
                                         withContext(Dispatchers.Main) {
+                                            if (searchToken != searchGeneration) return@withContext
                                             _searchResults.value = apiList
                                             _isSearchActive.value = false
                                         }
@@ -281,9 +288,11 @@ class FileBrowserViewModel(
                     results[file.path] = file
                 }
             } catch (_: Exception) {}
-            if (results.isNotEmpty()) {
+            if (results.isNotEmpty() && searchToken == searchGeneration) {
                 val cachedList = results.values.toList()
-                withContext(Dispatchers.Main) { _searchResults.value = cachedList }
+                withContext(Dispatchers.Main) {
+                    if (searchToken == searchGeneration) _searchResults.value = cachedList
+                }
             }
 
             // Pass 2: Quét đa luồng nhẹ nhàng (3 workers + delay 35ms) để không gây treo hay hao phí tài nguyên NAS
@@ -349,11 +358,11 @@ class FileBrowserViewModel(
                                     }
                                 }
 
-                                if (hasNewMatch && isActive) {
+                                if (hasNewMatch && isActive && searchToken == searchGeneration) {
                                     val currentMatches = results.values.toList()
                                     updateMutex.withLock {
                                         withContext(Dispatchers.Main) {
-                                            _searchResults.value = currentMatches
+                                            if (searchToken == searchGeneration) _searchResults.value = currentMatches
                                         }
                                     }
                                 }
@@ -369,6 +378,7 @@ class FileBrowserViewModel(
             }
 
             withContext(Dispatchers.Main) {
+                if (searchToken != searchGeneration) return@withContext // query moi da chay
                 _searchResults.value = results.values.toList()
                 _isSearchActive.value = false
             }
@@ -441,95 +451,9 @@ class FileBrowserViewModel(
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
 
     private var searchJob: Job? = null
-
-    /**
-     * Perform recursive search starting from [currentUrl] with max depth 3.
-     * First filters current [fileList] for instant feedback, then recursively
-     * PROPFINDs subdirectories. Updates [searchResults] incrementally.
-     */
-    fun performSearch(query: String) {
-        searchJob?.cancel()
-        if (query.isBlank() || query.length < 2) {
-            _isSearchActive.value = false
-            _searchResults.value = emptyList()
-            return
-        }
-
-        // FIX Bug 1: capture currentUrl on Main thread before launching IO coroutine.
-        // Without this, the IO thread could read a stale or empty value, causing
-        // PROPFIND on "/" or wrong path → silent BFS failure.
-        // Fallback to WebDavManager.currentBaseUrl so search works immediately after
-        // login before user navigates anywhere.
-        val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
-        if (searchRootUrl.isBlank()) {
-            _isSearchActive.value = false
-            _searchResults.value = emptyList()
-            return
-        }
-
-        _isSearchActive.value = true
-        searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(300) // Debounce 300ms
-            if (!isActive) return@launch
-
-            val allResults = mutableListOf<NasFile>()
-            val seenPaths = mutableSetOf<String>()
-            var failCount = 0
-
-            // Instant feedback: filter current fileList
-            val instantResults = fileList.filter {
-                it.name.contains(query, ignoreCase = true)
-            }
-            for (file in instantResults) {
-                if (seenPaths.add(file.path)) {
-                    allResults.add(file)
-                }
-            }
-            withContext(Dispatchers.Main) { _searchResults.value = allResults.toList() }
-
-            // BFS recursive PROPFIND with max depth 3
-            val queue = ArrayDeque<Pair<String, Int>>() // (url, depth)
-            queue.add(searchRootUrl to 0)
-
-            while (queue.isNotEmpty() && isActive) {
-                val (url, depth) = queue.removeFirst()
-                if (depth > 3) continue
-
-                try {
-                    val files = WebDavManager.listFiles(url)
-                    for (file in files) {
-                        if (isActive && seenPaths.add(file.path)) {
-                            if (file.name.contains(query, ignoreCase = true)) {
-                                allResults.add(file)
-                            }
-                            if (file.isDirectory) {
-                                queue.add(file.path to depth + 1)
-                            }
-                        }
-                    }
-                    // Update results incrementally on Main thread
-                    withContext(Dispatchers.Main) {
-                        _searchResults.value = allResults.toList()
-                    }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // FIX Bug 4: track failures so we can warn user if search returns empty
-                    // due to widespread subfolder errors.
-                    failCount++
-                    android.util.Log.w("RecursiveSearch", "PROPFIND failed for $url: ${e.message}")
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                _searchResults.value = allResults
-                _isSearchActive.value = false
-                if (allResults.isEmpty() && failCount > 0) {
-                    errorMessage = appContext.getString(R.string.browser_folder_access_error, failCount)
-                }
-            }
-        }
-    }
+    // Tang moi lan searchGlobal() chay — job cu (cancel cham) khong duoc de
+    // ket qua cu len sau khi job moi da co ket qua.
+    private var searchGeneration = 0
 
     /** Clear recursive search state and cancel any in-progress search. */
     fun clearSearch() {
@@ -971,8 +895,12 @@ class FileBrowserViewModel(
 
     fun unzipFile(context: Context, filePath: String) {
         try {
-            val uri = java.net.URI(filePath)
-            val relativePath = uri.path.substringAfter("/webdav")
+            // URI chua encode (dau cach/tieng Viet) -> URISyntaxException.
+            // Da trong try, nhung fallback path thu cong de van giai nen duoc.
+            val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) {
+                try { java.net.URL(filePath).path } catch (_: Exception) { filePath }
+            }
+            val relativePath = (rawPath ?: filePath).substringAfter("/webdav")
             val fileName = filePath.substringAfterLast("/")
             val jsonBody = org.json.JSONObject().apply {
                 put("file_path", relativePath)

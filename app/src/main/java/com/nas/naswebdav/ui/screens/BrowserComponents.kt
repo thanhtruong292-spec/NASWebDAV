@@ -122,6 +122,7 @@ fun FileItemGridCell(
     val auth = WebDavManager.currentAuthState().authHeader
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     var showRenameDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -219,9 +220,8 @@ fun FileItemGridCell(
     Column(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
             .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
                     if (!selectionMode && !file.isDirectory && isNewFile) {
@@ -233,6 +233,7 @@ fun FileItemGridCell(
                     onClick()
                 },
                 onLongClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     // Long-press LUON mo menu cho ca file va folder. Selection mode
                     // entry được thực hiện qua nút "Chọn file" ở toolbar.
                     if (selectionMode) {
@@ -243,7 +244,7 @@ fun FileItemGridCell(
                     }
                 }
             )
-            .padding(horizontal = 1.dp, vertical = 1.dp),
+            .padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {

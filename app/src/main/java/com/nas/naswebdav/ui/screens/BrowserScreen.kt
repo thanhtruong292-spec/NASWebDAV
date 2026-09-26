@@ -23,6 +23,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import com.nas.naswebdav.ui.components.NasEmptyState
+import com.nas.naswebdav.ui.layout.adaptiveGridColumns
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -140,11 +144,15 @@ fun BrowserScreen(
     var searchQuery by remember { mutableStateOf("") }
     
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val focusManager = LocalFocusManager.current
     val historyManager = remember { SearchHistoryManager(context) }
     val searchHistory by remember(isSearching, searchQuery) { 
         mutableStateOf(if (isSearching && searchQuery.isEmpty()) historyManager.getHistory() else emptyList())
     }
+
+    // Bộ lọc định dạng file thông minh: ALL, IMAGE, VIDEO, DOC, ARCHIVE
+    var selectedCategory by remember { mutableStateOf("ALL") }
 
     // TÍNH NĂNG 7.L: Trạng thái của chế độ Multi-Selection
     var selectionMode by remember { mutableStateOf(false) }
@@ -153,7 +161,10 @@ fun BrowserScreen(
     // VD: nhan "Chon tat ca" -> mark all viewed -> increment tick -> moi
     // FileItemGridCell remember key bi invalidated -> doc lai prefs.
     var viewedRefreshTick by remember { mutableStateOf(0) }
-    LaunchedEffect(fileBrowserVM.currentUrl) { viewedRefreshTick++ }
+    LaunchedEffect(fileBrowserVM.currentUrl) { 
+        viewedRefreshTick++
+        selectedCategory = "ALL"
+    }
 
     // SORT — reactive từ FileBrowserViewModel (survive rotation).
     // Values: "name_asc" | "name_desc" | "date_desc" | "date_asc" | "size_desc" | "size_asc"
@@ -200,6 +211,8 @@ fun BrowserScreen(
         if (selectionMode) {
             selectionMode = false
             selectedFiles.clear()
+        } else if (selectedCategory != "ALL") {
+            selectedCategory = "ALL"
         } else if (isSearching || wasInSearchMode) {
             // A search Back press only closes search; it must never navigate
             // out of BrowserScreen to the main menu.
@@ -497,6 +510,13 @@ fun BrowserScreen(
     LaunchedEffect(isSearching) {
         if (isSearching) wasInSearchMode = true
     }
+    // Chi luu lich su khi search xong VA co ket qua — query 0 ket qua hoac
+    // dang go do khong lam rac lich su. Bam vao file giu nguyen (luu ngay).
+    LaunchedEffect(isServerSearchActive, serverSearchResults.size) {
+        if (isSearching && searchQuery.isNotBlank() && !isServerSearchActive && serverSearchResults.isNotEmpty()) {
+            historyManager.saveQuery(searchQuery)
+        }
+    }
 
     // Windows-Explorer-style search display:
     // - blank query → current folder listing
@@ -513,15 +533,31 @@ fun BrowserScreen(
                 // or returned nothing yet.
                 fileBrowserVM.fileList.filter { fileBrowserVM.matchesQuery(it.name, searchQuery) }
             }
+            val categoryFiltered = when (selectedCategory) {
+                "IMAGE" -> filtered.filter { com.nas.naswebdav.utils.MediaUtils.isImage(it.name) }
+                "VIDEO" -> filtered.filter { com.nas.naswebdav.utils.MediaUtils.isVideo(it.name) }
+                "DOC" -> filtered.filter {
+                    val n = it.name.lowercase()
+                    n.endsWith(".pdf") || n.endsWith(".doc") || n.endsWith(".docx") ||
+                    n.endsWith(".xls") || n.endsWith(".xlsx") || n.endsWith(".ppt") ||
+                    n.endsWith(".pptx") || n.endsWith(".txt") || n.endsWith(".md")
+                }
+                "ARCHIVE" -> filtered.filter {
+                    val n = it.name.lowercase()
+                    n.endsWith(".zip") || n.endsWith(".rar") || n.endsWith(".7z") ||
+                    n.endsWith(".tar") || n.endsWith(".gz")
+                }
+                else -> filtered
+            }
             if (searchQuery.isNotBlank()) {
                 // TÌM KIẾM: Sắp xếp theo điểm gần khớp nhất (Relevance Score) đưa kết quả sát nhất lên đầu
-                val folders = filtered.filter { it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
-                val files = filtered.filter { !it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
+                val folders = categoryFiltered.filter { it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
+                val files = categoryFiltered.filter { !it.isDirectory }.sortedByDescending { fileBrowserVM.calculateRelevanceScore(it.name, searchQuery) }
                 folders + files
             } else {
                 // SORT: thu muc luon o tren, sau do ap dung sort theo che do user chon
-                val folders = filtered.filter { it.isDirectory }
-                val files = filtered.filter { !it.isDirectory }
+                val folders = categoryFiltered.filter { it.isDirectory }
+                val files = categoryFiltered.filter { !it.isDirectory }
                 val sortFn: (NasFile) -> Comparable<*> = when (sortMode) {
                     "name_desc", "name_asc" -> { f -> f.name.lowercase() }
                     "date_desc", "date_asc" -> { f -> f.lastModified }
@@ -611,8 +647,127 @@ fun BrowserScreen(
                     }
                 }
             }
+        },
+        bottomBar = {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = selectionMode,
+                enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut()
+            ) {
+                Surface(
+                    color = DarkCard,
+                    tonalElevation = 6.dp,
+                    shadowElevation = 8.dp,
+                    shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
+                        val hasSelection = selectedFiles.isNotEmpty()
 
+                        if (isTrash) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = hasSelection) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        fileBrowserVM.restoreMultipleFiles(context, selectedFiles.toList())
+                                        selectionMode = false
+                                        selectedFiles.clear()
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Restore,
+                                    contentDescription = stringResource(R.string.cd_restore),
+                                    tint = if (hasSelection) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline
+                                )
+                                Text(
+                                    stringResource(R.string.cd_restore),
+                                    fontSize = 11.sp,
+                                    color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        } else {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = hasSelection) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        pendingBatchOperation = "COPY"
+                                        showFolderPickerDialog = true
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = stringResource(R.string.cd_copy),
+                                    tint = if (hasSelection) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline
+                                )
+                                Text(
+                                    stringResource(R.string.cd_copy),
+                                    fontSize = 11.sp,
+                                    color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
+                                )
+                            }
 
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = hasSelection) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        pendingBatchOperation = "MOVE"
+                                        showFolderPickerDialog = true
+                                    }
+                                    .padding(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.DriveFileMove,
+                                    contentDescription = stringResource(R.string.cd_move),
+                                    tint = if (hasSelection) AccentOrange else MaterialTheme.colorScheme.outline
+                                )
+                                Text(
+                                    stringResource(R.string.cd_move),
+                                    fontSize = 11.sp,
+                                    color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = hasSelection) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showMultiDeleteDialog = true
+                                }
+                                .padding(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = if (isTrash) "Xóa vĩnh viễn" else "Xóa",
+                                tint = if (hasSelection) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                            )
+                            Text(
+                                if (isTrash) "Xóa vĩnh viễn" else "Xóa",
+                                fontSize = 11.sp,
+                                color = if (hasSelection) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                            )
+                        }
+                    }
+                }
+            }
         },
         topBar = {
             if (isSearching) {
@@ -633,7 +788,8 @@ fun BrowserScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            historyManager.saveQuery(searchQuery)
+                            // Khong luu o day — LaunchedEffect luu khi search
+                            // xong VA co ket qua.
                             focusManager.clearFocus()
                             if (searchQuery.isNotBlank()) {
                                 fileBrowserVM.searchFiles(searchQuery)
@@ -857,27 +1013,27 @@ fun BrowserScreen(
                         // Đã xóa nút Đồng bộ thư mục
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_find_duplicates)) },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, stringResource(R.string.menu_find_duplicates)) },
                             onClick = { showMoreMenu = false; showDuplicateConfigDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.action_create_folder)) },
-                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, null) },
+                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, stringResource(R.string.action_create_folder)) },
                             onClick = { showMoreMenu = false; showCreateFolderDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_organize_videos)) },
-                            leadingIcon = { Icon(Icons.Default.SnippetFolder, null) },
+                            leadingIcon = { Icon(Icons.Default.SnippetFolder, stringResource(R.string.menu_organize_videos)) },
                             onClick = { showMoreMenu = false; showOrganizeDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.action_refresh)) },
-                            leadingIcon = { Icon(Icons.Default.Refresh, null) },
+                            leadingIcon = { Icon(Icons.Default.Refresh, stringResource(R.string.action_refresh)) },
                             onClick = { showMoreMenu = false; fileBrowserVM.refresh() }
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_random_photo)) },
-                            leadingIcon = { Icon(Icons.Default.Shuffle, null) },
+                            leadingIcon = { Icon(Icons.Default.Shuffle, stringResource(R.string.menu_random_photo)) },
                             onClick = {
                                 showMoreMenu = false
                                 val images = fileBrowserVM.fileList.filter { it.name.lowercase().run { endsWith(".jpg") || endsWith(".png") } }
@@ -886,7 +1042,7 @@ fun BrowserScreen(
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.menu_login), color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.Logout, stringResource(R.string.menu_login), tint = MaterialTheme.colorScheme.error) },
                             onClick = { showMoreMenu = false; onLogout() }
                         )
                     }
@@ -917,8 +1073,7 @@ fun BrowserScreen(
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Trái: Đường dẫn (thu gọn khi sâu > 3: NAS/.../cha/con)
-                    var showCrumbMenu by remember { mutableStateOf(false) }
+                    // Trái: Đường dẫn dạng cuộn ngang
                     Row(
                         modifier = Modifier
                             .weight(1f)
@@ -928,49 +1083,8 @@ fun BrowserScreen(
                         Text("NAS", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable { fileBrowserVM.navigateToUrl("/") })
-
-                        // Gon breadcrumb: giu 2 cuoi, con lai vao dropdown "..."
-                        val visibleSegs = if (segments.size > 3) segments.takeLast(2) else segments
-                        val hiddenSegs = if (segments.size > 3) segments.dropLast(2) else emptyList()
-                        if (hiddenSegs.isNotEmpty()) {
-                            Text(" / ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                            Box {
-                                Text("...",
-                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.clickable { showCrumbMenu = true }
-                                        .padding(horizontal = 10.dp, vertical = 10.dp))
-                                DropdownMenu(
-                                    expanded = showCrumbMenu,
-                                    onDismissRequest = { showCrumbMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("NAS (gốc)") },
-                                        onClick = { showCrumbMenu = false; fileBrowserVM.navigateToUrl("/") }
-                                    )
-                                    hiddenSegs.forEachIndexed { index, segment ->
-                                        DropdownMenuItem(
-                                            text = { Text(segment, maxLines = 1) },
-                                            onClick = {
-                                                showCrumbMenu = false
-                                                val targetPath = segments.take(index + 1).joinToString("/") + "/"
-                                                val targetUrl = baseUrl + targetPath
-                                                fileBrowserVM.urlStack.clear()
-                                                for (i in 0 until index + 1) {
-                                                    if (i == 0) fileBrowserVM.urlStack.push(baseUrl)
-                                                    else fileBrowserVM.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
-                                                }
-                                                fileBrowserVM.navigateToUrl(targetUrl)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        val segOffset = segments.size - visibleSegs.size
-                        visibleSegs.forEachIndexed { vIndex, segment ->
-                            val index = segOffset + vIndex
+                        
+                        segments.forEachIndexed { index, segment ->
                             Text(" / ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
                             val isLast = index == segments.lastIndex
                             Text(
@@ -1021,7 +1135,7 @@ fun BrowserScreen(
                             onClick = {
                                 fileBrowserVM.setViewModeName(nextMode.name)
                             },
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(48.dp)
                         ) {
                             Icon(
                                 imageVector = currentIcon,
@@ -1036,10 +1150,13 @@ fun BrowserScreen(
                     if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
                         Box {
                             IconButton(
-                                onClick = { showSortMenu = true },
+                                onClick = { 
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    showSortMenu = true 
+                                },
                                 modifier = Modifier
-                                    .padding(start = 4.dp)
-                                    .size(28.dp)
+                                    .padding(start = 2.dp)
+                                    .size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Sort,
@@ -1073,13 +1190,13 @@ fun BrowserScreen(
                                         },
                                         leadingIcon = {
                                             Icon(
-                                                opt.icon, null,
+                                                opt.icon, opt.label,
                                                 tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         },
                                         trailingIcon = if (isActive) {
-                                            { Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+                                            { Icon(Icons.Default.Check, opt.label, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
                                         } else null,
                                         onClick = {
                                             fileBrowserVM.setFileSort(opt.key)
@@ -1094,10 +1211,13 @@ fun BrowserScreen(
                     // Nút kích hoạt chế độ chọn nhiều file
                     if (!selectionMode && fileBrowserVM.fileList.isNotEmpty()) {
                         IconButton(
-                            onClick = { selectionMode = true },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                selectionMode = true
+                            },
                             modifier = Modifier
-                                .padding(start = 4.dp)
-                                .size(28.dp)
+                                .padding(start = 2.dp)
+                                .size(48.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CheckBox,
@@ -1112,6 +1232,45 @@ fun BrowserScreen(
             
             // Thanh tiến trình tải ảnh (chỉ hiện khi đang tải hàng loạt)
             if (animatedProgress > 0f && animatedProgress < 1f) LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary, trackColor = Color.Transparent)
+
+            // Thanh chip lọc nhanh định dạng (Tất cả, Ảnh, Video, Tài liệu, Nén)
+            if (!selectionMode && (fileBrowserVM.fileList.isNotEmpty() || selectedCategory != "ALL")) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    listOf(
+                        "ALL" to "Tất cả",
+                        "IMAGE" to "Ảnh",
+                        "VIDEO" to "Video",
+                        "DOC" to "Tài liệu",
+                        "ARCHIVE" to "File nén"
+                    ).forEach { (catKey, catLabel) ->
+                        val isSelected = selectedCategory == catKey
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedCategory = if (isSelected && catKey != "ALL") "ALL" else catKey
+                            },
+                            label = { Text(catLabel, fontSize = 11.sp) },
+                            leadingIcon = if (isSelected) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(13.dp)) }
+                            } else null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.height(30.dp)
+                        )
+                    }
+                }
+            }
 
             // TÍNH NĂNG MỚI: Trạng thái Kéo để làm mới (Pull-to-Refresh) CHUẨN ĐỒNG BỘ
             val pullToRefreshState = rememberPullToRefreshState()
@@ -1144,7 +1303,7 @@ fun BrowserScreen(
                     item { Text(stringResource(R.string.label_recent_searches), color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(10.dp)) }
                     items(items = searchHistory, key = { it.query }) { history ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; historyManager.saveQuery(history.query); focusManager.clearFocus() }.padding(16.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; fileBrowserVM.searchFiles(history.query); focusManager.clearFocus() }.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(end = 16.dp))
@@ -1215,10 +1374,8 @@ fun BrowserScreen(
                         }
                     }
                 }
-                val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                 val onFileLongClick: (NasFile) -> Unit = { file ->
-                    // Rung nhe khi nhan giu chon file — phan hoi xuc giac tuc thi.
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (!selectionMode) {
                         selectionMode = true
                         selectedFiles.add(file)
@@ -1235,10 +1392,9 @@ fun BrowserScreen(
                 // TÍNH NĂNG MỚI: Chuyển đổi layout theo chế độ hiển thị
                 when (viewMode) {
                     BrowserViewMode.ICON -> {
-                        // ICON MODE: luoi adaptive 3/4/5 cot theo man hinh
-                        // (Compact phone 3 — o rong doc duoc ten file).
+                        // ICON MODE: Lưới icon thích ứng (3 cột điện thoại, 4 cột tablet, 5 cột máy tính)
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(com.nas.naswebdav.ui.layout.adaptiveGridColumns()),
+                            columns = GridCells.Fixed(adaptiveGridColumns()),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(AppSpacing.XS),
                             horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS),
@@ -1310,59 +1466,6 @@ fun BrowserScreen(
                                     val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
                                     val auth = WebDavManager.currentAuthState().authHeader
 
-                                    // Vuot nhanh: trai = Xoa (trash), phai = Tai ve.
-                                    // Tat khi selectionMode (tranh xung dot voi multi-select).
-                                    val swipeState = androidx.compose.material3.rememberSwipeToDismissBoxState(
-                                        confirmValueChange = { target ->
-                                            if (selectionMode) return@rememberSwipeToDismissBoxState false
-                                            when (target) {
-                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> {
-                                                    // Vuot phai: tai ve qua DownloadManager.
-                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                    try {
-                                                        val request = android.app.DownloadManager.Request(file.path.toUri())
-                                                            .setTitle(file.name)
-                                                            .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                                            .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
-                                                            .addRequestHeader("Authorization", auth)
-                                                        (context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
-                                                    } catch (_: Exception) {}
-                                                    false // khong dismiss — giu item
-                                                }
-                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> {
-                                                    // Vuot trai: mo xac nhan xoa (dung ham co san).
-                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                    fileBrowserVM.deleteFile(context, file)
-                                                    false
-                                                }
-                                                else -> false
-                                            }
-                                        }
-                                    )
-                                    androidx.compose.material3.SwipeToDismissBox(
-                                        state = swipeState,
-                                        enableDismissFromStartToEnd = !selectionMode,
-                                        enableDismissFromEndToStart = !selectionMode,
-                                        backgroundContent = {
-                                            val dir = swipeState.dismissDirection
-                                            val bg = when (dir) {
-                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> AccentGreen.copy(alpha = 0.85f)
-                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> AccentRed.copy(alpha = 0.85f)
-                                                else -> Color.Transparent
-                                            }
-                                            val icon = when (dir) {
-                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Download
-                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> Icons.Default.Delete
-                                                else -> null
-                                            }
-                                            Box(
-                                                modifier = Modifier.fillMaxSize().background(bg).padding(horizontal = 16.dp),
-                                                contentAlignment = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd
-                                            ) {
-                                                if (icon != null) Icon(icon, contentDescription = null, tint = Color.White)
-                                            }
-                                        }
-                                    ) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1458,7 +1561,6 @@ fun BrowserScreen(
                                             modifier = Modifier.padding(start = 8.dp)
                                         )
                                     }
-                                    } // SwipeToDismissBox content
                                 }
                             }
                         }
@@ -1654,24 +1756,60 @@ fun BrowserScreen(
                     }
                 } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
                     androidx.compose.animation.Crossfade(
-                        targetState = isSearching && searchQuery.isNotEmpty(),
+                        // 3 trang thai: dang tim (spinner) / xong-khong-ket-qua /
+                        // loc category trong / thu muc trong. Ban cu hien "Khong
+                        // tim thay" ngay ca khi BFS van dang chay -> nhap nhay.
+                        targetState = if (isSearching && searchQuery.isNotEmpty() && isServerSearchActive) "loading"
+                            else if (isSearching && searchQuery.isNotEmpty()) "noresult"
+                            else if (selectedCategory != "ALL") "nocategory" else "empty",
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
                         label = "BrowserEmptyState"
-                    ) { showSearchEmpty ->
-                        Column(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                    ) { state ->
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
                         ) {
-                            if (showSearchEmpty) {
-                                Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+                            if (state == "loading") {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Đang tìm \"$searchQuery\"...", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+                                }
                             } else {
-                                com.nas.naswebdav.ui.components.NasEmptyState(
-                                    icon = Icons.Default.FolderOpen,
-                                    title = stringResource(R.string.label_folder_empty),
-                                    description = "Kéo xuống để làm mới hoặc tải tệp lên."
-                                )
+                            val showSearchEmpty = state == "noresult"
+                            NasEmptyState(
+                                icon = if (showSearchEmpty) Icons.Default.SearchOff else Icons.Default.FolderOpen,
+                                title = when (state) {
+                                    "noresult" -> "Không tìm thấy kết quả"
+                                    "nocategory" -> "Không có tệp phù hợp"
+                                    else -> stringResource(R.string.label_folder_empty)
+                                },
+                                description = when (state) {
+                                    "noresult" -> "Không có tệp nào phù hợp với \"$searchQuery\""
+                                    "nocategory" -> "Không tìm thấy tệp thuộc danh mục đã chọn trong thư mục này"
+                                    else -> "Thư mục hiện tại chưa có dữ liệu nào"
+                                },
+                                actionText = when (state) {
+                                    "noresult" -> "Xóa tìm kiếm"
+                                    "nocategory" -> "Hiện tất cả tệp"
+                                    else -> "Làm mới"
+                                },
+                                onAction = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    when (state) {
+                                        "noresult" -> {
+                                            searchQuery = ""
+                                            fileBrowserVM.clearSearch()
+                                        }
+                                        "nocategory" -> {
+                                            selectedCategory = "ALL"
+                                        }
+                                        else -> {
+                                            fileBrowserVM.refresh()
+                                        }
+                                    }
+                                }
+                            )
                             }
                         }
                     }
@@ -1802,13 +1940,13 @@ fun BrowserScreenFileItemGridCell(
         )
     }
 
-    val itemHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val cellHaptic = LocalHapticFeedback.current
+
     Column(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
             .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
                     if (!selectionMode && !file.isDirectory && isNewFile) {
@@ -1820,9 +1958,9 @@ fun BrowserScreenFileItemGridCell(
                     onClick()
                 },
                 onLongClick = {
+                    cellHaptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     // Long-press LUON mo menu cho ca file va folder. Selection mode
                     // entry được thực hiện qua nút "Chọn file" ở toolbar.
-                    itemHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     if (selectionMode) {
                         // Trong selection mode -> long-press toggle select (giu logic cu).
                         onLongClick()
@@ -1831,7 +1969,7 @@ fun BrowserScreenFileItemGridCell(
                     }
                 }
             )
-            .padding(horizontal = 1.dp, vertical = 1.dp),
+            .padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
