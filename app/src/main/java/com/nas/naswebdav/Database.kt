@@ -49,16 +49,10 @@ interface FileDao {
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
 
-    @Query("SELECT path FROM files_cache WHERE isDirectory = 0 LIMIT 5000")
-    fun getAllCachedFilePaths(): List<String>
-
-    // TỐI ƯU OOM: Tránh load toàn bộ List<String> vào RAM
-    @Query("SELECT EXISTS(SELECT 1 FROM files_cache WHERE path = :path LIMIT 1)")
-    fun exists(path: String): Boolean
-
-    // Dialog Thuoc tinh file dung de tra cuu hash da scan
-    @Query("SELECT * FROM files_cache WHERE path = :path LIMIT 1")
-    fun getFileByPath(path: String): CachedFile?
+    // Dialog Thuoc tinh file dung de tra cuu hash da scan — scope phien
+    // de khong doc hash cua NAS/tai khoan khac.
+    @Query("SELECT * FROM files_cache WHERE path = :path AND (accountKey = :key OR accountKey = '') LIMIT 1")
+    fun getFileByPath(path: String, key: String = ""): CachedFile?
 
     // TỐI ƯU SQL: Loại trừ thư mục .trash để ảnh/video đã xóa không xuất hiện
     @Query("""
@@ -89,12 +83,6 @@ interface FileDao {
     // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
     @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFilesUnder(rootPrefix: String, keyword: String, key: String = ""): List<CachedFile>
-
-    // DEAD QUERY (không còn caller): giữ để tương thích, không dùng cho flow mới.
-    // Flow mới dùng searchFilesUnder() với LIMIT thay vì load full-table.
-    @Deprecated("Dùng searchFilesUnder() hoặc Paging thay vì load full-table")
-    @Query("SELECT * FROM files_cache LIMIT 25000")
-    fun getAllFilesForMap(): List<CachedFile>
 
     // P2-8 (lop 2, tiep): scope duplicate-scan theo phien. Row key rong van
     // doc duoc trong phien hien tai; doi phien -> connect() xoa sach.
@@ -287,14 +275,6 @@ interface FingerprintDao {
     // Lưu vân tay mới (upsert)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertFingerprint(fingerprint: FileFingerprint)
-
-    // Tìm file có hash CHÍNH XÁC trùng khớp
-    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash LIMIT 1")
-    fun findByExactHash(hash: String): FileFingerprint?
-
-    // Tim theo hash + size (phien ban nguon) — aHash va cham duoc.
-    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size LIMIT 5")
-    fun findByHashAndSize(hash: String, size: Long): List<FileFingerprint>
 
     // P2-muc3: tim theo hash + size + TAI KHOAN — khong dung ban NAS A cho NAS B.
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size AND (accountKey = :key OR accountKey = '') LIMIT 5")

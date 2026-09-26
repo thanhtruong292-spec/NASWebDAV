@@ -99,9 +99,8 @@ fun FilePropertiesDialog(
         try {
             val db = com.nas.naswebdav.NasApplication.instance.database
             val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // FingerprintDao chi co findByExactHash(hash) — query full table de tim filePath khong toi uu.
-                // Thay vao do dung FileDao.partialHash / fullHash (CachedFile co san).
-                db.fileDao().getFileByPath(file.path)
+                // Scope phien hien tai — khong doc hash cua NAS/tai khoan khac.
+                db.fileDao().getFileByPath(file.path, currentAccountKey())
             }
             fingerprintHash = result?.fullHash ?: result?.partialHash ?: result?.imageFingerprint
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {

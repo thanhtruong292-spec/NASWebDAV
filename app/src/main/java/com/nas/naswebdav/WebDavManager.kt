@@ -1524,11 +1524,6 @@ class WebDavRepository(
         database.fileDao().searchFilesUnder(rootPrefix, keyword, currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
-    @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")
-    suspend fun getAllFilesForMap(): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().getAllFilesForMap().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
-    }
-
     suspend fun saveDiscoveredFiles(files: List<NasFile>, parentUrl: String) = withContext(Dispatchers.IO) {
         if (files.isEmpty()) return@withContext
         // P2-8: ghi kem accountKey phien hien tai.
