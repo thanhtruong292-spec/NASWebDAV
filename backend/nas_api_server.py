@@ -3096,12 +3096,55 @@ def _is_app_temp_dirname(dname):
         return True
     return False
 
+def _managed_tmp_in_use():
+    """Tap hop realpath tmp_dir cua job DANG CHAY (livestream/ytdlp active).
+    Cleanup phai loai tru — khong xoa thu muc tac vu dang dung du cu tuoi.
+    Dung globals().get() de an toan thu tu dinh nghia module."""
+    in_use = set()
+    try:
+        lock = globals().get("_livestream_lock")
+        if lock is not None:
+            with lock:
+                jobs = list(globals().get("_livestream_jobs", {}).values())
+        else:
+            jobs = []
+    except Exception:
+        jobs = []
+    for info in jobs:
+        try:
+            if (info or {}).get("status") in ("recording", "starting", "stopping", "finishing"):
+                t = (info or {}).get("tmp_dir") or ""
+                if t:
+                    in_use.add(os.path.realpath(t))
+        except Exception:
+            continue
+    try:
+        ylock = globals().get("_ytdlp_lock")
+        if ylock is not None:
+            with ylock:
+                yjobs = list(globals().get("_ytdlp_jobs", {}).values())
+        else:
+            yjobs = []
+    except Exception:
+        yjobs = []
+    for info in yjobs:
+        try:
+            t = (info or {}).get("tmp_dir") or ""
+            if t:
+                in_use.add(os.path.realpath(t))
+        except Exception:
+            continue
+    return in_use
+
 def _clean_managed_tmp_root(max_seconds=20, min_age_seconds=7200):
     """F2: don vung tmp do app quan ly (_get_hdd_tmp_root + fallback /tmp).
     Toan bo vung nay la app-managed nen don theo tuoi, khong doan ten.
+    P1-moi: LOAI TRU tmp_dir cua job dang chay (livestream/ytdlp) — phien dai
+    van ghi file ben trong nhung khong tao entry moi co the bi xoa giua chung.
     Tra ve so entry da xoa."""
     removed = 0
     deadline = time.time() + max_seconds
+    in_use = _managed_tmp_in_use()
     roots = []
     try:
         roots.append(_get_hdd_tmp_root())
@@ -3121,6 +3164,9 @@ def _clean_managed_tmp_root(max_seconds=20, min_age_seconds=7200):
                     break
                 p = os.path.join(real_root, entry)
                 try:
+                    real_p = os.path.realpath(p)
+                    if real_p in in_use:
+                        continue  # job dang chay — khong dung vao
                     if time.time() - os.path.getmtime(p) < min_age_seconds:
                         continue
                     if os.path.isdir(p) and not os.path.islink(p):

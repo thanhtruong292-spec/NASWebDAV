@@ -263,15 +263,23 @@ interface ThumbnailDao {
     tableName = "file_fingerprints",
     indices = [
         Index(value = ["hash"]),       // Tìm trùng lặp chính xác siêu nhanh
-        Index(value = ["fileName"])    // Tìm theo tên file
+        Index(value = ["fileName"]),   // Tìm theo tên file
+        Index(value = ["accountKey"]), // P2-muc3: tach NAS/tai khoan
+        Index(value = ["sourceKey"])   // P2-muc4: tim theo nguon (ke ca khi khong aHash)
     ]
 )
 data class FileFingerprint(
     @PrimaryKey val filePath: String,  // Đường dẫn WebDAV trên NAS
-    val hash: String,                  // aHash 64-bit (hex 16 ký tự)
+    val hash: String,                  // aHash 64-bit (hex 16 ký tự, "" neu khong tinh duoc)
     val fileName: String,              // Tên file gốc (hiển thị cho user)
     val fileSize: Long,                // Dung lượng file (bytes)
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    // P2-muc3: dinh danh NAS/tai khoan — khong dung ban NAS A cho NAS B.
+    val accountKey: String = "",
+    // P2-muc4: danh tinh nguon on dinh ("media:<id>") + full SHA-256 sau verify.
+    // Cho phep nhan dien "nguon khong doi" ke ca khi khong tinh duoc aHash.
+    val sourceKey: String = "",
+    val contentHash: String = "",
 )
 
 @Dao
@@ -287,6 +295,14 @@ interface FingerprintDao {
     // Tim theo hash + size (phien ban nguon) — aHash va cham duoc.
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size LIMIT 5")
     fun findByHashAndSize(hash: String, size: Long): List<FileFingerprint>
+
+    // P2-muc3: tim theo hash + size + TAI KHOAN — khong dung ban NAS A cho NAS B.
+    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size AND (accountKey = :key OR accountKey = '') LIMIT 5")
+    fun findByHashSizeAccount(hash: String, size: Long, key: String): List<FileFingerprint>
+
+    // P2-muc4: tim theo NGUON (on dinh ke ca khi khong aHash) + tai khoan.
+    @Query("SELECT * FROM file_fingerprints WHERE sourceKey = :source AND (accountKey = :key OR accountKey = '') ORDER BY timestamp DESC LIMIT 5")
+    fun findBySource(source: String, key: String): List<FileFingerprint>
 
     // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker
     @Query("SELECT * FROM file_fingerprints LIMIT 10000")
@@ -583,9 +599,18 @@ val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
     }
 }
 
+// P2-muc3+muc4: fingerprint them accountKey/sourceKey/contentHash.
+val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.addColumnIfMissing("file_fingerprints", "accountKey", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("file_fingerprints", "sourceKey", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("file_fingerprints", "contentHash", "TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 18,
+    version = 19,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
