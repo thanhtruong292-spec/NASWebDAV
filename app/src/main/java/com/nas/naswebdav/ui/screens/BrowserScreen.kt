@@ -917,7 +917,8 @@ fun BrowserScreen(
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Trái: Đường dẫn dạng cuộn ngang
+                    // Trái: Đường dẫn (thu gọn khi sâu > 3: NAS/.../cha/con)
+                    var showCrumbMenu by remember { mutableStateOf(false) }
                     Row(
                         modifier = Modifier
                             .weight(1f)
@@ -927,8 +928,49 @@ fun BrowserScreen(
                         Text("NAS", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable { fileBrowserVM.navigateToUrl("/") })
-                        
-                        segments.forEachIndexed { index, segment ->
+
+                        // Gon breadcrumb: giu 2 cuoi, con lai vao dropdown "..."
+                        val visibleSegs = if (segments.size > 3) segments.takeLast(2) else segments
+                        val hiddenSegs = if (segments.size > 3) segments.dropLast(2) else emptyList()
+                        if (hiddenSegs.isNotEmpty()) {
+                            Text(" / ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                            Box {
+                                Text("...",
+                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clickable { showCrumbMenu = true }
+                                        .padding(horizontal = 10.dp, vertical = 10.dp))
+                                DropdownMenu(
+                                    expanded = showCrumbMenu,
+                                    onDismissRequest = { showCrumbMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("NAS (gốc)") },
+                                        onClick = { showCrumbMenu = false; fileBrowserVM.navigateToUrl("/") }
+                                    )
+                                    hiddenSegs.forEachIndexed { index, segment ->
+                                        DropdownMenuItem(
+                                            text = { Text(segment, maxLines = 1) },
+                                            onClick = {
+                                                showCrumbMenu = false
+                                                val targetPath = segments.take(index + 1).joinToString("/") + "/"
+                                                val targetUrl = baseUrl + targetPath
+                                                fileBrowserVM.urlStack.clear()
+                                                for (i in 0 until index + 1) {
+                                                    if (i == 0) fileBrowserVM.urlStack.push(baseUrl)
+                                                    else fileBrowserVM.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
+                                                }
+                                                fileBrowserVM.navigateToUrl(targetUrl)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        val segOffset = segments.size - visibleSegs.size
+                        visibleSegs.forEachIndexed { vIndex, segment ->
+                            val index = segOffset + vIndex
                             Text(" / ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
                             val isLast = index == segments.lastIndex
                             Text(
@@ -1173,7 +1215,10 @@ fun BrowserScreen(
                         }
                     }
                 }
+                val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                 val onFileLongClick: (NasFile) -> Unit = { file ->
+                    // Rung nhe khi nhan giu chon file — phan hoi xuc giac tuc thi.
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     if (!selectionMode) {
                         selectionMode = true
                         selectedFiles.add(file)
@@ -1264,6 +1309,59 @@ fun BrowserScreen(
                                     val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
                                     val auth = WebDavManager.currentAuthState().authHeader
 
+                                    // Vuot nhanh: trai = Xoa (trash), phai = Tai ve.
+                                    // Tat khi selectionMode (tranh xung dot voi multi-select).
+                                    val swipeState = androidx.compose.material3.rememberSwipeToDismissBoxState(
+                                        confirmValueChange = { target ->
+                                            if (selectionMode) return@rememberSwipeToDismissBoxState false
+                                            when (target) {
+                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> {
+                                                    // Vuot phai: tai ve qua DownloadManager.
+                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                    try {
+                                                        val request = android.app.DownloadManager.Request(file.path.toUri())
+                                                            .setTitle(file.name)
+                                                            .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                                            .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
+                                                            .addRequestHeader("Authorization", auth)
+                                                        (context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
+                                                    } catch (_: Exception) {}
+                                                    false // khong dismiss — giu item
+                                                }
+                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> {
+                                                    // Vuot trai: mo xac nhan xoa (dung ham co san).
+                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                    fileBrowserVM.deleteFile(context, file)
+                                                    false
+                                                }
+                                                else -> false
+                                            }
+                                        }
+                                    )
+                                    androidx.compose.material3.SwipeToDismissBox(
+                                        state = swipeState,
+                                        enableDismissFromStartToEnd = !selectionMode,
+                                        enableDismissFromEndToStart = !selectionMode,
+                                        backgroundContent = {
+                                            val dir = swipeState.dismissDirection
+                                            val bg = when (dir) {
+                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> AccentGreen.copy(alpha = 0.85f)
+                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> AccentRed.copy(alpha = 0.85f)
+                                                else -> Color.Transparent
+                                            }
+                                            val icon = when (dir) {
+                                                androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> Icons.Default.Download
+                                                androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> Icons.Default.Delete
+                                                else -> null
+                                            }
+                                            Box(
+                                                modifier = Modifier.fillMaxSize().background(bg).padding(horizontal = 16.dp),
+                                                contentAlignment = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd
+                                            ) {
+                                                if (icon != null) Icon(icon, contentDescription = null, tint = Color.White)
+                                            }
+                                        }
+                                    ) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1359,6 +1457,7 @@ fun BrowserScreen(
                                             modifier = Modifier.padding(start = 8.dp)
                                         )
                                     }
+                                    } // SwipeToDismissBox content
                                 }
                             }
                         }
@@ -1700,6 +1799,7 @@ fun BrowserScreenFileItemGridCell(
         )
     }
 
+    val itemHaptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -1719,6 +1819,7 @@ fun BrowserScreenFileItemGridCell(
                 onLongClick = {
                     // Long-press LUON mo menu cho ca file va folder. Selection mode
                     // entry được thực hiện qua nút "Chọn file" ở toolbar.
+                    itemHaptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     if (selectionMode) {
                         // Trong selection mode -> long-press toggle select (giu logic cu).
                         onLongClick()
