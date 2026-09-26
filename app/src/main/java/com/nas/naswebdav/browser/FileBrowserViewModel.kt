@@ -971,8 +971,12 @@ class FileBrowserViewModel(
 
     fun unzipFile(context: Context, filePath: String) {
         try {
-            val uri = java.net.URI(filePath)
-            val relativePath = uri.path.substringAfter("/webdav")
+            // URI chua encode (dau cach/tieng Viet) -> URISyntaxException.
+            // Da trong try, nhung fallback path thu cong de van giai nen duoc.
+            val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) {
+                try { java.net.URL(filePath).path } catch (_: Exception) { filePath }
+            }
+            val relativePath = (rawPath ?: filePath).substringAfter("/webdav")
             val fileName = filePath.substringAfterLast("/")
             val jsonBody = org.json.JSONObject().apply {
                 put("file_path", relativePath)

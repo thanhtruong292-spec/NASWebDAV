@@ -248,8 +248,12 @@ class SmartToolsViewModel(
     // ═══ UNZIP ═══
 
     fun unzipFile(filePath: String) {
-        val uri = java.net.URI(filePath)
-        val relativePath = uri.path.substringAfter("/webdav")
+        // URI chua encode (dau cach/tieng Viet) -> URISyntaxException. Fallback:
+        // cat path thu cong thay vi crash.
+        val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) {
+            try { java.net.URL(filePath).path } catch (_: Exception) { filePath }
+        }
+        val relativePath = (rawPath ?: filePath).substringAfter("/webdav")
         val fileName = filePath.substringAfterLast("/")
         val jsonBody = org.json.JSONObject().apply {
             put("file_path", relativePath)
@@ -276,6 +280,14 @@ class SmartToolsViewModel(
     fun resetShouldAutoOpenDuplicates() { shouldAutoOpenDuplicates = false }
     fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile) {
         viewModelScope.launch(Dispatchers.IO) {
+            deleteDuplicateFileInternal(file)
+        }
+    }
+
+    // Xoa 1 file (loi goi truc tiep, khong tu launch) — de batch chay tuan tu
+    // trong 1 coroutine, tranh 30-50 coroutine cung filter list tren Main
+    // (lost-update: file da xoa hien lai).
+    private suspend fun deleteDuplicateFileInternal(file: com.nas.naswebdav.NasFile) {
             try {
                 val isInTrash = file.path.contains(".trash")
                 if (isInTrash) {
@@ -313,11 +325,14 @@ class SmartToolsViewModel(
                 // moi de tranh phai wire UI.
                 android.util.Log.w("SmartToolsVM", "deleteDuplicateFile (giu file): ${e.message}")
             }
-        }
     }
 
+    // Batch xoa TUAN TU trong 1 coroutine — tranh lost-update UI khi 30-50
+    // coroutine cung filter duplicateFilesList tren Main.
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) {
-        files.forEach { deleteDuplicateFile(it) }
+        viewModelScope.launch(Dispatchers.IO) {
+            for (f in files) deleteDuplicateFileInternal(f)
+        }
     }
     fun togglePauseDuplicateScan() {
         scanDuplicatesIsPaused = !scanDuplicatesIsPaused

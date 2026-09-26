@@ -1022,7 +1022,6 @@ class DeviceManagementViewModel(
                 .let(WebDavManager::tagCurrentAuth)
                 .build()
             usbImportApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use
                 val body = resp.body?.string() ?: "{}"
                 if (!resp.isSuccessful) {
                     withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }

@@ -294,7 +294,7 @@ class AutoBackupViewModel(
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/start")
-                    .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "startUsbImportNow: ${e.message}")
@@ -307,7 +307,7 @@ class AutoBackupViewModel(
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/usb_import/cancel")
-                    .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("AutoBackup", "cancelUsbImport: ${e.message}")
@@ -389,7 +389,7 @@ class AutoBackupViewModel(
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/system/hdd_spindown_now")
-                    .post(ByteArray(0).toRequestBody(null, 0, 0)).build()
+                    .post(ByteArray(0).toRequestBody(null, 0, 0)).let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     withContext(Dispatchers.Main) { onDone?.invoke(resp.isSuccessful, if (resp.isSuccessful) "OK" else "HTTP ${resp.code}") }
                 }

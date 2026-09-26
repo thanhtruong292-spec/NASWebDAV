@@ -4676,7 +4676,10 @@ def api_smb_toggle():
             content = before + after
             
         if enable:
-            block = "\n{0}\n[NAS_Data]\n   path = /srv/dev-disk-by-label-data\n   read only = no\n   guest ok = no\n   valid users = daica\n   force user = root\n   force group = root\n{1}\n".format(marker_start, marker_end)
+            # Dung username thuc te tu auth.conf — hardcode ten cu lam khoa
+            # truy cap khi user doi ten tai khoan NAS (NT_STATUS_ACCESS_DENIED).
+            _smb_user = _re_module.sub(r"[^A-Za-z0-9_.-]+", "", str(globals().get("WEBDAV_USER") or "")) or "daica"
+            block = "\n{0}\n[NAS_Data]\n   path = /srv/dev-disk-by-label-data\n   read only = no\n   guest ok = no\n   valid users = {1}\n   force user = root\n   force group = root\n{2}\n".format(marker_start, _smb_user, marker_end)
             content = content.rstrip() + block
             
         with open(conf_path, "w") as f:
