@@ -1235,9 +1235,10 @@ fun BrowserScreen(
                 // TÍNH NĂNG MỚI: Chuyển đổi layout theo chế độ hiển thị
                 when (viewMode) {
                     BrowserViewMode.ICON -> {
-                        // ICON MODE: Lưới icon, 5 cột (đồng bộ với dashboard cards)
+                        // ICON MODE: luoi adaptive 3/4/5 cot theo man hinh
+                        // (Compact phone 3 — o rong doc duoc ten file).
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(5),
+                            columns = GridCells.Fixed(com.nas.naswebdav.ui.layout.adaptiveGridColumns()),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(AppSpacing.XS),
                             horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS),
@@ -1666,9 +1667,11 @@ fun BrowserScreen(
                                 Spacer(Modifier.height(8.dp))
                                 Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
                             } else {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
-                                Spacer(Modifier.height(8.dp))
-                                Text(stringResource(R.string.label_folder_empty), color = MaterialTheme.colorScheme.outline)
+                                com.nas.naswebdav.ui.components.NasEmptyState(
+                                    icon = Icons.Default.FolderOpen,
+                                    title = stringResource(R.string.label_folder_empty),
+                                    description = "Kéo xuống để làm mới hoặc tải tệp lên."
+                                )
                             }
                         }
                     }
@@ -1805,7 +1808,7 @@ fun BrowserScreenFileItemGridCell(
             .fillMaxWidth()
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
+                indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
                     if (!selectionMode && !file.isDirectory && isNewFile) {

@@ -3,6 +3,7 @@ package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.minTouchTarget
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.screens.*
@@ -211,7 +212,7 @@ fun NasInsightsDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("Tổng quan hệ thống NAS", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { sysVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { sysVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp).minTouchTarget()) {
                     Icon(Icons.Default.Refresh, null, tint = TextTertiary, modifier = Modifier.size(18.dp))
                 }
             }

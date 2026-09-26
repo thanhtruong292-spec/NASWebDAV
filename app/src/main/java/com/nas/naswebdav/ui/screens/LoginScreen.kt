@@ -261,7 +261,18 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth().focusRequester(userFocusRequester), singleLine = true)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+        var showPassword by remember { mutableStateOf(false) }
+        OutlinedTextField(value = pass, onValueChange = { pass = it }, label = { Text("Mật khẩu") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+            visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showPassword = !showPassword }) {
+                    Icon(
+                        if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (showPassword) "Ẩn mật khẩu" else "Hiện mật khẩu",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            })
         Spacer(Modifier.height(14.dp))
         val interactionSource = remember { MutableInteractionSource() }
         val btnContent: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {

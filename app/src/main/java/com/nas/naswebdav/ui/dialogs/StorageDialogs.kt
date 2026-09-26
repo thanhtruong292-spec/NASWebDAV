@@ -3,6 +3,7 @@ package com.nas.naswebdav.ui.dialogs
 
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.minTouchTarget
 import com.nas.naswebdav.ui.components.NasBottomSheetHandle
 import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.components.NasLoadingSpinner
@@ -133,7 +134,7 @@ fun UsbImportDialog(
                 Spacer(Modifier.width(8.dp))
                 Text("USB Import", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { deviceVM.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { deviceVM.fetchUsbImportStatus() }, modifier = Modifier.size(32.dp).minTouchTarget()) {
                     Icon(Icons.Default.Refresh, "Làm mới", tint = TextTertiary, modifier = Modifier.size(18.dp))
                 }
             }

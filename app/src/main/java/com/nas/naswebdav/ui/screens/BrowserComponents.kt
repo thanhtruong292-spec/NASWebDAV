@@ -221,7 +221,7 @@ fun FileItemGridCell(
             .fillMaxWidth()
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
+                indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
                     if (!selectionMode && !file.isDirectory && isNewFile) {
