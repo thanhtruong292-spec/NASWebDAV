@@ -497,6 +497,13 @@ fun BrowserScreen(
     LaunchedEffect(isSearching) {
         if (isSearching) wasInSearchMode = true
     }
+    // Chi luu lich su khi search xong VA co ket qua — query 0 ket qua hoac
+    // dang go do khong lam rac lich su. Bam vao file giu nguyen (luu ngay).
+    LaunchedEffect(isServerSearchActive, serverSearchResults.size) {
+        if (isSearching && searchQuery.isNotBlank() && !isServerSearchActive && serverSearchResults.isNotEmpty()) {
+            historyManager.saveQuery(searchQuery)
+        }
+    }
 
     // Windows-Explorer-style search display:
     // - blank query → current folder listing
@@ -633,7 +640,8 @@ fun BrowserScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = {
-                            historyManager.saveQuery(searchQuery)
+                            // Khong luu o day — LaunchedEffect luu khi search
+                            // xong VA co ket qua (query 0 ket qua khong rac lich su).
                             focusManager.clearFocus()
                             if (searchQuery.isNotBlank()) {
                                 fileBrowserVM.searchFiles(searchQuery)
@@ -1102,7 +1110,7 @@ fun BrowserScreen(
                     item { Text(stringResource(R.string.label_recent_searches), color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(10.dp)) }
                     items(items = searchHistory, key = { it.query }) { history ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; historyManager.saveQuery(history.query); focusManager.clearFocus() }.padding(16.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; fileBrowserVM.searchFiles(history.query); focusManager.clearFocus() }.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(end = 16.dp))
@@ -1554,15 +1562,23 @@ fun BrowserScreen(
                     }
                 } else if (!fileBrowserVM.isLoading && displayedFiles.isEmpty() && currentError.isNullOrEmpty()) {
                     androidx.compose.animation.Crossfade(
-                        targetState = isSearching && searchQuery.isNotEmpty(),
+                        // 3 trang thai rieng: dang tim (spinner) / xong-khong-ket-qua
+                        // / thu muc trong. Ban cu hien "Khong tim thay" ngay ca khi
+                        // BFS van dang chay -> nhap nhay lien tuc.
+                        targetState = if (isSearching && searchQuery.isNotEmpty() && isServerSearchActive) "loading"
+                            else if (isSearching && searchQuery.isNotEmpty()) "noresult" else "empty",
                         animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
                         label = "BrowserEmptyState"
-                    ) { showSearchEmpty ->
+                    ) { state ->
                         Column(
                             modifier = Modifier.align(Alignment.Center),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            if (showSearchEmpty) {
+                            if (state == "loading") {
+                                androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(8.dp))
+                                Text("Đang tìm \"$searchQuery\"...", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
+                            } else if (state == "noresult") {
                                 Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
                                 Spacer(Modifier.height(8.dp))
                                 Text("Không tìm thấy kết quả phù hợp cho \"$searchQuery\"", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
