@@ -240,6 +240,8 @@ fun NasNavHost(
 
             // ── MORE (Thêm) ────────────────────────────────────────────
             composable(NasRoutes.MORE) {
+                val moreContext = androidx.compose.ui.platform.LocalContext.current
+                var showAboutDialog by remember { mutableStateOf(false) }
                 MoreSectionScreen(
                     onOpenPerformance = { navController.navigate(NasRoutes.PERFORMANCE) },
                     onLogout = {
@@ -249,7 +251,43 @@ fun NasNavHost(
                         }
                         navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
                     },
+                    // FIX-AUDIT-#6: het 2 TODO — Cai dat mo app settings he thong,
+                    // Gioi thieu mo dialog version inline.
+                    onOpenSettings = {
+                        runCatching {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                            ).apply {
+                                data = android.net.Uri.fromParts(
+                                    "package", moreContext.packageName, null)
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            moreContext.startActivity(intent)
+                        }
+                    },
+                    onOpenAbout = { showAboutDialog = true },
                 )
+                if (showAboutDialog) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showAboutDialog = false },
+                        title = { androidx.compose.material3.Text("NAS WebDAV") },
+                        text = {
+                            androidx.compose.material3.Text(
+                                "Ứng dụng quản lý NAS qua WebDAV.\n" +
+                                "Phiên bản: " + runCatching {
+                                    moreContext.packageManager
+                                        .getPackageInfo(moreContext.packageName, 0).versionName
+                                }.getOrDefault("?")
+                            )
+                        },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(
+                                onClick = { showAboutDialog = false }) {
+                                androidx.compose.material3.Text("Đóng")
+                            }
+                        }
+                    )
+                }
             }
 
             // ── FULL-SCREEN DESTINATIONS (no bottom nav) ────────────────

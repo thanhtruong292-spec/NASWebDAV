@@ -92,12 +92,18 @@ private fun BottomNavItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val contentColor = if (isActive) PanelTitleCyan else TextTertiary
+    val bgColor = if (isActive) PanelTitleCyan.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(AppSpacing.SM))
-            .clickable { onClick() }
+            .clip(RoundedCornerShape(AppSpacing.MD))
+            .background(bgColor)
+            .clickable {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                onClick()
+            }
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -113,6 +119,7 @@ private fun BottomNavItem(
             style = AppTypography.LabelSmall,
             color = contentColor,
             maxLines = 1,
+            fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
         )
     }
 }

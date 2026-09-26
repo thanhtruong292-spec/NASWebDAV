@@ -74,4 +74,24 @@ class DatabaseDaoTest {
         database.trashMetaDao().insert(meta)
         assertEquals(meta, database.trashMetaDao().findByOriginalPath("/photos/photo.jpg"))
     }
+
+    @Test
+    fun `files cache is scoped by account key`() {
+        val dao = database.fileDao()
+        dao.insertFiles(listOf(
+            CachedFile("/docs/a.txt", "a.txt", false, "text/plain", "/docs", 100, 1, accountKey = "u1@h:1/r"),
+            CachedFile("/docs/b.txt", "b.txt", false, "text/plain", "/docs", 100, 2, accountKey = "u2@h:1/r"),
+            CachedFile("/docs/c.txt", "c.txt", false, "text/plain", "/docs", 100, 3)
+        ))
+        // Phien u1: thay a.txt (key minh) + c.txt (row cu chua key).
+        assertEquals(listOf("a.txt", "c.txt"),
+            dao.getFiles("/docs", "u1@h:1/r").map { it.name }.sorted())
+        // Phien u2: thay b.txt + c.txt, khong thay a.txt.
+        assertEquals(listOf("b.txt", "c.txt"),
+            dao.getFiles("/docs", "u2@h:1/r").map { it.name }.sorted())
+        // searchFiles cung scope.
+        assertEquals(listOf("a.txt"),
+            dao.searchFiles("a.txt", "u1@h:1/r").map { it.name })
+        assertTrue(dao.searchFiles("a.txt", "u2@h:1/r").isEmpty())
+    }
 }

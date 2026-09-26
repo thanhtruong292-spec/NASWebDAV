@@ -217,8 +217,24 @@ class NasDocumentProvider : DocumentsProvider() {
         val url = resolveDocumentUrl(targetId, baseUrl)
 
         val accessMode = ParcelFileDescriptor.parseMode(mode ?: "r")
+        // FIX-AUDIT-D1: bitmask cũ `(mode & MODE_READ_WRITE) != 0` luôn true với "r"
+        // vì MODE_READ_WRITE (0x30000000) chứa bit MODE_READ_ONLY (0x10000000).
+        // Phân loại đúng: chỉ WRITE_ONLY hoặc APPEND mới là ghi; "r" phải đi
+        // path đọc (tuyệt đối không PUT).
         val isWrite = (accessMode and ParcelFileDescriptor.MODE_WRITE_ONLY) != 0 ||
-                (accessMode and ParcelFileDescriptor.MODE_READ_WRITE) != 0
+                (accessMode and ParcelFileDescriptor.MODE_APPEND) != 0
+        // Hợp đồng mode Android DocumentsProvider:
+        //   "r"/"rt"      -> đọc (path dưới, không bao giờ PUT)
+        //   "w"/"wt"/"rwt"-> truncate -> temp rỗng (đúng, PUT đè nội dung mới)
+        //   "wa"/"rw"     -> giữ nội dung gốc -> phải preload từ NAS trước khi ghi
+        //   mode lạ khác  -> từ chối (FileNotFoundException) thay vì đoán -> tránh
+        //                     trả temp rỗng rồi PUT 0 byte đè mất dữ liệu.
+        val rawMode = (mode ?: "r").lowercase()
+        val isTruncate = rawMode == "w" || rawMode == "wt" || rawMode == "rwt"
+        val needPreload = isWrite && !isTruncate
+        if (isWrite && !isTruncate && rawMode != "wa" && rawMode != "rw") {
+            throw FileNotFoundException("Chế độ ghi không hỗ trợ: $mode")
+        }
 
         val fileExtension = targetId.trimEnd('/').substringAfterLast('.', "")
 
@@ -235,6 +251,32 @@ class NasDocumentProvider : DocumentsProvider() {
             // với tên có timestamp để user/developer recover thủ công.
             val tempFile = File(context?.cacheDir, "nas_write_${System.currentTimeMillis()}.$fileExtension")
             tempFile.createNewFile()
+            // FIX-AUDIT-D1: wa/rw phải bắt đầu từ nội dung gốc trên NAS. Preload
+            // trực tiếp (sharedHttpClient + authState đã chụp, giống read-path).
+            // 404 nghĩa là file chưa tồn tại -> tạo mới OK, giữ temp rỗng.
+            // Lỗi mạng/auth/khác -> từ chối, không trả temp rỗng rồi PUT đè
+            // 0 byte mất dữ liệu gốc.
+            if (needPreload) {
+                try {
+                    val preloadReq = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("Authorization", authState.authHeader)
+                        .build()
+                    NasApplication.instance.sharedHttpClient.newCall(preloadReq).execute().use { resp ->
+                        if (resp.code == 404) return@use
+                        if (!resp.isSuccessful) throw java.io.FileNotFoundException("Không tải nội dung gốc: HTTP ${resp.code}")
+                        val body = resp.body ?: throw java.io.FileNotFoundException("Nội dung gốc rỗng")
+                        body.byteStream().use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: java.io.FileNotFoundException) { throw e }
+                catch (e: java.lang.Exception) {
+                    tempFile.delete()
+                    throw java.io.FileNotFoundException("Không tải được nội dung gốc: ${e.message}")
+                }
+            }
 
             val handler = Handler(Looper.getMainLooper())
             return ParcelFileDescriptor.open(tempFile, accessMode, handler) { err ->
@@ -258,12 +300,27 @@ class NasDocumentProvider : DocumentsProvider() {
                             try {
                                 val app = NasApplication.instance
                                 val db = app.database
+                                val failHost = runCatching { java.net.URL(url).host ?: "" }.getOrDefault("")
+                                // FIX-REVIEW-193369e-#8: lay root tu baseUrl chup
+                                // cung credentials (khong phai thu muc cha file
+                                // dich). Ban cu: base /dav + file /dav/docs/a.txt
+                                // -> root /dav/docs, worker activeRoot /dav ->
+                                // SQL loai hang, khong tu retry du dung endpoint.
+                                val failPort = runCatching { java.net.URL(baseUrl).port.takeIf { it > 0 } ?: java.net.URL(baseUrl).defaultPort }.getOrDefault(-1)
+                                val failRoot = runCatching {
+                                    val p = java.net.URL(baseUrl).path.trimEnd('/')
+                                    if (p.isEmpty()) "/" else p
+                                }.getOrDefault("/")
                                 db.syncActionDao().insert(
                                     com.nas.naswebdav.SyncAction(
                                         actionType = "UPLOAD_FAILED",
                                         sourcePath = tempFile.absolutePath,
                                         destPath = url,
-                                        status = "FAILED"
+                                        status = "FAILED",
+                                        nasHost = failHost,
+                                        nasUser = authState.user,
+                                        nasPort = failPort,
+                                        nasRoot = failRoot
                                     )
                                 )
                                 // Kích hoạt OfflineSyncWorker retry ngay khi có mạng.
@@ -315,9 +372,14 @@ class NasDocumentProvider : DocumentsProvider() {
 
             NasApplication.applicationScope.launch(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(authState)) {
                 try {
+                    // P2-3: gan Authorization TRUC TIEP tu credential snapshot.
+                    // Ban cu chi .tagCurrentAuth() (gan tag) nhung sharedHttpClient
+                    // KHONG co interceptor chuyen tag thanh header (chi
+                    // fastApiClient/optimizedClient co) -> NAS 401 khi mo file
+                    // bang ung dung khac. Dung authState.authHeader (UTF-8 Base64).
                     val request = okhttp3.Request.Builder()
                         .url(url)
-                        .let(WebDavManager::tagCurrentAuth)
+                        .header("Authorization", authState.authHeader)
                         .build()
                     NasApplication.instance.sharedHttpClient.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) {

@@ -309,7 +309,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                     CachedFile(
                                                         path = fullUrl, name = name, isDirectory = false,
                                                         contentType = "application/octet-stream", parentPath = parentUrl,
-                                                        contentLength = size, lastModified = mtime
+                                                        contentLength = size, lastModified = mtime,
+                                                        accountKey = currentAccountKey()
                                                     )
                                                 )
                                                 if (batchBuffer.size >= 2000) {
@@ -333,6 +334,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                             progressPercent.set(stage1Progress * 0.5f)
 
                                             if (flushBatch.isNotEmpty()) {
+                                                // P2-8: drain flag doi-phien truoc khi ghi
+                                                // (worker co the chay lech phien voi UI).
+                                                WebDavManager.drainPendingCacheClear()
                                                 db.withTransaction { db.fileDao().insertFiles(flushBatch) }
                                             }
                                         }
@@ -450,7 +454,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                             CachedFile(
                                                                 path = file.path, name = file.name, isDirectory = false,
                                                                 contentType = file.contentType, parentPath = folder,
-                                                                contentLength = file.contentLength, lastModified = file.lastModified
+                                                                contentLength = file.contentLength, lastModified = file.lastModified,
+                                                                accountKey = currentAccountKey()
                                                             )
                                                         )
                                                     }
@@ -516,9 +521,11 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 progressPercent.set(0.50f)
 
                 // CHỈ đếm số lượng, KHÔNG load object vào RAM
-                val actualDuplicatesCount = db.fileDao().countDuplicateFiles()
+                // P2-8: scope theo phien hien tai.
+                val scanKey = currentAccountKey()
+                val actualDuplicatesCount = db.fileDao().countDuplicateFiles(scanKey)
                 // Lấy danh sách kích thước trùng (chỉ là List<Long>, rất nhẹ)
-                val duplicateSizes = db.fileDao().getDuplicateSizes()
+                val duplicateSizes = db.fileDao().getDuplicateSizes(scanKey)
                 
                 if (actualDuplicatesCount > 0) {
                     currentFileName.set("Tìm thấy $actualDuplicatesCount file nghi ngờ trùng lặp (${duplicateSizes.size} nhóm kích thước)")
@@ -556,7 +563,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                         while (DuplicateProgressState.isPaused.value && !isStopped) { delay(500) }
                         
                         // 1. Tải 50 nhóm file trong 1 truy vấn SQL duy nhất (Giảm 50x CSDL)
-                        val batchFiles = db.fileDao().getFilesBySizes(batchSizes).groupBy { it.contentLength }
+                        val batchFiles = db.fileDao().getFilesBySizes(batchSizes, currentAccountKey()).groupBy { it.contentLength }
                         
                         val filesNeedHash = mutableListOf<CachedFile>()
                         var currentBatchGroupsSize = 0
@@ -707,7 +714,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 delay(100) // Cho UI kịp vẽ ra bước mới
 
                 // Đếm lại duplicate groups chính xác từ DB (CHỈ ĐẾM, không load object)
-                val finalDuplicateCount = db.fileDao().countDuplicateFiles()
+                val finalDuplicateCount = db.fileDao().countDuplicateFiles(currentAccountKey())
                 
                 currentStage.set("Hoàn tất")
                 stageDescription.set("Hoàn tất. Đã quét ${totalFilesIndexed.get()} tệp, tìm thấy $finalDuplicateCount tệp trùng.")

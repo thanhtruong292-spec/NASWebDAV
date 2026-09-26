@@ -451,7 +451,7 @@ internal fun OmvServicesHardwarePanel() {
                     Row(
                         Modifier.fillMaxWidth().clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { ExclusivePanelState.toggle("omv") },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween

@@ -325,6 +325,10 @@ fun MainMenuScreen(
     var editingSlot by rememberSaveable { mutableStateOf<Int?>(null) }
     var showCommonDialog by rememberSaveable { mutableStateOf(false) }
 
+    // UX3: che do Tinh gon (chi file/backup/media) vs Chuyen gia (day du
+    // widget sysadmin). Luu prefs de giu lua chon.
+    var simpleMode by rememberSaveable { mutableStateOf(prefsRepo.isDashboardSimpleMode()) }
+
     // STATE CHO XÁC NHẬN NGUỒN VÀ TOOLBOX
     var showPowerMenu by rememberSaveable { mutableStateOf(false) }
     var showRebootConfirm by rememberSaveable { mutableStateOf(false) }
@@ -787,6 +791,28 @@ fun MainMenuScreen(
 
             Spacer(Modifier.height(8.dp))
 
+        // UX3: toggle Tinh gon / Chuyen gia — Tinh gon an 5 panel sysadmin
+        // (SystemOverview, OMV, MonitoringChart, Insights, Torrent), giu
+        // QuickAccess + SystemStatus + Logs cho user pho thong.
+        androidx.compose.material3.FilterChip(
+            selected = simpleMode,
+            onClick = {
+                simpleMode = !simpleMode
+                prefsRepo.setDashboardSimpleMode(simpleMode)
+            },
+            label = { Text(if (simpleMode) "Chế độ: Tinh gọn" else "Chế độ: Chuyên gia") },
+            leadingIcon = {
+                Icon(
+                    if (simpleMode) Icons.Default.VisibilityOff else Icons.Default.Dashboard,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            },
+            modifier = Modifier.align(Alignment.End)
+        )
+            Spacer(Modifier.height(8.dp))
+
+        if (!simpleMode) {
         MainMenuDashboardSystemOverviewCard(
             realtimeNow = realtimeNow,
             onShowProcessList = { type ->
@@ -796,10 +822,14 @@ fun MainMenuScreen(
             onOpenNewDiskProfile = { showNewDiskProfileSheet = true },
             onOpenSmartDetails = { showSmartDialog = true },
         )
+        }
 
+        if (!simpleMode) {
         MainMenuDashboardOmvServicesHardwarePanel()
+        }
 
         // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
+        if (!simpleMode) {
         Spacer(Modifier.height(8.dp))
         com.nas.naswebdav.ui.screens.MonitoringChartCard()
         Spacer(Modifier.height(8.dp))
@@ -809,6 +839,7 @@ fun MainMenuScreen(
                 showNasInsightsDialog = true
             }
         )
+        }
 
         // ── NEW: DashboardAlerts component ──
         run {
@@ -847,10 +878,12 @@ fun MainMenuScreen(
         )
         MainMenuSectionSystemLogsSummaryCard()
 
+        if (!simpleMode) {
         MainMenuDashboardTorrentActivityCard(
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
         )
+        }
 
 
 

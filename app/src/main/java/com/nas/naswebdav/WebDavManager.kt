@@ -5,6 +5,7 @@ package com.nas.naswebdav
 import android.util.Xml
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.withContext
 
@@ -126,6 +127,22 @@ internal fun buildWebDavRestoreTargetUrl(baseUrl: String, sourcePath: String, fi
     return targetUrl
 }
 
+/**
+ * P2-8 (lop 2): dinh danh phien cho files_cache (user@host:port/root).
+ * Top-level de ca WebDavManager (object) va WebDavRepository (class) deu dung.
+ */
+internal fun currentAccountKey(): String {
+    val a = WebDavManager.currentAuthState()
+    if (a.baseUrl.isBlank()) return ""
+    val host = runCatching { java.net.URL(a.baseUrl).host ?: a.baseUrl }.getOrDefault(a.baseUrl)
+    val port = runCatching { java.net.URL(a.baseUrl).port.takeIf { it > 0 } ?: java.net.URL(a.baseUrl).defaultPort }.getOrDefault(-1)
+    val root = runCatching {
+        val p = java.net.URL(a.baseUrl).path.trimEnd('/')
+        if (p.isEmpty()) "/" else p
+    }.getOrDefault("/")
+    return "${a.user}@$host:$port$root"
+}
+
 object WebDavManager {
 
     data class AuthState(
@@ -147,6 +164,23 @@ object WebDavManager {
 
     @Volatile
     private var authState = AuthState()
+
+    // P2-8: flag xoa cache khi doi phien. Duoc drain dong bo o dau moi lan
+    // doc/ghi files_cache (da o IO context) — khong launch coroutine le.
+    private val pendingCacheClear = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Drain flag doi-phien: xoa sach files_cache neu phien da doi. Goi o dau moi DB access (IO). */
+    internal fun drainPendingCacheClear() {
+        if (pendingCacheClear.compareAndSet(true, false)) {
+            try {
+                NasApplication.instance.database.fileDao().clearAllFiles()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) {
+                // Xoa that bai -> dat lai flag de lan sau thu lai (khong de lo).
+                pendingCacheClear.set(true)
+            }
+        }
+    }
 
     val currentBaseUrl: String
         get() = authState.baseUrl
@@ -340,7 +374,24 @@ object WebDavManager {
 
         val safeUrl = if (url.isNotEmpty() && !url.endsWith("/")) "$url/" else url
 
+        // P2-8 (lop 1): doi phien (NAS/user khac) -> xoa cache file cu + reset
+        // QueryCache de phien sau khong thay ten/path cua phien truoc (lo metadata).
+        // Xoa async (khong block login); insert sau cua phien moi se nap lai.
+        val prev = authState
+        val identityChanged = prev.baseUrl.isNotEmpty() &&
+            (prev.baseUrl != safeUrl || prev.user != user)
+        // F7: lan connect DAU TIEN cua process (prev rong) cung drain — row
+        // legacy key rong tu DB cu khong ro chu, khong de doc chung. Cache
+        // rebuild sau vai giay duyet.
+        val firstConnect = prev.baseUrl.isEmpty()
         authState = AuthState(safeUrl, user, pass)
+        if (identityChanged || firstConnect) {
+            QueryCache.clear()
+            // P2-8: danh dau dirty thay vi launch coroutine xoa DB (coroutine le
+            // gay race voi Robolectric SQLite trong unit test + kho kiem soat
+            // thread). Lan doc/ghi DB tiep theo (da o IO) se xoa dong bo truoc.
+            pendingCacheClear.set(true)
+        }
 
     }
 
@@ -955,17 +1006,172 @@ object WebDavManager {
     /**
      * Full-content SHA-256 on phone. Streams the entire file via WebDAV GET and hashes
      * locally — pushes work OFF the NAS CPU. Use only for files small enough to download.
+     *
+     * P1-2: nghiem ngat ve so byte va status. Ban cu chap nhan moi 2xx (ke ca
+     * 206 Partial) va khong dem byte -> noi dung thieu van cho ra hash "full".
+     * Quy tac moi: chi HTTP 200; so byte doc duoc phai DUNG totalSize
+     * (thieu/thua -> null); loi server -> null. Khong gui Range.
      */
+    // P1-2: GET truc tiep + siet byte/status (khong precondition). Dung cho
+    // verify sau MOVE (da co If-Match o buoc MOVE) va test. Ban co precondition
+    // ETag day du la getFullSha256WithEtag ben duoi.
     suspend fun getFullSha256PhoneStream(url: String, totalSize: Long): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().withAuth(authState).url(url).build()
             optimizedClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
+                // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
+                if (response.code != 200) return@withContext null
                 val stream = response.body?.byteStream() ?: return@withContext null
-                stream.use { com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(it) }
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(65536)
+                var totalRead = 0L
+                stream.use {
+                    while (true) {
+                        val n = it.read(buffer)
+                        if (n == -1) break
+                        totalRead += n
+                        if (totalRead > totalSize) return@withContext null // thua byte
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                if (totalRead != totalSize) return@withContext null // thieu byte
+                digest.digest().joinToString("") { "%02x".format(it) }
                     .takeIf { it.isNotEmpty() }
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
+    }
+
+    /**
+     * F3: full-hash GAN VOI ETAG. Quy trinh: HEAD lay ETag (+ size) TRUOC ->
+     * GET toan bo voi If-Match ETag do -> HEAD lai, ETag doi -> null.
+     * Hash tra ve chi co nghia voi dung phien ban ETag kem theo; caller dung
+     * CHINH ETag nay cho MOVE If-Match. Thieu/yeu ETag -> null (bo qua).
+     *
+     * @return Pair(hash, etag) hoac null khi khong du bang chung phien ban.
+     */
+    suspend fun getFullSha256WithEtag(url: String, totalSize: Long): Pair<String, String>? = withContext(Dispatchers.IO) {
+        try {
+            val head1 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext null
+            val remoteLen = head1["Content-Length"]?.toLongOrNull() ?: return@withContext null
+            if (remoteLen != totalSize) return@withContext null
+            val etag = head1["ETag"]?.trim()?.takeIf { it.isNotEmpty() } ?: return@withContext null
+            if (etag.startsWith("W/")) return@withContext null
+            val request = Request.Builder().withAuth(authState).url(url)
+                .header("If-Match", etag)
+                .build()
+            val hash = optimizedClient.newCall(request).execute().use { response ->
+                // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
+                if (response.code != 200) return@withContext null
+                val stream = response.body?.byteStream() ?: return@withContext null
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buffer = ByteArray(65536)
+                var totalRead = 0L
+                stream.use {
+                    while (true) {
+                        val n = it.read(buffer)
+                        if (n == -1) break
+                        totalRead += n
+                        if (totalRead > totalSize) return@withContext null // thua byte
+                        digest.update(buffer, 0, n)
+                    }
+                }
+                if (totalRead != totalSize) return@withContext null // thieu byte
+                digest.digest().joinToString("") { "%02x".format(it) }
+                    .takeIf { it.isNotEmpty() }
+            } ?: return@withContext null
+            // ETag phai giu nguyen sau download — doi giua chung -> bo.
+            val head2 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext null
+            val etag2 = head2["ETag"]?.trim() ?: return@withContext null
+            if (etag2 != etag) return@withContext null
+            Pair(hash, etag)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+    }
+
+    /**
+     * P1-1: xac minh TOAN BO noi dung backup truoc khi cho phep xoa nguon.
+     *
+     * Quy trinh (fail-closed, khong fallback metadata):
+     * 1) HEAD lay size + ETag. Size khac expectedSize -> false. ETag yeu
+     *    (W/...) hoac trong -> false (khong du bang chung phien ban).
+     * 2) GET toan bo voi `If-Match: <etag>` (conditional download, KHONG Range).
+     *    412/that bai -> false (phien ban da doi hoac khong doc duoc).
+     * 3) Stream so sanh byte-by-byte voi source (khong load het RAM).
+     *    Source null/throw (trừ Cancellation) -> false. So byte phai dung
+     *    expectedSize. CancellationException LUON propagate (khong bien thanh false).
+     * 4) HEAD lai sau download: ETag phai giu nguyen -> chong thay doi giua chung.
+     *
+     * @param sourceProvider mo InputStream cua file nguon moi lan goi. Co the
+     * tra null hoac throw khi khong doc duoc -> verify that bai (false).
+     * @return true chi khi toan bo noi dung khop + phien ban on dinh.
+     */
+    suspend fun verifyBackupContent(
+        url: String,
+        expectedSize: Long,
+        sourceProvider: () -> java.io.InputStream?,
+    ): Boolean = withContext(Dispatchers.IO) {
+        // 1) HEAD: size + strong ETag.
+        val head1 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+            ?: return@withContext false
+        val remoteLen = head1["Content-Length"]?.toLongOrNull() ?: return@withContext false
+        if (remoteLen != expectedSize) return@withContext false
+        val etag = head1["ETag"]?.trim()?.takeIf { it.isNotEmpty() } ?: return@withContext false
+        if (etag.startsWith("W/")) return@withContext false // ETag yeu: khong du bang chung phien ban
+
+        // 2) GET conditional toan bo (khong Range): stream hash remote, dem byte.
+        // P1-1: hash streaming (khong nap het file vao RAM) de file lon khong OOM.
+        val request = Request.Builder().withAuth(authState).url(url)
+            .header("If-Match", etag)
+            .build()
+        val remoteDigest: String = try {
+            optimizedClient.newCall(request).execute().use { response ->
+                if (response.code != 200) return@withContext false // 412 = phien ban doi
+                val body = response.body ?: return@withContext false
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val buf = ByteArray(65536)
+                var total = 0L
+                body.byteStream().use { ins ->
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n == -1) break
+                        total += n
+                        if (total > expectedSize) return@withContext false
+                        digest.update(buf, 0, n)
+                    }
+                }
+                if (total != expectedSize) return@withContext false
+                digest.digest().joinToString("") { "%02x".format(it) }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return@withContext false }
+
+        // 3) Hash source (stream). Source null/throw -> false. Count phai dung.
+        // CancellationException LUON propagate (khong bien thanh false).
+        val sourceDigest: String = try {
+            val src = try { sourceProvider() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+                ?: return@withContext false
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val buf = ByteArray(65536)
+            var total = 0L
+            src.use {
+                while (true) {
+                    val n = it.read(buf)
+                    if (n == -1) break
+                    total += n
+                    if (total > expectedSize) return@withContext false
+                    digest.update(buf, 0, n)
+                }
+            }
+            if (total != expectedSize) return@withContext false
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return@withContext false }
+        if (sourceDigest != remoteDigest) return@withContext false
+
+        // 4) HEAD lai: ETag phai giu nguyen sau download (chong thay doi giua chung).
+        val head2 = try { headFileHeaders(url) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+            ?: return@withContext false
+        val etag2 = head2["ETag"]?.trim() ?: return@withContext false
+        etag2 == etag
     }
 
 
@@ -1054,9 +1260,14 @@ object WebDavManager {
         }
     }
 
+    // P1-4: MOVE mac dinh KHONG ghi de (Overwrite: F). Ban cu khong dat
+    // header -> server WebDAV ghi de am tham file dich cung ten. Tat ca caller
+    // (rename/move/restore/trash) deu khong muon ghi de am tham; dich ton tai
+    // -> 412 de caller giai quyet xung dot (doi ten duy nhat).
     suspend fun renameFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -1068,9 +1279,58 @@ object WebDavManager {
         }
     }
 
+    // FIX-REVIEW-24/09-#5: MOVE khong ghi de (Overwrite: F) — dung cho luan
+    // temp+MOVE create-only cua backup: dich da ton tai -> 412, giu nguyen ban
+    // co san thay vi ghi de mat du lieu nguoi dung.
+    suspend fun moveFileNoOverwrite(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
+
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("MOVE", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
+
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val errorBody = readCappedBody(response, MAX_ERROR_BODY_BYTES)?.take(200)?.trim().orEmpty()
+                val suffix = if (errorBody.isNotBlank()) " - $errorBody" else ""
+                throw java.io.IOException("MOVE failed: ${response.code}$suffix")
+            }
+        }
+    }
+
+    // FIX-REVIEW-24/09-#5: PUT create-only (If-None-Match: *) — dich da ton tai
+    // -> 412 Precondition Failed, khong ghi de. Dung de danh dich truoc khi MOVE.
+    suspend fun uploadStreamIfAbsent(
+        fileUrl: String, inputStream: InputStream, totalContentLength: Long,
+        contentType: String, onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val requestBody = object : RequestBody() {
+            override fun contentType() = contentType.toMediaTypeOrNull()
+            override fun contentLength() = totalContentLength
+            override fun writeTo(sink: BufferedSink) {
+                inputStream.source().use { source ->
+                    var totalBytesRead = 0L
+                    var readCount = 0L
+                    while (source.read(sink.buffer, 262144L).also { readCount = it } != -1L) {
+                        sink.emit()
+                        totalBytesRead += readCount
+                        onProgress(totalBytesRead, totalContentLength)
+                    }
+                }
+            }
+        }
+        val request = Request.Builder().withAuth(authState).url(fileUrl).put(requestBody)
+            .header("If-None-Match", "*")
+            .withCallGroup(CALL_GROUP_TRANSFER)
+            .build()
+        optimizedClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("NAS từ chối tệp: ${response.code}")
+        }
+    }
+
+    // P1-4: COPY mac dinh KHONG ghi de (Overwrite: F). Ly do nhu renameFile.
     suspend fun copyFile(oldUrl: String, newUrl: String) = withContext(Dispatchers.IO) {
 
-        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null).header("Destination", newUrl).build()
+        val request = Request.Builder().withAuth(authState).url(oldUrl).method("COPY", null)
+            .header("Destination", newUrl).header("Overwrite", "F").build()
 
         optimizedClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -1165,7 +1425,8 @@ class WebDavRepository(
 
     suspend fun getCachedFiles(url: String): List<CachedFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getFiles(url)
+        WebDavManager.drainPendingCacheClear()
+        database.fileDao().getFiles(url, currentAccountKey())
 
     }
 
@@ -1173,11 +1434,12 @@ class WebDavRepository(
 
     fun getFilesStream(url: String): Flow<PagingData<NasFile>> {
 
+        val key = currentAccountKey()
         return Pager(
 
             config = PagingConfig(pageSize = 50, enablePlaceholders = false, prefetchDistance = 20, initialLoadSize = 150),
 
-            pagingSourceFactory = { database.fileDao().getFilesPaged(url) }
+            pagingSourceFactory = { database.fileDao().getFilesPaged(url, key) }
 
         ).flow.map { pagingData ->
 
@@ -1191,19 +1453,25 @@ class WebDavRepository(
 
     suspend fun getRemoteFilesAndCache(url: String): List<NasFile> = withContext(Dispatchers.IO) {
 
+        // F7: chup key TRUOC request — doi phien giua chung thi du lieu van gan
+        // key phien da gui request (khong luu nham sang phien moi). Neu key doi
+        // giua chung, ket qua van nhat quan voi phien cu.
+        val key = currentAccountKey()
         val remoteFiles = kotlinx.coroutines.withTimeout(120000L) { webDavManager.listFiles(url) }
 
+        // P2-8: ghi kem accountKey cua phien hien tai; xoa cu cung scope.
         kotlinx.coroutines.withTimeout(45000L) {
 
             database.withTransaction {
 
-                database.fileDao().deleteByParentPath(url)
+                WebDavManager.drainPendingCacheClear()
+                database.fileDao().deleteByParentPath(url, key)
 
                 remoteFiles.chunked(500).forEach { batch ->
 
                     database.fileDao().insertFiles(batch.map {
 
-                        CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = url, contentLength = it.contentLength, lastModified = it.lastModified)
+                        CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = url, contentLength = it.contentLength, lastModified = it.lastModified, accountKey = key)
 
                     })
 
@@ -1223,7 +1491,7 @@ class WebDavRepository(
 
         QueryCache.cached("duplicates") {
 
-            database.fileDao().getDuplicateFiles().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.partialHash) }
+            database.fileDao().getDuplicateFiles(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.partialHash) }
 
         }
 
@@ -1233,7 +1501,7 @@ class WebDavRepository(
 
     suspend fun getLatestPhotos(): List<NasFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getLatestPhotos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().getLatestPhotos(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
@@ -1241,19 +1509,19 @@ class WebDavRepository(
 
     suspend fun getRecentVideos(): List<NasFile> = withContext(Dispatchers.IO) {
 
-        database.fileDao().getRecentVideos().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().getRecentVideos(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
 
     }
 
 
 
     suspend fun searchGlobal(keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().searchFiles(keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().searchFiles(keyword, currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
     // Tìm kiếm cache giới hạn trong root — thay full-table scan 25k rows.
     suspend fun searchCacheUnder(rootPrefix: String, keyword: String): List<NasFile> = withContext(Dispatchers.IO) {
-        database.fileDao().searchFilesUnder(rootPrefix, keyword).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
+        database.fileDao().searchFilesUnder(rootPrefix, keyword, currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified) }
     }
 
     @Deprecated("Dùng searchCacheUnder() — full-table scan gây OOM thư viện lớn")
@@ -1263,9 +1531,11 @@ class WebDavRepository(
 
     suspend fun saveDiscoveredFiles(files: List<NasFile>, parentUrl: String) = withContext(Dispatchers.IO) {
         if (files.isEmpty()) return@withContext
+        // P2-8: ghi kem accountKey phien hien tai.
+        val key = currentAccountKey()
         try {
             database.fileDao().insertFiles(files.map {
-                CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = parentUrl, contentLength = it.contentLength, lastModified = it.lastModified)
+                CachedFile(path = it.path, name = it.name, isDirectory = it.isDirectory, contentType = it.contentType, parentPath = parentUrl, contentLength = it.contentLength, lastModified = it.lastModified, accountKey = key)
             })
         } catch (_: Exception) {}
     }
@@ -1298,6 +1568,11 @@ object QueryCache {
     // Khi hai coroutine dong thoi thay cache miss -> deu goi loader() -> duplicate work.
     // ConcurrentHashMap chi an toan cho single operations, khong cho compound check-then-put.
     private val mutex = kotlinx.coroutines.sync.Mutex()
+
+    /** P2-8: xoa toan bo cache (goi khi doi phien dang nhap). */
+    fun clear() {
+        cache.clear()
+    }
 
     suspend fun <T> cached(key: String, loader: suspend () -> T): T {
 

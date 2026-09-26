@@ -14,6 +14,7 @@ import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.toApiBaseUrl
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.encodeWebDavSegment
+import com.nas.naswebdav.buildWebDavRestoreTargetUrl
 import com.nas.naswebdav.ThumbnailAuditData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -214,8 +215,13 @@ class FileBrowserViewModel(
             return
         }
         _isSearchActive.value = true
+        // Token chong job cu (bi cancel cham) de ket qua cu len sau khi job
+        // moi da xong — moi pass kiem tra token truoc khi post Main.
+        val searchToken = ++searchGeneration
         searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(80) // Debounce cực ngắn giúp phản hồi ngay lập tức
+            // Debounce 300ms: go "anh" lien tuc chi cham 1 lan BFS thay vi
+            // 3 lan (moi lan 3 luong PROPFIND khap NAS).
+            delay(300)
             if (!isActive) return@launch
 
             val results = ConcurrentHashMap<String, NasFile>()
@@ -260,7 +266,9 @@ class FileBrowserViewModel(
                                         }
                                         repository.saveDiscoveredFiles(apiFiles, searchRootUrl)
                                         val apiList = results.values.toList()
+                                        if (searchToken != searchGeneration) return@launch // query moi da chay
                                         withContext(Dispatchers.Main) {
+                                            if (searchToken != searchGeneration) return@withContext
                                             _searchResults.value = apiList
                                             _isSearchActive.value = false
                                         }
@@ -280,9 +288,11 @@ class FileBrowserViewModel(
                     results[file.path] = file
                 }
             } catch (_: Exception) {}
-            if (results.isNotEmpty()) {
+            if (results.isNotEmpty() && searchToken == searchGeneration) {
                 val cachedList = results.values.toList()
-                withContext(Dispatchers.Main) { _searchResults.value = cachedList }
+                withContext(Dispatchers.Main) {
+                    if (searchToken == searchGeneration) _searchResults.value = cachedList
+                }
             }
 
             // Pass 2: Quét đa luồng nhẹ nhàng (3 workers + delay 35ms) để không gây treo hay hao phí tài nguyên NAS
@@ -348,11 +358,11 @@ class FileBrowserViewModel(
                                     }
                                 }
 
-                                if (hasNewMatch && isActive) {
+                                if (hasNewMatch && isActive && searchToken == searchGeneration) {
                                     val currentMatches = results.values.toList()
                                     updateMutex.withLock {
                                         withContext(Dispatchers.Main) {
-                                            _searchResults.value = currentMatches
+                                            if (searchToken == searchGeneration) _searchResults.value = currentMatches
                                         }
                                     }
                                 }
@@ -368,6 +378,7 @@ class FileBrowserViewModel(
             }
 
             withContext(Dispatchers.Main) {
+                if (searchToken != searchGeneration) return@withContext // query moi da chay
                 _searchResults.value = results.values.toList()
                 _isSearchActive.value = false
             }
@@ -440,95 +451,9 @@ class FileBrowserViewModel(
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
 
     private var searchJob: Job? = null
-
-    /**
-     * Perform recursive search starting from [currentUrl] with max depth 3.
-     * First filters current [fileList] for instant feedback, then recursively
-     * PROPFINDs subdirectories. Updates [searchResults] incrementally.
-     */
-    fun performSearch(query: String) {
-        searchJob?.cancel()
-        if (query.isBlank() || query.length < 2) {
-            _isSearchActive.value = false
-            _searchResults.value = emptyList()
-            return
-        }
-
-        // FIX Bug 1: capture currentUrl on Main thread before launching IO coroutine.
-        // Without this, the IO thread could read a stale or empty value, causing
-        // PROPFIND on "/" or wrong path → silent BFS failure.
-        // Fallback to WebDavManager.currentBaseUrl so search works immediately after
-        // login before user navigates anywhere.
-        val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
-        if (searchRootUrl.isBlank()) {
-            _isSearchActive.value = false
-            _searchResults.value = emptyList()
-            return
-        }
-
-        _isSearchActive.value = true
-        searchJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(300) // Debounce 300ms
-            if (!isActive) return@launch
-
-            val allResults = mutableListOf<NasFile>()
-            val seenPaths = mutableSetOf<String>()
-            var failCount = 0
-
-            // Instant feedback: filter current fileList
-            val instantResults = fileList.filter {
-                it.name.contains(query, ignoreCase = true)
-            }
-            for (file in instantResults) {
-                if (seenPaths.add(file.path)) {
-                    allResults.add(file)
-                }
-            }
-            withContext(Dispatchers.Main) { _searchResults.value = allResults.toList() }
-
-            // BFS recursive PROPFIND with max depth 3
-            val queue = ArrayDeque<Pair<String, Int>>() // (url, depth)
-            queue.add(searchRootUrl to 0)
-
-            while (queue.isNotEmpty() && isActive) {
-                val (url, depth) = queue.removeFirst()
-                if (depth > 3) continue
-
-                try {
-                    val files = WebDavManager.listFiles(url)
-                    for (file in files) {
-                        if (isActive && seenPaths.add(file.path)) {
-                            if (file.name.contains(query, ignoreCase = true)) {
-                                allResults.add(file)
-                            }
-                            if (file.isDirectory) {
-                                queue.add(file.path to depth + 1)
-                            }
-                        }
-                    }
-                    // Update results incrementally on Main thread
-                    withContext(Dispatchers.Main) {
-                        _searchResults.value = allResults.toList()
-                    }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // FIX Bug 4: track failures so we can warn user if search returns empty
-                    // due to widespread subfolder errors.
-                    failCount++
-                    android.util.Log.w("RecursiveSearch", "PROPFIND failed for $url: ${e.message}")
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                _searchResults.value = allResults
-                _isSearchActive.value = false
-                if (allResults.isEmpty() && failCount > 0) {
-                    errorMessage = appContext.getString(R.string.browser_folder_access_error, failCount)
-                }
-            }
-        }
-    }
+    // Tang moi lan searchGlobal() chay — job cu (cancel cham) khong duoc de
+    // ket qua cu len sau khi job moi da co ket qua.
+    private var searchGeneration = 0
 
     /** Clear recursive search state and cancel any in-progress search. */
     fun clearSearch() {
@@ -579,6 +504,20 @@ class FileBrowserViewModel(
                 launch(Dispatchers.IO) {
                     try {
                         repository.getRemoteFilesAndCache(currentUrl)
+                        // P2-7: refresh nen xong PHAl cap nhat fileList — ban cu chi
+                        // ghi Room, UI giu danh sach cu (file them/xoa tu may khac
+                        // khong hien). Generation guard + ton trong pendingDeletes.
+                        val fresh = repository.getCachedFiles(currentUrl)
+                        val activeDeletes = pendingDeletes.toSet()
+                        withContext(Dispatchers.Main) {
+                            if (gen == loadGeneration) {
+                                fileList = fresh.map {
+                                    NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified)
+                                }
+                                    .filter { it.path !in activeDeletes }
+                                    .filter { !it.name.startsWith(".") || isSpecialMode }
+                            }
+                        }
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -628,7 +567,7 @@ class FileBrowserViewModel(
             var lastError: Exception? = null
 
             // 1. Thử chuyển file vào Thùng rác (.trash/) qua WebDAV MOVE
-            val trashUrl = file.path.toTrashUrl()
+            var trashUrl = file.path.toTrashUrl()
             if (trashUrl != null) {
                 try {
                     WebDavManager.renameFile(file.path, trashUrl)
@@ -641,13 +580,48 @@ class FileBrowserViewModel(
                         android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash", dbEx)
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, falling back to DELETE: ${e.message}")
-                    lastError = e
+                    // F8: dich trash trung ten (412 — xoa A/photo.jpg, tao lai,
+                    // xoa nua -> cung ten trash) -> doi ten duy nhat + timestamp
+                    // nhu batch, giu originalPath dung. Loi khac -> GIU FILE (P1-3).
+                    if ((e.message ?: "").contains("412")) {
+                        try {
+                            trashUrl = file.path.toTrashUrlUnique()
+                            if (trashUrl != null) {
+                                WebDavManager.renameFile(file.path, trashUrl)
+                                deletedSuccessfully = true
+                                try {
+                                    NasApplication.instance.database.trashMetaDao().insert(
+                                        com.nas.naswebdav.TrashMeta(trashPath = trashUrl, originalPath = file.path)
+                                    )
+                                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                                    android.util.Log.w("FileBrowser", "DB sync failed after single delete to trash (unique)", dbEx)
+                                }
+                                android.util.Log.w("FileBrowser", "Trash dich ton tai, doi ten duy nhat: ${file.name}")
+                            } else {
+                                lastError = e
+                            }
+                        } catch (e2: kotlinx.coroutines.CancellationException) { throw e2 } catch (e2: Exception) {
+                            android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash (unique) failed, giu file: ${e2.message}")
+                            com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
+                                "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e2.message}")
+                            lastError = e2
+                        }
+                    } else {
+                        // P1-3: MOVE trash that bai -> GIU FILE + bao loi, KHONG
+                        // fallback DELETE vinh vien.
+                        android.util.Log.w("FileBrowser", "WebDAV MOVE to .trash failed, giu file: ${e.message}")
+                        com.nas.naswebdav.utils.SystemLogger.log("WARNING", "FileBrowser",
+                            "MOVE trash that bai (${file.path}) — giu file, khong xoa vinh vien: ${e.message}")
+                        lastError = e
+                    }
                 }
             }
 
-            // 2. Nếu MOVE thất bại hoặc không có trashUrl, thực hiện WebDAV DELETE trực tiếp
-            if (!deletedSuccessfully) {
+            // P1-3: KHONG con fallback DELETE vinh vien khi MOVE trash that bai.
+            // Chi DELETE truc tiep khi KHONG tinh duoc trashUrl (drive goc,
+            // khong co vi tri trash hop le) — day la truong hop cau truc,
+            // khong phai loi runtime, va da bao loi ro cho user.
+            if (!deletedSuccessfully && trashUrl == null) {
                 try {
                     WebDavManager.deleteFile(file.path, file.isDirectory)
                     deletedSuccessfully = true
@@ -684,6 +658,50 @@ class FileBrowserViewModel(
         }
     }
 
+    /**
+     * R4: xoa VINH VIEN file DANG O TRONG TRASH (da duoc user xac nhan o UI).
+     * Tach khoi deleteFile() — ham do dung cho file thuong (MOVE vao trash).
+     * Goi deleteFile() cho file trong trash se dung lai trash URL -> MOVE ve
+     * chinh no -> that bai (hoi quy P1-3). Ham nay DELETE truc tiep + xoa meta.
+     */
+    fun deletePermanently(context: Context, file: NasFile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pendingDeletes.add(file.path)
+            withContext(Dispatchers.Main) {
+                fileList = fileList.filter { it.path != file.path }
+            }
+            try {
+                WebDavManager.deleteFile(file.path, file.isDirectory)
+                try {
+                    NasApplication.instance.database.trashMetaDao().deleteByTrashPath(file.path)
+                } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                    android.util.Log.w("FileBrowser", "DB sync failed after permanent delete", dbEx)
+                }
+                repository.removeDuplicateFromDb(file.path)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        context,
+                        context.getString(R.string.browser_delete_success, file.name),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                pendingDeletes.remove(file.path)
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "FileBrowser",
+                    "Xóa vĩnh viễn thất bại (${file.path}): ${e.message}")
+                withContext(Dispatchers.Main) {
+                    errorMessage = context.getString(R.string.browser_delete_failure, file.name, e.message.orEmpty())
+                    fileList = fileList + file
+                }
+            }
+        }
+    }
+
+    // R5: ten trash DUY NHAT theo nguon. A/photo.jpg va B/photo.jpg khac
+    // parent -> ten trash khac nhau (them hash parent), khong dung do 412.
+    // TrashMeta luu originalPath day du de restore + hien thi ten goc.
     private fun String.toTrashUrl(): String? {
         val normalizedBase = WebDavManager.currentBaseUrl.trimEnd('/')
         val relativePath = removePrefix(normalizedBase).removePrefix("/").trimStart('/')
@@ -691,8 +709,30 @@ class FileBrowserViewModel(
         return if (driveName.isBlank()) null
         else {
             val fileName = substringAfterLast('/')
-            val safeName = fileName.replace('/', '_').take(200)
+            val parentPath = substringBeforeLast('/', "")
+            val parentHash = parentPath.hashCode().toUInt().toString(36)
+            val dot = fileName.lastIndexOf('.')
+            val uniqueName = if (dot > 0) {
+                fileName.substring(0, dot) + "__" + parentHash + fileName.substring(dot)
+            } else {
+                fileName + "__" + parentHash
+            }
+            val safeName = uniqueName.replace('/', '_').take(200)
             "$normalizedBase/${encodeWebDavSegment(driveName)}/.trash/${encodeWebDavSegment(safeName)}"
+        }
+    }
+
+    // F8: ten trash duy nhat cho lan xoa LAP LAI cung duong dan (xoa -> tao lai
+    // -> xoa nua: cung parent hash -> trung ten). Them timestamp de phan biet.
+    private fun String.toTrashUrlUnique(): String? {
+        val base = toTrashUrl() ?: return null
+        val ts = System.currentTimeMillis()
+        val dot = base.lastIndexOf('.')
+        val slash = base.lastIndexOf('/')
+        return if (dot > slash) {
+            base.substring(0, dot) + "__" + ts + base.substring(dot)
+        } else {
+            base + "__" + ts
         }
     }
 
@@ -798,15 +838,17 @@ class FileBrowserViewModel(
     }
 
     fun createFolder(context: Context, folderName: String) {
+        // P2-5: chup snapshot thu muc DANG DUYET (currentUrl) truoc khi launch —
+        // ban cu dung WebDavManager.currentBaseUrl (root) nen tao nham o root
+        // khi dang o thu muc con. Refresh sau thanh cong de hien thu muc moi.
+        val destDir = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val targetUrl = (context.applicationContext as NasApplication).let {
-                    val currentUrl = WebDavManager.currentBaseUrl
-                    val sep = if (currentUrl.endsWith("/")) "" else "/"
-                    val encodedName = encodeWebDavSegment(folderName)
-                    currentUrl + sep + encodedName + "/"
-                }
+                val sep = if (destDir.endsWith("/")) "" else "/"
+                val encodedName = encodeWebDavSegment(folderName)
+                val targetUrl = destDir + sep + encodedName + "/"
                 WebDavManager.createFolder(targetUrl)
+                refresh()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -822,7 +864,20 @@ class FileBrowserViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val trashMetaDao = NasApplication.instance.database.trashMetaDao()
             val meta = runCatching { trashMetaDao.findByTrashPath(file.path) }.getOrNull()
-            val targetUrl = meta?.originalPath ?: file.path.replace(".trash/", "")
+            // P2-6: thieu metadata -> dung ham restore chung (tach drive + ten,
+            // khong phai removePrefix). Neu dich trung nguon (URL tuyet doi,
+            // khong xac dinh duoc goc) -> BAO LOI ro, khong MOVE ve chinh no.
+            val targetUrl = meta?.originalPath
+                ?: buildWebDavRestoreTargetUrl(
+                    WebDavManager.currentBaseUrl, file.path, file.name, file.isDirectory)
+            if (targetUrl == file.path) {
+                com.nas.naswebdav.utils.SystemLogger.log("ERROR", "FileBrowser",
+                    "Khôi phục thất bại (${file.path}): thiếu metadata gốc, không xác định được đích.")
+                withContext(Dispatchers.Main) {
+                    errorMessage = context.getString(R.string.browser_restore_failure, "thiếu thông tin gốc")
+                }
+                return@launch
+            }
             try {
                 WebDavManager.renameFile(file.path, targetUrl)
                 trashMetaDao.deleteByTrashPath(file.path)
@@ -840,8 +895,12 @@ class FileBrowserViewModel(
 
     fun unzipFile(context: Context, filePath: String) {
         try {
-            val uri = java.net.URI(filePath)
-            val relativePath = uri.path.substringAfter("/webdav")
+            // URI chua encode (dau cach/tieng Viet) -> URISyntaxException.
+            // Da trong try, nhung fallback path thu cong de van giai nen duoc.
+            val rawPath = try { java.net.URI(filePath).path } catch (_: Exception) {
+                try { java.net.URL(filePath).path } catch (_: Exception) { filePath }
+            }
+            val relativePath = (rawPath ?: filePath).substringAfter("/webdav")
             val fileName = filePath.substringAfterLast("/")
             val jsonBody = org.json.JSONObject().apply {
                 put("file_path", relativePath)

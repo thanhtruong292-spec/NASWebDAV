@@ -70,6 +70,20 @@ class BatchOperationWorker(
         return if (trimmed.startsWith('/')) base + trimmed else "$base/$trimmed"
     }
 
+    // P1-4: ten dich duy nhat khi xung dot (them _timestamp truoc extension).
+    private fun uniqueBatchTargetUrl(safeDestUrl: String, fileName: String, isDirectory: Boolean): String {
+        val ts = System.currentTimeMillis()
+        val dot = fileName.lastIndexOf('.')
+        val unique = if (!isDirectory && dot > 0) {
+            fileName.substring(0, dot) + "_$ts" + fileName.substring(dot)
+        } else {
+            fileName + "_$ts"
+        }
+        var target = safeDestUrl + com.nas.naswebdav.encodeWebDavSegment(unique)
+        if (isDirectory && !target.endsWith("/")) target += "/"
+        return target
+    }
+
     private fun loadBatchFiles(): Pair<Array<String>, Array<String>> {
         val payloadFile = inputData.getString("payloadFile") ?: ""
         if (payloadFile.isNotEmpty()) {
@@ -211,7 +225,18 @@ class BatchOperationWorker(
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            webDavManager.copyFile(sourceUrl, targetUrl)
+                            // P1-4: COPY khong ghi de (Overwrite: F). Dich ton tai
+                            // (412) -> doi ten duy nhat + timestamp, giu ca hai.
+                            try {
+                                webDavManager.copyFile(sourceUrl, targetUrl)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) {
+                                if ((e.message ?: "").contains("412")) {
+                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
+                                    webDavManager.copyFile(sourceUrl, targetUrl)
+                                    android.util.Log.w(TAG, "COPY dich ton tai, doi ten: $fileName -> $targetUrl")
+                                } else throw e
+                            }
                             successCount++
                         }
                         "MOVE" -> {
@@ -219,7 +244,19 @@ class BatchOperationWorker(
                             val encodedName = encodeWebDavSegment(fileName)
                             var targetUrl = safeDestUrl + encodedName
                             if (isDirectory && !targetUrl.endsWith("/")) targetUrl += "/"
-                            webDavManager.renameFile(sourceUrl, targetUrl)
+                            // P1-4: MOVE khong ghi de. Dich ton tai (412) -> doi
+                            // ten duy nhat, giu ca hai (tru khi MOVE vao trash —
+                            // trash da co co che ten duy nhat rieng).
+                            try {
+                                webDavManager.renameFile(sourceUrl, targetUrl)
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) {
+                                if ((e.message ?: "").contains("412") && !targetUrl.contains(trashFolderName)) {
+                                    targetUrl = uniqueBatchTargetUrl(safeDestUrl, fileName, isDirectory)
+                                    webDavManager.renameFile(sourceUrl, targetUrl)
+                                    android.util.Log.w(TAG, "MOVE dich ton tai, doi ten: $fileName -> $targetUrl")
+                                } else throw e
+                            }
                             try {
                                 if (sourceUrl.contains(trashFolderName) && !targetUrl.contains(trashFolderName)) {
                                     trashMetaDao.deleteByTrashPath(sourceUrl)
@@ -246,10 +283,29 @@ class BatchOperationWorker(
                                 } catch (moveEx: kotlinx.coroutines.CancellationException) {
                                     throw moveEx
                                 } catch (moveEx: Exception) {
-                                    webDavManager.deleteFile(sourceUrl, isDirectory)
-                                    try {
-                                        trashMetaDao.deleteByTrashPath(sourceUrl)
-                                    } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (_: Exception) {}
+                                    // R5: dich trash trung ten (412, vd A/photo.jpg
+                                    // va B/photo.jpg) -> doi ten duy nhat + giu
+                                    // originalPath dung. Loi khac -> GIU FILE (P1-3).
+                                    if ((moveEx.message ?: "").contains("412")) {
+                                        val uniqueTarget = uniqueBatchTargetUrl(
+                                            buildWebDavTrashTargetUrl(activeBaseUrl, sourceUrl, "", false).let {
+                                                if (it.endsWith("/")) it else "$it/"
+                                            }, fileName, isDirectory)
+                                        webDavManager.renameFile(sourceUrl, uniqueTarget)
+                                        android.util.Log.w(TAG, "Trash dich ton tai, doi ten: $fileName -> $uniqueTarget")
+                                        try {
+                                            trashMetaDao.insert(TrashMeta(trashPath = uniqueTarget, originalPath = sourceUrl))
+                                        } catch (dbEx: kotlinx.coroutines.CancellationException) { throw dbEx } catch (dbEx: Exception) {
+                                            android.util.Log.w(TAG, "DB sync failed after DELETE $fileName (NAS OK)", dbEx)
+                                        }
+                                    } else {
+                                        // P1-3: MOVE trash that bai -> GIU FILE + bao loi,
+                                        // KHONG fallback DELETE vinh vien.
+                                        android.util.Log.w(TAG, "MOVE to .trash failed for $fileName, giu file: ${moveEx.message}")
+                                        com.nas.naswebdav.utils.SystemLogger.log("WARNING", "BatchOperation",
+                                            "Khong chuyen duoc vao trash (giu file): $sourceUrl — ${moveEx.message}")
+                                        throw moveEx
+                                    }
                                 }
                             } else {
                                 webDavManager.deleteFile(sourceUrl, isDirectory)

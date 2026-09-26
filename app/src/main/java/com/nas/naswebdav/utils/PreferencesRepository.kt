@@ -240,6 +240,15 @@ class PreferencesRepository(context: Context) {
         prefs(PREFS_NAS).edit().putBoolean(KEY_SCREEN_RECORD_QUICK, added).apply()
     }
 
+    // UX3: che do dashboard Tinh gon (chi file/backup/media) vs Chuyen gia
+    // (day du widget sysadmin). Luu prefs de giu lua chon qua session.
+    fun isDashboardSimpleMode(): Boolean =
+        prefs(PREFS_NAS).getBoolean("dashboard_simple_mode", false)
+
+    fun setDashboardSimpleMode(simple: Boolean) {
+        prefs(PREFS_NAS).edit().putBoolean("dashboard_simple_mode", simple).apply()
+    }
+
     companion object {
         const val PREFS_BROWSER = "browser_prefs"
         const val PREFS_NAS = "nas_prefs"

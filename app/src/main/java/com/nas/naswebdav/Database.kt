@@ -22,23 +22,29 @@ data class CachedFile(
     val partialHash: String? = null, // Stage 2: Hash 1MB đầu tiên
     val fullHash: String? = null,    // Stage 3: SHA-256 toàn bộ
     val imageFingerprint: String? = null, // PHASE 5: pHash để tìm file mềm cực nhanh
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    // P2-8 (lop 2): dinh danh phien (user@host:port/root). Query doc loc theo
+    // key nay de phien sau khong doc du lieu phien truoc. Row cu (key rong)
+    // thuoc phien hien tai cho den khi connect() doi phien xoa sach.
+    val accountKey: String = "",
 )
 
 @Dao
 interface FileDao {
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
-    fun getFiles(path: String): List<CachedFile>
+    // P2-8: loc theo accountKey (phien hien tai). Row cu key rong van doc duoc
+    // trong phien hien tai (chua doi phien); doi phien -> connect() xoa sach.
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '') ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
+    fun getFiles(path: String, key: String = ""): List<CachedFile>
 
     // KIẾN TRÚC MỚI: Paging 3 cho hàng trăm ngàn tệp tin
-    @Query("SELECT * FROM files_cache WHERE parentPath = :path ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
-    fun getFilesPaged(path: String): androidx.paging.PagingSource<Int, CachedFile>
+    @Query("SELECT * FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '') ORDER BY isDirectory DESC, name COLLATE NOCASE ASC")
+    fun getFilesPaged(path: String, key: String = ""): androidx.paging.PagingSource<Int, CachedFile>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertFiles(files: List<CachedFile>): List<Long>
 
-    @Query("DELETE FROM files_cache WHERE parentPath = :path")
-    fun deleteByParentPath(path: String): Int
+    @Query("DELETE FROM files_cache WHERE parentPath = :path AND (accountKey = :key OR accountKey = '')")
+    fun deleteByParentPath(path: String, key: String = ""): Int
 
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
@@ -56,31 +62,33 @@ interface FileDao {
 
     // TỐI ƯU SQL: Loại trừ thư mục .trash để ảnh/video đã xóa không xuất hiện
     @Query("""
-    SELECT * FROM files_cache 
-    WHERE isDirectory = 0 
-    AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%' 
-    AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic') 
+    SELECT * FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
+    AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
+    AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic')
     ORDER BY lastModified DESC LIMIT 100
 """)
-    fun getLatestPhotos(): List<CachedFile>
+    fun getLatestPhotos(key: String = ""): List<CachedFile>
 
     @Query("""
-    SELECT * FROM files_cache 
-    WHERE isDirectory = 0 
+    SELECT * FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
     AND parentPath NOT LIKE '%.trash%' AND parentPath NOT LIKE '%#recycle%' AND parentPath NOT LIKE '%@eaDir%'
-    AND (name LIKE '%.mp4' OR name LIKE '%.mkv' OR name LIKE '%.mov' OR name LIKE '%.avi' OR name LIKE '%.mpg' OR name LIKE '%.mpeg' OR name LIKE '%.wmv' OR name LIKE '%.flv') 
+    AND (name LIKE '%.mp4' OR name LIKE '%.mkv' OR name LIKE '%.mov' OR name LIKE '%.avi' OR name LIKE '%.mpg' OR name LIKE '%.mpeg' OR name LIKE '%.wmv' OR name LIKE '%.flv')
     ORDER BY lastModified DESC LIMIT 100
 """)
-    fun getRecentVideos(): List<CachedFile>
+    fun getRecentVideos(key: String = ""): List<CachedFile>
 
     // TÍNH NĂNG TÌM KIẾM TOÀN CẦU (GLOBAL SEARCH)
-    @Query("SELECT * FROM files_cache WHERE name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
-    fun searchFiles(keyword: String): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    fun searchFiles(keyword: String, key: String = ""): List<CachedFile>
 
     // Tìm kiếm giới hạn trong một root path — thay thế pattern load
     // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
-    @Query("SELECT * FROM files_cache WHERE path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
-    fun searchFilesUnder(rootPrefix: String, keyword: String): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
+    fun searchFilesUnder(rootPrefix: String, keyword: String, key: String = ""): List<CachedFile>
 
     // DEAD QUERY (không còn caller): giữ để tương thích, không dùng cho flow mới.
     // Flow mới dùng searchFilesUnder() với LIMIT thay vì load full-table.
@@ -88,65 +96,67 @@ interface FileDao {
     @Query("SELECT * FROM files_cache LIMIT 25000")
     fun getAllFilesForMap(): List<CachedFile>
 
-    // FIX FALSE POSITIVES & PHASE 8: Nhóm theo contentLength VÀ name riêng biệt (tránh collision chuỗi nối)
-    // PHASE 8: Loại bỏ thư mục và các file vụn vặt rác < 4KB (4096 bytes) để tăng tốc quét tối đa
-    // TỐI ƯU PHASE 15: Dùng CTE (Common Table Expression) thay vì subquery lồng
-    // SỬa LỖI: ETag trên NAS là unique/file, không phải content hash. Duy trì truy vấn theo contentLength để tìm nhóm ứng cử viên.
+    // P2-8 (lop 2, tiep): scope duplicate-scan theo phien. Row key rong van
+    // doc duoc trong phien hien tai; doi phien -> connect() xoa sach.
     @Query("""
     WITH duplicate_sizes AS (
-        SELECT contentLength FROM files_cache 
+        SELECT contentLength FROM files_cache
         WHERE isDirectory = 0 AND contentLength >= 4096
-        GROUP BY contentLength 
+        AND (accountKey = :key OR accountKey = '')
+        GROUP BY contentLength
         HAVING COUNT(*) > 1
     )
     SELECT f.* FROM files_cache f
     INNER JOIN duplicate_sizes ds ON f.contentLength = ds.contentLength
-    WHERE f.isDirectory = 0
+    WHERE f.isDirectory = 0 AND (f.accountKey = :key OR f.accountKey = '')
     ORDER BY f.contentLength DESC, f.name ASC
     LIMIT 1500
 """)
-    fun getDuplicateFiles(): List<CachedFile>
+    fun getDuplicateFiles(key: String = ""): List<CachedFile>
 
     // ĐẾM SỐ FILE TRÙNG LẶP (chỉ trả về Int, không load object vào RAM)
     @Query("""
-    SELECT COUNT(*) FROM files_cache 
-    WHERE isDirectory = 0 
+    SELECT COUNT(*) FROM files_cache
+    WHERE isDirectory = 0
+    AND (accountKey = :key OR accountKey = '')
     AND contentLength IN (
-        SELECT contentLength FROM files_cache 
+        SELECT contentLength FROM files_cache
         WHERE isDirectory = 0 AND contentLength >= 4096
-        GROUP BY contentLength 
+        AND (accountKey = :key OR accountKey = '')
+        GROUP BY contentLength
         HAVING COUNT(*) > 1
     )
     """)
-    fun countDuplicateFiles(): Int
+    fun countDuplicateFiles(key: String = ""): Int
 
     // LẤY DANH SÁCH CÁC KÍCH THƯỚC FILE BỊ TRÙNG (chỉ trả về Long, không load CachedFile)
     @Query("""
-    SELECT contentLength FROM files_cache 
+    SELECT contentLength FROM files_cache
     WHERE isDirectory = 0 AND contentLength >= 4096
-    GROUP BY contentLength 
+    AND (accountKey = :key OR accountKey = '')
+    GROUP BY contentLength
     HAVING COUNT(*) > 1
     ORDER BY contentLength DESC
     """)
-    fun getDuplicateSizes(): List<Long>
+    fun getDuplicateSizes(key: String = ""): List<Long>
 
     // LẤY FILES THEO TỪNG NHÓM SIZE (batch nhỏ, an toàn RAM)
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength = :size ORDER BY name ASC")
-    fun getFilesBySize(size: Long): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength = :size AND (accountKey = :key OR accountKey = '') ORDER BY name ASC")
+    fun getFilesBySize(size: Long, key: String = ""): List<CachedFile>
 
     // LẤY FILES THEO NHIỀU NHÓM SIZE MỘT LÚC (Tối ưu hóa cực độ tốc độ tải Bước 2)
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength IN (:sizes) ORDER BY name ASC")
-    fun getFilesBySizes(sizes: List<Long>): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength IN (:sizes) AND (accountKey = :key OR accountKey = '') ORDER BY name ASC")
+    fun getFilesBySizes(sizes: List<Long>, key: String = ""): List<CachedFile>
 
     // HASH STAGE 1: Tìm các file có cùng dung lượng byte (Cực nhanh)
     // TỐI ƯU PHASE 8: Loại bỏ file rác cỏn con < 4KB
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 LIMIT 1500")
-    fun getAllLargeFiles(): List<CachedFile>
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 AND (accountKey = :key OR accountKey = '') LIMIT 1500")
+    fun getAllLargeFiles(key: String = ""): List<CachedFile>
 
-    // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM 
+    // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM
     // vì nếu có 500,000 file thì getAllLargeFiles() sẽ nổ tung bộ nhớ RAM (OutOfMemory) gây treo toàn bộ ứng dụng ở Bước 2.
-    fun getStage1Duplicates(): List<CachedFile> {
-        return getDuplicateFiles()
+    fun getStage1Duplicates(key: String = ""): List<CachedFile> {
+        return getDuplicateFiles(key)
     }
 
 
@@ -320,11 +330,24 @@ interface HashCacheDao {
 @Entity(tableName = "sync_queue")
 data class SyncAction(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val actionType: String, // "UPLOAD", "DELETE", "RENAME", "MOVE", "CREATE_FOLDER"
+    val actionType: String, // "UPLOAD", "DELETE", "RENAME", "MOVE", "CREATE_FOLDER", "UPLOAD_FAILED"
     val sourcePath: String, // Đường dẫn nguồn (Local URI hoặc NAS Path)
     val destPath: String? = null, // Cho hành động MOVE/RENAME
-    val status: String = "PENDING", // PENDING, FAILED
-    val timestamp: Long = System.currentTimeMillis()
+    val status: String = "PENDING", // PENDING, FAILED, PARKED, COMPLETED
+    val timestamp: Long = System.currentTimeMillis(),
+    // FIX-AUDIT-D4..D7: ràng buộc NAS/user để không phát lại thao tác của NAS
+    // khác khi đổi endpoint (R4-P1), và đếm lỗi / trạng thái chạy để park + retry.
+    val nasHost: String = "", // host NAS mà action này thuộc về (rỗng = legacy, tương thích ngược)
+    val nasUser: String = "", // user NAS (rỗng = legacy)
+    // FIX-REVIEW-24/09-#6: dinh danh endpoint DAY DU (port + root). Ban cu chi
+    // luu host: doi :8080/davA sang :8081/davB cung host/user van qua scope,
+    // tac vu cu co the ap len root moi. Legacy rong cho tac vu pha huy phai
+    // cho xac nhan, khong tu rebind.
+    val nasPort: Int = -1, // port endpoint (-1 = legacy/chua xac dinh)
+    val nasRoot: String = "", // root path endpoint (vd /davA, /webdav; rong = legacy)
+    val failCount: Int = 0, // số lần thất bại liên tiếp (park sau ngưỡng)
+    val lastFailAt: Long = 0L, // timestamp lỗi gần nhất (dùng pushBack)
+    val runState: String = "PENDING" // trạng thái chạy: PENDING/PARKED/COMPLETED
 )
 
 @Dao
@@ -332,13 +355,45 @@ interface SyncActionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(action: SyncAction)
 
+    // FIX-REVIEW-193369e-#7: wildcard port/root CHI khi host/user cung legacy.
+    // Ban cu: hang migration16 co host/user nhung port=-1/root='' van wildcard
+    // -> tu replay destructive khi doi port/root cung host/user. Quy tac moi:
+    // identity thieu bat ky thanh phan nao (port/root thieu ma host/user co)
+    // thi KHONG du dieu kien tu replay — worker park cho xac nhan.
+    @Query("""
+        SELECT * FROM sync_queue
+        WHERE runState = 'PENDING'
+          AND (
+            (nasHost = :activeHost AND nasUser = :activeUser
+             AND nasPort = :activePort AND nasRoot = :activeRoot)
+            OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
+          )
+        ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC
+        LIMIT :limit
+    """)
+    fun getAllPendingActionsScoped(activeHost: String, activeUser: String, activePort: Int, activeRoot: String, limit: Int): List<SyncAction>
+
     // UPLOAD_FAILED xếp cuối để action bình thường không bị starve khi queue đầy.
-    @Query("SELECT * FROM sync_queue ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
+    @Query("SELECT * FROM sync_queue WHERE runState = 'PENDING' ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
     fun getAllPendingActions(): List<SyncAction>
 
     // Tổng số action còn lại trong queue (dùng để quyết định continuation work khi > 200)
-    @Query("SELECT COUNT(*) FROM sync_queue")
+    @Query("SELECT COUNT(*) FROM sync_queue WHERE runState = 'PENDING'")
     fun countAll(): Int
+
+    // So action PENDING dung scope account+endpoint — dung cho continuation.
+    // FIX-REVIEW-193369e-#7: cung quy tac chat nhu selection (khong wildcard
+    // port/root khi host/user co gia tri).
+    @Query("""
+        SELECT COUNT(*) FROM sync_queue
+        WHERE runState = 'PENDING'
+          AND (
+            (nasHost = :activeHost AND nasUser = :activeUser
+             AND nasPort = :activePort AND nasRoot = :activeRoot)
+            OR (nasHost = '' AND nasUser = '' AND nasPort = -1 AND nasRoot = '')
+          )
+    """)
+    fun countLocal(activeHost: String, activeUser: String, activePort: Int, activeRoot: String): Int
 
     // Liệt kê các UPLOAD_FAILED cho UI (mới nhất trước)
     @Query("SELECT * FROM sync_queue WHERE actionType = 'UPLOAD_FAILED' ORDER BY timestamp DESC")
@@ -350,6 +405,20 @@ interface SyncActionDao {
     // Retry theo ID truc tiep — khong tim trong top 200.
     @Query("SELECT * FROM sync_queue WHERE id = :id LIMIT 1")
     fun getById(id: Int): SyncAction?
+
+    // FIX-AUDIT-D5/D6: đếm + tăng lỗi, park row sau ngưỡng để không chặn queue.
+    @Query("UPDATE sync_queue SET failCount = failCount + 1, lastFailAt = :now WHERE id = :id")
+    fun bumpFail(id: Int, now: Long)
+
+    @Query("SELECT failCount FROM sync_queue WHERE id = :id LIMIT 1")
+    fun getFailCount(id: Int): Int?
+
+    @Query("UPDATE sync_queue SET runState = 'PARKED', status = 'PARKED' WHERE id = :id")
+    fun park(id: Int)
+
+    // Đẩy mục lỗi xuống cuối queue (timestamp mới) để batch sau vét mục khác trước.
+    @Query("UPDATE sync_queue SET timestamp = :now WHERE id = :id")
+    fun pushBack(id: Int, now: Long)
 }
 
 // ================= TRASH META — Lưu path gốc để restore đúng vị trí =================
@@ -486,9 +555,37 @@ val MIGRATION_14_15 = object : androidx.room.migration.Migration(14, 15) {
     }
 }
 
+// FIX-AUDIT-D4..D7: mở rộng sync_queue hỗ trợ ràng buộc NAS/user (R4-P1) và
+// đếm lỗi / trạng thái park (D5/D6). Dùng addColumnIfMissing để không phá dữ
+// liệu hàng đợi cũ của user khi upgrade.
+val MIGRATION_15_16 = object : androidx.room.migration.Migration(15, 16) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.addColumnIfMissing("sync_queue", "nasHost", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("sync_queue", "nasUser", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("sync_queue", "failCount", "INTEGER NOT NULL DEFAULT 0")
+        db.addColumnIfMissing("sync_queue", "lastFailAt", "INTEGER NOT NULL DEFAULT 0")
+        db.addColumnIfMissing("sync_queue", "runState", "TEXT NOT NULL DEFAULT 'PENDING'")
+    }
+}
+
+// FIX-REVIEW-24/09-#6: endpoint day du (port + root) cho scope account.
+val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.addColumnIfMissing("sync_queue", "nasPort", "INTEGER NOT NULL DEFAULT -1")
+        db.addColumnIfMissing("sync_queue", "nasRoot", "TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+// P2-8 (lop 2): tach cache file theo phien dang nhap.
+val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.addColumnIfMissing("files_cache", "accountKey", "TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 @Database(
     entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 15,
+    version = 18,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

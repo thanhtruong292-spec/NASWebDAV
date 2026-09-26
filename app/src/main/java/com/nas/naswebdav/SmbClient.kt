@@ -105,6 +105,75 @@ object SmbManager {
         totalSize: Long,
         onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
     ): Boolean {
+        return uploadFileInternal(host, user, pass, share, remotePath, inputStream, totalSize, onProgress, false)
+    }
+
+    // FIX-REVIEW-193369e-#5: SMB create-only — FILE_CREATE that bai neu dich da
+    // ton tai (occupied = conflict, khong phai quyen ghi de). Dung cho luan
+    // temp+commit cua backup.
+    suspend fun uploadFileIfAbsent(
+        host: String,
+        user: String,
+        pass: String,
+        share: String,
+        remotePath: String,
+        inputStream: InputStream,
+        totalSize: Long,
+        onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit
+    ): Boolean {
+        return uploadFileInternal(host, user, pass, share, remotePath, inputStream, totalSize, onProgress, true)
+    }
+
+    // P1-8: publish NGUYEN TU bang rename khong ghi de — dich da ton tai thi
+    // bao loi de caller giu ban co san. Ban cu copy+delete: copy loi giua
+    // chung de lai dich do dang, ban tam lai bi xoa -> retry ket.
+    // SMBJ File.rename(target, replace=false) la rename nguyen tu phia server.
+    suspend fun moveNoOverwrite(
+        host: String,
+        user: String,
+        pass: String,
+        share: String,
+        oldPath: String,
+        newPath: String
+    ): Boolean {
+        val diskShare = try {
+            connectAndOpenShare(host, user, pass, share)
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("SmbClient", "SMB move connect failed: ${e.message}")
+            return false
+        }
+        return try {
+            if (diskShare.fileExists(newPath)) return false
+            diskShare.openFile(
+                oldPath,
+                EnumSet.of(AccessMask.GENERIC_READ, AccessMask.DELETE),
+                null,
+                EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
+                SMB2CreateDisposition.FILE_OPEN,
+                null
+            ).use { src ->
+                // Rename nguyen tu, khong thay the dich da ton tai.
+                src.rename(newPath, false)
+            }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            // That bai -> GIU ban staged (khong rm) de retry sau; KHONG mo final.
+            android.util.Log.w("SmbClient", "SMB move failed (giu staged): ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun uploadFileInternal(
+        host: String,
+        user: String,
+        pass: String,
+        share: String,
+        remotePath: String,
+        inputStream: InputStream,
+        totalSize: Long,
+        onProgress: (bytesWritten: Long, totalBytes: Long) -> Unit,
+        createOnly: Boolean
+    ): Boolean {
         return try {
             val diskShare = connectAndOpenShare(host, user, pass, share)
             ensureParentFoldersExist(diskShare, remotePath)
@@ -114,7 +183,7 @@ object SmbManager {
                 EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.GENERIC_READ),
                 null,
                 EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ),
-                SMB2CreateDisposition.FILE_OVERWRITE_IF,
+                if (createOnly) SMB2CreateDisposition.FILE_CREATE else SMB2CreateDisposition.FILE_OVERWRITE_IF,
                 null
             )
 

@@ -294,8 +294,12 @@ class SmartToolsViewModel(
                             )
                         } catch (_: Exception) {}
                     } catch (moveEx: Exception) {
-                        // Fallback to direct DELETE if MOVE to trash fails
-                        WebDavManager.deleteFile(file.path, file.isDirectory)
+                        // P1-3: MOVE trash that bai -> GIU FILE + bao loi, KHONG
+                        // fallback DELETE vinh vien (mat du lieu khong khoi phuc).
+                        android.util.Log.w("SmartToolsVM", "MOVE to .trash failed, giu file ${file.path}: ${moveEx.message}")
+                        com.nas.naswebdav.utils.SystemLogger.log("WARNING", "SmartTools",
+                            "Khong chuyen duoc vao trash (giu file): ${file.path} — ${moveEx.message}")
+                        throw moveEx
                     }
                     repository.removeDuplicateFromDb(file.path)
                 }
@@ -304,7 +308,10 @@ class SmartToolsViewModel(
                     selectedDuplicates.remove(file)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                android.util.Log.w("SmartToolsVM", "deleteDuplicateFile: ${e.message}")
+                // P1-3: file duoc GIU lai (UI list khong doi = tin hieu ro nhat);
+                // chi tiet da ghi SystemLogger trong nhanh throw. Khong them state
+                // moi de tranh phai wire UI.
+                android.util.Log.w("SmartToolsVM", "deleteDuplicateFile (giu file): ${e.message}")
             }
         }
     }

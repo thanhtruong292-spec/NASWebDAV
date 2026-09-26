@@ -150,13 +150,17 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             if (key == "total") { reader.nextInt() }
                             else if (key == "files") {
                                 reader.beginArray(); val batch = mutableListOf<CachedFile>()
+                                // P2-8: drain flag doi-phien 1 lan truoc batch dau
+                                // (worker co the chay lech phien voi UI).
+                                var drainedOnce = false
                                 while (reader.hasNext()) {
                                     reader.beginObject(); var name = ""; var path = ""; var size = 0L; var mtime = 0L
                                     while (reader.hasNext()) { when (reader.nextName()) { "name" -> name = reader.nextString(); "path" -> path = reader.nextString(); "size" -> size = reader.nextLong(); "mtime" -> mtime = reader.nextLong(); else -> reader.skipValue() } }
                                     reader.endObject()
                                     val rootUrl = url.trimEnd('/'); val absolutePath = rootUrl + (if (path.startsWith("/")) path else "/$path"); val parentUrl = absolutePath.substringBeforeLast("/") + "/"
-                                    batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime))
+                                    batch.add(CachedFile(path = absolutePath, name = name, isDirectory = false, contentType = "application/octet-stream", parentPath = parentUrl, contentLength = size, lastModified = mtime, accountKey = currentAccountKey()))
                                     totalFiles++
+                                    if (!drainedOnce) { drainedOnce = true; WebDavManager.drainPendingCacheClear() }
                                     if (batch.size >= 2000) { db.withTransaction { db.fileDao().insertFiles(batch) }; batch.clear() }
                                 }
                                 reader.endArray()
@@ -167,33 +171,130 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                     }
                 } else throw Exception(applicationContext.getString(R.string.autodup_no_fastpath))
             }
-            val duplicateSizes = db.fileDao().getDuplicateSizes()
+            val duplicateSizes = db.fileDao().getDuplicateSizes(currentAccountKey())
             var movedCount = 0; var savedBytes = 0L; var totalDuplicatesFound = 0
             for (size in duplicateSizes) {
-                val group = db.fileDao().getFilesBySize(size)
+                val group = db.fileDao().getFilesBySize(size, currentAccountKey())
                 if (group.size < 2 || group.first().contentLength < 1024L) continue
+                // FIX-AUDIT-D3: khử alias endpoint — cùng file vật lý qua LAN và
+                // Tailscale là 2 row khác URL nhưng cùng canonical path. Giữ một
+                // đại diện mỗi identity TRƯỚC khi hash, nếu không full-hash khớp
+                // tất yếu rồi MOVE alias xóa bản duy nhất.
+                val deduped = group.groupBy { canonicalNasPath(it.path) }
+                    .mapNotNull { (canonical, rows) ->
+                        if (canonical.isEmpty()) null
+                        else rows.minByOrNull { it.path.length }
+                    }
+                val aliasSkipped = group.size - deduped.size
+                if (aliasSkipped > 0) {
+                    SystemLogger.log("INFO", "AutoClean",
+                        "Bỏ qua $aliasSkipped alias endpoint (cùng file vật lý)")
+                }
+                val uniqueGroup = deduped
+                if (uniqueGroup.size < 2) continue
                 val hashResult = mutableMapOf<String, String>()
-                // Phone CPU computes SHA-256 over first 1MB (WebDAV Range) — NAS chỉ serve bytes
+                // FIX-AUDIT-D3: partial hash (1MB đầu) + fallback size+mtime chỉ là
+                // LỌC ỨNG VIÊN, không đủ kết luận trùng để xóa. File hash lỗi
+                // (null) bị bỏ qua thay vì gán pseudo-hash LGH_ rồi xóa nhầm.
                 try {
-                    for (file in group) {
+                    for (file in uniqueGroup) {
+                        if (!isActive) break
+                        // Tôn trọng pause của user trong vòng hash/MOVE.
+                        while (DuplicateProgressState.isPaused.value && isActive) {
+                            kotlinx.coroutines.delay(500)
+                        }
                         if (!isActive) break
                         val phoneHash = webDavManager.getSha256PhoneStream(file.path)
                         if (!phoneHash.isNullOrEmpty()) {
                             hashResult[file.path] = phoneHash
                         } else {
-                            // Fallback khi phone không tải được: dùng size+mtime pseudo-hash
-                            hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}"
+                            SystemLogger.log("WARNING", "AutoClean",
+                                "Bỏ qua ứng viên trùng (không hash được): ${file.path}")
                         }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { for (file in group) hashResult[file.path] = "LGH_${file.contentLength}_${file.lastModified}" }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* bỏ qua group, không gán LGH_ */ }
                 val hashGroups = mutableMapOf<String, MutableList<CachedFile>>()
-                for (file in group) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
+                for (file in uniqueGroup) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
                     if (identicalFiles.size > 1) {
-                        val sorted = identicalFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
-                        val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
-                        val authCtx = WebDavAuthContext(webDavManager, user, pass)
-                        for (trashFile in filesToTrash) { if (moveFileToTrash(authCtx, trashFile.path)) { movedCount++; savedBytes += trashFile.contentLength } }
+                        // F3: hash GAN VOI ETAG tu dau. Moi file: chup ETag truoc,
+                        // hash duoi ETag do (If-Match + recheck), nhom theo cap
+                        // (hash, etag). ETag lay sau hash co the la phien ban chua
+                        // duyet -> MOVE sai. Thieu/yeu ETag -> bo ca nhom.
+                        val fullHashes = mutableMapOf<String, Pair<String, String>>()
+                        val hashSnapshot = mutableMapOf<String, Pair<Long, Long>>()
+                        var fullOk = true
+                        for (file in identicalFiles) {
+                            if (!isActive) { fullOk = false; break }
+                            val full = webDavManager.getFullSha256WithEtag(file.path, file.contentLength)
+                            if (full == null) {
+                                fullOk = false
+                                SystemLogger.log("WARNING", "AutoClean",
+                                    "Bỏ qua nhóm trùng (không verify full+ETag được): ${file.path}")
+                                break
+                            }
+                            fullHashes[file.path] = full
+                            hashSnapshot[file.path] = Pair(file.contentLength, file.lastModified)
+                        }
+                        if (!fullOk) continue
+                        val verified = fullHashes.entries.groupBy({ it.value }, { it.key })
+                            .filter { it.value.size > 1 }
+                        for ((hashEtag, paths) in verified) {
+                            val (expectedHash, boundEtag) = hashEtag
+                            val verifiedFiles = identicalFiles.filter { it.path in paths }
+                            if (verifiedFiles.size < 2) continue
+                            val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
+                            // Survivor = sorted.first(). ETag hien tai phai DUNG
+                            // ETag da chup (khong hash lai, khong lay ETag moi) —
+                            // doi la bo nhom.
+                            val survivor = sorted.first()
+                            val survivorSnap = hashSnapshot[survivor.path]
+                            val survivorEtagNow = try {
+                                webDavManager.headFileHeaders(survivor.path)?.get("ETag")?.trim()
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                            val survivorLen = try {
+                                webDavManager.headFileHeaders(survivor.path)?.get("Content-Length")?.toLongOrNull()
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (_: Exception) { null }
+                            val survivorOk = survivorSnap != null &&
+                                survivorLen != null && survivorLen == survivorSnap.first &&
+                                survivorEtagNow != null && survivorEtagNow == boundEtag
+                            if (!survivorOk) {
+                                SystemLogger.log("WARNING", "AutoClean",
+                                    "Bỏ qua nhóm (survivor đổi/mất sau hash): ${survivor.path}")
+                                continue
+                            }
+                            val filesToTrash = sorted.drop(1); totalDuplicatesFound += filesToTrash.size
+                            val authCtx = WebDavAuthContext(webDavManager, user, pass)
+                            for (trashFile in filesToTrash) {
+                                if (!isActive) break
+                                while (DuplicateProgressState.isPaused.value && isActive) {
+                                    kotlinx.coroutines.delay(500)
+                                }
+                                if (!isActive) break
+                                // Victim: ETag hien tai phai DUNG ETag da chup cung
+                                // hash (khong lay ETag moi). Size van check de loai
+                                // som. Thieu/khac -> bo qua, khong MOVE.
+                                val snap = hashSnapshot[trashFile.path]
+                                val victimHeaders = try {
+                                    webDavManager.headFileHeaders(trashFile.path)
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                val victimLen = victimHeaders?.get("Content-Length")?.toLongOrNull()
+                                val victimEtagNow = victimHeaders?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                                if (snap == null || victimLen == null || victimLen != snap.first ||
+                                    victimEtagNow == null || victimEtagNow != boundEtag) {
+                                    SystemLogger.log("WARNING", "AutoClean",
+                                        "Bỏ qua (đổi phiên bản sau hash): ${trashFile.path}")
+                                    continue
+                                }
+                                // F3: MOVE voi CHINH ETag da chup cung hash (boundEtag).
+                                // Verify sau MOVE that bai -> moveFileToTrash tra
+                                // false (khong tinh success am tham).
+                                if (moveFileToTrash(authCtx, trashFile.path, boundEtag, expectedHash)) { movedCount++; savedBytes += trashFile.contentLength }
+                            }
+                        }
                     }
                 }
             }
@@ -241,15 +342,75 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
         }
     }
 
-    private suspend fun moveFileToTrash(ctx: WebDavAuthContext, sourceUrl: String): Boolean {
+    // R3: MOVE rang buoc phien ban + verify sau MOVE.
+    // - Gui If-Match voi ETag lay luc revalidate: server doi version giua HEAD
+    //   va MOVE -> 412 -> giu file. (Server khong ho tro If-Match tren MOVE thi
+    //   header bi bo qua — buoc verify duoi van bat duoc.)
+    // - Sau MOVE thanh cong: doc lai full-hash cua file TRONG TRASH va so voi
+    //   hash da verify. Khac nhau (race ma ca hai lop phong thu lot) -> bao loi
+    //   ro, khong tinh la thanh cong am tham.
+    private suspend fun moveFileToTrash(
+        ctx: WebDavAuthContext,
+        sourceUrl: String,
+        ifMatchEtag: String? = null,
+        expectedHash: String? = null,
+    ): Boolean {
         try {
             val rootUrl = ctx.manager.currentBaseUrl.trimEnd('/')
             val fileName = sourceUrl.substringAfterLast("/")
             val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, "", false)
-            val destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
+            var destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, fileName, false)
             executeWebDavRequest(trashFolderUrl, "MKCOL", ctx.authHeader)
-            val success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, "Destination" to destUrl, "Overwrite" to "F")
+            val versionHeaders: Array<Pair<String, String>> = if (!ifMatchEtag.isNullOrEmpty()) {
+                arrayOf("Destination" to destUrl, "Overwrite" to "F", "If-Match" to ifMatchEtag)
+            } else {
+                arrayOf("Destination" to destUrl, "Overwrite" to "F")
+            }
+            var success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, *versionHeaders)
+            // FIX-AUDIT-D3: đích trash trùng tên (412) → đổi tên duy nhất + timestamp,
+            // không ghi đè bản trash cũ. Giành lại If-Match cho đích mới.
+            if (!success) {
+                val dot = fileName.lastIndexOf('.')
+                val unique = if (dot > 0) {
+                    fileName.substring(0, dot) + "_" + System.currentTimeMillis() + fileName.substring(dot)
+                } else {
+                    fileName + "_" + System.currentTimeMillis()
+                }
+                destUrl = buildWebDavTrashTargetUrl(rootUrl, sourceUrl, unique, false)
+                val retryHeaders: Array<Pair<String, String>> = if (!ifMatchEtag.isNullOrEmpty()) {
+                    arrayOf("Destination" to destUrl, "Overwrite" to "F", "If-Match" to ifMatchEtag)
+                } else {
+                    arrayOf("Destination" to destUrl, "Overwrite" to "F")
+                }
+                success = executeWebDavRequest(sourceUrl, "MOVE", ctx.authHeader, *retryHeaders)
+            }
             if (success) {
+                // F3: verify noi dung trong trash khop hash da verify. That bai
+                // -> return FALSE (khong tinh success): file goc co the da doi
+                // ma ca If-Match + ETag check lot (server khong ho tro). Metadata
+                // van ghi de user thay + khoi phuc; worker khong tu xoa them.
+                if (!expectedHash.isNullOrEmpty()) {
+                    val trashLen = try {
+                        ctx.manager.headFileHeaders(destUrl)?.get("Content-Length")?.toLongOrNull()
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (_: Exception) { null }
+                    val verifiedHash = if (trashLen != null && trashLen > 0) {
+                        try { ctx.manager.getFullSha256PhoneStream(destUrl, trashLen) }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (_: Exception) { null }
+                    } else null
+                    if (verifiedHash == null || verifiedHash != expectedHash) {
+                        android.util.Log.w("AutoCleanWorker", "Trash verify that bai cho $destUrl — noi dung trash khac hash da duyet")
+                        SystemLogger.log("ERROR", "AutoClean",
+                            "Nội dung trong trash khác hash đã duyệt ($destUrl) — giữ nguyên, cần kiểm tra thủ công.")
+                        try {
+                            NasApplication.instance.database.trashMetaDao().insert(
+                                TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
+                            )
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                        return false
+                    }
+                }
                 try {
                     NasApplication.instance.database.trashMetaDao().insert(
                         TrashMeta(trashPath = destUrl, originalPath = sourceUrl)
@@ -263,13 +424,21 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
             android.util.Log.w("AutoCleanWorker", "MOVE to .trash failed: ${e.message}")
         }
 
-        // Fallback: WebDAV DELETE (xóa thẳng vĩnh viễn theo hardrule GEMINI §10)
-        val delSuccess = executeWebDavRequest(sourceUrl, "DELETE", ctx.authHeader)
-        if (delSuccess) {
-            android.util.Log.i("AutoCleanWorker", "Permanently deleted duplicate file $sourceUrl as fallback")
-        } else {
-            android.util.Log.e("AutoCleanWorker", "Fallback DELETE also failed for $sourceUrl")
-        }
-        return delSuccess
+        // FIX-AUDIT-D3: KHÔNG fallback DELETE vĩnh viễn khi MOVE trash fail.
+        // File trùng đã full-verify vẫn phải giữ để xử lý sau (log + retry vòng
+        // sau) — xóa vĩnh viễn tự động là mất dữ liệu khi trash gặp sự cố.
+        android.util.Log.w("AutoCleanWorker", "MOVE to .trash failed for $sourceUrl — giữ file, thử lại vòng sau")
+        SystemLogger.log("WARNING", "AutoClean",
+            "Không chuyển được vào trash (giữ file): $sourceUrl")
+        return false
+    }
+
+    // FIX-AUDIT-D3: chuẩn hóa URL NAS về canonical path để khử alias endpoint
+    // (LAN vs Tailscale cùng trỏ 1 file vật lý). Chỉ dùng cho nội bộ worker này.
+    private fun canonicalNasPath(urlOrPath: String): String {
+        val trimmed = urlOrPath.trimEnd('/')
+        // Bỏ scheme://host[:port] và /AutoBackup/ prefix, giữ phần path sau.
+        val noScheme = trimmed.substringAfter("://").substringAfter("/")
+        return noScheme.lowercase().replace(Regex("/+"), "/").trimStart('/')
     }
 }

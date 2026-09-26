@@ -115,7 +115,10 @@ class LivestreamViewModel(
                         val obj = jobsArray.getJSONObject(i)
                         val status = obj.optString("status", "")
                         val jobId = obj.optString("job_id", "")
-                        if (status == "recording" && jobId.isNotEmpty()) {
+                        // FIX-REVIEW-193369e-#13: giu stopping/finalizing tren UI
+                        // (flush/finalize), khong chi recording. Chi terminal
+                        // (finished/error/stopped/cancelled) moi roi khoi list.
+                        if ((status == "recording" || status == "stopping" || status == "finalizing" || status == "starting") && jobId.isNotEmpty()) {
                             serverRecordingIds.add(jobId)
                             newJobs.add(LivestreamJob(jobId = jobId, platform = obj.optString("platform", ""), status = status, watchUsername = obj.optString("watch_username", ""), durationSeconds = obj.optLong("duration_seconds", 0L), startedTs = obj.optLong("started_ts", 0L), fileSize = obj.optString("file_size", "0 B"), duration = obj.optString("duration_display", "0h00m00s"), speed = obj.optString("avg_speed", "—"), outputFile = obj.optString("output_file", "")))
                         }
@@ -155,6 +158,11 @@ class LivestreamViewModel(
                         tiktokWatchDaemonLastTick = json.optString("last_tick", "")
                         tiktokWatchDaemonSummary = json.optString("summary", "")
                         tiktokExcludeEnabled = json.optBoolean("exclude_enabled", false)
+                        // FIX-AUDIT-L7: hydrate ca gio bat dau/ket thuc (truoc day
+                        // fetch thieu -> mo lai man hinh hien gia tri cu du backend
+                        // da luu moi).
+                        tiktokExcludeStart = json.optString("exclude_start", "23:00")
+                        tiktokExcludeEnd = json.optString("exclude_end", "07:00")
                         tiktokLiveWatchError = json.optString("error").ifEmpty { null }
                         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
                         tiktokCookiesMessage = json.optString("cookies_message", "")
@@ -291,12 +299,23 @@ class LivestreamViewModel(
                     .toRequestBody("application/json".toMediaTypeOrNull())
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/livestream/stop").post(body).let(WebDavManager::tagCurrentAuth).build()
+                // FIX-REVIEW-193369e-#13: doc body response, giu job toi terminal.
+                // Ban cu bo body, xoa job va bao "da dung" du backend tra stopping.
+                // Quy tac: stopping/finalizing -> doi polling xac nhan terminal;
+                // phan biet "da gui lenh" voi "hoan tat".
+                var respStatus = ""
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     throwOnUnsuccessfulResponse(resp)
+                    val respBody = resp.body?.string() ?: "{}"
+                    respStatus = org.json.JSONObject(respBody).optString("status", "")
                 }
                 withContext(Dispatchers.Main) {
-                    activeLivestreams.removeAll { it.jobId == jobId }
-                    livestreamMessage = "⏹ Đã dừng ghi hình"
+                    if (respStatus == "stopping" || respStatus == "finalizing") {
+                        livestreamMessage = "⏳ Đã gửi lệnh dừng — đang flush/finalize, chờ hoàn tất..."
+                    } else {
+                        activeLivestreams.removeAll { it.jobId == jobId }
+                        livestreamMessage = "⏹ Đã dừng ghi hình"
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 withContext(Dispatchers.Main) { livestreamMessage = "Lỗi dừng ghi: ${e.message}" }

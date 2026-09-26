@@ -68,6 +68,10 @@ class ScreenRecordService : Service() {
     private lateinit var apiBase: String
     private lateinit var authHeader: String
     private lateinit var spoolDir: File
+    // F1: mac dinh GIU spool — chi xoa khi finish OK hoac user chu dong bo
+    // (discardSession). Ban cu dung retain flag (default false) nen moi nhanh
+    // loi quen set flag (failRecording, catch ngoai stopRecording) deu mat spool.
+    private val spoolDeleteAllowed = AtomicBoolean(false)
     private var segmentIndex = 0
     private var currentSegmentFile: File? = null
     private var startedAtMs = 0L
@@ -444,11 +448,11 @@ class ScreenRecordService : Service() {
         hideRecordingOverlay()
         updateNotification(message)
         scope.launch {
-            try {
-                cancelNasSession()
-            } catch (e: Exception) {
-                Log.w(TAG, "Cancel NAS session failed session=$sessionId", e)
-            }
+            // P1-7: loi nang khi dang quay — GIU phien NAS (segment da upload con
+            // gia tri, user co the ghep thu cong), KHONG cancel (cancel xoa sach
+            // segment tren NAS trong khi local da xoa sau upload). Chi huy phien
+            // khi user chu dong chon bo ban ghi.
+            logWarn("Ghi hình lỗi, GIỮ phiên $sessionId và segment đã upload — không hủy: $message")
             try {
                 stopSegment()
             } catch (e: Exception) {
@@ -520,26 +524,29 @@ class ScreenRecordService : Service() {
                     waitCount++
                 }
                 if (spoolDir.listFiles()?.any { it.name.endsWith(".ready") } == true) {
-                    Log.w(TAG, "Timed out waiting for pending screen-record uploads; cancelling NAS session=$sessionId")
-                    logWarn("Quá 30 giây vẫn còn segment chưa upload, hủy phiên để dọn tài nguyên")
-                    try {
-                        cancelNasSession()
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Cancel NAS session after upload timeout failed session=$sessionId", e)
-                    }
+                    Log.w(TAG, "Timed out waiting for pending screen-record uploads; GIU phien NAS session=$sessionId")
+                    // P1-7: KHONG cancelNasSession() o day. Segment da upload bi
+                    // xoa local ngay sau upload; cancel se xoa ca thu muc segment
+                    // tren NAS -> mat du lieu. Giu phien + marker local de lan
+                    // sau thu lai / ghep thu cong; chi huy khi user chu dong bo.
+                    // F1: mac dinh giu spool (khong can set flag).
+                    logWarn("Còn segment chưa upload sau 30 giây — GIỮ phiên $sessionId, marker và spool local để thử lại, không hủy dữ liệu đã upload.")
                     return@launch
                 }
                 try {
                     if (!finishNasSession()) {
-                        cancelNasSession()
+                        // P1-7: finish that bai -> GIU phien, khong cancel (cancel
+                        // xoa segment da upload trong khi local da xoa).
+                        Log.w(TAG, "Finish NAS session failed, GIU phien session=$sessionId de thu lai")
+                        logWarn("NAS chưa hoàn tất phiên $sessionId — GIỮ phiên và segment đã upload để thử lại, không hủy.")
+                    } else {
+                        // F1: finish OK -> duoc phep xoa spool trong onDestroy.
+                        spoolDeleteAllowed.set(true)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Gặp lỗi khi thông báo hoàn tất phiên lên NAS", e)
-                    try {
-                        cancelNasSession()
-                    } catch (cancelError: Exception) {
-                        Log.w(TAG, "Cancel NAS session after finish failure failed session=$sessionId", cancelError)
-                    }
+                    // P1-7: nhu tren — giu phien, khong cancel.
+                    logWarn("Lỗi hoàn tất phiên $sessionId (${e.message}) — GIỮ phiên để thử lại, không hủy.")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Lỗi khi dừng quay màn hình", e)
@@ -559,8 +566,31 @@ class ScreenRecordService : Service() {
         try { stopSegment() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
         scope.cancel()
-        try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
+        // F1: mac dinh GIU spool + marker .ready (de lan sau thu lai). Chi xoa
+        // khi finish OK hoac discardSession (user chu dong bo). Moi nhanh loi
+        // (failRecording, catch ngoai, timeout, finish fail) deu giu.
+        if (spoolDeleteAllowed.get()) {
+            try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
+        } else {
+            try {
+                if (::spoolDir.isInitialized) Log.w(TAG, "GIU spool session=$sessionId de thu lai (khong xoa trong onDestroy)")
+            } catch (_: Exception) {}
+        }
         super.onDestroy()
+    }
+
+    /**
+     * R1: user CHU DONG bo ban ghi — xoa spool local + huy phien NAS.
+     * Day la DUY NHAT noi duoc phep cancel session (khong tu dong goi khi loi).
+     */
+    fun discardSession() {
+        spoolDeleteAllowed.set(true)
+        try { if (::spoolDir.isInitialized) spoolDir.deleteRecursively() } catch (_: Exception) {}
+        scope.launch {
+            try { cancelNasSession() } catch (e: Exception) {
+                Log.w(TAG, "Cancel NAS session (user discard) failed session=$sessionId", e)
+            }
+        }
     }
 
     private suspend fun tickerLoop() {

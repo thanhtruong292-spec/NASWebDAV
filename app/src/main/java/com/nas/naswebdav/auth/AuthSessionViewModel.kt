@@ -302,11 +302,23 @@ class AuthSessionViewModel(
                 val queueBaseUrl = WebDavManager.currentBaseUrl
                 val normalizedSourcePath = sourcePath.toOfflineQueuePath(queueBaseUrl)
                 val normalizedDestPath = destPath?.toOfflineQueuePath(queueBaseUrl)
+                val queueHost = runCatching { java.net.URL(queueBaseUrl).host ?: "" }.getOrDefault("")
+                val queueUser = com.nas.naswebdav.SecurePrefsHelper.getUser(context.applicationContext)
+                // FIX-REVIEW-24/09-#6: luu endpoint DAY DU (port + root).
+                val queuePort = runCatching { java.net.URL(queueBaseUrl).port.takeIf { it > 0 } ?: java.net.URL(queueBaseUrl).defaultPort }.getOrDefault(-1)
+                val queueRoot = runCatching {
+                    val p = java.net.URL(queueBaseUrl).path.trimEnd('/')
+                    if (p.isEmpty()) "/" else p
+                }.getOrDefault("/")
                 db.syncActionDao().insert(
                     com.nas.naswebdav.SyncAction(
                         actionType = actionType,
                         sourcePath = normalizedSourcePath,
-                        destPath = normalizedDestPath
+                        destPath = normalizedDestPath,
+                        nasHost = queueHost,
+                        nasUser = queueUser,
+                        nasPort = queuePort,
+                        nasRoot = queueRoot
                     )
                 )
 
