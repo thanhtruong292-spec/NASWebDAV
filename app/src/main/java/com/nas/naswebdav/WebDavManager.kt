@@ -183,17 +183,17 @@ object WebDavManager {
     }
 
     val currentBaseUrl: String
-        get() = authState.baseUrl
+        get() = (threadLocalAuth.get() ?: authState).baseUrl
 
     val currentUser: String
-        get() = authState.user
+        get() = (threadLocalAuth.get() ?: authState).user
 
     val currentPass: String
-        get() = authState.pass
+        get() = (threadLocalAuth.get() ?: authState).pass
 
-    fun currentAuthHeader(): String = authState.authHeader
+    fun currentAuthHeader(): String = (threadLocalAuth.get() ?: authState).authHeader
 
-    fun currentAuthState(): AuthState = authState
+    fun currentAuthState(): AuthState = threadLocalAuth.get() ?: authState
 
     private const val LOGIN_CALL_GROUP = "login"
     const val CALL_GROUP_LOGIN = "login"
@@ -230,7 +230,8 @@ object WebDavManager {
     }
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
-        return tag(AuthState::class.java, auth)
+        val effectiveAuth = threadLocalAuth.get() ?: auth
+        return tag(AuthState::class.java, effectiveAuth)
     }
 
     private fun Request.Builder.withCallGroup(group: String): Request.Builder {
@@ -271,7 +272,7 @@ object WebDavManager {
 
             .addInterceptor { chain ->
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: threadLocalAuth.get() ?: authState
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -331,7 +332,7 @@ object WebDavManager {
 
                 // NAS KHÔNG trả về 401 để kích hoạt Sardine Authenticator, mà nó trả về thư mục TRỐNG nếu không có mật khẩu ngay từ đầu!
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: threadLocalAuth.get() ?: authState
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -638,10 +639,19 @@ object WebDavManager {
                                             val rawUri = if (currentHref.startsWith("http", ignoreCase = true)) {
                                                 currentHref
                                             } else {
-                                                val baseUri = java.net.URI(safeUrl)
-                                                val hrefUri = java.net.URI(currentHref)
-                                                // Resolve relative hrefs against the current directory, not host root.
-                                                baseUri.resolve(hrefUri).toString()
+                                                runCatching {
+                                                    val baseUri = java.net.URI(safeUrl)
+                                                    val hrefUri = java.net.URI(currentHref.replace(" ", "%20"))
+                                                    // Resolve relative hrefs against the current directory, not host root.
+                                                    baseUri.resolve(hrefUri).toString()
+                                                }.getOrElse {
+                                                    if (currentHref.startsWith("/")) {
+                                                        val schemeHost = safeUrl.substringBefore("://") + "://" + safeUrl.substringAfter("://").substringBefore("/")
+                                                        schemeHost + currentHref
+                                                    } else {
+                                                        safeUrl.trimEnd('/') + "/" + currentHref
+                                                    }
+                                                }
                                             }
                                             // FIX Bug 2: normalize Unicode/spaces in href before reuse by BFS.
                                             val fullUri = runCatching { java.net.URI(rawUri).toASCIIString() }

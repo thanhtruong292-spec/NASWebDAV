@@ -395,8 +395,11 @@ class NasDocumentProvider : DocumentsProvider() {
                             body.byteStream().copyTo(fos)
                         }
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                    try { writeFd.closeWithError(e.message ?: "Mất kết nối stream") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    try { writeFd.closeWithError("Đã hủy kết nối") } catch (_: Exception) {}
+                    throw e
+                } catch (e: Exception) {
+                    try { writeFd.closeWithError(e.message ?: "Mất kết nối stream") } catch (_: Exception) {}
                 }
             }
 

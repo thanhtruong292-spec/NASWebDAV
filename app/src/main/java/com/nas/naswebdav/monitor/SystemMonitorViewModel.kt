@@ -198,10 +198,10 @@ class SystemMonitorViewModel(
                     val diskCapacity = diskPartsStrArr.getOrNull(1) ?: ""
                     
                     val fanRpmRaw = json.opt("fan_rpm")
-                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
+                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Number)?.toInt() else null
 
                     val fanPctRaw = json.opt("fan_percent")
-                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Int) else null
+                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Number)?.toInt() else null
 
                     val newStatus = NasSystemStatus(
                         temp = json.optString("temperature", "--°C"),

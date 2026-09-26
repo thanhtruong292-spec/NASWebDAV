@@ -280,14 +280,6 @@ class SmartToolsViewModel(
     fun resetShouldAutoOpenDuplicates() { shouldAutoOpenDuplicates = false }
     fun deleteDuplicateFile(file: com.nas.naswebdav.NasFile) {
         viewModelScope.launch(Dispatchers.IO) {
-            deleteDuplicateFileInternal(file)
-        }
-    }
-
-    // Xoa 1 file (loi goi truc tiep, khong tu launch) — de batch chay tuan tu
-    // trong 1 coroutine, tranh 30-50 coroutine cung filter list tren Main
-    // (lost-update: file da xoa hien lai).
-    private suspend fun deleteDuplicateFileInternal(file: com.nas.naswebdav.NasFile) {
             try {
                 val isInTrash = file.path.contains(".trash")
                 if (isInTrash) {
@@ -325,13 +317,53 @@ class SmartToolsViewModel(
                 // moi de tranh phai wire UI.
                 android.util.Log.w("SmartToolsVM", "deleteDuplicateFile (giu file): ${e.message}")
             }
+        }
     }
 
-    // Batch xoa TUAN TU trong 1 coroutine — tranh lost-update UI khi 30-50
-    // coroutine cung filter duplicateFilesList tren Main.
     fun deleteSelectedDuplicates(files: List<com.nas.naswebdav.NasFile>) {
+        if (files.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
-            for (f in files) deleteDuplicateFileInternal(f)
+            val deletedPaths = mutableSetOf<String>()
+            val rootUrl = WebDavManager.currentBaseUrl.trimEnd('/')
+            for (file in files) {
+                try {
+                    val isInTrash = file.path.contains(".trash")
+                    if (isInTrash) {
+                        WebDavManager.deleteFile(file.path, file.isDirectory)
+                        repository.removeDuplicateFromDb(file.path)
+                        deletedPaths.add(file.path)
+                    } else {
+                        val trashFolderUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, "", false)
+                        val trashTargetUrl = buildWebDavTrashTargetUrl(rootUrl, file.path, file.name, file.isDirectory)
+                        try { WebDavManager.createFolder(trashFolderUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                        try {
+                            WebDavManager.renameFile(file.path, trashTargetUrl)
+                            try {
+                                NasApplication.instance.database.trashMetaDao().insert(
+                                    com.nas.naswebdav.TrashMeta(trashPath = trashTargetUrl, originalPath = file.path)
+                                )
+                            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                        } catch (moveEx: Exception) {
+                            android.util.Log.w("SmartToolsVM", "MOVE to .trash failed, giu file ${file.path}: ${moveEx.message}")
+                            com.nas.naswebdav.utils.SystemLogger.log("WARNING", "SmartTools",
+                                "Khong chuyen duoc vao trash (giu file): ${file.path} — ${moveEx.message}")
+                            continue
+                        }
+                        repository.removeDuplicateFromDb(file.path)
+                        deletedPaths.add(file.path)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.util.Log.w("SmartToolsVM", "deleteSelectedDuplicates error on ${file.path}: ${e.message}")
+                }
+            }
+            if (deletedPaths.isNotEmpty()) {
+                withContext(Dispatchers.Main) {
+                    duplicateFilesList = duplicateFilesList.filter { it.path !in deletedPaths }
+                    selectedDuplicates.removeAll { it.path in deletedPaths }
+                }
+            }
         }
     }
     fun togglePauseDuplicateScan() {

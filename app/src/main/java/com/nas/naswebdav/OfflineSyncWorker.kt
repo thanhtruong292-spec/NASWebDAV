@@ -9,6 +9,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -93,7 +94,11 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         // R4-P1: bỏ qua row của NAS/user khác — không phát lại thao tác sang máy
         // khác khi đổi endpoint. Row cũ (nasHost rỗng, trước v17) vẫn xử lý để
         // tương thích, nhưng KHÔNG rewrite authority sang host hiện tại.
+        // Auth rieng theo worker (threadLocal) — khong bi worker/UI khac ghi de
+        // authState giua chung khi chay song song đa tai khoan.
+        val auth = WebDavManager.AuthState(url, user, pass)
         val webDavManager = WebDavManager.apply { connect(url, user, pass) }
+        return@withContext withContext(WebDavManager.threadLocalAuth.asContextElement(auth)) {
         setThumbnailActivity("sync", true)
         try {
             var allSuccess = true
@@ -308,8 +313,9 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                     "$skippedForeign action thuộc NAS khác — giữ lại, xử lý khi về đúng NAS")
             }
             result
-        } finally {
-            setThumbnailActivity("sync", false)
+            } finally {
+                setThumbnailActivity("sync", false)
+            }
         }
     }
 }
