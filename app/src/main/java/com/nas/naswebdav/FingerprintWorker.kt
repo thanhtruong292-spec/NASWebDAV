@@ -42,7 +42,10 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
         val app = applicationContext as NasApplication; val db = app.database
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         try {
-            val filesToProcess = db.fileDao().getFilesWithoutFingerprint()
+            // P2-scope: khoa phien cho SELECT + UPDATE fingerprint — worker
+            // chi cham row cua NAS/tai khoan hien tai.
+            val fpKey = currentAccountKey()
+            val filesToProcess = db.fileDao().getFilesWithoutFingerprint(fpKey)
             if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không phát hiện tập tin yêu cầu tạo chữ ký số (fingerprint)."); return@withContext Result.success() }
             SystemLogger.log("INFO", "FingerprintWorker", "Khởi tạo quá trình cấp phát chữ ký số cho ${filesToProcess.size} tập tin...")
             var successCount = 0; var failCount = 0
@@ -83,7 +86,7 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                                     try {
                                         val aHash = ImageFingerprint.computeAHash(bitmap)
                                         if (aHash != null) {
-                                            db.fileDao().updateImageFingerprint(file.path, aHash); successCount++
+                                            db.fileDao().updateImageFingerprint(file.path, aHash, fpKey); successCount++
                                         } else failCount++
                                     } finally { bitmap.recycle() }
                                 } else failCount++
@@ -116,7 +119,7 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                             }
                             // 4xx khác (400/451…): terminal client error → NOT_SUPPORTED
                             else -> {
-                                db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED"); failCount++
+                                db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED", fpKey); failCount++
                             }
                         }
                     }

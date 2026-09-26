@@ -638,7 +638,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                             pendingHashCacheUpdates.clear()
                             db.withTransaction {
                                 for (update in chunk) {
-                                    db.fileDao().updatePartialHash(update.first, update.second)
+                                    db.fileDao().updatePartialHash(update.first, update.second, scanKey)
                                 }
                                 if (cacheChunk.isNotEmpty()) {
                                     db.hashCacheDao().insertHashes(cacheChunk)
@@ -680,7 +680,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     if (pendingHashUpdates.isNotEmpty()) {
                         db.withTransaction {
                             for (update in pendingHashUpdates) {
-                                db.fileDao().updatePartialHash(update.first, update.second)
+                                db.fileDao().updatePartialHash(update.first, update.second, scanKey)
                             }
                             if (pendingHashCacheUpdates.isNotEmpty()) {
                                 db.hashCacheDao().insertHashes(pendingHashCacheUpdates)

@@ -79,8 +79,8 @@ interface FileDao {
     @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFiles(keyword: String, key: String = ""): List<CachedFile>
 
-    // Tìm kiếm giới hạn trong một root path — thay thế pattern load
-    // getAllFilesForMap() rồi lọc prefix trong RAM (25k rows → OOM).
+    // Tìm kiếm giới hạn trong một root path — thay full-table scan
+    // rồi lọc prefix trong RAM (25k rows → OOM).
     @Query("SELECT * FROM files_cache WHERE (accountKey = :key OR accountKey = '') AND path LIKE :rootPrefix || '%' AND name LIKE '%' || :keyword || '%' ORDER BY isDirectory DESC, name ASC LIMIT 200")
     fun searchFilesUnder(rootPrefix: String, keyword: String, key: String = ""): List<CachedFile>
 
@@ -148,26 +148,28 @@ interface FileDao {
     }
 
 
-    @Query("UPDATE files_cache SET partialHash = :hash WHERE path = :path")
-    fun updatePartialHash(path: String, hash: String)
+    @Query("UPDATE files_cache SET partialHash = :hash WHERE path = :path AND (accountKey = :key OR accountKey = '')")
+    fun updatePartialHash(path: String, hash: String, key: String = "")
 
-    // PHASE 5: Cập nhật Image Fingerprint
-    @Query("UPDATE files_cache SET imageFingerprint = :fingerprint WHERE path = :path")
-    fun updateImageFingerprint(path: String, fingerprint: String)
+    // PHASE 5: Cập nhật Image Fingerprint — scope phien de khong ghi de
+    // hash cua NAS/tai khoan khac co cung path.
+    @Query("UPDATE files_cache SET imageFingerprint = :fingerprint WHERE path = :path AND (accountKey = :key OR accountKey = '')")
+    fun updateImageFingerprint(path: String, fingerprint: String, key: String = "")
 
     // Lấy các file chưa có Fingerprint để cho Worker chạy ngầm băm (chỉ lấy file ảnh và video nhẹ)
     @Query("""
-        SELECT * FROM files_cache 
-        WHERE isDirectory = 0 
-        AND imageFingerprint IS NULL 
+        SELECT * FROM files_cache
+        WHERE isDirectory = 0
+        AND (accountKey = :key OR accountKey = '')
+        AND imageFingerprint IS NULL
         AND parentPath NOT LIKE '%/.trash/%'
         AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic')
         ORDER BY lastModified DESC LIMIT 500
     """)
-    fun getFilesWithoutFingerprint(): List<CachedFile>
+    fun getFilesWithoutFingerprint(key: String = ""): List<CachedFile>
 
-    @Query("DELETE FROM files_cache WHERE path = :path")
-    fun deleteFileByPath(path: String)
+    @Query("DELETE FROM files_cache WHERE path = :path AND (accountKey = :key OR accountKey = '')")
+    fun deleteFileByPath(path: String, key: String = "")
 }
 
 @Entity(tableName = "system_logs")
@@ -287,10 +289,6 @@ interface FingerprintDao {
     // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker
     @Query("SELECT * FROM file_fingerprints LIMIT 10000")
     fun getAllFingerprints(): List<FileFingerprint>
-
-    // Xóa fingerprint theo đường dẫn
-    @Query("DELETE FROM file_fingerprints WHERE filePath = :path")
-    fun deleteByPath(path: String)
 
     // Đếm tổng số vân tay đã lưu
     @Query("SELECT COUNT(*) FROM file_fingerprints")

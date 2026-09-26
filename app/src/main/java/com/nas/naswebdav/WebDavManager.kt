@@ -1547,7 +1547,7 @@ class WebDavRepository(
 
     suspend fun clearSystemLogs() = withContext(Dispatchers.IO) { database.logDao().clearAllLogs() }
 
-    suspend fun removeDuplicateFromDb(path: String) = withContext(Dispatchers.IO) { database.fileDao().deleteFileByPath(path) }
+    suspend fun removeDuplicateFromDb(path: String) = withContext(Dispatchers.IO) { database.fileDao().deleteFileByPath(path, currentAccountKey()) }
 
 }
 
