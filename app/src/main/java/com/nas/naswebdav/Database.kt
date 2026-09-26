@@ -600,11 +600,15 @@ val MIGRATION_17_18 = object : androidx.room.migration.Migration(17, 18) {
 }
 
 // P2-muc3+muc4: fingerprint them accountKey/sourceKey/contentHash.
+// Tao ca 2 index moi — thieu la Room IllegalStateException khi upgrade
+// (entity khai @Index nhung DB thuc te khong co).
 val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.addColumnIfMissing("file_fingerprints", "accountKey", "TEXT NOT NULL DEFAULT ''")
         db.addColumnIfMissing("file_fingerprints", "sourceKey", "TEXT NOT NULL DEFAULT ''")
         db.addColumnIfMissing("file_fingerprints", "contentHash", "TEXT NOT NULL DEFAULT ''")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_file_fingerprints_accountKey` ON `file_fingerprints` (`accountKey`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_file_fingerprints_sourceKey` ON `file_fingerprints` (`sourceKey`)")
     }
 }
 
