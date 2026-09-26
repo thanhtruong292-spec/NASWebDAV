@@ -479,16 +479,19 @@ class ScreenRecordService : Service() {
         val files = spoolDir.listFiles()?.sortedBy { it.lastModified() } ?: return
         var total = files.filter { it.isFile }.sumOf { it.length() }
         if (total <= maxSpoolBytes) return
+        val writing = currentSegmentFile
         var dropped = 0
         for (file in files) {
             if (!file.name.endsWith(".ts")) continue
+            // Khong xoa segment DANG GHI (mat doan hinh + gay hong day so
+            // segment -> NAS 409 khi finish) va file con marker .ready chua
+            // upload (xoa se mat du lieu chua dong bo).
+            if (writing != null && file.absolutePath == writing.absolutePath) continue
             val marker = File(spoolDir, file.name.replace(".ts", ".ready"))
+            if (marker.exists()) continue
             total -= file.length()
             if (file.delete()) {
                 dropped++
-            }
-            if (marker.exists()) {
-                marker.delete()
             }
             if (total <= maxSpoolBytes) break
         }

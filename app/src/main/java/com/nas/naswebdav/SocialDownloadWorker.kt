@@ -248,6 +248,7 @@ class SocialDownloadWorker(
     ): Boolean {
         val deadline = System.currentTimeMillis() + 15 * 60 * 1000L
         var delayMs = 2000L
+        var httpErrors = 0
         while (System.currentTimeMillis() < deadline) {
             // P1-12: Honor WorkManager stop signal to avoid leaked poll loop
             if (isStopped) return false
@@ -262,6 +263,25 @@ class SocialDownloadWorker(
                     val json = JSONObject(resp.body?.string() ?: "{}")
                     Pair(json.optString("status", "running"), json.optString("error", ""))
                 }
+                // HTTP loi thoang qua (NAS nghen 502/504): dem lien tuc, chi
+                // fail sau 5 lan. Backend yt-dlp van chay — khong huy vo ly.
+                // 4xx (job khong ton tai) -> fail ngay.
+                if (status == "error" && errorMsg.startsWith("HTTP ")) {
+                    val code = errorMsg.removePrefix("HTTP ").toIntOrNull() ?: 0
+                    val transient = code == 408 || code == 429 || code in 500..599
+                    if (transient) {
+                        httpErrors++
+                        android.util.Log.w("SocialWorker", "Poll HTTP $code thoang qua ($httpErrors/5), thu lai: $jobId")
+                        if (httpErrors < 5) {
+                            kotlinx.coroutines.delay(delayMs)
+                            delayMs = (delayMs * 1.5).toLong().coerceAtMost(10000L)
+                            continue
+                        }
+                    }
+                    SystemLogger.log("WARNING", "SocialDownload", "Social job $jobId failed: $errorMsg")
+                    return false
+                }
+                httpErrors = 0
                 when (status) {
                     "completed", "success", "done" -> return true
                     "error", "failed" -> {

@@ -87,9 +87,18 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                                         val aHash = ImageFingerprint.computeAHash(bitmap)
                                         if (aHash != null) {
                                             db.fileDao().updateImageFingerprint(file.path, aHash, fpKey); successCount++
-                                        } else failCount++
+                                        } else {
+                                            // Bam that bai vinh vien (pixel khong doc
+                                            // duoc) — danh dau de pass sau bo qua,
+                                            // khong retry vo tan.
+                                            db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED", fpKey); failCount++
+                                        }
                                     } finally { bitmap.recycle() }
-                                } else failCount++
+                                } else {
+                                    // Giai ma that bai (file hong/dinh dang la) —
+                                    // danh dau de pass sau bo qua.
+                                    db.fileDao().updateImageFingerprint(file.path, "NOT_SUPPORTED", fpKey); failCount++
+                                }
                             }
                             // 5xx: transient server error — không gắn NOT_SUPPORTED, retry sau
                             resp.code in 500..599 -> {

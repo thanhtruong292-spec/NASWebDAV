@@ -235,7 +235,13 @@ class LivestreamMonitorWorker(
                     resp.body?.string() ?: "{}"
                 }
                 if (bodyStr == null) {
-                    if (consecutiveErrors >= 5) break
+                    // NAS loi lien tuc (>=5): khong de finalStatus o "recording"
+                    // roi xuong nhanh success ao ben duoi.
+                    if (consecutiveErrors >= 5) {
+                        finalStatus = "error"
+                        finalErrorReason = "Mất kết nối NAS khi theo dõi (lỗi liên tục)"
+                        break
+                    }
                     continue
                 }
                 val json = JSONObject(bodyStr)
@@ -315,7 +321,11 @@ class LivestreamMonitorWorker(
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 consecutiveErrors++
                 android.util.Log.w("LivestreamMonitor", "Poll error ($consecutiveErrors/10): ${e.message}")
-                if (consecutiveErrors >= 10) break
+                if (consecutiveErrors >= 10) {
+                    finalStatus = "error"
+                    finalErrorReason = "Lỗi polling liên tục: ${e.message}"
+                    break
+                }
             }
         }
 

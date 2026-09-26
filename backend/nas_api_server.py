@@ -3097,8 +3097,10 @@ def _is_app_temp_dirname(dname):
     return False
 
 def _managed_tmp_in_use():
-    """Tap hop realpath tmp_dir cua job DANG CHAY (livestream/ytdlp active).
+    """Tap hop realpath tmp_dir/wrapper_dir cua job DANG CHAY (livestream/ytdlp active).
     Cleanup phai loai tru — khong xoa thu muc tac vu dang dung du cu tuoi.
+    Gom ca wrapper_dir (script loop_*.py cua TikTok live) — phien dai >2h keo
+    dai se bi don nham neu chi tru tmp_dir.
     Dung globals().get() de an toan thu tu dinh nghia module."""
     in_use = set()
     try:
@@ -3113,9 +3115,10 @@ def _managed_tmp_in_use():
     for info in jobs:
         try:
             if (info or {}).get("status") in ("recording", "starting", "stopping", "finishing"):
-                t = (info or {}).get("tmp_dir") or ""
-                if t:
-                    in_use.add(os.path.realpath(t))
+                for _k in ("tmp_dir", "wrapper_dir"):
+                    t = (info or {}).get(_k) or ""
+                    if t:
+                        in_use.add(os.path.realpath(t))
         except Exception:
             continue
     try:

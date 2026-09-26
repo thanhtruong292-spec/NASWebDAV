@@ -9,7 +9,6 @@ import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.File
 import java.io.InputStream
-import java.io.OutputStream
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
 
@@ -187,21 +186,24 @@ object SmbManager {
                 null
             )
 
-            val outputStream: OutputStream = file.outputStream
-            val bufferSize = 262144 // 256KB cho LAN throughput
-            val buffer = ByteArray(bufferSize)
-            var totalBytesRead = 0L
-            var bytesRead: Int
+            // Dong file + stream ke ca khi loi giua chung — khong de smbd giu
+            // lock (attempt sau bi STATUS_SHARING_VIOLATION).
+            file.use { f ->
+                f.outputStream.use { outputStream ->
+                    val bufferSize = 262144 // 256KB cho LAN throughput
+                    val buffer = ByteArray(bufferSize)
+                    var totalBytesRead = 0L
+                    var bytesRead: Int
 
-            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                outputStream.write(buffer, 0, bytesRead)
-                totalBytesRead += bytesRead
-                onProgress(totalBytesRead, totalSize)
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        onProgress(totalBytesRead, totalSize)
+                    }
+
+                    outputStream.flush()
+                }
             }
-
-            outputStream.flush()
-            outputStream.close()
-            file.close()
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB upload failed: ${e.message}")

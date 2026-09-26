@@ -160,6 +160,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         }
 
         val db = NasApplication.instance.database
+        var notifiedDone = false
         try {
             val backupFolderBase = if (baseUrl.endsWith("/")) "${baseUrl}AutoBackup/" else "$baseUrl/AutoBackup/"
             try { webDavManager.createFolder(backupFolderBase) } catch (_: Exception) {}
@@ -466,6 +467,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             break
                                         }
                                     } catch (e: Exception) {
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
                                         android.util.Log.w("AutoBackup", "SMB attempt $smbAttempt failed for $fileName: ${e.message}")
                                     }
                                 }
@@ -550,6 +552,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         try {
                                             webDavManager.moveFileNoOverwrite(tmpNasPath, targetFileNasPath)
                                         } catch (e: Exception) {
+                                            if (e is kotlinx.coroutines.CancellationException) throw e
                                             val isConflict = (e.message ?: "").contains("412")
                                             if (!isConflict || isCompressedEarly) {
                                                 try { webDavManager.deleteFile(tmpNasPath, false) } catch (_: Exception) {}
@@ -614,6 +617,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         }
                                         break // upload thành công → thoát retry loop
                                     } catch (e: Exception) {
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
                                         lastWebDavException = e
                                         val msg = e.message ?: ""
                                         val isServerError = msg.contains("500") || msg.contains("502") || msg.contains("503")
@@ -744,7 +748,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.resultSkipped.value = skippedCount
             AutoBackupState.resultFailed.value = failedCount
             AutoBackupState.showResultDialog.value = true
-            
+
+            // Giu thong bao ket qua tren status bar thay vi cancel im lang —
+            // user khoa man hinh van biet backup xong ra sao.
+            notifiedDone = true
+            try {
+                val done = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                    .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                    .setContentTitle("Auto Backup xong: $backupCount mới, $skippedCount bỏ qua, $failedCount lỗi")
+                    .setAutoCancel(true)
+                    .setOngoing(false)
+                    .build()
+                androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, done)
+            } catch (_: Exception) {}
+
             return@withContext Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -764,7 +781,10 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         } finally {
             setThumbnailActivity("autobackup", false)
             if (wakeLock.isHeld) wakeLock.release()
-            try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
+            // Da bao ket qua thi giu notification; that bai/huy thi don.
+            if (!notifiedDone) {
+                try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
+            }
         }
     }
 }
