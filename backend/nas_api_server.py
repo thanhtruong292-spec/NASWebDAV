@@ -11231,8 +11231,134 @@ def api_hash_batch():
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for r in pool.map(_hash_one, items):
             if r: result[r[0]] = r[1]
-            
+
     return jsonify(result)
+
+# ============ FILE HASH STORE — quan ly file qua ma hash + tim trung lap ====
+# Kho SQLite rieng (.nas_meta/file_hashes.db): moi file 1 row (path, size,
+# mtime, sha256 full, partial 1MB). PC/app tinh hash roi POST len luu; API
+# duplicates nhom theo sha256 de bao trung lap. Khong quet tu dong — chi luu
+# khi client gui (do client render/hash, NAS chi luu tru).
+_HASH_DB_PATH = None  # khoi tao lazy duoi .nas_meta
+_HASH_DB_LOCK = threading.Lock()
+
+
+def _hash_db():
+    """Mo (va tao bang neu chua co) kho hash. Tra connection moi — caller dong."""
+    global _HASH_DB_PATH
+    import sqlite3
+    if _HASH_DB_PATH is None:
+        try:
+            meta = os.path.join(get_webdav_root(), ".nas_meta")
+            os.makedirs(meta, exist_ok=True)
+            _HASH_DB_PATH = os.path.join(meta, "file_hashes.db")
+        except Exception:
+            _HASH_DB_PATH = "/tmp/nas_file_hashes.db"
+    conn = sqlite3.connect(_HASH_DB_PATH, timeout=10.0)
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS file_hashes (
+            path TEXT PRIMARY KEY, size INTEGER NOT NULL DEFAULT 0,
+            mtime INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '',
+            partial TEXT NOT NULL DEFAULT '', scanned_at INTEGER NOT NULL DEFAULT 0)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hashes_sha ON file_hashes(sha256)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hashes_size ON file_hashes(size)")
+        conn.commit()
+    except Exception:
+        pass
+    return conn
+
+
+@app.route("/api/hash/save", methods=["POST"])
+@requires_auth
+def api_hash_save():
+    """Luu batch hash do client tinh (PC/app render + hash, NAS chi luu).
+    Body: {"items": [{"path": "/webdav/a.jpg", "size": 123, "mtime": 456,
+    "sha256": "abc...", "partial": "md5-1MB"}]} — toi da 500 items/lan."""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        items = data.get("items", [])
+        if not isinstance(items, list) or len(items) > 500:
+            return jsonify({"error": "items phai la list <= 500"}), 400
+        now = int(time.time())
+        saved = 0
+        conn = _hash_db()
+        try:
+            for it in items:
+                try:
+                    p = str(it.get("path", "") or "")
+                    s = str(it.get("sha256", "") or "").lower()
+                    if not p or len(s) != 64:
+                        continue
+                    conn.execute(
+                        "INSERT OR REPLACE INTO file_hashes "
+                        "(path, size, mtime, sha256, partial, scanned_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (p, int(it.get("size", 0) or 0), int(it.get("mtime", 0) or 0),
+                         s, str(it.get("partial", "") or ""), now))
+                    saved += 1
+                except Exception:
+                    continue
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({"result": "ok", "saved": saved})
+    except Exception as e:
+        log.error("[API] Error in api_hash_save: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/hash/duplicates", methods=["GET"])
+@requires_auth
+def api_hash_duplicates():
+    """Nhom file trung lap theo sha256 (chi nhom co >= 2 file).
+    Query: ?min_size=4096 (bo file nho hon, mac dinh 1KB)."""
+    try:
+        min_size = int(request.args.get("min_size", "1024") or 1024)
+        conn = _hash_db()
+        try:
+            rows = conn.execute(
+                "SELECT sha256, GROUP_CONCAT(path, char(31)), "
+                "SUM(size), COUNT(*) FROM file_hashes "
+                "WHERE sha256 != '' AND size >= ? "
+                "GROUP BY sha256 HAVING COUNT(*) > 1 "
+                "ORDER BY SUM(size) DESC LIMIT 500",
+                (min_size,)).fetchall()
+        finally:
+            conn.close()
+        groups = []
+        for sha, paths_blob, total, count in rows:
+            paths = (paths_blob or "").split(chr(31))
+            groups.append({"sha256": sha, "files": paths,
+                           "count": count, "wasted_bytes": int(total or 0)})
+        return jsonify({"groups": groups, "total_groups": len(groups)})
+    except Exception as e:
+        log.error("[API] Error in api_hash_duplicates: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/hash/lookup", methods=["GET"])
+@requires_auth
+def api_hash_lookup():
+    """Tra cuu hash cua 1 file: ?path=/webdav/a.jpg -> row da luu (neu co)."""
+    try:
+        p = (request.args.get("path", "") or "").strip()
+        if not p:
+            return jsonify({"error": "Thieu path"}), 400
+        conn = _hash_db()
+        try:
+            row = conn.execute(
+                "SELECT path, size, mtime, sha256, partial, scanned_at "
+                "FROM file_hashes WHERE path = ?", (p,)).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return jsonify({"found": False})
+        return jsonify({"found": True, "path": row[0], "size": row[1],
+                        "mtime": row[2], "sha256": row[3], "partial": row[4],
+                        "scanned_at": row[5]})
+    except Exception as e:
+        log.error("[API] Error in api_hash_lookup: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 # ============ THUMBNAIL GENERATOR (Synology-style, TURBO MODE) ============
 # 4 worker song song, smart frame (chon frame sang nhat), khong throttle CPU
