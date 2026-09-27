@@ -68,8 +68,10 @@ PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 def propfind(session, base, path, depth=1, debug=False):
     """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1).
     Gui body XML explicit giong app (WebDavManager FIX H5) — nginx WebDAV
-    tra 405 neu PROPFIND khong co body."""
-    url = base.rstrip("/") + ("/" + path.strip("/") if path.strip("/") else "")
+    tra 405 neu PROPFIND khong co body. URL luon co dau / cuoi giong app
+    (toValidUrl ep trailing slash cho collection) — thieu la nginx tra 405."""
+    stripped = path.strip("/")
+    url = base.rstrip("/") + ("/" + stripped + "/" if stripped else "/")
     try:
         r = session.request("PROPFIND", url,
                             data=PROPFIND_BODY.encode("utf-8"),
