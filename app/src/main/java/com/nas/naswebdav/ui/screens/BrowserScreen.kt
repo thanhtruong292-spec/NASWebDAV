@@ -579,7 +579,9 @@ fun BrowserScreen(
         floatingActionButtonPosition = androidx.compose.material3.FabPosition.Center,
         floatingActionButton = {
             androidx.compose.animation.AnimatedVisibility(
-                visible = autoBackupVM.isAutoBackupRunning,
+                // An FAB backup khi selectionMode bat (bottom bar hanh dong
+                // chiem day man hinh) — tranh 2 lop de nhau lon xon.
+                visible = autoBackupVM.isAutoBackupRunning && !selectionMode,
                 enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + androidx.compose.animation.fadeIn(),
                 exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + androidx.compose.animation.fadeOut()
             ) {
@@ -860,76 +862,10 @@ fun BrowserScreen(
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_close))
                     }
                 },
-                actions = {
-                    val isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác"
-                    
-                    if (isTrash) {
-                        // NÚT KHÔI PHỤC HÀNG LOẠT (CHỈ TRONG THÙNG RÁC)
-                        IconButton(
-                            onClick = {
-                                if (selectedFiles.isNotEmpty()) {
-                                    fileBrowserVM.restoreMultipleFiles(context, selectedFiles.toList())
-                                    selectionMode = false
-                                    selectedFiles.clear()
-                                }
-                            },
-                            enabled = selectedFiles.isNotEmpty()
-                        ) {
-                            Icon(
-                                Icons.Default.Restore,
-                                contentDescription = stringResource(R.string.cd_restore),
-                                tint = if (selectedFiles.isNotEmpty()) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    } else {
-                        // NÚT SAO CHÉP
-                        IconButton(
-                            onClick = {
-                                if (selectedFiles.isNotEmpty()) {
-                                    pendingBatchOperation = "COPY"
-                                    showFolderPickerDialog = true
-                                }
-                            },
-                            enabled = selectedFiles.isNotEmpty()
-                        ) {
-                            Icon(
-                                Icons.Default.ContentCopy,
-                                contentDescription = stringResource(R.string.cd_copy),
-                                tint = if (selectedFiles.isNotEmpty()) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        // NÚT DI CHUYỂN
-                        IconButton(
-                            onClick = {
-                                if (selectedFiles.isNotEmpty()) {
-                                    pendingBatchOperation = "MOVE"
-                                    showFolderPickerDialog = true
-                                }
-                            },
-                            enabled = selectedFiles.isNotEmpty()
-                        ) {
-                            Icon(
-                                Icons.Default.DriveFileMove,
-                                contentDescription = stringResource(R.string.cd_move),
-                                tint = if (selectedFiles.isNotEmpty()) AccentOrange else MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-
-                    // NÚT XÓA HÀNG LOẠT (DÙNG CHUNG)
-                    IconButton(
-                        onClick = {
-                            showMultiDeleteDialog = true
-                        },
-                        enabled = selectedFiles.isNotEmpty()
-                    ) {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = if (isTrash) "Xóa vĩnh viễn" else "Xóa",
-                            tint = if (selectedFiles.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-                        )
-                    }
-                },
+                // Chuan app quan ly file: topBar selection chi giu dem + dong.
+                // Moi action (Copy/Move/Xoa/Khoi phuc) nam o bottom bar ngang
+                // tam ngon tay cai — khong trung lap 2 noi.
+                actions = {},
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             )
         } else {

@@ -812,17 +812,44 @@ fun MainMenuScreen(
         )
             Spacer(Modifier.height(8.dp))
 
-        if (!simpleMode) {
-        MainMenuDashboardSystemOverviewCard(
-            realtimeNow = realtimeNow,
-            onShowProcessList = { type ->
-                processSortType = type
-                showProcessDialog = true
-            },
-            onOpenNewDiskProfile = { showNewDiskProfileSheet = true },
-            onOpenSmartDetails = { showSmartDialog = true },
+        // ── Thu tu dashboard theo chuan app quan ly file: hanh dong nhanh
+        // len dau (QuickAccess, chuc nang), giam sat ky thuat xuong cuoi
+        // (SystemOverview, OMV, Chart, Insights, Torrent, Logs).
+        MainMenuDashboardQuickAccessSection(
+            slot2Id = slot2Id,
+            slot3Id = slot3Id,
+            slot4Id = slot4Id,
+            editingSlot = editingSlot,
+            prefsRepo = prefsRepo,
+            onEditingSlotChange = { editingSlot = it },
+            onSlot2Change = { slot2Id = it },
+            onSlot3Change = { slot3Id = it },
+            onSlot4Change = { slot4Id = it },
+            onQuickAction = handleQuickAction,
+            onOpenFiles = onOpenFiles,
+            onOpenLatestPhotos = onOpenLatestPhotos,
+            onOpenRecentVideos = onOpenRecentVideos,
+            onOpenToolbox = { showToolboxDialog = true }
         )
-        }
+        Spacer(Modifier.height(8.dp))
+
+        MainMenuSystemStatusCards(
+            mContext = mContext,
+            onOpenAutoBackup = { showAutoBackupDialog = true },
+            onOpenLivestream = { showLivestreamDialog = true },
+            onOpenUsbImport = {
+                deviceVM.fetchUsbImportStatus()
+                showUsbImportDialog = true
+            },
+            onOpenDuplicateScan = {
+                when {
+                    smartToolsVM.isWorkerRunning || smartToolsVM.isScanningDuplicates -> smartToolsVM.isScanningDuplicates = true
+                    smartToolsVM.duplicateFilesList.isNotEmpty() -> smartToolsVM.isShowingDuplicates = true
+                    else -> showDuplicateScanDialog = true
+                }
+            }
+        )
+        Spacer(Modifier.height(8.dp))
 
         // Card thong ke file toan NAS — hien ca 2 che do (thong tin file ca
         // nhan, khong phai sysadmin). Du lieu tu /api/storage/summary.
@@ -830,23 +857,6 @@ fun MainMenuScreen(
             realtimeNow = realtimeNow,
         )
         Spacer(Modifier.height(8.dp))
-
-        if (!simpleMode) {
-        MainMenuDashboardOmvServicesHardwarePanel()
-        }
-
-        // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
-        if (!simpleMode) {
-        Spacer(Modifier.height(8.dp))
-        com.nas.naswebdav.ui.screens.MonitoringChartCard()
-        Spacer(Modifier.height(8.dp))
-        MainMenuDashboardNasInsightsSummaryCard(
-            onOpen = {
-                sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
-                showNasInsightsDialog = true
-            }
-        )
-        }
 
         // ── NEW: DashboardAlerts component ──
         run {
@@ -867,50 +877,47 @@ fun MainMenuScreen(
         }
         Spacer(Modifier.height(4.dp))
 
-        MainMenuSystemStatusCards(
-            mContext = mContext,
-            onOpenAutoBackup = { showAutoBackupDialog = true },
-            onOpenLivestream = { showLivestreamDialog = true },
-            onOpenUsbImport = {
-                deviceVM.fetchUsbImportStatus()
-                showUsbImportDialog = true
+        if (!simpleMode) {
+        MainMenuDashboardSystemOverviewCard(
+            realtimeNow = realtimeNow,
+            onShowProcessList = { type ->
+                processSortType = type
+                showProcessDialog = true
             },
-            onOpenDuplicateScan = {
-                when {
-                    smartToolsVM.isWorkerRunning || smartToolsVM.isScanningDuplicates -> smartToolsVM.isScanningDuplicates = true
-                    smartToolsVM.duplicateFilesList.isNotEmpty() -> smartToolsVM.isShowingDuplicates = true
-                    else -> showDuplicateScanDialog = true
-                }
+            onOpenNewDiskProfile = { showNewDiskProfileSheet = true },
+            onOpenSmartDetails = { showSmartDialog = true },
+        )
+        Spacer(Modifier.height(8.dp))
+        }
+
+        if (!simpleMode) {
+        MainMenuDashboardOmvServicesHardwarePanel()
+        Spacer(Modifier.height(8.dp))
+        }
+
+        // --- CHÈN BIỂU ĐỒ GIÁM SÁT VÀ BÁO CÁO Ở ĐÂY ---
+        if (!simpleMode) {
+        com.nas.naswebdav.ui.screens.MonitoringChartCard()
+        Spacer(Modifier.height(8.dp))
+        MainMenuDashboardNasInsightsSummaryCard(
+            onOpen = {
+                sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
+                showNasInsightsDialog = true
             }
         )
+        Spacer(Modifier.height(8.dp))
+        }
+
         MainMenuSectionSystemLogsSummaryCard()
+        Spacer(Modifier.height(8.dp))
 
         if (!simpleMode) {
         MainMenuDashboardTorrentActivityCard(
             onOpenFolder = onOpenFolder,
             onGlobalSearch = onGlobalSearch
         )
+        Spacer(Modifier.height(8.dp))
         }
-
-
-
-
-        MainMenuDashboardQuickAccessSection(
-            slot2Id = slot2Id,
-            slot3Id = slot3Id,
-            slot4Id = slot4Id,
-            editingSlot = editingSlot,
-            prefsRepo = prefsRepo,
-            onEditingSlotChange = { editingSlot = it },
-            onSlot2Change = { slot2Id = it },
-            onSlot3Change = { slot3Id = it },
-            onSlot4Change = { slot4Id = it },
-            onQuickAction = handleQuickAction,
-            onOpenFiles = onOpenFiles,
-            onOpenLatestPhotos = onOpenLatestPhotos,
-            onOpenRecentVideos = onOpenRecentVideos,
-            onOpenToolbox = { showToolboxDialog = true }
-        )
         Spacer(Modifier.height(16.dp))
 
         // THÔNG BÁO DIALOG
