@@ -199,12 +199,16 @@ def render_image(data):
         # Draft mode giam them ~30% thoi gian decode JPEG.
         img.draft("RGB", (THUMB_SIZE * 2, THUMB_SIZE * 2))
         img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.BILINEAR)
-        if img.mode in ("RGBA", "P"):
+        # PNG 16-bit (I;16/...) khong save JPEG truc tiep duoc -> ve L roi RGB.
+        if img.mode in ("I;16", "I;16L", "I;16B", "I", "F"):
+            img = img.convert("L").convert("RGB")
+        elif img.mode != "RGB":
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=75)
         return buf.getvalue()
-    except Exception:
+    except Exception as e:
+        _log(f"[WARN] render anh loi: {e}")
         return None
 
 
@@ -239,22 +243,36 @@ def _ffmpeg_hw_args():
 
 
 def render_video(tmp_path):
-    try:
-        out = tmp_path + ".thumb.jpg"
-        # -ss TRUOC -i = seek nhanh (khong decode tu dau toi giay 5).
-        # hwaccel neu co + scale rieng (hwdownload neu can).
-        hw = _ffmpeg_hw_args()
-        vf = f"scale={THUMB_SIZE}:-1"
-        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
-               + hw + ["-ss", "5", "-i", tmp_path,
-                       "-vframes", "1", "-vf", vf, "-q:v", "4", out])
-        subprocess.run(cmd, timeout=120, check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if os.path.isfile(out) and os.path.getsize(out) > 1200:
-            with open(out, "rb") as f:
-                return f.read()
-    except Exception:
-        pass
+    out = tmp_path + ".thumb.jpg"
+    # -ss TRUOC -i = seek nhanh (khong decode tu dau toi giay 5). Mot so file
+    # (moov o cuoi, index hong) seek nhanh cho frame den -> fallback seek chinh
+    # xac (-ss sau -i). hwaccel neu co.
+    hw = _ffmpeg_hw_args()
+    vf = f"scale={THUMB_SIZE}:-1"
+    attempts = [
+        (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+         + hw + ["-ss", "5", "-i", tmp_path,
+                 "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
+        (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+          "-i", tmp_path, "-ss", "5",
+          "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
+    ]
+    last_err = ""
+    for cmd in attempts:
+        try:
+            r = subprocess.run(cmd, timeout=180, check=False,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, text=True)
+            if os.path.isfile(out) and os.path.getsize(out) > 1200:
+                with open(out, "rb") as f:
+                    return f.read()
+            last_err = (r.stderr or "").strip().splitlines()[-1:] or [""]
+            last_err = last_err[0][:160]
+        except Exception as e:
+            last_err = str(e)[:160]
+            continue
+    if last_err:
+        _log(f"[WARN] render video loi ({os.path.basename(tmp_path)}): {last_err}")
     return None
 
 
