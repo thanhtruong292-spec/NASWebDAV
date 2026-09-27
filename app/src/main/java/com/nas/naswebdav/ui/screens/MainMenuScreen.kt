@@ -1255,7 +1255,7 @@ private fun MainMenuDashboardSystemOverviewCard(
                     Row(
                         Modifier.fillMaxWidth().clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { fanExpanded = !fanExpanded },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1403,7 +1403,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                     Row(
                         Modifier.fillMaxWidth().clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { ExclusivePanelState.toggle("omv") },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -1463,7 +1463,7 @@ private fun MainMenuDashboardOmvServicesHardwarePanel() {
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             modifier = Modifier.weight(1f).clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
+                                                indication = androidx.compose.foundation.LocalIndication.current
                                             ) {
                                                 pendingServiceName = svc.name
                                                 pendingServiceTitle = svc.title
@@ -1893,7 +1893,7 @@ fun MainMenuDashboardGaugeCard(
     Card(
         modifier = if (onClick != null) modifier.clickable(
             interactionSource = remember { MutableInteractionSource() },
-            indication = null,
+            indication = androidx.compose.foundation.LocalIndication.current,
             onClick = onClick
         ) else modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -2079,7 +2079,7 @@ fun MainMenuSettingsMenuCard(
             .height(64.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = RoundedCornerShape(10.dp)
@@ -2397,7 +2397,7 @@ fun MainMenuSectionSystemLogsSummaryCard(realtimeNow: Long = System.currentTimeM
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { isExpanded = !isExpanded }
             ) {
                 Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))

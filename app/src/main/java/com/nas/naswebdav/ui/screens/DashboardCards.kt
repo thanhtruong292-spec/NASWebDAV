@@ -240,6 +240,13 @@ internal fun DashboardSystemOverviewCard(
                     Spacer(Modifier.weight(1f))
                     PanelFreshnessTag(systemVM.lastMetricsRefreshAt, realtimeNow, staleAfterMs = 15_000L)
                 }
+                // Vai tro ro rang: NAS chi luu tru + serve bytes; dien thoai tu
+                // giai ma/render anh-video nen CPU NAS thap khi duyet file.
+                Text(
+                    "NAS lưu trữ • Điện thoại tự giải mã & hiển thị",
+                    fontSize = 11.sp,
+                    color = TextSecondary
+                )
                 Spacer(Modifier.height(AppSpacing.SM - AppSpacing.XS))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     GaugeCard(

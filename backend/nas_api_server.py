@@ -250,6 +250,18 @@ except ImportError:
 
 app = Flask(__name__)
 
+# CLIENT-FIRST: user dang duyet (API hit gan day) -> daemon nang (thumb,
+# cleanup) nhuong CPU de serve bytes. May tu render, NAS chi doc file.
+_LAST_USER_HIT = {"time": 0.0}
+_USER_IDLE_S = 90  # khong co request nao 90s moi cho daemon chay
+
+@app.before_request
+def _stamp_user_hit():
+    try:
+        _LAST_USER_HIT["time"] = time.time()
+    except Exception:
+        pass
+
 INDEX_DB_PATH = "/var/lib/nas_fast_index.db"
 _index_lock = threading.Lock()
 
@@ -3030,6 +3042,13 @@ def _background_heavy_work_allowed():
         allowed = True
         if bool(globals().get("_usb_import_running", False)):
             allowed = False
+        # CLIENT-FIRST: user dang duyet -> daemon nghi, nhuong CPU cho serve.
+        if allowed:
+            try:
+                if now - float(_LAST_USER_HIT.get("time", 0.0)) < float(globals().get("_USER_IDLE_S", 90)):
+                    allowed = False
+            except Exception:
+                pass
         lock = globals().get("_livestream_lock")
         jobs = globals().get("_livestream_jobs", {})
         if allowed and lock:

@@ -4,6 +4,7 @@ package com.nas.naswebdav.ui.dialogs
 import com.nas.naswebdav.*
 import com.nas.naswebdav.ui.screens.*
 import com.nas.naswebdav.ui.components.NasModalBottomSheet
+import com.nas.naswebdav.ui.components.minTouchTarget
 import com.nas.naswebdav.ui.components.NasGradientButton
 import com.nas.naswebdav.ui.components.NasLoadingSpinner
 import com.nas.naswebdav.ui.screens.WebDavCachedThumbnail
@@ -283,7 +284,7 @@ fun LivestreamRecordDialog(
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {
                     if (liveUrl.isNotEmpty()) {
-                        IconButton(onClick = { liveUrl = "" }, modifier = Modifier.size(28.dp)) {
+                        IconButton(onClick = { liveUrl = "" }, modifier = Modifier.size(28.dp).minTouchTarget()) {
                             Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = TextTertiary, modifier = Modifier.size(18.dp))
                         }
                     } else if (detectedPlatform.isNotEmpty()) {

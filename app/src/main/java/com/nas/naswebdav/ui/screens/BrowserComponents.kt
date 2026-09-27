@@ -567,7 +567,15 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // ── Strategy 2: NAS backend /api/thumb (server-side) ──
+                    // CLIENT-FIRST: anh tinh di thang Coil doc WebDAV (NAS chi serve
+                    // bytes, CPU ~0) — KHONG goi /api/thumb de NAS render. Chi video
+                    // moi hoi NAS (can frame extract), that bai thi tu decode tren may.
+                    if (!isVideo) {
+                        strategy = ThumbStrategy.CLIENT_IMAGE
+                        return@withPermit
+                    }
+
+                    // ── Strategy 2 (chi video): NAS backend /api/thumb (server-side) ──
                     val downloaded = com.nas.naswebdav.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
                     if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
                         localThumbPath = thumbFile.absolutePath
@@ -576,12 +584,8 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // NAS couldn't deliver (not scanned yet, HEIC/PNG unsupported, busy, …).
-                    // FIX: Skip slow on-demand download for images — go straight to
-                    // CLIENT_IMAGE (Coil loads directly from WebDAV URL, instant display).
-                    // On-demand generation is still useful for video (no CLIENT_IMAGE fallback),
-                    // so we only skip it for still images.
-                    if (isVideo) {
+                    // NAS couldn't deliver (not scanned yet, busy, …) — tu decode.
+                    run {
                         strategy = ThumbStrategy.CLIENT_DECODE
                         val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
                         if (generated != null) {
@@ -595,9 +599,6 @@ fun WebDavCachedThumbnail(
                         } else {
                             strategy = ThumbStrategy.ERROR
                         }
-                    } else {
-                        // Images: skip CLIENT_DECODE (requires full download), use CLIENT_IMAGE
-                        strategy = ThumbStrategy.CLIENT_IMAGE
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
