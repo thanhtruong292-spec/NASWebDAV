@@ -352,7 +352,9 @@ def main():
     ap.add_argument("--host", required=True,
                     help="VD: http://192.168.100.254:8822")
     ap.add_argument("--user", required=True)
-    ap.add_argument("--pass", dest="password", required=True)
+    ap.add_argument("--pass", dest="password", default="",
+                    help="Mat khau NAS (khuyen dung: bo trong + dat NAS_PASS "
+                         "de khoi lo pass trong lich su lenh).")
     ap.add_argument("--workers", type=int, default=0,
                     help="So luong mac dinh = CPU x 2 (toi da 16).")
     ap.add_argument("--dry-run", action="store_true",
@@ -367,6 +369,9 @@ def main():
                     help="Base API rieng (mac dinh: <host>).")
     args = ap.parse_args()
     max_bytes = (args.max_mb or 0) * 1024 * 1024
+    password = args.password or os.environ.get("NAS_PASS", "")
+    if not password:
+        sys.exit("Thieu mat khau: truyen --pass ... hoac dat bien NAS_PASS.")
 
     base = args.host.rstrip("/")
     webdav_base = (args.webdav_url.rstrip("/") if args.webdav_url
@@ -380,7 +385,7 @@ def main():
     def _session():
         s = getattr(_tls, "s", None)
         if s is None:
-            s = make_session(args.user, args.password)
+            s = make_session(args.user, password)
             _tls.s = s
         return s
 
