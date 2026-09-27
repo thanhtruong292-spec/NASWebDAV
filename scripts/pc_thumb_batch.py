@@ -40,7 +40,9 @@ except ImportError:
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v"}
 THUMB_SIZE = 320
-MAX_BYTES = 200 * 1024 * 1024
+# Mac dinh KHONG gioi han dung luong (chay LAN/WiFi 6). Neu mang yeu thi
+# truyen --max-mb N de bo qua file lon hon N MB (0 = khong gioi han).
+MAX_BYTES_DEFAULT = 0
 
 _stats = {"total": 0, "skipped": 0, "done": 0, "failed": 0}
 _lock = threading.Lock()
@@ -157,7 +159,7 @@ def render_video(tmp_path):
     return None
 
 
-def process_one(session, base, api, path, dry_run):
+def process_one(session, base, api, path, dry_run, max_bytes=0):
     _bump("total")
     if has_thumb(session, api, path):
         _bump("skipped")
@@ -172,10 +174,11 @@ def process_one(session, base, api, path, dry_run):
         _bump("failed")
         _log(f"[SKIP] {path} — can Pillow (pip install pillow)")
         return
-    # Tai file goc (gioi han MAX_BYTES).
+    # Tai full file goc qua LAN (khong gioi han mac dinh). Chi gioi han khi
+    # truyen --max-mb (mang yeu).
     try:
         url = base.rstrip("/") + "/webdav/" + urllib.parse.quote(path.lstrip("/"))
-        r = session.get(url, timeout=120, stream=True)
+        r = session.get(url, timeout=600, stream=True)
         if r.status_code != 200:
             _bump("failed")
             return
@@ -183,17 +186,17 @@ def process_one(session, base, api, path, dry_run):
                                          suffix=os.path.splitext(path)[1]) as tf:
             tmp = tf.name
             total = 0
-            for chunk in r.iter_content(131072):
+            for chunk in r.iter_content(1024 * 1024):
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > MAX_BYTES:
+                if max_bytes > 0 and total > max_bytes:
                     break
                 tf.write(chunk)
-        if total > MAX_BYTES:
+        if max_bytes > 0 and total > max_bytes:
             os.unlink(tmp)
             _bump("failed")
-            _log(f"[SKIP] {path} — qua lon (>{MAX_BYTES // 1048576}MB)")
+            _log(f"[SKIP] {path} — qua lon (>{max_bytes // 1048576}MB)")
             return
     except Exception as e:
         _bump("failed")
@@ -254,7 +257,11 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true",
                     help="Chi liet ke + render, khong upload")
+    ap.add_argument("--max-mb", type=int, default=0,
+                    help="Bo qua file lon hon N MB (0 = khong gioi han, mac dinh "
+                         "cho LAN/WiFi 6). Chi dung khi mang yeu.")
     args = ap.parse_args()
+    max_bytes = (args.max_mb or 0) * 1024 * 1024
 
     session = requests.Session()
     session.auth = (args.user, args.password)
@@ -272,7 +279,8 @@ def main():
         _log("CANH BAO: khong thay ffmpeg — video se bi bo qua.")
     t0 = time.time()
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(process_one, session, base, api, p, args.dry_run)
+        futs = [ex.submit(process_one, session, base, api, p, args.dry_run,
+                          max_bytes)
                 for p in files]
         for f in cf.as_completed(futs):
             f.result()
