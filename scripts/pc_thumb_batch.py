@@ -65,24 +65,58 @@ PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 </D:prop></D:propfind>"""
 
 
+def _quote_variants(path):
+    """Cac cach encode path de thu khi 404: ten Nhat/Trung/Han hay bi double-
+    encode (%E3%80%80 con sot) hoac server cho UTF-8 tho. Tra list URL path."""
+    stripped = path.strip("/")
+    variants = []
+    # 1. Chuan: quote UTF-8 toan path (giua /).
+    variants.append("/" + "/".join(
+        urllib.parse.quote(seg, safe="") for seg in stripped.split("/")) + "/"
+        if stripped else "/")
+    # 2. Unquote-rescue: path da bi encode 1 lan (con sot %XX) -> giai het
+    # ve UTF-8 tho roi quote lai dung.
+    try:
+        rescued = urllib.parse.unquote(urllib.parse.unquote(stripped))
+        v = ("/" + "/".join(
+            urllib.parse.quote(seg, safe="") for seg in rescued.split("/")) + "/"
+             if rescued else "/")
+        if v not in variants:
+            variants.append(v)
+    except Exception:
+        pass
+    # 3. Tho (khong encode): mot so nginx cau hinh accepting raw UTF-8.
+    raw = "/" + stripped + "/" if stripped else "/"
+    if raw not in variants:
+        variants.append(raw)
+    return variants
+
+
 def propfind(session, base, path, depth=1, debug=False):
     """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1).
     Gui body XML explicit giong app (WebDavManager FIX H5) — nginx WebDAV
     tra 405 neu PROPFIND khong co body. URL luon co dau / cuoi giong app
-    (toValidUrl ep trailing slash cho collection) — thieu la nginx tra 405."""
-    stripped = path.strip("/")
-    url = base.rstrip("/") + ("/" + stripped + "/" if stripped else "/")
-    try:
-        r = session.request("PROPFIND", url,
-                            data=PROPFIND_BODY.encode("utf-8"),
-                            headers={"Depth": str(depth),
-                                     "Content-Type": "application/xml; charset=utf-8"},
-                            timeout=30)
-    except Exception as e:
-        _log(f"[WARN] PROPFIND loi {url}: {e}")
-        return []
-    if r.status_code not in (200, 207):
-        _log(f"[WARN] PROPFIND {url} -> HTTP {r.status_code} (can Basic auth + quyen doc)")
+    (toValidUrl ep trailing slash cho collection) — thieu la nginx tra 405.
+    Ten Nhat/Trung/Han de bi 404 do double-encode -> thu nhieu bien the."""
+    base = base.rstrip("/")
+    last_status = None
+    for variant in _quote_variants(path):
+        url = base + variant
+        try:
+            r = session.request("PROPFIND", url,
+                                data=PROPFIND_BODY.encode("utf-8"),
+                                headers={"Depth": str(depth),
+                                         "Content-Type": "application/xml; charset=utf-8"},
+                                timeout=30)
+        except Exception as e:
+            _log(f"[WARN] PROPFIND loi {url}: {e}")
+            return []
+        if r.status_code in (200, 207):
+            break
+        last_status = r.status_code
+    else:
+        _log(f"[WARN] PROPFIND {base + _quote_variants(path)[0]} -> HTTP {last_status} "
+             f"(thu {len(_quote_variants(path))} bien the encode, can Basic auth + quyen doc)")
         return []
     out = []
     try:
