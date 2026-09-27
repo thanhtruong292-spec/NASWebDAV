@@ -121,6 +121,7 @@ fun FileItemGridCell(
     val isMedia = isVideo || isImage
     val auth = WebDavManager.currentAuthState().authHeader
     var showMenu by remember { mutableStateOf(false) }
+    var showActionSheet by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
@@ -234,98 +235,69 @@ fun FileItemGridCell(
                 },
                 onLongClick = {
                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    // Long-press LUON mo menu cho ca file va folder. Selection mode
-                    // entry được thực hiện qua nút "Chọn file" ở toolbar.
+                    // Long-press LUON mo action sheet cho ca file va folder.
+                    // Selection mode entry được thực hiện qua nút "Chọn file" ở toolbar.
                     if (selectionMode) {
                         // Trong selection mode -> long-press toggle select (giu logic cu).
                         onLongClick()
                     } else {
-                        showMenu = true
+                        showActionSheet = true
                     }
                 }
             )
             .padding(horizontal = 2.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_download)) }, onClick = {
-                showMenu = false
-                val request = android.app.DownloadManager.Request(file.path.toUri())
-                    .setTitle(file.name)
-                    .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
-                    .addRequestHeader("Authorization", auth)
-                (context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
-
-                commonDialogType = DialogType.SUCCESS
-                commonDialogMessage = "Đã bắt đầu tải về: ${file.name}"
-                showCommonDialog = true
-            })
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_copy_link)) }, onClick = {
-                showMenu = false
-                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
-
-                commonDialogType = DialogType.SUCCESS
-                commonDialogMessage = "Đã sao chép liên kết tệp!"
-                showCommonDialog = true
-            })
-            // Chỉ hiện nút Khôi phục nếu đang ở trong Thùng rác
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_copy)) }, onClick = {
-                showMenu = false
-                pendingTransferOperation = "COPY"
-                showTransferPickerDialog = true
-            })
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_move)) }, onClick = {
-                showMenu = false
-                pendingTransferOperation = "MOVE"
-                showTransferPickerDialog = true
-            })
-            if (fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác") {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_restore)) },
-                    onClick = {
-                        showMenu = false
-                        fileBrowserVM.restoreFile(context, file)
-                    },)
-            }
-
-            // TÍNH NĂNG MỚI: Giải nén tại NAS
-            if (file.name.lowercase().endsWith(".zip")) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_extract_nas), color = AccentPurple, fontWeight = FontWeight.Bold) },
-                    onClick = {
-                        showMenu = false
-                        smartToolsVM.unzipFile(file.path)
-                    }
-                )
-            }
-
-            // Mở video bằng ứng dụng ngoài
-            if (isVideo) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_open_external), color = AccentOrange, fontWeight = FontWeight.Bold) },
-                    onClick = {
-                        showMenu = false
-                        val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
-                        openExternalVideoPlayer(
-                            context = context,
-                            url = file.path,
-                            user = authSnapshot.user,
-                            pass = authSnapshot.pass,
-                            onError = {
-                                commonDialogType = DialogType.ERROR
-                                commonDialogMessage = "Không tìm thấy trình phát video ngoài nào!"
-                                showCommonDialog = true
-                            }
-                        )
-                    }
-                )
-            }
-
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_rename)) }, onClick = { showMenu = false; newFileName = file.name; showRenameDialog = true })
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_properties)) }, onClick = { showMenu = false; showPropertiesDialog = true })
-            DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = AccentRed) }, onClick = { showMenu = false; showDeleteDialog = true })
+        // BottomSheet thao tac file (thay DropdownMenu kieu desktop): header co
+        // preview + ten/size/ngay, luoi 4 nut nhanh, list chi tiet ben duoi.
+        if (showActionSheet) {
+            FileActionBottomSheet(
+                file = file,
+                isVideo = isVideo,
+                auth = auth,
+                isTrash = fileBrowserVM.isSpecialMode && fileBrowserVM.specialTitle == "Thùng rác",
+                onDismiss = { showActionSheet = false },
+                onDownload = {
+                    showActionSheet = false
+                    val request = android.app.DownloadManager.Request(file.path.toUri())
+                        .setTitle(file.name)
+                        .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
+                        .addRequestHeader("Authorization", auth)
+                    (context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
+                    commonDialogType = DialogType.SUCCESS
+                    commonDialogMessage = "Đã bắt đầu tải về: ${file.name}"
+                    showCommonDialog = true
+                },
+                onCopyLink = {
+                    showActionSheet = false
+                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
+                    commonDialogType = DialogType.SUCCESS
+                    commonDialogMessage = "Đã sao chép liên kết tệp!"
+                    showCommonDialog = true
+                },
+                onCopy = { showActionSheet = false; pendingTransferOperation = "COPY"; showTransferPickerDialog = true },
+                onMove = { showActionSheet = false; pendingTransferOperation = "MOVE"; showTransferPickerDialog = true },
+                onRestore = { showActionSheet = false; fileBrowserVM.restoreFile(context, file) },
+                onUnzip = { showActionSheet = false; smartToolsVM.unzipFile(file.path) },
+                onOpenExternal = {
+                    showActionSheet = false
+                    val authSnapshot = com.nas.naswebdav.WebDavManager.currentAuthState()
+                    openExternalVideoPlayer(
+                        context = context, url = file.path,
+                        user = authSnapshot.user, pass = authSnapshot.pass,
+                        onError = {
+                            commonDialogType = DialogType.ERROR
+                            commonDialogMessage = "Không tìm thấy trình phát video ngoài nào!"
+                            showCommonDialog = true
+                        }
+                    )
+                },
+                onRename = { showActionSheet = false; newFileName = file.name; showRenameDialog = true },
+                onProperties = { showActionSheet = false; showPropertiesDialog = true },
+                onDelete = { showActionSheet = false; showDeleteDialog = true }
+            )
         }
 
         // === KHUNG HIỂN THỊ CHÍNH — ĐỒNG BỘ DASHBOARD DESIGN ===
@@ -735,6 +707,135 @@ fun openExternalVideoPlayer(
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
         android.util.Log.w("BrowserScreen", "Không mở được trình phát video ngoài: ${e.message}", e)
         onError()
+    }
+}
+
+// ============ FILE ACTION BOTTOM SHEET (thay DropdownMenu kieu desktop) ======
+// Chuan Google Drive/OneDrive: header preview + ten/size/ngay, luoi 4 nut
+// nhanh (Tai ve/Chia se/Doi ten/Thung rac), list chi tiet ben duoi.
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun FileActionBottomSheet(
+    file: NasFile,
+    isVideo: Boolean,
+    auth: String,
+    isTrash: Boolean,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onCopyLink: () -> Unit,
+    onCopy: () -> Unit,
+    onMove: () -> Unit,
+    onRestore: () -> Unit,
+    onUnzip: () -> Unit,
+    onOpenExternal: () -> Unit,
+    onRename: () -> Unit,
+    onProperties: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val isZip = file.name.lowercase().endsWith(".zip")
+    com.nas.naswebdav.ui.components.NasModalBottomSheet(onDismissRequest = onDismiss) {
+        // Header: preview + ten + size + ngay sua
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (file.isDirectory) {
+                Icon(Icons.Default.Folder, contentDescription = null, tint = AccentOrange,
+                    modifier = Modifier.size(48.dp))
+            } else {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).background(DarkCard),
+                    contentAlignment = Alignment.Center
+                ) {
+                    WebDavCachedThumbnail(
+                        url = file.path, auth = auth, isVideo = isVideo,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(file.name, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(2.dp))
+                val sizeText = if (file.isDirectory) "Thư mục"
+                    else com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
+                val dateText = if (file.lastModified > 0L) {
+                    val fmt = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+                    fmt.format(java.util.Date(file.lastModified))
+                } else ""
+                Text(
+                    listOf(sizeText, dateText).filter { it.isNotEmpty() }.joinToString(" • "),
+                    fontSize = 12.sp, color = TextSecondary, maxLines = 1
+                )
+            }
+        }
+        HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
+        // Luoi 4 nut nhanh
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            @Composable
+            fun QuickBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String,
+                         tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onClick()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Text(label, fontSize = 12.sp, color = TextPrimary)
+                }
+            }
+            if (isTrash) {
+                QuickBtn(Icons.Default.Restore, "Khôi phục", AccentGreen) { onRestore() }
+            } else {
+                QuickBtn(Icons.Default.Download, "Tải về", AccentGreen) { onDownload() }
+            }
+            QuickBtn(Icons.Default.Share, "Chia sẻ", AccentCyan) { onCopyLink() }
+            QuickBtn(Icons.Default.DriveFileRenameOutline, "Đổi tên", AccentOrange) { onRename() }
+            QuickBtn(Icons.Default.Delete, if (isTrash) "Xóa hẳn" else "Thùng rác",
+                AccentRed) { onDelete() }
+        }
+        HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
+        // List chi tiet
+        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            @Composable
+            fun DetailRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String,
+                          tint: androidx.compose.ui.graphics.Color = TextPrimary,
+                          onClick: () -> Unit) {
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .clickable { onClick() }
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(label, fontSize = 14.sp, color = tint)
+                }
+            }
+            if (!isTrash) {
+                DetailRow(Icons.Default.ContentCopy, "Sao chép tới...") { onCopy() }
+                DetailRow(Icons.Default.DriveFileMove, "Di chuyển tới...") { onMove() }
+            }
+            if (isZip) {
+                DetailRow(Icons.Default.Unarchive, "Giải nén tại NAS", AccentPurple) { onUnzip() }
+            }
+            if (isVideo) {
+                DetailRow(Icons.Default.OpenInNew, "Mở bằng app ngoài", AccentOrange) { onOpenExternal() }
+            }
+            DetailRow(Icons.Default.Info, "Thuộc tính") { onProperties() }
+            Spacer(Modifier.height(8.dp))
+        }
     }
 }
 

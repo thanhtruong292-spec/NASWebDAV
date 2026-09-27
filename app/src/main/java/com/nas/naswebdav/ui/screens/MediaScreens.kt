@@ -120,6 +120,22 @@ fun ImageViewerScreen(
     val context = LocalContext.current
     val fileBrowserVM = LocalFileBrowserVM.current
 
+    // Hieu ung mo anh: phong to + mo dan tu thumbnail (thay shared-element,
+    // can Compose 1.7+; hien tai dung 1.6 nen dung scale+fade tuong thich).
+    // Duoc gan vao Box viewer chinh ben duoi.
+    var viewerVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { viewerVisible = true }
+    val viewerScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (viewerVisible) 1f else 0.85f,
+        animationSpec = androidx.compose.animation.core.tween(280),
+        label = "viewerScale"
+    )
+    val viewerAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (viewerVisible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(220),
+        label = "viewerAlpha"
+    )
+
     // ============ IMAGE LIST ============
     val imageFiles = remember(fileBrowserVM.fileList) {
         fileBrowserVM.fileList.filter { com.nas.naswebdav.utils.MediaUtils.isImage(it.name) }
@@ -239,6 +255,7 @@ fun ImageViewerScreen(
         Modifier
             .fillMaxSize()
             .background(DarkSurface) // pure black immersive background
+            .graphicsLayer(scaleX = viewerScale, scaleY = viewerScale, alpha = viewerAlpha)
     ) {
         if (imageFiles.isEmpty()) {
             Column(
