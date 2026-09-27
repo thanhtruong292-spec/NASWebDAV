@@ -702,34 +702,16 @@ fun VideoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Uni
         showOverlayButtons = isControllerVisible
     }
 
-    // ═══ PHÁT HIỆN ĐỊNH DẠNG LEGACY NGAY LÚC MỞ PLAYER ═══
-    // Formats ExoPlayer KHÔNG decode được (MPEG-2, WMV, v.v.)
-    // → Chuyển thẳng sang URL transcode trên NAS (FFmpeg → MP4)
-    val isLegacyFormat = remember(url) {
-        val urlLower = url.lowercase()
-        urlLower.endsWith(".mpg") || urlLower.endsWith(".mpeg") ||
-                urlLower.endsWith(".avi") || urlLower.endsWith(".wmv") ||
-                urlLower.endsWith(".flv") || urlLower.endsWith(".asf")
+    // NAS CHI LUU TRU — moi dinh dang do dien thoai giai ma truc tiep tu file
+    // goc (direct-play). Khong con duong transcode len NAS (ffmpeg dot CPU).
+    // May khong decode duoc (codec la) -> dialog loi da co san huong dan mo
+    // bang VLC/MX Player qua proxy cuc bo.
+    val effectiveUrl = remember(url) {
+        url.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM, AVI, WMV, FLV... — endpoint Range/ETag toi uu LAN
     }
 
-    val effectiveUrl = remember(url, isLegacyFormat) {
-        if (isLegacyFormat) {
-            // Xây dựng URL transcode: http://host:5050/api/stream/transcode?path=/đường/dẫn/file
-            // FIX: Dùng android.net.Uri thay vì java.net.URI để tránh crash URISyntaxException khi có khoảng trắng
-            val uri = url.toUri()
-            val relativePath = uri.path?.substringAfter("/webdav") ?: ""
-            val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
-            val transcodeUrl = "${url.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
-            android.util.Log.i("VideoPlayer", "Legacy format → transcode: $transcodeUrl")
-            transcodeUrl
-        } else {
-            url.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM → endpoint Range/ETag tối ưu LAN
-        }
-    }
-
-    // Chỉ coi là transcode khi thật sự đi vào endpoint transcode/HLS.
-    // /api/media cho MP4 thường cũng đổi URL nhưng vẫn là progressive stream, không phải manifest.
-    val isTranscoding = isLegacyFormat
+    // Khong bao gio transcode tren NAS nua.
+    val isTranscoding = false
 
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->

@@ -186,25 +186,12 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
 
     // Always try the original WebDAV/nginx media URL first.
     // That keeps NAS work to simple sendfile/range reads; decoding stays on the phone.
-    val isLegacyFormat = remember(playbackUrl) {
-        val urlLower = playbackUrl.lowercase()
-        urlLower.endsWith(".mpg") || urlLower.endsWith(".mpeg") ||
-                urlLower.endsWith(".avi") || urlLower.endsWith(".wmv") ||
-                urlLower.endsWith(".flv") || urlLower.endsWith(".asf")
+    // NAS CHI LUU TRU — khong transcode tren NAS nua (moi dinh dang direct-play).
+    val effectiveUrl = remember(playbackUrl) {
+        playbackUrl.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM, AVI, WMV... → /api/media endpoint
     }
 
-    val effectiveUrl = remember(playbackUrl, isLegacyFormat) {
-        if (isLegacyFormat) {
-            val uri = playbackUrl.toUri()
-            val relativePath = uri.path?.substringAfter("/webdav") ?: ""
-            val encodedPath = java.net.URLEncoder.encode(relativePath, "UTF-8")
-            "${playbackUrl.toApiBaseUrl()}/api/stream/transcode?path=$encodedPath"
-        } else {
-            playbackUrl.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM → /api/media endpoint
-        }
-    }
-
-    val isTranscoding = isLegacyFormat
+    val isTranscoding = false
 
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { info ->

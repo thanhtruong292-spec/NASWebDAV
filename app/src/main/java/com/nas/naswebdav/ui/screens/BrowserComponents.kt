@@ -567,26 +567,18 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
 
-                    // CLIENT-FIRST: anh tinh di thang Coil doc WebDAV (NAS chi serve
-                    // bytes, CPU ~0) — KHONG goi /api/thumb de NAS render. Chi video
-                    // moi hoi NAS (can frame extract), that bai thi tu decode tren may.
+                    // CLIENT-FIRST (ca anh + video): Coil doc truc tiep WebDAV —
+                    // anh: downsampling; video: VideoFrameDecoder (MediaMetadataRetriever
+                    // chi doc header qua Range, NAS chi serve bytes, CPU ~0).
+                    // NAS /api/thumb chi la fallback cuoi (video la ma Coil khong mo
+                    // duoc). Luu local sau de lan sau khong hoi lai.
                     if (!isVideo) {
                         strategy = ThumbStrategy.CLIENT_IMAGE
                         return@withPermit
                     }
-
-                    // ── Strategy 2 (chi video): NAS backend /api/thumb (server-side) ──
-                    val downloaded = com.nas.naswebdav.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
-                    if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
-                        localThumbPath = thumbFile.absolutePath
-                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
-                        strategy = ThumbStrategy.LOCAL
-                        return@withPermit
-                    }
-
-                    // NAS couldn't deliver (not scanned yet, busy, …) — tu decode.
+                    // Video: thu client-decode tren may truoc (Range + frame extract
+                    // bang CPU dien thoai). That bai moi nho NAS render.
                     run {
-                        strategy = ThumbStrategy.CLIENT_DECODE
                         val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
                         if (generated != null) {
                             localThumbPath = generated.absolutePath
@@ -596,10 +588,19 @@ fun WebDavCachedThumbnail(
                                 )
                             }
                             strategy = ThumbStrategy.LOCAL
-                        } else {
-                            strategy = ThumbStrategy.ERROR
+                            return@withPermit
                         }
                     }
+
+                    // ── Fallback cuoi (chi video la): NAS backend /api/thumb ──
+                    val downloaded = com.nas.naswebdav.downloadThumbnailFromNas(url, thumbFile, auth, isVideo)
+                    if (downloaded && thumbFile.exists() && thumbFile.length() > 0) {
+                        localThumbPath = thumbFile.absolutePath
+                        runCatching { thumbnailDao.saveThumbnail(ThumbnailCache(url, thumbFile.absolutePath, System.currentTimeMillis())) }
+                        strategy = ThumbStrategy.LOCAL
+                        return@withPermit
+                    }
+                    strategy = ThumbStrategy.ERROR
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 strategy = if (isVideo) ThumbStrategy.ERROR else ThumbStrategy.CLIENT_IMAGE
