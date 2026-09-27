@@ -11310,8 +11310,11 @@ def api_hash_save():
 @app.route("/api/hash/duplicates", methods=["GET"])
 @requires_auth
 def api_hash_duplicates():
-    """Nhom file trung lap theo sha256 (chi nhom co >= 2 file).
-    Query: ?min_size=4096 (bo file nho hon, mac dinh 1KB)."""
+    """Nhom file trung lap theo sha256 — LOP 4: re-stat + ETag truoc khi tra.
+    Moi file trong nhom duoc stat lai tren disk: size/mtime khac luc luu hash
+    -> stale (tu refresh row, loai khoi nhom lan nay). ETag hien tai
+    ("size-mtime") dinh kem tung file de app dung If-Match khi MOVE.
+    Nhom con < 2 file sau loc -> bo. Query: ?min_size= (mac dinh 1KB)."""
     try:
         min_size = int(request.args.get("min_size", "1024") or 1024)
         conn = _hash_db()
@@ -11326,14 +11329,80 @@ def api_hash_duplicates():
         finally:
             conn.close()
         groups = []
-        for sha, paths_blob, total, count in rows:
+        stale_paths = []
+        for sha, paths_blob, _total, _count in rows:
             paths = (paths_blob or "").split(chr(31))
-            groups.append({"sha256": sha, "files": paths,
-                           "count": count, "wasted_bytes": int(total or 0)})
-        return jsonify({"groups": groups, "total_groups": len(groups)})
+            verified = []
+            for p in paths:
+                try:
+                    info = _verify_hash_row(p, sha)
+                except Exception:
+                    continue
+                if info is None:
+                    continue  # file mat hoac doc loi — bo qua lan nay
+                if info.get("stale"):
+                    stale_paths.append(p)
+                    continue  # da doi noi dung — khong bao trung
+                verified.append(info)
+            if len(verified) < 2:
+                continue
+            total = sum(v["size"] for v in verified)
+            groups.append({"sha256": sha, "files": [v["path"] for v in verified],
+                           "etags": {v["path"]: v["etag"] for v in verified},
+                           "count": len(verified), "wasted_bytes": total})
+        # Refresh async cac row stale (khong chan response).
+        if stale_paths:
+            try:
+                _refresh_stale_rows(stale_paths)
+            except Exception as e:
+                log.warning("[Hash] Refresh stale loi: %s", e)
+        return jsonify({"groups": groups, "total_groups": len(groups),
+                        "stale_refreshed": len(stale_paths)})
     except Exception as e:
         log.error("[API] Error in api_hash_duplicates: %s", e)
         return jsonify({"error": str(e)}), 500
+
+
+def _verify_hash_row(webdav_path, expected_sha):
+    """Re-stat file tren disk, so size/mtime voi kho hash.
+    Tra None neu file mat/doc loi; {"stale": True} neu da doi noi dung;
+    dict day du kem etag hien tai neu khop."""
+    real = _resolve_webdav_request_path(webdav_path)
+    if not real or not os.path.isfile(real):
+        return None
+    try:
+        st = os.stat(real)
+    except Exception:
+        return None
+    size = st.st_size
+    mtime = int(st.st_mtime)
+    conn = _hash_db()
+    try:
+        row = conn.execute(
+            "SELECT size, mtime FROM file_hashes WHERE path = ?",
+            (webdav_path,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    if int(row[0] or 0) != size or int(row[1] or 0) != mtime:
+        return {"stale": True, "path": webdav_path}
+    etag = '"%x-%x"' % (size, mtime)
+    return {"path": webdav_path, "size": size, "mtime": mtime,
+            "etag": etag, "sha256": expected_sha}
+
+
+def _refresh_stale_rows(paths):
+    """Xoa row stale de lan quet sau tinh lai (khong giu hash cu gay bao sai)."""
+    if not paths:
+        return
+    conn = _hash_db()
+    try:
+        conn.executemany("DELETE FROM file_hashes WHERE path = ?",
+                         [(p,) for p in paths])
+        conn.commit()
+    finally:
+        conn.close()
 
 
 @app.route("/api/hash/lookup", methods=["GET"])

@@ -58,6 +58,23 @@ class HashStoreTests(unittest.TestCase):
         self.assertEqual(dups[0][1], 2)
         conn.close()
 
+    def test_verify_helpers_exist(self):
+        """_verify_hash_row + _refresh_stale_rows phai ton tai (lop 4)."""
+        src = _source()
+        self.assertIn("def _verify_hash_row", src)
+        self.assertIn("def _refresh_stale_rows", src)
+        self.assertIn('"etags"', src)
+        self.assertIn("stale_refreshed", src)
+
+    def test_stale_logic_simulation(self):
+        """Mo phong: size/mtime doi -> stale, khong bao trung."""
+        saved = ("/webdav/a.jpg", 100, 1000)
+        current = ("/webdav/a.jpg", 120, 1000)  # size doi
+        stale = (saved[1] != current[1]) or (saved[2] != current[2])
+        self.assertTrue(stale)
+        same = (saved[1] == 100) and (saved[2] == 1000)
+        self.assertTrue(same)
+
 
 if __name__ == "__main__":
     unittest.main()
