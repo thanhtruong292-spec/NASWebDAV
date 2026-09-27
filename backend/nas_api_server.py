@@ -9955,7 +9955,7 @@ def _media_cache_headers(real_path, file_size, mime_type):
     }
 
 
-def _iter_file_range(real_path, start, end, chunk_size=1024 * 1024):
+def _iter_file_range(real_path, start, end, chunk_size=4 * 1024 * 1024):
     try:
         f = open(real_path, "rb")
     except Exception:

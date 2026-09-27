@@ -222,6 +222,13 @@ open class NasApplication : Application(), ImageLoaderFactory {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            // WiFi 6 mo video cham: ExoPlayer mo nhieu Range song song (probe +
+            // header + data) nhung dispatcher mac dinh chi 5/host -> xep hang.
+            // Nang len 12/host cho LAN thong.
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 12
+            })
             // AUTH FIX: Inject UTF-8 Basic Auth header theo cùng pattern fastApiClient.
             // Trước đây caller tự gọi okhttp3.Credentials.basic() (ISO-8859-1) → password chứa
             // dấu tiếng Việt bị corrupt → NAS 401 chỉ riêng với video. authHeader dùng

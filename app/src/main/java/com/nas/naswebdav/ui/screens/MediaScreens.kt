@@ -159,6 +159,31 @@ fun ImageViewerScreen(
         }
     }
 
+    // ============ PREFETCH ANH KE (WiFi 6 van thay cham vi doi page moi tai) ==
+    // Pager chi giu 1 trang moi ben; Coil prefetch them trang ke tiep vao
+    // disk+memory cache truoc — vuot sang la hien ngay, khong doi mang.
+    val prefetchAuth = WebDavManager.AuthState(user = user, pass = pass).authHeader
+    LaunchedEffect(pagerState.currentPage, imageFiles.size) {
+        if (imageFiles.isEmpty()) return@LaunchedEffect
+        val loader = coil.Coil.imageLoader(context)
+        for (delta in listOf(1, 2, -1)) {
+            val idx = pagerState.currentPage + delta
+            if (idx < 0 || idx >= imageFiles.size) continue
+            val f = imageFiles[idx]
+            val req = coil.request.ImageRequest.Builder(context)
+                .data(f.path)
+                .addHeader("Authorization", prefetchAuth)
+                .size(1920, 1080)
+                .allowHardware(true)
+                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                .build()
+            try {
+                loader.enqueue(req)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+        }
+    }
+
     // ============ CLEANUP ============
     DisposableEffect(Unit) {
         onDispose {
