@@ -824,6 +824,13 @@ fun MainMenuScreen(
         )
         }
 
+        // Card thong ke file toan NAS — hien ca 2 che do (thong tin file ca
+        // nhan, khong phai sysadmin). Du lieu tu /api/storage/summary.
+        com.nas.naswebdav.ui.screens.DashboardStorageCard(
+            realtimeNow = realtimeNow,
+        )
+        Spacer(Modifier.height(8.dp))
+
         if (!simpleMode) {
         MainMenuDashboardOmvServicesHardwarePanel()
         }

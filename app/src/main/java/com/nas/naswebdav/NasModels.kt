@@ -109,6 +109,33 @@ data class NasInsights(
 data class InsightAction(val priority: String = "", val title: String = "", val detail: String = "")
 
 /**
+ * Thong ke file toan NAS — GET /api/storage/summary (cache 5 phut phia server).
+ * Dung cho card Storage chuyen nghiep tren dashboard.
+ */
+data class LargestFile(val path: String = "", val bytes: Long = 0L)
+
+data class StorageSummary(
+    val totalFiles: Int = 0,
+    val totalDirs: Int = 0,
+    val totalBytes: Long = 0L,
+    val imageFiles: Int = 0,
+    val imageBytes: Long = 0L,
+    val videoFiles: Int = 0,
+    val videoBytes: Long = 0L,
+    val docFiles: Int = 0,
+    val docBytes: Long = 0L,
+    val audioFiles: Int = 0,
+    val audioBytes: Long = 0L,
+    val archiveFiles: Int = 0,
+    val archiveBytes: Long = 0L,
+    val otherFiles: Int = 0,
+    val otherBytes: Long = 0L,
+    val largest: List<LargestFile> = emptyList(),
+    val partial: Boolean = false,
+    val updatedAt: Long = 0L,
+)
+
+/**
  * HDD spindown / suspend schedule. Sent to GET/POST /api/system/sleep_schedule.
  * `mode` is "spindown" (park heads + stop rotation) or "suspend" (full SCSI stop).
  */

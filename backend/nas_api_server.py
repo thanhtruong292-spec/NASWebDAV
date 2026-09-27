@@ -6498,6 +6498,117 @@ def api_system_data_flow():
         return jsonify({"error": str(e)}), 500
 
 
+_STORAGE_SUMMARY_CACHE = {"ts": 0.0, "data": None}
+_STORAGE_SUMMARY_LOCK = threading.Lock()
+_STORAGE_SUMMARY_TTL = 300  # 5 phut — quet disk nang, khong the moi lan mo app
+
+_STORAGE_SKIP_DIRS = {".thumbs", ".thumbnails", ".trash", ".nas_meta", ".git",
+                      ".recycle", "@eaDir", "#recycle", ".cache"}
+
+
+def _build_storage_summary(max_seconds=45):
+    """Quet 1 lan WebDAV root: tong file/thu muc/dung luong, breakdown theo
+    loai (anh/video/tai lieu/nhac/nen/khac), top-10 file lon nhat.
+    Gioi han thoi gian de khong treo HDD yeu; het gio thi tra partial=True."""
+    import heapq
+    root = get_webdav_root()
+    deadline = time.time() + max_seconds
+    by_type = {"image": [0, 0], "video": [0, 0], "doc": [0, 0],
+               "audio": [0, 0], "archive": [0, 0], "other": [0, 0]}
+    top = []  # heap (size, path)
+    total_files = 0
+    total_dirs = 0
+    total_bytes = 0
+    partial = False
+    IMG = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
+    VID = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv",
+           ".ts", ".m4v", ".webm"}
+    DOC = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt",
+           ".md", ".csv"}
+    AUD = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
+    ARC = {".zip", ".rar", ".7z", ".tar", ".gz"}
+    try:
+        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+            if time.time() >= deadline:
+                partial = True
+                break
+            dirnames[:] = [d for d in dirnames
+                           if d not in _STORAGE_SKIP_DIRS
+                           and not d.startswith(".")]
+            total_dirs += len(dirnames)
+            for name in filenames:
+                if name.startswith("."):
+                    continue
+                fp = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(fp)
+                    if not os.path.isfile(fp):
+                        continue
+                    sz = st.st_size
+                except Exception:
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext in IMG:
+                    cat = "image"
+                elif ext in VID:
+                    cat = "video"
+                elif ext in DOC:
+                    cat = "doc"
+                elif ext in AUD:
+                    cat = "audio"
+                elif ext in ARC:
+                    cat = "archive"
+                else:
+                    cat = "other"
+                by_type[cat][0] += 1
+                by_type[cat][1] += sz
+                total_files += 1
+                total_bytes += sz
+                rel = os.path.relpath(fp, root)
+                if len(top) < 10:
+                    heapq.heappush(top, (sz, rel))
+                elif sz > top[0][0]:
+                    heapq.heapreplace(top, (sz, rel))
+    except Exception as e:
+        log.warning("[Storage] Scan loi: %s", e)
+        partial = True
+    largest = sorted(top, reverse=True)
+    return {
+        "total_files": total_files,
+        "total_dirs": total_dirs,
+        "total_bytes": total_bytes,
+        "by_type": {k: {"files": v[0], "bytes": v[1]} for k, v in by_type.items()},
+        "largest": [{"path": p, "bytes": s} for s, p in largest],
+        "partial": partial,
+        "scanned_at": int(time.time()),
+    }
+
+
+@app.route('/api/storage/summary', methods=['GET'])
+@requires_auth
+def api_storage_summary():
+    """Thong ke file toan NAS (cache 5 phut). ?force=1 de quet lai ngay."""
+    try:
+        force = (request.args.get("force", "") or "").strip() == "1"
+        now = time.time()
+        with _STORAGE_SUMMARY_LOCK:
+            cached = _STORAGE_SUMMARY_CACHE["data"]
+            if not force and cached and now - _STORAGE_SUMMARY_CACHE["ts"] < _STORAGE_SUMMARY_TTL:
+                out = dict(cached)
+                out["cached"] = True
+                return jsonify(out)
+        data = _build_storage_summary()
+        with _STORAGE_SUMMARY_LOCK:
+            _STORAGE_SUMMARY_CACHE["data"] = data
+            _STORAGE_SUMMARY_CACHE["ts"] = time.time()
+        out = dict(data)
+        out["cached"] = False
+        return jsonify(out)
+    except Exception as e:
+        log.error("[API] Error in api_storage_summary: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 _SYSTEM_INSIGHTS_CACHE = {
     "ts": 0.0,
     "data": None,

@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import coil.compose.AsyncImage
 import com.nas.naswebdav.NasFile
 import com.nas.naswebdav.WebDavManager
+import com.nas.naswebdav.ui.components.minTouchTarget
 import androidx.core.content.edit
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
@@ -424,6 +425,125 @@ internal fun DashboardSystemOverviewCard(
             }
         }
 }
+
+/**
+ * Card thong ke file toan NAS — tong file/thu muc/dung luong, breakdown theo
+ * loai (dang thanh ty le), top file lon nhat. Du lieu tu /api/storage/summary
+ * (server cache 5 phut). Nut Lam moi de quet lai ngay (?force=1).
+ */
+@Composable
+internal fun DashboardStorageCard(
+    realtimeNow: Long,
+) {
+    val systemVM = LocalSystemMonitorVM.current
+    val s = systemVM.storageSummary
+    // Fetch 1 lan khi card hien (neu du lieu cu hon 30s).
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        systemVM.fetchStorageSummary()
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        shape = AppShapes.Card
+    ) {
+        Column(Modifier.padding(horizontal = AppSpacing.SM, vertical = AppSpacing.SM - AppSpacing.XS)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("LƯU TRỮ", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
+                    letterSpacing = PanelTitleLetterSpacing)
+                Spacer(Modifier.weight(1f))
+                if (s.partial) {
+                    Text("quét dở", fontSize = 11.sp, color = AccentOrange)
+                    Spacer(Modifier.width(AppSpacing.XS))
+                }
+                PanelFreshnessTag(systemVM.storageUpdatedAt(realtimeNow), realtimeNow, staleAfterMs = 300_000L)
+                Spacer(Modifier.width(AppSpacing.XS))
+                IconButton(
+                    onClick = { systemVM.fetchStorageSummary(force = true) },
+                    modifier = Modifier.size(32.dp).minTouchTarget(),
+                    enabled = !systemVM.isFetchingStorageSummary
+                ) {
+                    Icon(Icons.Default.Refresh,
+                        contentDescription = "Quét lại dung lượng",
+                        tint = TextTertiary, modifier = Modifier.size(18.dp))
+                }
+            }
+            Spacer(Modifier.height(AppSpacing.XS))
+            if (systemVM.isFetchingStorageSummary && s.totalFiles == 0) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM)) {
+                    CircularProgressIndicator(color = AccentCyan,
+                        modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("Đang thống kê file...", fontSize = 13.sp, color = TextSecondary)
+                }
+            } else {
+                // Tong quan: N file • M thu muc • tong dung luong
+                Text(
+                    "${formatStorageCount(s.totalFiles)} tệp • ${formatStorageCount(s.totalDirs)} thư mục • ${formatStorageBytes(s.totalBytes)}",
+                    fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary
+                )
+                Spacer(Modifier.height(AppSpacing.XS))
+                // Breakdown theo loai — thanh ty le + so file/dung luong.
+                StorageTypeRow("Ảnh", s.imageFiles, s.imageBytes, s.totalBytes, AccentCyan)
+                StorageTypeRow("Video", s.videoFiles, s.videoBytes, s.totalBytes, AccentOrange)
+                StorageTypeRow("Tài liệu", s.docFiles, s.docBytes, s.totalBytes, AccentGreen)
+                StorageTypeRow("Nhạc", s.audioFiles, s.audioBytes, s.totalBytes, AccentPurple)
+                StorageTypeRow("Nén", s.archiveFiles, s.archiveBytes, s.totalBytes, AccentRed)
+                StorageTypeRow("Khác", s.otherFiles, s.otherBytes, s.totalBytes, TextTertiary)
+                // Top file lon nhat.
+                if (s.largest.isNotEmpty()) {
+                    Spacer(Modifier.height(AppSpacing.XS))
+                    Text("FILE LỚN NHẤT", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        color = TextTertiary, letterSpacing = PanelTitleLetterSpacing)
+                    s.largest.take(5).forEach { f ->
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 2.dp)) {
+                            Icon(Icons.Default.InsertDriveFile, contentDescription = null,
+                                tint = TextTertiary, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(AppSpacing.XS))
+                            Text(
+                                f.path.substringAfterLast("/"),
+                                fontSize = 12.sp, color = TextPrimary, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(formatStorageBytes(f.bytes), fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold, color = TextSecondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 1 hang breakdown: ten loai + thanh ty le + so file/dung luong. */
+@Composable
+private fun StorageTypeRow(label: String, files: Int, bytes: Long, total: Long, color: Color) {
+    val frac = if (total > 0) (bytes.toFloat() / total).coerceIn(0f, 1f) else 0f
+    Column(modifier = Modifier.padding(vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 12.sp, color = TextSecondary, modifier = Modifier.width(64.dp))
+            LinearProgressIndicator(
+                progress = { frac },
+                modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)),
+                color = color,
+                trackColor = DarkCardHover,
+            )
+            Spacer(Modifier.width(AppSpacing.XS))
+            Text("${formatStorageCount(files)} • ${formatStorageBytes(bytes)}",
+                fontSize = 11.sp, color = TextSecondary)
+        }
+    }
+}
+
+private fun formatStorageCount(n: Int): String = when {
+    n >= 1_000_000 -> "%.1fM".format(java.util.Locale.US, n / 1_000_000f)
+    n >= 1_000 -> "%.1fK".format(java.util.Locale.US, n / 1_000f)
+    else -> "$n"
+}
+
+private fun formatStorageBytes(bytes: Long): String =
+    com.nas.naswebdav.utils.FormatUtils.formatBytes(bytes)
 
 @Composable
 internal fun OmvServicesHardwarePanel() {

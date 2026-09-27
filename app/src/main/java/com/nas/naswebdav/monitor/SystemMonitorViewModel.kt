@@ -15,6 +15,8 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.DiskHealthSample
 import com.nas.naswebdav.InsightAction
 import com.nas.naswebdav.InsightFlowTask
+import com.nas.naswebdav.LargestFile
+import com.nas.naswebdav.StorageSummary
 import com.nas.naswebdav.NasConfigBackup
 import com.nas.naswebdav.NasInsights
 import com.nas.naswebdav.toApiBaseUrl
@@ -117,6 +119,16 @@ class SystemMonitorViewModel(
         internal set
     var isFetchingNasInsights by androidx.compose.runtime.mutableStateOf(false)
         internal set
+
+    // ═══ STORAGE SUMMARY (thong ke file toan NAS) ═══
+
+    var storageSummary by androidx.compose.runtime.mutableStateOf(StorageSummary())
+        internal set
+    var isFetchingStorageSummary by androidx.compose.runtime.mutableStateOf(false)
+        internal set
+
+    /** Timestamp de PanelFreshnessTag hien do tuoi du lieu (giong lastMetricsRefreshAt). */
+    fun storageUpdatedAt(now: Long): Long = storageSummary.updatedAt
 
     // ═══ POLLING JOBS — cancel previous on restart ═══
 
@@ -752,6 +764,66 @@ class SystemMonitorViewModel(
                 android.util.Log.w("SysMonitor", "fetchNasInsights: ${e.message}")
             } finally {
                 withContext(Dispatchers.Main) { isFetchingNasInsights = false }
+            }
+        }
+    }
+
+    /** Thong ke file toan NAS — GET /api/storage/summary (server cache 5 phut).
+     * force=true de quet lai ngay (nut Lam moi tren card). */
+    fun fetchStorageSummary(force: Boolean = false, minIntervalMs: Long = 30_000L) {
+        if (isFetchingStorageSummary) return
+        if (!force && System.currentTimeMillis() - storageSummary.updatedAt < minIntervalMs) return
+        isFetchingStorageSummary = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                val url = "$apiBase/api/storage/summary" + if (force) "?force=1" else ""
+                val req = okhttp3.Request.Builder().url(url).get().let(WebDavManager::tagCurrentAuth).build()
+                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    if (json.has("error")) return@use
+                    fun typeObj(key: String): org.json.JSONObject = json.optJSONObject("by_type")?.optJSONObject(key) ?: org.json.JSONObject()
+                    val img = typeObj("image")
+                    val vid = typeObj("video")
+                    val doc = typeObj("doc")
+                    val aud = typeObj("audio")
+                    val arc = typeObj("archive")
+                    val oth = typeObj("other")
+                    val largestArr = json.optJSONArray("largest")
+                    val largest: List<LargestFile> = largestArr?.let { arr ->
+                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                            LargestFile(path = it.optString("path", ""), bytes = it.optLong("bytes", 0L))
+                        }
+                    } ?: emptyList()
+                    val parsed = StorageSummary(
+                        totalFiles = json.optInt("total_files", 0),
+                        totalDirs = json.optInt("total_dirs", 0),
+                        totalBytes = json.optLong("total_bytes", 0L),
+                        imageFiles = img.optInt("files", 0),
+                        imageBytes = img.optLong("bytes", 0L),
+                        videoFiles = vid.optInt("files", 0),
+                        videoBytes = vid.optLong("bytes", 0L),
+                        docFiles = doc.optInt("files", 0),
+                        docBytes = doc.optLong("bytes", 0L),
+                        audioFiles = aud.optInt("files", 0),
+                        audioBytes = aud.optLong("bytes", 0L),
+                        archiveFiles = arc.optInt("files", 0),
+                        archiveBytes = arc.optLong("bytes", 0L),
+                        otherFiles = oth.optInt("files", 0),
+                        otherBytes = oth.optLong("bytes", 0L),
+                        largest = largest,
+                        partial = json.optBoolean("partial", false),
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    withContext(Dispatchers.Main) {
+                        storageSummary = parsed
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                android.util.Log.w("SysMonitor", "fetchStorageSummary: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) { isFetchingStorageSummary = false }
             }
         }
     }
