@@ -58,11 +58,24 @@ def _bump(k):
         _stats[k] += 1
 
 
+PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:"><D:prop>
+  <D:getcontentlength/><D:getlastmodified/><D:getcontenttype/>
+  <D:resourcetype/><D:getetag/>
+</D:prop></D:propfind>"""
+
+
 def propfind(session, base, path, depth=1, debug=False):
-    """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1)."""
+    """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1).
+    Gui body XML explicit giong app (WebDavManager FIX H5) — nginx WebDAV
+    tra 405 neu PROPFIND khong co body."""
     url = base.rstrip("/") + ("/" + path.strip("/") if path.strip("/") else "")
     try:
-        r = session.request("PROPFIND", url, headers={"Depth": str(depth)}, timeout=30)
+        r = session.request("PROPFIND", url,
+                            data=PROPFIND_BODY.encode("utf-8"),
+                            headers={"Depth": str(depth),
+                                     "Content-Type": "application/xml; charset=utf-8"},
+                            timeout=30)
     except Exception as e:
         _log(f"[WARN] PROPFIND loi {url}: {e}")
         return []
