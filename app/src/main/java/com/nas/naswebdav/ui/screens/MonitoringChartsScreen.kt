@@ -124,7 +124,7 @@ fun MonitoringChartCard() {
             Row(
                 Modifier.fillMaxWidth().clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { com.nas.naswebdav.ui.screens.ExclusivePanelState.toggle("chart") },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -150,7 +150,7 @@ fun MonitoringChartCard() {
                             color = if (selected) _ChartAccentCyan.copy(alpha = 0.16f) else Color.Transparent,
                             modifier = Modifier.clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null
+                                indication = androidx.compose.foundation.LocalIndication.current
                             ) {
                                 // Force open chart panel (overrides other panels)
                                 com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = "chart"
@@ -186,7 +186,7 @@ fun MonitoringChartCard() {
                         color = if (sel) TrackGreen.copy(alpha = 0.5f) else _ChartDarkSurface,
                         modifier = Modifier.weight(1f).clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { sysMonitorVM.metricsChartTab = i }
                     ) {
                         Row(

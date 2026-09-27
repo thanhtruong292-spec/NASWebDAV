@@ -150,7 +150,7 @@ fun SystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { isExpanded = !isExpanded }
             ) {
                 Icon(Icons.Default.Assignment, null, tint = AccentCyan, modifier = Modifier.size(20.dp))

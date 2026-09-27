@@ -398,7 +398,7 @@ fun LivestreamRecordDialog(
                         .fillMaxWidth()
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { LivestreamPanelState.toggle("active") }
                 ) {
                     val pulse = rememberInfiniteTransition(label = "rec_pulse")

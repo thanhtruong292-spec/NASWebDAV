@@ -644,7 +644,7 @@ internal fun OmvServicesHardwarePanel() {
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             modifier = Modifier.weight(1f).clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
+                                                indication = androidx.compose.foundation.LocalIndication.current
                                             ) {
                                                 pendingServiceName = svc.name
                                                 pendingServiceTitle = svc.title

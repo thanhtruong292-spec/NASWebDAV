@@ -58,20 +58,22 @@ def _bump(k):
         _stats[k] += 1
 
 
-def propfind(session, base, path, depth=1):
+def propfind(session, base, path, depth=1, debug=False):
     """Tra ve [(href, is_dir)] duoi path WebDAV (Depth: 1)."""
     url = base.rstrip("/") + ("/" + path.strip("/") if path.strip("/") else "")
     try:
         r = session.request("PROPFIND", url, headers={"Depth": str(depth)}, timeout=30)
     except Exception as e:
-        _log(f"[WARN] PROPFIND loi {path}: {e}")
+        _log(f"[WARN] PROPFIND loi {url}: {e}")
         return []
     if r.status_code not in (200, 207):
+        _log(f"[WARN] PROPFIND {url} -> HTTP {r.status_code} (can Basic auth + quyen doc)")
         return []
     out = []
     try:
         root = ET.fromstring(r.content)
-    except Exception:
+    except Exception as e:
+        _log(f"[WARN] PROPFIND {url} XML loi: {e}")
         return []
     for resp in root.iter():
         if not resp.tag.endswith("response"):
@@ -175,9 +177,9 @@ def process_one(session, base, api, path, dry_run, max_bytes=0):
         _log(f"[SKIP] {path} — can Pillow (pip install pillow)")
         return
     # Tai full file goc qua LAN (khong gioi han mac dinh). Chi gioi han khi
-    # truyen --max-mb (mang yeu).
+    # truyen --max-mb (mang yeu). base o day la webdav_base (da gom /webdav).
     try:
-        url = base.rstrip("/") + "/webdav/" + urllib.parse.quote(path.lstrip("/"))
+        url = base.rstrip("/") + "/" + urllib.parse.quote(path.lstrip("/"))
         r = session.get(url, timeout=600, stream=True)
         if r.status_code != 200:
             _bump("failed")
@@ -260,16 +262,28 @@ def main():
     ap.add_argument("--max-mb", type=int, default=0,
                     help="Bo qua file lon hon N MB (0 = khong gioi han, mac dinh "
                          "cho LAN/WiFi 6). Chi dung khi mang yeu.")
+    ap.add_argument("--webdav-url", default="",
+                    help="Base WebDAV rieng (mac dinh: <host>/webdav). "
+                         "VD khi API :5050 nhung WebDAV :8822.")
+    ap.add_argument("--api-url", default="",
+                    help="Base API rieng (mac dinh: <host>).")
     args = ap.parse_args()
     max_bytes = (args.max_mb or 0) * 1024 * 1024
 
     session = requests.Session()
     session.auth = (args.user, args.password)
     base = args.host.rstrip("/")
-    api = base  # cung host:port, endpoint /api/...
+    webdav_base = (args.webdav_url.rstrip("/") if args.webdav_url
+                   else base + "/webdav")
+    api = args.api_url.rstrip("/") if args.api_url else base
 
-    _log(f"Liet ke file media tren {base} ...")
-    files = list(walk(session, base + "/webdav"))
+    _log(f"WebDAV: {webdav_base} | API: {api}")
+    # Debug root ngay: thay vi nuot im roi bao 0 file.
+    _root = propfind(session, webdav_base, "", debug=True)
+    _log(f"PROPFIND root -> {len(_root)} muc "
+         f"(vd: {[h for h, _ in _root[:3]]})")
+    _log(f"Liet ke file media tren {webdav_base} ...")
+    files = list(walk(session, webdav_base))
     _log(f"Tim thay {len(files)} file media.")
     if not files:
         return
@@ -279,8 +293,8 @@ def main():
         _log("CANH BAO: khong thay ffmpeg — video se bi bo qua.")
     t0 = time.time()
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(process_one, session, base, api, p, args.dry_run,
-                          max_bytes)
+        futs = [ex.submit(process_one, session, webdav_base, api, p,
+                          args.dry_run, max_bytes)
                 for p in files]
         for f in cf.as_completed(futs):
             f.result()

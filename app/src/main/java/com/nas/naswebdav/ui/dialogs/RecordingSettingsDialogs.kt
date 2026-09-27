@@ -144,7 +144,7 @@ fun BiometricSettingsDialogCompat(
                 modifier = Modifier.fillMaxWidth().clickable(
                     enabled = bioStatus == "available",
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) {
                     enabled = !enabled
                 }
@@ -192,7 +192,7 @@ fun BiometricSettingsDialogCompat(
                             .clickable(
                                 enabled = enabled,
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null
+                                indication = androidx.compose.foundation.LocalIndication.current
                             ) { delaySec = sec }
                             .padding(horizontal = 8.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically

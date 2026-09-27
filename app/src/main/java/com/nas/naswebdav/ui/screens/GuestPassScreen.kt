@@ -124,7 +124,7 @@ fun GuestPassScreen(onBack: () -> Unit) {
                 Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (!authVM.isGuestPassLoading) Brush.horizontalGradient(listOf(GpAccentPurple, AccentPurple)) else Brush.horizontalGradient(listOf(GpTextSecondary.copy(alpha=0.2f), GpTextSecondary.copy(alpha=0.2f)))).clickable(
                     enabled = !authVM.isGuestPassLoading,
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { authVM.createGuestPass(durationMinutes) }.padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
                     if (authVM.isGuestPassLoading) { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(color = GpTextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("Đang tạo tài khoản...", color = GpTextPrimary, fontWeight = FontWeight.Bold) } }
                     else { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.PersonAdd, "Add guest pass icon", tint = TextPrimary, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(10.dp)); Text("Cấp Guest Pass ($durationMinutes phút)", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp) } }

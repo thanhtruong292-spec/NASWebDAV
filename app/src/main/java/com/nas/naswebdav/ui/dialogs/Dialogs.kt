@@ -458,7 +458,7 @@ private fun DialogsTikTokLiveWatchSection(
             .then(
                 if (users.isNotEmpty()) Modifier.clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { DialogsLivestreamPanelState.toggle("watchlist") } else Modifier
             )
     ) {
@@ -647,7 +647,7 @@ private fun DialogsTikTokLiveWatchSection(
                                 .background(DarkCardHover, RoundedCornerShape(10.dp))
                                 .clickable(
                                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) {
                                     expandedUserName = if (expandedUserName == user.username) null else user.username
                                 }
@@ -785,7 +785,7 @@ private fun DialogsTikTokLiveWatchSection(
             .fillMaxWidth()
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) { DialogsLivestreamPanelState.toggle("exclude") }
     ) {
         Text("☾", fontSize = 18.sp, color = AccentOrange)
@@ -2550,7 +2550,7 @@ fun DialogsLivestreamRecordDialog(
                         .fillMaxWidth()
                         .clickable(
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                            indication = null
+                            indication = androidx.compose.foundation.LocalIndication.current
                         ) { DialogsLivestreamPanelState.toggle("active") }
                 ) {
                     val pulse = rememberInfiniteTransition(label = "rec_pulse")
@@ -2748,7 +2748,7 @@ fun DialogsBiometricSettingsDialog(
                 modifier = Modifier.fillMaxWidth().clickable(
                     enabled = bioStatus == "available",
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) {
                     enabled = !enabled
                 }
@@ -2796,7 +2796,7 @@ fun DialogsBiometricSettingsDialog(
                             .clickable(
                                 enabled = enabled,
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null
+                                indication = androidx.compose.foundation.LocalIndication.current
                             ) { delaySec = sec }
                             .padding(horizontal = 8.dp, vertical = 0.dp),
                         verticalAlignment = Alignment.CenterVertically

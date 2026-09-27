@@ -638,7 +638,7 @@ private fun ModeTab(
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
+                indication = androidx.compose.foundation.LocalIndication.current,
                 onClick = onClick
             )
             .padding(vertical = 10.dp),
@@ -917,7 +917,7 @@ private fun MainActionButton(
             .clickable(
                 enabled = isEnabled || isWorking,
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) {
                 if (isWorking) onCancel() else onStart()
             }

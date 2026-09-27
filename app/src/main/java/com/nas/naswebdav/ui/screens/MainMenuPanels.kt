@@ -442,7 +442,7 @@ fun MainMenuSystemStatusCards(
                 Row(
                     Modifier.fillMaxWidth().clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
+                        indication = androidx.compose.foundation.LocalIndication.current
                     ) { ExclusivePanelState.toggle("tasks") },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -656,7 +656,7 @@ fun MainMenuSystemStatusCards(
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenAutoBackup() },
                                 verticalAlignment = Alignment.Top
                             ) {
@@ -717,7 +717,7 @@ fun MainMenuSystemStatusCards(
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenUsbImport() },
                                 verticalAlignment = Alignment.Top
                             ) {
@@ -783,7 +783,7 @@ fun MainMenuSystemStatusCards(
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenLivestream() },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -820,7 +820,7 @@ fun MainMenuSystemStatusCards(
                                             .padding(start = 38.dp, top = 4.dp)
                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
+                                                indication = androidx.compose.foundation.LocalIndication.current
                                             ) { onOpenLivestream() }
                                     ) {
                                         // Hiện "@user" nếu có watchUsername (từ /api/livestream/status hoặc local extract),

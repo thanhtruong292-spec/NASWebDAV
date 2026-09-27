@@ -184,7 +184,7 @@ fun GaugeCard(
     Card(
         modifier = if (onClick != null) modifier.clickable(
             interactionSource = remember { MutableInteractionSource() },
-            indication = null,
+            indication = androidx.compose.foundation.LocalIndication.current,
             onClick = onClick
         ) else modifier,
         colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -365,7 +365,7 @@ fun SettingsMenuCardTall(
             .height(76.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) { onClick() },
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = AppShapes.Card

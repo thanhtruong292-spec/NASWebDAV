@@ -177,7 +177,7 @@ fun DashboardSystemStatusCards(
                 Row(
                     Modifier.fillMaxWidth().clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
+                        indication = androidx.compose.foundation.LocalIndication.current
                     ) { ExclusivePanelState.toggle("tasks") },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -395,7 +395,7 @@ fun DashboardSystemStatusCards(
                             Column(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenAutoBackup() }
                             ) {
                                 // Header
@@ -506,7 +506,7 @@ fun DashboardSystemStatusCards(
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenUsbImport() },
                                 verticalAlignment = Alignment.Top
                             ) {
@@ -572,7 +572,7 @@ fun DashboardSystemStatusCards(
                             Row(
                                 modifier = Modifier.fillMaxWidth().clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) { onOpenLivestream() },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -609,7 +609,7 @@ fun DashboardSystemStatusCards(
                                             .padding(start = 8.dp, top = 6.dp)
                                             .clickable(
                                                 interactionSource = remember { MutableInteractionSource() },
-                                                indication = null
+                                                indication = androidx.compose.foundation.LocalIndication.current
                                             ) { onOpenLivestream() }
                                     ) {
                                         // Hiện "@user" nếu có watchUsername (từ /api/livestream/status hoặc local extract),

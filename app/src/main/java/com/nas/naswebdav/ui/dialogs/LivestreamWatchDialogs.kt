@@ -158,7 +158,7 @@ internal fun TikTokLiveWatchSection(
             .then(
                 if (users.isNotEmpty()) Modifier.clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    indication = null
+                    indication = androidx.compose.foundation.LocalIndication.current
                 ) { LivestreamPanelState.toggle("watchlist") } else Modifier
             )
     ) {
@@ -347,7 +347,7 @@ internal fun TikTokLiveWatchSection(
                                 .background(DarkSurface, RoundedCornerShape(10.dp))
                                 .clickable(
                                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                    indication = null
+                                    indication = androidx.compose.foundation.LocalIndication.current
                                 ) {
                                     expandedUserName = if (expandedUserName == user.username) null else user.username
                                 }
@@ -486,7 +486,7 @@ internal fun TikTokLiveWatchSection(
             .fillMaxWidth()
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) { LivestreamPanelState.toggle("exclude") }
     ) {
         Text("☾", fontSize = 18.sp, color = AccentOrange)

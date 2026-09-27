@@ -424,7 +424,7 @@ internal fun DiskProfileBottomSheet(
                         Box(
                             modifier = Modifier.clickable(
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null
+                                indication = androidx.compose.foundation.LocalIndication.current
                             ) { showResetTrackingConfirm = true }
                         ) {
                             Text("Đặt lại mốc theo dõi", color = AccentOrange, fontSize = 10.sp)
@@ -670,7 +670,7 @@ internal fun DiskProfileBottomSheet(
                 Row(
                     Modifier.fillMaxWidth().clickable(
                         interactionSource = remember { MutableInteractionSource() },
-                        indication = null
+                        indication = androidx.compose.foundation.LocalIndication.current
                     ) { writePanelExpanded = !writePanelExpanded },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -721,7 +721,7 @@ private fun OperationModeChip(
             .background(if (selected) AccentCyan.copy(alpha = 0.18f) else DarkSurface)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null
+                indication = androidx.compose.foundation.LocalIndication.current
             ) {
                 hwPrefs.setHardwareProfile("operation_mode", mode)
                 onSelect(mode)
