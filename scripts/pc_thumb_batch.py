@@ -167,6 +167,19 @@ def walk(session, base):
                 yield "/" + rel
 
 
+def make_session(user, password):
+    """Session rieng moi worker: pool lon, keep-alive, khong tranh nhau.
+    requests.Session KHONG thread-safe tren pool — dung chung la nghen."""
+    from requests.adapters import HTTPAdapter
+    s = requests.Session()
+    s.auth = (user, password)
+    ad = HTTPAdapter(pool_connections=8, pool_maxsize=16,
+                     max_retries=2, pool_block=False)
+    s.mount("http://", ad)
+    s.mount("https://", ad)
+    return s
+
+
 def has_thumb(session, api, path):
     try:
         r = session.head(api + "/api/thumb",
@@ -182,26 +195,61 @@ def render_image(data):
         return None
     try:
         img = Image.open(io.BytesIO(data))
-        img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS)
+        # BILINEAR nhanh gap 3-4x LANCZOS, mat thuong khong phan biet o 320px.
+        # Draft mode giam them ~30% thoi gian decode JPEG.
+        img.draft("RGB", (THUMB_SIZE * 2, THUMB_SIZE * 2))
+        img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.BILINEAR)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=80)
+        img.save(buf, "JPEG", quality=75)
         return buf.getvalue()
     except Exception:
         return None
 
 
+def _ffmpeg_hw_args():
+    """Chon hwaccel neu co: dxva2/d3d11va (Windows), videotoolbox (macOS),
+    cuda/qsv/vaapi (Linux). Khong co thi [] (CPU). Cache ket qua."""
+    if hasattr(_ffmpeg_hw_args, "_cached"):
+        return _ffmpeg_hw_args._cached
+    args = []
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-hwaccels"],
+                           timeout=10, stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, text=True)
+        accels = (r.stdout or "").lower()
+        if sys.platform == "win32":
+            for a in ("d3d11va", "dxva2"):
+                if a in accels:
+                    args = ["-hwaccel", a]
+                    break
+        elif sys.platform == "darwin":
+            if "videotoolbox" in accels:
+                args = ["-hwaccel", "videotoolbox"]
+        else:
+            for a in ("cuda", "qsv", "vaapi"):
+                if a in accels:
+                    args = ["-hwaccel", a]
+                    break
+    except Exception:
+        pass
+    _ffmpeg_hw_args._cached = args
+    return args
+
+
 def render_video(tmp_path):
     try:
         out = tmp_path + ".thumb.jpg"
-        subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-ss", "5", "-i", tmp_path,
-             "-vframes", "1", "-vf", f"scale={THUMB_SIZE}:-1",
-             "-q:v", "4", out],
-            timeout=120, check=False,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # -ss TRUOC -i = seek nhanh (khong decode tu dau toi giay 5).
+        # hwaccel neu co + scale rieng (hwdownload neu can).
+        hw = _ffmpeg_hw_args()
+        vf = f"scale={THUMB_SIZE}:-1"
+        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+               + hw + ["-ss", "5", "-i", tmp_path,
+                       "-vframes", "1", "-vf", vf, "-q:v", "4", out])
+        subprocess.run(cmd, timeout=120, check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.isfile(out) and os.path.getsize(out) > 1200:
             with open(out, "rb") as f:
                 return f.read()
@@ -305,7 +353,8 @@ def main():
                     help="VD: http://192.168.100.254:8822")
     ap.add_argument("--user", required=True)
     ap.add_argument("--pass", dest="password", required=True)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=0,
+                    help="So luong mac dinh = CPU x 2 (toi da 16).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Chi liet ke + render, khong upload")
     ap.add_argument("--max-mb", type=int, default=0,
@@ -319,8 +368,6 @@ def main():
     args = ap.parse_args()
     max_bytes = (args.max_mb or 0) * 1024 * 1024
 
-    session = requests.Session()
-    session.auth = (args.user, args.password)
     base = args.host.rstrip("/")
     webdav_base = (args.webdav_url.rstrip("/") if args.webdav_url
                    else base + "/webdav")
@@ -328,11 +375,22 @@ def main():
 
     _log(f"WebDAV: {webdav_base} | API: {api}")
     # Debug root ngay: thay vi nuot im roi bao 0 file.
-    _root = propfind(session, webdav_base, "", debug=True)
+    _tls = threading.local()
+
+    def _session():
+        s = getattr(_tls, "s", None)
+        if s is None:
+            s = make_session(args.user, args.password)
+            _tls.s = s
+        return s
+
+    _root = propfind(_session(), webdav_base, "", debug=True)
     _log(f"PROPFIND root -> {len(_root)} muc "
          f"(vd: {[h for h, _ in _root[:3]]})")
+    hw = _ffmpeg_hw_args()
+    _log(f"ffmpeg hwaccel: {hw if hw else 'CPU (khong thay GPU)'}")
     _log(f"Liet ke file media tren {webdav_base} ...")
-    files = list(walk(session, webdav_base))
+    files = list(walk(_session(), webdav_base))
     _log(f"Tim thay {len(files)} file media.")
     if not files:
         return
@@ -340,11 +398,16 @@ def main():
         _log("CANH BAO: thieu Pillow — anh se bi bo qua (pip install pillow).")
     if not _have_ffmpeg():
         _log("CANH BAO: khong thay ffmpeg — video se bi bo qua.")
+    workers = args.workers or min(16, (os.cpu_count() or 4) * 2)
+    _log(f"Workers: {workers} (CPU x 2).")
     t0 = time.time()
-    with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = [ex.submit(process_one, session, webdav_base, api, p,
-                          args.dry_run, max_bytes)
-                for p in files]
+
+    def _run(p):
+        return process_one(_session(), webdav_base, api, p,
+                           args.dry_run, max_bytes)
+
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_run, p) for p in files]
         for f in cf.as_completed(futs):
             f.result()
     dt = time.time() - t0
