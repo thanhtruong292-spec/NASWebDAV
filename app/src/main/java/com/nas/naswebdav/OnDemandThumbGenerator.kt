@@ -24,6 +24,15 @@ object OnDemandThumbGenerator {
     private const val VIDEO_LIMIT_BYTES = 100L * 1024 * 1024
     private const val MAX_DOWNLOAD_BUFFER = 131072
 
+    /** Chi tu render khi mang khong tinh phi (Wi-Fi/LAN). 4G thi bo qua de
+     * NAS xu luc idle — tranh dot data di dong tai file 10-100MB. */
+    fun isUnmetered(context: Context): Boolean {
+        val cm = runCatching {
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        }.getOrNull() ?: return true
+        return runCatching { cm.isActiveNetworkMetered == false }.getOrDefault(true)
+    }
+
     suspend fun generateAndUpload(
         sourceUrl: String,
         auth: String,

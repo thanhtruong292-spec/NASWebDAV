@@ -577,7 +577,10 @@ fun WebDavCachedThumbnail(
                         return@withPermit
                     }
                     // Video: thu client-decode tren may truoc (Range + frame extract
-                    // bang CPU dien thoai). That bai moi nho NAS render.
+                    // bang CPU dien thoai) — chi khi Wi-Fi/LAN (khong dot 4G tai
+                    // file toi 100MB). 4G thi nho NAS render luc idle. That bai
+                    // moi nho NAS render.
+                    if (OnDemandThumbGenerator.isUnmetered(context)) {
                     run {
                         val generated = OnDemandThumbGenerator.generateAndUpload(url, auth, isVideo, context)
                         if (generated != null) {
@@ -590,6 +593,7 @@ fun WebDavCachedThumbnail(
                             strategy = ThumbStrategy.LOCAL
                             return@withPermit
                         }
+                    }
                     }
 
                     // ── Fallback cuoi (chi video la): NAS backend /api/thumb ──

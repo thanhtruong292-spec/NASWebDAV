@@ -11142,6 +11142,11 @@ _thumb_paused = threading.Event()  # Set = dang chay, Clear = t?m dùng
 _thumb_paused.set()  # Mac dinh: CHAY
 _thumb_gate_lock = threading.Lock()
 _thumb_manual_paused = False
+# CLIENT-FIRST: may tu render + upload thumb, daemon khong quet dinh ky nua.
+# Quet chi chay khi: (1) app yeu cau tay qua /api/thumb/control action=scan,
+# (2) du 24h ke tu lan quet truoc VA NAS that su idle. Khong con quet 30ph.
+_thumb_scan_requested = False
+_THUMB_DAILY_INTERVAL_S = 86400  # 24h giua cac lan quet tu dong
 _thumb_auto_block_reasons = set()
 _thumb_block_timestamps = {}             # {reason: time_when_blocked} — để auto-expire stale activity blocks
 _THUMB_ACTIVITY_BLOCK_MAX_AGE_S = 600    # 10 phút: block từ /api/thumb/activity phải heartbeat mỗi 3 phút
@@ -11697,21 +11702,27 @@ def _thumbnail_generator():
 
     Gates honored:
       - _thumb_paused Event (set by _apply_thumbnail_gate_locked)
-      - _background_heavy_work_allowed() (livestream, USB import, RAM>78%, load>2.5)
+      - _background_heavy_work_allowed() (livestream, USB import, RAM>78%, load>2.5,
+        user dang duyet <90s)
+      - CLIENT-FIRST: quet dinh ky TAT. Chi quet khi app yeu cau tay
+        (action=scan) hoac du 24h ke tu lan truoc. May tu render + upload,
+        daemon chi lap cho trong luc that su idle.
 
     Two-pass scan:
       1. First scan: walks all roots, counts media, sets total_media.
       2. Forward sweep: skips files whose .thumbnails/<hash>.jpg already exists.
-      3. Sleep 5 minutes and re-scan to pick up new uploads.
+      3. Ngu day du 24h (thay vi 30 phut) truoc khi xet quet tiep.
     """
-    global _thumb_stats
+    global _thumb_stats, _thumb_scan_requested
 
     _THUMB_EXCLUDE_DIRS = {".thumbnails", ".trash", ".nas_meta", ".git", ".recycle", "@eaDir", "#recycle"}
     _THUMB_SMB_ROOTS = ["/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
     # FIX-AV1-RETRY-STORM: daemon quét toàn disk mỗi vòng; file AV1/corrupt
     # (ffmpeg 3.2 không decoder) bị probe + spawn ffmpeg lại vô ích mỗi vòng,
     # ~2300 warning/ngày trong log 2026-09-15. Giãn rescan 300s -> 1800s.
-    _RESCAN_INTERVAL_S = 1800  # 30 minutes between full re-scans
+    # CLIENT-FIRST: tat han quet dinh ky 30ph. Daemon chi quet khi:
+    #  (1) app yeu cau tay (action=scan), (2) du 24h + that su idle.
+    _RESCAN_INTERVAL_S = 86400  # 24h giua cac lan quet tu dong
 
     def _scan_roots():
         """Walk all media roots, deduplicate by realpath, yield media files."""
@@ -11801,12 +11812,20 @@ def _thumbnail_generator():
                 time.sleep(5)
                 continue
 
-            # Full re-scan every5 minutes to pick up new uploads.
-            if now - last_full_scan < _RESCAN_INTERVAL_S:
+            # CLIENT-FIRST: khong quet dinh ky nua. Chi quet khi app yeu cau tay
+            # (dat _thumb_scan_requested) hoac du 24h ke tu lan truoc.
+            # May tu render + upload thumb, daemon chi lap cho trong luc idle.
+            with _thumb_gate_lock:
+                manual_scan = bool(globals().get("_thumb_scan_requested", False))
+            due_daily = (now - last_full_scan) >= _RESCAN_INTERVAL_S
+            if not manual_scan and not due_daily:
                 time.sleep(5)
                 continue
+            if manual_scan:
+                with _thumb_gate_lock:
+                    globals()["_thumb_scan_requested"] = False
             last_full_scan = now
-            log.info("[Thumbnail] Starting scan pass ...")
+            log.info("[Thumbnail] Starting scan pass (manual=%s) ...", manual_scan)
 
             base_dir = get_webdav_root()
             thumb_dir = os.path.join(base_dir, THUMB_DIR_NAME)
@@ -12093,12 +12112,13 @@ def api_process_state():
 @app.route("/api/thumb/control", methods=["POST"])
 @requires_auth
 def api_thumb_control():
-    """Dieu khien Thumbnail Generator: pause / resume.
-    Body: {"action": "pause"} hoac {"action": "resume"}"""
+    """Dieu khien Thumbnail Generator: pause / resume / scan.
+    Body: {"action": "pause"|"resume"|"scan"} — scan = yeu cau quet 1 vong ngay
+    (daemon van ton trong gate: pause/user-active/livestream/RAM/load)."""
     data = request.get_json(force=True) or {}
     action = data.get("action", "").strip().lower()
 
-    global _thumb_manual_paused
+    global _thumb_manual_paused, _thumb_scan_requested
     if action == "pause":
         with _thumb_gate_lock:
             _thumb_manual_paused = True
@@ -12110,8 +12130,12 @@ def api_thumb_control():
             _apply_thumbnail_gate_locked()
             paused = not _thumb_paused.is_set()
         return jsonify({"result": "ok", "paused": paused, "block_reasons": sorted(_thumb_auto_block_reasons)})
+    elif action == "scan":
+        with _thumb_gate_lock:
+            _thumb_scan_requested = True
+        return jsonify({"result": "ok", "scan_requested": True})
     else:
-        return jsonify({"error": "Hành động phải là 'pause' hoặc 'resume'"}), 400
+        return jsonify({"error": "Hành động phải là 'pause', 'resume' hoặc 'scan'"}), 400
 
 @app.route("/api/thumb/activity", methods=["POST"])
 @requires_auth
