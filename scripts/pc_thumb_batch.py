@@ -32,7 +32,10 @@ except ImportError:
     sys.exit("Thieu 'requests' — chay: pip install requests pillow")
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageFile
+    # Anh Facebook tai ve hay bi cut duoi vai bytes — van decode duoc phan
+    # co de lam thumb 320px thay vi bo ca file.
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
     HAVE_PIL = True
 except ImportError:
     HAVE_PIL = False
@@ -195,9 +198,18 @@ def render_image(data):
         return None
     try:
         img = Image.open(io.BytesIO(data))
+        # Anh Facebook hay bi cut duoi vai bytes (truncated 0-7 bytes) — load
+        # rieng de lay phan decode duoc thay vi bo ca file.
         # BILINEAR nhanh gap 3-4x LANCZOS, mat thuong khong phan biet o 320px.
-        # Draft mode giam them ~30% thoi gian decode JPEG.
-        img.draft("RGB", (THUMB_SIZE * 2, THUMB_SIZE * 2))
+        try:
+            img.draft("RGB", (THUMB_SIZE * 2, THUMB_SIZE * 2))
+        except Exception:
+            pass
+        try:
+            img.load()
+        except OSError as oe:
+            if "truncated" not in str(oe).lower():
+                raise
         img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.BILINEAR)
         # PNG 16-bit (I;16/...) khong save JPEG truc tiep duoc -> ve L roi RGB.
         if img.mode in ("I;16", "I;16L", "I;16B", "I", "F"):
@@ -247,6 +259,8 @@ def render_video(tmp_path):
     # -ss TRUOC -i = seek nhanh (khong decode tu dau toi giay 5). Mot so file
     # (moov o cuoi, index hong) seek nhanh cho frame den -> fallback seek chinh
     # xac (-ss sau -i). hwaccel neu co.
+    # Luu y d3d11va: mot so file (screen-recorder, audio-only, moov hong)
+    # bao "Invalid data"/"no packets" du CPU van mo duoc -> fallback CPU cuoi.
     hw = _ffmpeg_hw_args()
     vf = f"scale={THUMB_SIZE}:-1"
     attempts = [
@@ -255,6 +269,11 @@ def render_video(tmp_path):
                  "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
         (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
           "-i", tmp_path, "-ss", "5",
+          "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
+        # Fallback cuoi: CPU + seek giay 0 (file nao co 1 frame doc duoc
+        # cung ra thumb, ke ca moov hong).
+        (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+          "-i", tmp_path,
           "-vframes", "1", "-vf", vf, "-q:v", "4", out]),
     ]
     last_err = ""
