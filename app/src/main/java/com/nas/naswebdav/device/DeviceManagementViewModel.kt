@@ -110,10 +110,45 @@ class DeviceManagementViewModel(
     var isFanModeUpdating by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
-    var storageFolderUsage by androidx.compose.runtime.mutableStateOf<List<StorageFolderUsage>>(emptyList())
+    var storageFolderUsage by androidx.compose.runtime.mutableStateOf<List<StorageFolderUsage>>(readCachedStorageUsage())
         internal set
     var isFetchingStorageUsage by androidx.compose.runtime.mutableStateOf(false)
         internal set
+    private var storageUsageUpdatedAt = readCachedStorageUsageAt()
+
+    companion object {
+        private const val STORAGE_USAGE_INTERVAL_MS = 30_000L
+
+        private fun readCachedStorageUsage(): List<StorageFolderUsage> {
+            return try {
+                val raw = com.nas.naswebdav.utils.PreferencesRepository
+                    .get(com.nas.naswebdav.NasApplication.instance)
+                    .getStorageUsageJson()
+                if (raw.isBlank()) return emptyList()
+                val arr = org.json.JSONArray(raw)
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                    StorageFolderUsage(
+                        name = it.optString("name", ""),
+                        path = it.optString("path", ""),
+                        size = it.optString("size", "--"),
+                        sizeBytes = it.optLong("size_bytes", 0L),
+                        files = it.optInt("files", 0),
+                        partial = it.optBoolean("partial", false)
+                    )
+                }
+            } catch (_: Exception) { emptyList() }
+        }
+
+        private fun readCachedStorageUsageAt(): Long {
+            return try {
+                val raw = com.nas.naswebdav.utils.PreferencesRepository
+                    .get(com.nas.naswebdav.NasApplication.instance)
+                    .getStorageUsageJson()
+                if (raw.isBlank()) return 0L
+                org.json.JSONArray(raw).optJSONObject(0)?.optLong("cached_at", 0L) ?: 0L
+            } catch (_: Exception) { 0L }
+        }
+    }
 
     var systemLogs by androidx.compose.runtime.mutableStateOf(listOf<SystemLog>())
         internal set
@@ -657,9 +692,12 @@ class DeviceManagementViewModel(
         }
     }
 
-    /** Fetch storage folder usage — Phase 2b wired */
-    fun fetchStorageUsage(minIntervalMs: Long = 30_000L) {
+    /** Fetch storage folder usage — Phase 2b wired.
+     * Mở app hiện cache cũ ngay, chỉ fetch nền khi quá 30s (trừ khi force bằng
+     * minIntervalMs = 0L từ kéo-refresh tay). Fetch xong lưu cache cho lần sau. */
+    fun fetchStorageUsage(minIntervalMs: Long = STORAGE_USAGE_INTERVAL_MS) {
         if (isFetchingStorageUsage) return
+        if (minIntervalMs > 0 && System.currentTimeMillis() - storageUsageUpdatedAt < minIntervalMs) return
         isFetchingStorageUsage = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -672,7 +710,20 @@ class DeviceManagementViewModel(
                     val arr = runCatching { org.json.JSONObject(body).optJSONArray("folders") }
                         .getOrNull() ?: runCatching { org.json.JSONArray(body) }.getOrNull()
                         ?: org.json.JSONArray()
+                    val now = System.currentTimeMillis()
+                    try {
+                        val cacheArr = org.json.JSONArray()
+                        for (i in 0 until arr.length()) {
+                            val o = arr.optJSONObject(i) ?: continue
+                            o.put("cached_at", now)
+                            cacheArr.put(o)
+                        }
+                        com.nas.naswebdav.utils.PreferencesRepository
+                            .get(com.nas.naswebdav.NasApplication.instance)
+                            .setStorageUsageJson(cacheArr.toString())
+                    } catch (_: Exception) {}
                     withContext(Dispatchers.Main) {
+                        storageUsageUpdatedAt = now
                         storageFolderUsage = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
                             StorageFolderUsage(
                                 name = it.optString("name", ""),
@@ -1022,7 +1073,6 @@ class DeviceManagementViewModel(
                 .let(WebDavManager::tagCurrentAuth)
                 .build()
             usbImportApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use
                 val body = resp.body?.string() ?: "{}"
                 if (!resp.isSuccessful) {
                     withContext(Dispatchers.Main) { usbImportMessage = "Lỗi tải USB Import: HTTP ${resp.code}" }

@@ -14319,12 +14319,16 @@ def _normalize_tiktok_username(username):
 
 # Cache trạng thái cookies TikTok de trảnh hit TikTok mới chu k? watchdog.
 _tiktok_cookies_cache = {
-    "status": "unknown",   # missing / expired / revoked / valid / unknown
+    "status": "unknown",   # missing / expired / expiring_soon / revoked / valid / unknown
     "message": "",         # mo ta ng??i dùng doc
     "checked_at": 0.0,     # epoch lan check gần nh?t
     "file_mtime": 0.0,     # mtime cua cookies.txt luc check de phat hien file moi
+    "expiry": 0,           # epoch het han sessionid (0 = khong ro)
+    "expiry_str": "",      # ngay het han dang doc duoc
+    "days_left": -1.0,     # so ngay con lai (-1 = khong ro)
 }
 _TIKTOK_COOKIES_CHECK_INTERVAL = 600  # 10 phut moi lan goi mang den TikTok
+_TIKTOK_COOKIES_EXPIRY_WARN_SEC = 3 * 86400  # báo trước 3 ngày khi sắp hết hạn
 
 def _tiktok_cookies_path():
     return os.path.join(WEBDAV_FILE_ROOT, "cookies.txt")
@@ -14388,12 +14392,16 @@ def _ping_tiktok_cookies(path):
         return True, "Không kiểm tra được (%s)" % str(e)[:80]
 
 def _check_cookies_status(force=False):
-    """Tr? v? dict { status, message, checked_at } cua cookies TikTok.
-    S? dùng cache 10 phut tru khi force=True hoac file vua thay doi."""
+    """Trả về dict { status, message, checked_at, expiry, expiry_str, days_left } của cookies TikTok.
+    Sử dụng cache 10 phút trừ khi force=True hoặc file vừa thay đổi.
+    Trạng thái: missing / expired / expiring_soon (còn <=3 ngày) / revoked / valid / unknown.
+    Tự động ghi system_logs (cooldown) khi phát hiện missing/expired/expiring_soon/revoked
+    và khi phục hồi về valid — để user biết ngay cả khi không mở app (xem /api/system_logs)."""
     path = _tiktok_cookies_path()
     now = time.time()
     if not os.path.exists(path):
-        _tiktok_cookies_cache.update({"status": "missing", "message": "Chưa có cookies.txt ở thư mục gốc WebDAV", "checked_at": now, "file_mtime": 0})
+        _tiktok_cookies_cache.update({"status": "missing", "message": "Chưa có cookies.txt ở thư mục gốc WebDAV", "checked_at": now, "file_mtime": 0, "expiry": 0, "expiry_str": "", "days_left": -1.0})
+        _add_system_log_once("tiktok_cookies_missing", "ERROR", "TikTokWatch", "Chưa có cookies.txt ở thư mục gốc WebDAV — watcher không phát hiện được live.", 86400)
         return dict(_tiktok_cookies_cache)
     try:
         mtime = os.path.getmtime(path)
@@ -14403,17 +14411,35 @@ def _check_cookies_status(force=False):
     if (not force) and (not file_changed) and (now - _tiktok_cookies_cache.get("checked_at", 0) < _TIKTOK_COOKIES_CHECK_INTERVAL):
         return dict(_tiktok_cookies_cache)
     expiry, sessionid = _parse_cookies_sessionid_expiry(path)
+    expiry_str = ""
+    days_left = -1.0
+    if expiry:
+        try:
+            expiry_str = datetime.datetime.fromtimestamp(expiry).strftime("%d/%m/%Y %H:%M")
+            days_left = round((expiry - now) / 86400.0, 1)
+        except Exception:
+            pass
     if not sessionid:
-        _tiktok_cookies_cache.update({"status": "missing", "message": "cookies.txt thiếu sessionid TikTok", "checked_at": now, "file_mtime": mtime})
+        _tiktok_cookies_cache.update({"status": "missing", "message": "cookies.txt thiếu sessionid TikTok", "checked_at": now, "file_mtime": mtime, "expiry": expiry or 0, "expiry_str": expiry_str, "days_left": days_left})
+        _add_system_log_once("tiktok_cookies_no_sessionid", "ERROR", "TikTokWatch", "cookies.txt thiếu sessionid TikTok — xuất lại file đầy đủ.", 86400)
         return dict(_tiktok_cookies_cache)
     if expiry and expiry < now:
-        _tiktok_cookies_cache.update({"status": "expired", "message": "Cookie sessionid hết hạn lúc %s. Vui lòng xuất lại cookies.txt." % datetime.datetime.fromtimestamp(expiry).strftime("%d/%m/%Y %H:%M"), "checked_at": now, "file_mtime": mtime})
+        _tiktok_cookies_cache.update({"status": "expired", "message": "Cookie sessionid hết hạn lúc %s. Vui lòng xuất lại cookies.txt." % (expiry_str or "?"), "checked_at": now, "file_mtime": mtime, "expiry": expiry, "expiry_str": expiry_str, "days_left": days_left})
+        _add_system_log_once("tiktok_cookies_expired", "ERROR", "TikTokWatch", "Cookies TikTok HẾT HẠN lúc %s — watcher mù, không ghi được live. Xuất lại cookies.txt." % (expiry_str or "?"), 86400)
         return dict(_tiktok_cookies_cache)
     ok, detail = _ping_tiktok_cookies(path)
     if ok:
-        _tiktok_cookies_cache.update({"status": "valid", "message": detail, "checked_at": now, "file_mtime": mtime})
+        if expiry and (expiry - now) <= _TIKTOK_COOKIES_EXPIRY_WARN_SEC:
+            _tiktok_cookies_cache.update({"status": "expiring_soon", "message": "Cookies TikTok sắp hết hạn (%s, còn ~%s ngày). Hãy xuất lại cookies.txt trước khi hết." % (expiry_str or "?", days_left), "checked_at": now, "file_mtime": mtime, "expiry": expiry, "expiry_str": expiry_str, "days_left": days_left})
+            _add_system_log_once("tiktok_cookies_expiring", "WARNING", "TikTokWatch", "Cookies TikTok SẮP HẾT HẠN %s (còn ~%s ngày) — xuất lại cookies.txt trước khi watcher mù." % (expiry_str or "?", days_left), 86400)
+        else:
+            prev = _tiktok_cookies_cache.get("status", "")
+            _tiktok_cookies_cache.update({"status": "valid", "message": detail, "checked_at": now, "file_mtime": mtime, "expiry": expiry or 0, "expiry_str": expiry_str, "days_left": days_left})
+            if prev in ("missing", "expired", "expiring_soon", "revoked"):
+                _add_system_log_once("tiktok_cookies_recovered", "INFO", "TikTokWatch", "Cookies TikTok đã sống trở lại (%s)." % detail, 3600)
     else:
-        _tiktok_cookies_cache.update({"status": "revoked", "message": detail, "checked_at": now, "file_mtime": mtime})
+        _tiktok_cookies_cache.update({"status": "revoked", "message": detail, "checked_at": now, "file_mtime": mtime, "expiry": expiry or 0, "expiry_str": expiry_str, "days_left": days_left})
+        _add_system_log_once("tiktok_cookies_revoked", "ERROR", "TikTokWatch", "Cookies TikTok BỊ THU HỒI / logout (%s) — watcher mù. Xuất lại cookies.txt." % detail, 86400)
     return dict(_tiktok_cookies_cache)
 
 def _is_tiktok_watch_excluded(now_dt=None):
@@ -15411,9 +15437,13 @@ def api_tiktok_live_watch_get():
             _save_tiktok_watch_state()
         resp = dict(_tiktok_watch_state)
     # Th?m trạng thái cookies de UI hien banner khi het han / bi thu hoi.
+    # Them expiry/expiry_str/days_left de app push canh bao truoc 3 ngay.
     cookies = _check_cookies_status()
     resp["cookies_status"] = cookies.get("status", "unknown")
     resp["cookies_message"] = cookies.get("message", "")
+    resp["cookies_expiry"] = cookies.get("expiry", 0) or 0
+    resp["cookies_expiry_str"] = cookies.get("expiry_str", "") or ""
+    resp["cookies_days_left"] = cookies.get("days_left", -1.0)
     daemon = dict(_tiktok_watch_runtime)
     try:
         heartbeat = daemon.get("last_heartbeat") or daemon.get("last_tick") or ""

@@ -37,61 +37,81 @@ private fun extractHost(url: String): String? {
 }
 
 fun scheduleIdleDuplicateScan(context: Context, currentUrl: String) {
-    val workManager = androidx.work.WorkManager.getInstance(context)
-    val constraints = androidx.work.Constraints.Builder()
-        .setRequiresDeviceIdle(true)
-        .setRequiresCharging(true)
-        .setRequiresBatteryNotLow(true)
-        .setRequiresStorageNotLow(true)
-        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
-        .build()
-    val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
-    val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
-        168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints).setInputData(inputData)
-        .build()
-    workManager.enqueueUniquePeriodicWork(
-        "Auto_Idle_Duplicate_Scan",
-        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicScanRequest
-    )
+    try {
+        val workManager = androidx.work.WorkManager.getInstance(context)
+        val constraints = androidx.work.Constraints.Builder()
+            .setRequiresDeviceIdle(true)
+            .setRequiresCharging(true)
+            .setRequiresBatteryNotLow(true)
+            .setRequiresStorageNotLow(true)
+            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+            .build()
+        val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
+        // LƯU Ý: Job idle (RequiresDeviceIdle) bị Android cấm kèm BackoffCriteria
+        // (JobInfo.build ném IllegalArgumentException) nên không đặt backoff ở đây.
+        val periodicScanRequest = androidx.work.PeriodicWorkRequestBuilder<DuplicateScanWorker>(
+            168, java.util.concurrent.TimeUnit.HOURS
+        ).setConstraints(constraints)
+            .setInputData(inputData)
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            "Auto_Idle_Duplicate_Scan",
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+            periodicScanRequest
+        )
+    } catch (e: Exception) {
+        Log.w("Power", "Không đặt lịch quét trùng lặp nhàn rỗi được: ${e.message}")
+    }
 }
 
 fun scheduleIdleSpeedTest(context: Context, currentUrl: String) {
-    val workManager = androidx.work.WorkManager.getInstance(context)
-    val constraints = androidx.work.Constraints.Builder()
-        .setRequiresDeviceIdle(true)
-        .setRequiresCharging(true)
-        .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
-        .build()
-    val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
-    val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
-        30, java.util.concurrent.TimeUnit.DAYS
-    ).setConstraints(constraints).setInputData(inputData)
-        .build()
-    workManager.enqueueUniquePeriodicWork(
-        "Auto_Idle_Speed_Test",
-        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicSpeedTestRequest
-    )
+    try {
+        val workManager = androidx.work.WorkManager.getInstance(context)
+        val constraints = androidx.work.Constraints.Builder()
+            .setRequiresDeviceIdle(true)
+            .setRequiresCharging(true)
+            .setRequiredNetworkType(androidx.work.NetworkType.UNMETERED)
+            .build()
+        val inputData = androidx.work.workDataOf("currentUrl" to currentUrl)
+        // LƯU Ý: Job idle (RequiresDeviceIdle) bị Android cấm kèm BackoffCriteria
+        // (JobInfo.build ném IllegalArgumentException) nên không đặt backoff ở đây.
+        val periodicSpeedTestRequest = androidx.work.PeriodicWorkRequestBuilder<IdleSpeedTestWorker>(
+            30, java.util.concurrent.TimeUnit.DAYS
+        ).setConstraints(constraints)
+            .setInputData(inputData)
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            "Auto_Idle_Speed_Test",
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+            periodicSpeedTestRequest
+        )
+    } catch (e: Exception) {
+        Log.w("Power", "Không đặt lịch đo tốc độ nhàn rỗi được: ${e.message}")
+    }
 }
 
 fun scheduleFingerprintWorker(context: Context) {
-    val workManager = androidx.work.WorkManager.getInstance(context)
-    val constraints = androidx.work.Constraints.Builder()
-        .setRequiresDeviceIdle(true)
-        .setRequiresCharging(true)
-        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-        .build()
-    val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
-        168, java.util.concurrent.TimeUnit.HOURS
-    ).setConstraints(constraints)
-        .build()
-    workManager.enqueueUniquePeriodicWork(
-        "Auto_Fingerprint_Worker",
-        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-        periodicRequest
-    )
+    try {
+        val workManager = androidx.work.WorkManager.getInstance(context)
+        val constraints = androidx.work.Constraints.Builder()
+            .setRequiresDeviceIdle(true)
+            .setRequiresCharging(true)
+            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+            .build()
+        // LƯU Ý: Job idle (RequiresDeviceIdle) bị Android cấm kèm BackoffCriteria
+        // (JobInfo.build ném IllegalArgumentException) nên không đặt backoff ở đây.
+        val periodicRequest = androidx.work.PeriodicWorkRequestBuilder<FingerprintWorker>(
+            168, java.util.concurrent.TimeUnit.HOURS
+        ).setConstraints(constraints)
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            "Auto_Fingerprint_Worker",
+            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+            periodicRequest
+        )
+    } catch (e: Exception) {
+        Log.w("Power", "Không đặt lịch quét vân tay nhàn rỗi được: ${e.message}")
+    }
 }
 
 suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String): Map<String, Long> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -170,6 +190,7 @@ fun sendDownloadLinkToQbittorrent(
             val request = okhttp3.Request.Builder()
                 .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/download")
                 .post(jsonBody)
+                .let(WebDavManager::tagCurrentAuth)
                 .build()
             val text = NasApplication.instance.fastApiClient.newCall(request).execute().use { it.body?.string() ?: "" }
             val o = try { org.json.JSONObject(text) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { org.json.JSONObject() }
@@ -221,6 +242,7 @@ fun uploadTorrentFileToNas(
             val req = okhttp3.Request.Builder()
                 .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/torrent/add_file")
                 .post(filePart)
+                .let(WebDavManager::tagCurrentAuth)
                 .build()
             val client = NasApplication.instance.fastApiClient.newBuilder()
                 .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()

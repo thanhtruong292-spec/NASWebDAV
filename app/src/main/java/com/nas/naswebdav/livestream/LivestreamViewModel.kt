@@ -93,6 +93,10 @@ class LivestreamViewModel(
         internal set
     var tiktokCookiesMessage by androidx.compose.runtime.mutableStateOf("")
         internal set
+    var tiktokCookiesExpiryStr by androidx.compose.runtime.mutableStateOf("")
+        internal set
+    var tiktokCookiesDaysLeft by androidx.compose.runtime.mutableStateOf(-1.0)
+        internal set
 
 
 
@@ -166,6 +170,17 @@ class LivestreamViewModel(
                         tiktokLiveWatchError = json.optString("error").ifEmpty { null }
                         tiktokCookiesStatus = json.optString("cookies_status", "unknown")
                         tiktokCookiesMessage = json.optString("cookies_message", "")
+                        // Cookies expiry alert: backend tra ngay het han + so ngay con lai
+                        // de UI hien banner truoc 3 ngay, khong doi chet moi biet.
+                        tiktokCookiesExpiryStr = json.optString("cookies_expiry_str", "")
+                        tiktokCookiesDaysLeft = json.optDouble("cookies_days_left", -1.0)
+                        com.nas.naswebdav.CookiesExpiryNotifier.checkAndNotify(
+                            NasApplication.instance,
+                            tiktokCookiesStatus,
+                            tiktokCookiesMessage,
+                            tiktokCookiesExpiryStr,
+                            tiktokCookiesDaysLeft
+                        )
                         val usersArr = json.optJSONArray("users")
                         tiktokLiveWatchUsers = if (usersArr != null) {
                             (0 until usersArr.length()).mapNotNull { idx ->

@@ -366,12 +366,15 @@ fun MainMenuScreen(
     }
     // ── SMART SWITCH: Tự động kiểm tra và chuyển mạng khi vào màn hình ──────
     // Kept as Unit: fires once on screen open to refresh the dashboard state.
+    // Lưu trữ dùng cache (số cũ hiện ngay, fetch nền làm mới) — không ép quét lại
+    // mỗi lần mở app; chỉ kéo-refresh tay mới ép (minIntervalMs = 0L).
     LaunchedEffect(Unit) {
         authVM.checkSmartNetwork(mContext)
-        deviceVM.fetchStorageUsage(minIntervalMs = 0L)
+        deviceVM.fetchStorageUsage()
         deviceVM.fetchSmartData(minIntervalMs = 0L)
         deviceVM.fetchOmvOverview(minIntervalMs = 0L)
         sysMonitorVM.fetchNasInsights(minIntervalMs = 0L)
+        sysMonitorVM.fetchStorageSummary()
         livestreamVM.syncLivestreamStateWithServer()
         sysMonitorVM.startDashboardMonitoring(resetStatusPoll = false)
     }

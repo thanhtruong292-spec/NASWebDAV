@@ -270,13 +270,48 @@ internal fun TikTokLiveWatchSection(
             )
         }
     }
-    // Banner trang thai cookies — chi hien khi co van de de tranh nhieu UI.
+    // Dòng trạng thái cookies — hiện LUÔN để user biết hạn cookies (valid cũng hiện,
+    // không đợi xấu mới báo). Banner cảnh báo chi tiết chỉ hiện khi xấu/sắp hết.
     val cookiesStatus = liveVM.tiktokCookiesStatus
-    if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked") {
+    val cookiesLine = when (cookiesStatus) {
+        "valid" -> {
+            val when_ = liveVM.tiktokCookiesExpiryStr.takeIf { it.isNotBlank() }?.let { " • Hết hạn: $it" } ?: ""
+            val left = if (liveVM.tiktokCookiesDaysLeft >= 0) " (còn ~${"%.0f".format(liveVM.tiktokCookiesDaysLeft)} ngày)" else ""
+            "Cookies TikTok: tốt$when_$left"
+        }
+        "expiring_soon" -> "Cookies TikTok: sắp hết hạn" + (liveVM.tiktokCookiesExpiryStr.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "")
+        "expired" -> "Cookies TikTok: đã hết hạn"
+        "revoked" -> "Cookies TikTok: bị thu hồi"
+        "missing" -> "Cookies TikTok: chưa có cookies.txt"
+        else -> "Cookies TikTok: đang kiểm tra..."
+    }
+    val cookiesLineColor = when (cookiesStatus) {
+        "valid" -> AccentGreen
+        "expiring_soon", "missing" -> AccentOrange
+        "expired", "revoked" -> AccentRed
+        else -> TextSecondary
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            if (cookiesStatus == "valid") Icons.Default.CheckCircle else Icons.Default.Info,
+            contentDescription = null, tint = cookiesLineColor, modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(cookiesLine, color = cookiesLineColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    if (cookiesStatus == "missing" || cookiesStatus == "expired" || cookiesStatus == "revoked" || cookiesStatus == "expiring_soon") {
         Spacer(Modifier.height(4.dp))
         val (bannerBg, bannerFg, label) = when (cookiesStatus) {
             "missing" -> Triple(AccentOrange.copy(alpha = 0.2f), AccentOrange, "Chưa có cookies.txt")
             "expired" -> Triple(AccentRed.copy(alpha = 0.2f), AccentRed, "Cookies TikTok hết hạn")
+            "expiring_soon" -> Triple(
+                AccentOrange.copy(alpha = 0.2f),
+                AccentOrange,
+                "Cookies TikTok sắp hết hạn" + (liveVM.tiktokCookiesExpiryStr.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "")
+            )
             else -> Triple(AccentRed.copy(alpha = 0.2f), AccentRed, "Cookies TikTok bị thu hồi")
         }
         Row(
@@ -299,8 +334,8 @@ internal fun TikTokLiveWatchSection(
             }
         }
     }
-    // List user theo doi — chi hien khi listExpanded == true. Mac dinh an de tiet kiem
-    // khong gian man hinh khi co nhieu user; user bam header de mo.
+    // List user theo dõi — chỉ hiện khi listExpanded == true. Mặc định ẩn để tiết kiệm
+    // không gian màn hình khi có nhiều user; user bấm header để mở.
     androidx.compose.animation.AnimatedVisibility(visible = users.isNotEmpty() && listExpanded) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 6.dp)) {
             users.forEach { user ->

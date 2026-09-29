@@ -482,6 +482,7 @@ class ScreenRecordService : Service() {
         var dropped = 0
         for (file in files) {
             if (!file.name.endsWith(".ts")) continue
+            if (file == currentSegmentFile) continue
             val marker = File(spoolDir, file.name.replace(".ts", ".ready"))
             total -= file.length()
             if (file.delete()) {

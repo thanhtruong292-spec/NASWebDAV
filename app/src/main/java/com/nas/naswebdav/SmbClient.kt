@@ -187,21 +187,22 @@ object SmbManager {
                 null
             )
 
-            val outputStream: OutputStream = file.outputStream
-            val bufferSize = 262144 // 256KB cho LAN throughput
-            val buffer = ByteArray(bufferSize)
-            var totalBytesRead = 0L
-            var bytesRead: Int
+            file.use { smbFile ->
+                smbFile.outputStream.use { outputStream ->
+                    val bufferSize = 262144 // 256KB cho LAN throughput
+                    val buffer = ByteArray(bufferSize)
+                    var totalBytesRead = 0L
+                    var bytesRead: Int
 
-            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                outputStream.write(buffer, 0, bytesRead)
-                totalBytesRead += bytesRead
-                onProgress(totalBytesRead, totalSize)
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        onProgress(totalBytesRead, totalSize)
+                    }
+
+                    outputStream.flush()
+                }
             }
-
-            outputStream.flush()
-            outputStream.close()
-            file.close()
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB upload failed: ${e.message}")
@@ -224,10 +225,9 @@ object SmbManager {
         return try {
             val localFile = java.io.File(localPath)
             if (!localFile.exists()) return false
-            val inputStream = localFile.inputStream()
-            val result = uploadFile(host, user, pass, share, remotePath, inputStream, localFile.length(), onProgress)
-            inputStream.close()
-            result
+            localFile.inputStream().use { inputStream ->
+                uploadFile(host, user, pass, share, remotePath, inputStream, localFile.length(), onProgress)
+            }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SmbClient", "SMB local file upload failed: ${e.message}")
             false

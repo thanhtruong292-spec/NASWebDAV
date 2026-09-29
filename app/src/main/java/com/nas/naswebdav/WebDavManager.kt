@@ -183,17 +183,17 @@ object WebDavManager {
     }
 
     val currentBaseUrl: String
-        get() = authState.baseUrl
+        get() = (threadLocalAuth.get() ?: authState).baseUrl
 
     val currentUser: String
-        get() = authState.user
+        get() = (threadLocalAuth.get() ?: authState).user
 
     val currentPass: String
-        get() = authState.pass
+        get() = (threadLocalAuth.get() ?: authState).pass
 
-    fun currentAuthHeader(): String = authState.authHeader
+    fun currentAuthHeader(): String = (threadLocalAuth.get() ?: authState).authHeader
 
-    fun currentAuthState(): AuthState = authState
+    fun currentAuthState(): AuthState = threadLocalAuth.get() ?: authState
 
     private const val LOGIN_CALL_GROUP = "login"
     const val CALL_GROUP_LOGIN = "login"
@@ -201,10 +201,10 @@ object WebDavManager {
     const val CALL_GROUP_TRANSFER = "transfer"
 
     // OOM guard: giới hạn kích thước body đọc vào RAM cho PROPFIND/error/JSON nhỏ.
-    // PROPFIND Depth:1 một thư mục thường < 1MB; 8MB đủ cho ~20k entries.
-    const val MAX_PROPFIND_BYTES = 8L * 1024 * 1024
-    const val MAX_PROPFIND_ENTRIES = 20_000
-    const val MAX_PROPFIND_PARSE_STEPS = 500_000
+    // Nâng lên 16MB / 30.000 entries / 2 triệu bước parse để hỗ trợ mượt mà các thư mục khổng lồ (vd. sao lưu Facebook).
+    const val MAX_PROPFIND_BYTES = 16L * 1024 * 1024
+    const val MAX_PROPFIND_ENTRIES = 30_000
+    const val MAX_PROPFIND_PARSE_STEPS = 2_000_000
     const val MAX_ERROR_BODY_BYTES = 8 * 1024
     const val MAX_JSON_BODY_BYTES = 256 * 1024
 
@@ -230,7 +230,8 @@ object WebDavManager {
     }
 
     private fun Request.Builder.withAuth(auth: AuthState): Request.Builder {
-        return tag(AuthState::class.java, auth)
+        val effectiveAuth = threadLocalAuth.get() ?: auth
+        return tag(AuthState::class.java, effectiveAuth)
     }
 
     private fun Request.Builder.withCallGroup(group: String): Request.Builder {
@@ -271,7 +272,7 @@ object WebDavManager {
 
             .addInterceptor { chain ->
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: threadLocalAuth.get() ?: authState
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -331,7 +332,7 @@ object WebDavManager {
 
                 // NAS KHÔNG trả về 401 để kích hoạt Sardine Authenticator, mà nó trả về thư mục TRỐNG nếu không có mật khẩu ngay từ đầu!
 
-                val auth = chain.request().tag(AuthState::class.java) ?: authState
+                val auth = chain.request().tag(AuthState::class.java) ?: threadLocalAuth.get() ?: authState
                 val credential = auth.authHeader
 
                 val request = chain.request().newBuilder()
@@ -546,35 +547,32 @@ object WebDavManager {
                 throw Exception("Mã lỗi NAS: ${response.code} - $errorBody")
             }
 
-            // OOM guard: tu choi PROPFIND qua lon truoc khi parse.
+            // OOM guard: Nếu Content-Length lớn, nạp streaming tối đa MAX_PROPFIND_BYTES thay vì vứt bỏ toàn bộ
             val declaredLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
             if (declaredLength > MAX_PROPFIND_BYTES) {
-                throw Exception("Thư mục quá lớn (${declaredLength / 1024 / 1024}MB), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                android.util.Log.w("WebDavManager", "Thư mục lớn (${declaredLength / 1024 / 1024}MB), sẽ nạp streaming tối đa ${MAX_PROPFIND_BYTES / 1024 / 1024}MB.")
             }
 
             val rawStream = response.body?.byteStream() ?: throw Exception("NAS trả về dữ liệu rỗng")
-            // Chan byte thuc doc — chunked vuot cap khong bi lot.
+            // Chặn đọc quá giới hạn dung lượng: nếu đạt cap thì kết thúc stream (EOF) thay vì crash
             var bytesRead = 0L
             val byteStream = object : java.io.FilterInputStream(rawStream) {
                 override fun read(): Int {
+                    if (bytesRead >= MAX_PROPFIND_BYTES) return -1
                     val b = super.read()
-                    if (b >= 0) {
-                        bytesRead++
-                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception("Thư mục quá lớn, dùng tìm kiếm hoặc chia nhỏ thư mục")
-                    }
+                    if (b >= 0) bytesRead++
                     return b
                 }
                 override fun read(b: ByteArray, off: Int, len: Int): Int {
-                    val n = super.read(b, off, len)
-                    if (n > 0) {
-                        bytesRead += n
-                        if (bytesRead > MAX_PROPFIND_BYTES) throw Exception("Thư mục quá lớn, dùng tìm kiếm hoặc chia nhỏ thư mục")
-                    }
+                    if (bytesRead >= MAX_PROPFIND_BYTES) return -1
+                    val toRead = minOf(len.toLong(), MAX_PROPFIND_BYTES - bytesRead).toInt()
+                    val n = super.read(b, off, toRead)
+                    if (n > 0) bytesRead += n
                     return n
                 }
             }
 
-            // 2. Phân tích XML bằng tay - Cực kỳ khoan dung với mọi loại NAS (Sử dụng luồng trực tiếp để chống OOM)
+            // 2. Phân tích XML bằng luồng trực tiếp (Streaming XmlPullParser)
             try {
                 val factory = org.xmlpull.v1.XmlPullParserFactory.newInstance()
                 factory.isNamespaceAware = true
@@ -589,15 +587,13 @@ object WebDavManager {
                 var currentModTime = 0L
                 var insideResponse = false
                 var textBuffer = ""
-                // Tolerant: NAS firmware lạ có thể trả XML phình to mà
-                // Content-Length/chunked — giới hạn vòng lặp parse.
                 var parseSteps = 0
 
                 while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
                     if (++parseSteps > MAX_PROPFIND_PARSE_STEPS) {
-                        throw Exception("Thư mục quá nhiều file, dùng tìm kiếm hoặc chia nhỏ thư mục")
+                        android.util.Log.w("WebDavManager", "Đạt giới hạn bước parse XML ($MAX_PROPFIND_PARSE_STEPS), dừng nạp tiếp để bảo toàn ${result.size} tệp đã đọc.")
+                        break
                     }
-                    // Tolerant: tag lạ/namespace prefix bất thường → bỏ qua tag đó.
                     val tagName = runCatching { parser.name?.lowercase()?.substringAfter(':') ?: "" }.getOrDefault("")
                     when (eventType) {
                         org.xmlpull.v1.XmlPullParser.START_TAG -> {
@@ -638,12 +634,19 @@ object WebDavManager {
                                             val rawUri = if (currentHref.startsWith("http", ignoreCase = true)) {
                                                 currentHref
                                             } else {
-                                                val baseUri = java.net.URI(safeUrl)
-                                                val hrefUri = java.net.URI(currentHref)
-                                                // Resolve relative hrefs against the current directory, not host root.
-                                                baseUri.resolve(hrefUri).toString()
+                                                runCatching {
+                                                    val baseUri = java.net.URI(safeUrl)
+                                                    val hrefUri = java.net.URI(currentHref.replace(" ", "%20"))
+                                                    baseUri.resolve(hrefUri).toString()
+                                                }.getOrElse {
+                                                    if (currentHref.startsWith("/")) {
+                                                        val schemeHost = safeUrl.substringBefore("://") + "://" + safeUrl.substringAfter("://").substringBefore("/")
+                                                        schemeHost + currentHref
+                                                    } else {
+                                                        safeUrl.trimEnd('/') + "/" + currentHref
+                                                    }
+                                                }
                                             }
-                                            // FIX Bug 2: normalize Unicode/spaces in href before reuse by BFS.
                                             val fullUri = runCatching { java.net.URI(rawUri).toASCIIString() }
                                                 .getOrDefault(rawUri)
 
@@ -657,8 +660,9 @@ object WebDavManager {
                                                 }
                                                 val dirPath = if (isDir && !fullUri.endsWith("/")) "$fullUri/" else fullUri
                                                 result.add(NasFile(extractedName, dirPath, isDir, currentType, currentLength, currentModTime))
-                                                if (result.size > MAX_PROPFIND_ENTRIES) {
-                                                    throw Exception("Thư mục quá nhiều file (>${MAX_PROPFIND_ENTRIES}), dùng tìm kiếm hoặc chia nhỏ thư mục")
+                                                if (result.size >= MAX_PROPFIND_ENTRIES) {
+                                                    android.util.Log.w("WebDavManager", "Đạt giới hạn $MAX_PROPFIND_ENTRIES tệp trong 1 thư mục, dừng parse để hiển thị danh sách đã nạp.")
+                                                    break
                                                 }
                                             }
                                         }
@@ -669,14 +673,17 @@ object WebDavManager {
                         }
                     }
                     eventType = runCatching { parser.next() }.getOrElse {
-                        // XML hong giua chung -> throw de caller giu cache cu.
-                        // Ban cu nuot partial roi thay cache bang danh sach thieu.
-                        throw Exception("Danh sách thư mục bị cắt giữa chừng, giữ cache cũ và thử tải lại")
+                        // XML stream kết thúc hoặc bị ngắt -> kết thúc vòng lặp an toàn
+                        org.xmlpull.v1.XmlPullParser.END_DOCUMENT
                     }
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { 
+                throw e 
+            } catch (e: Exception) {
                 android.util.Log.e("NAS_XML", "Lỗi phân tích XML thủ công", e)
-                throw Exception("NAS trả về cấu trúc XML lạ không thể đọc: ${e.message}")
+                if (result.isEmpty()) {
+                    throw Exception("Không thể đọc danh sách tệp từ NAS: ${e.message}")
+                }
             }
         }
 

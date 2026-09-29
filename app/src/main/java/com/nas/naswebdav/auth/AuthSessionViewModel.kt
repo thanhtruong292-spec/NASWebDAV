@@ -108,7 +108,7 @@ class AuthSessionViewModel(
                 val jobs = urlList.map { activeUrl ->
                     launch(Dispatchers.IO) {
                         if (activeUrl.isBlank()) {
-                            channel.send(Pair(false, ""))
+                            channel.trySend(Pair(false, ""))
                             return@launch
                         }
 
@@ -137,14 +137,14 @@ class AuthSessionViewModel(
                             pingClient.newCall(request).execute().use { response ->
                                 if (response.isSuccessful) {
                                     recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
-                                    channel.send(Pair(true, safeUrl))
+                                    channel.trySend(Pair(true, safeUrl))
                                 } else {
-                                    channel.send(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
+                                    channel.trySend(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
                                 }
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                             android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
-                            channel.send(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
+                            channel.trySend(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
                         }
                     }
                 }

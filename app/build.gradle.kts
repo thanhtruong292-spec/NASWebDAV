@@ -68,8 +68,8 @@ android {
         applicationId = "com.nas.naswebdav"
         minSdk = 26
         targetSdk = 35
-        versionCode = gitCommitCount
-        versionName = "$baseVersionName.$gitCommitCount$gitDirtySuffix ($gitShortSha · $buildStamp)"
+        versionCode = maxOf(gitCommitCount, 114)
+        versionName = "$baseVersionName.${maxOf(gitCommitCount, 114)}$gitDirtySuffix ($gitShortSha · $buildStamp)"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures {

@@ -111,6 +111,15 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
         // FIX D2b: Đã trong withContext(IO) → gọi suspend fun trực tiếp, không cần runBlocking
         val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        // P2-muc3+muc4: accountKey + sourceKey on dinh cho fingerprint scope.
+        val backupUser = SecurePrefsHelper.getUser(applicationContext)
+        val backupAccountKey = runCatching {
+            val u = java.net.URL(baseUrl)
+            val host = u.host ?: baseUrl
+            val port = u.port.takeIf { it > 0 } ?: u.defaultPort
+            val root = u.path.trimEnd('/').ifEmpty { "/" }
+            "$backupUser@$host:$port$root"
+        }.getOrDefault("$backupUser@$baseUrl")
         val settingsPrefs = SecurePrefsHelper.getSettingsPrefs(applicationContext)
         val deleteAfterBackup = settingsPrefs.getBoolean("delete_after_backup", false)
         val webDavManager = loadWebDavManager() ?: run {
@@ -267,56 +276,74 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         val fileUri = android.content.ContentUris.withAppendedId(mediaUri, id)
                         try {
                             val fileHash: String? = try { com.nas.naswebdav.utils.ImageFingerprint.computeFromUri(applicationContext, fileUri) } catch (_: Exception) { null }
+                            // F5+F6 + P2-muc3+muc4: skip phai chung minh noi dung
+                            // KHONG DOI tren DUNG NAS/tai khoan.
+                            // - Ung vien: fingerprint cung aHash+size+accountKey
+                            //   (khong dung ban NAS A cho NAS B) + fallback theo
+                            //   sourceKey khi khong aHash.
+                            // - Moi ung vien: HEAD size -> 1MB loc nhanh ->
+                            //   full-hash chot. Khop bat ky ban nao -> skip.
+                            // - Khong aHash: tim theo sourceKey+account, so
+                            //   contentHash da luu voi full-hash hien tai + verify
+                            //   remote; khop -> skip (khong tao versioned moi).
+                            val sourceKey = "media:$id"
                             var isSkipped = false
-                            // F5: skip phai chung minh noi dung KHONG DOI, khong chi
-                            // 1MB dau. Ban cu: dich dung + size + 1MB khop la skip —
-                            // file doi phan cuoi van bi bo sot (khong luu ban moi).
-                            // Quy tac moi (2 vong, re dan dat):
-                            // vong 1 (re): dich dung + size khop + 1MB khop;
-                            // vong 2 (chot): full SHA-256 remote khop local.
-                            // Rot vong 2 -> khong skip -> upload lai, P2-2 phan
-                            // biet khong-doi/da-sua (verify dich -> versioned).
-                            // F6: ung vien la MOI fingerprint cung aHash+size (ke ca
-                            // ban versioned __v...), khong chi dich goc. Ban cu loc
-                            // fp.filePath == targetFileNasPath -> ban versioned bi
-                            // loai -> luot sau lai thay khac ban goc -> tao them
-                            // phien ban du nguon khong doi. Moi ung vien verify
-                            // full-hash voi nguon; khop bat ky ban nao -> skip.
-                            if (fileHash != null) {
-                                val candidates = db.fingerprintDao().findByHashAndSize(fileHash, fileSize)
-                                for (fp in candidates) {
-                                    if (fp.filePath.isEmpty()) continue
-                                    val headers = try {
-                                        webDavManager.headFileHeaders(fp.filePath)
-                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { null }
-                                    val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
-                                    if (headers == null || remoteLen != fileSize) continue
-                                    val remotePartial = try {
-                                        webDavManager.getSha256PhoneStream(fp.filePath)
-                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { null }
-                                    val localPartial = try {
-                                        applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
-                                            com.nas.naswebdav.utils.HashUtils.computeSha256Partial(ins, 1048576L)
-                                        }
-                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { null }
-                                    if (remotePartial == null || localPartial == null || remotePartial != localPartial) continue
-                                    // Vong 2: full-hash remote vs local.
-                                    val remoteFull = try {
-                                        webDavManager.getFullSha256PhoneStream(fp.filePath, fileSize)
-                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (_: Exception) { null }
-                                    val localFull = try {
+                            val fpDao = db.fingerprintDao()
+                            val candidates: List<FileFingerprint> = if (fileHash != null) {
+                                fpDao.findByHashSizeAccount(fileHash, fileSize, backupAccountKey)
+                            } else {
+                                fpDao.findBySource(sourceKey, backupAccountKey)
+                            }
+                            for (fp in candidates) {
+                                if (fp.filePath.isEmpty()) continue
+                                // P2-muc4 (khong aHash): so contentHash da luu voi
+                                // full-hash hien tai cua nguon truoc — khac nhau
+                                // nghia la nguon da doi tu luc luu -> khong skip
+                                // bang ban cu (di tiep upload/versioned).
+                                var localFull: String? = null
+                                if (fileHash == null) {
+                                    if (fp.contentHash.isEmpty()) continue
+                                    localFull = try {
                                         applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
                                             com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(ins)
                                         }
                                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                     catch (_: Exception) { null }
-                                    if (remoteFull != null && localFull != null && remoteFull == localFull) {
-                                        isSkipped = true; break
+                                    if (localFull == null || localFull != fp.contentHash) continue
+                                }
+                                val headers = try {
+                                    webDavManager.headFileHeaders(fp.filePath)
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                val remoteLen = headers?.get("Content-Length")?.toLongOrNull()
+                                if (headers == null || remoteLen != fileSize) continue
+                                val remotePartial = try {
+                                    webDavManager.getSha256PhoneStream(fp.filePath)
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                val localPartial = try {
+                                    applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                        com.nas.naswebdav.utils.HashUtils.computeSha256Partial(ins, 1048576L)
                                     }
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                if (remotePartial == null || localPartial == null || remotePartial != localPartial) continue
+                                // Vong 2: full-hash remote vs local (tan dung
+                                // localFull da tinh o nhanh khong-aHash).
+                                val remoteFull = try {
+                                    webDavManager.getFullSha256PhoneStream(fp.filePath, fileSize)
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                if (localFull == null) {
+                                    localFull = try {
+                                        applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                            com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(ins)
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (_: Exception) { null }
+                                }
+                                if (remoteFull != null && localFull != null && remoteFull == localFull) {
+                                    isSkipped = true; break
                                 }
                             }
                             
@@ -435,6 +462,8 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                             }
                                             break
                                         }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
                                     } catch (e: Exception) {
                                         android.util.Log.w("AutoBackup", "SMB attempt $smbAttempt failed for $fileName: ${e.message}")
                                     }
@@ -638,7 +667,27 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                                         "Noi dung/phien ban khong khop hoac khong du bang chung ($fileName) — giu nguon, khong xoa.")
                                 }
                             }
-                            if (fileHash != null && uploadVerified) db.fingerprintDao().insertFingerprint(FileFingerprint(filePath = verifyTarget, hash = fileHash, fileName = fileName, fileSize = fileSize))
+                            // P2-muc3+muc4: luu kem accountKey + sourceKey + contentHash.
+                            // contentHash = full SHA-256 nguon sau verify (tinh 1 lan
+                            // o day de vong skip sau so truc tiep, ke ca khi khong
+                            // aHash). Ghi ca khi fileHash null (hash="").
+                            if (uploadVerified) {
+                                val verifiedContentHash = try {
+                                    applicationContext.contentResolver.openInputStream(fileUri)?.use { ins ->
+                                        com.nas.naswebdav.utils.HashUtils.computeSha256OnPhone(ins)
+                                    }
+                                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { null }
+                                db.fingerprintDao().insertFingerprint(FileFingerprint(
+                                    filePath = verifyTarget,
+                                    hash = fileHash ?: "",
+                                    fileName = fileName,
+                                    fileSize = fileSize,
+                                    accountKey = backupAccountKey,
+                                    sourceKey = sourceKey,
+                                    contentHash = verifiedContentHash ?: ""
+                                ))
+                            }
                             if (deleteAfterBackup && uploadVerified) applicationContext.contentResolver.delete(ContentUris.withAppendedId(mediaUri, id), null, null)
                             if (!uploadVerified && !smbUploadOk) {
                                 SystemLogger.log("WARNING", "AutoBackup",

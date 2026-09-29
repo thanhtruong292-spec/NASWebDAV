@@ -22,10 +22,19 @@
 
 # ─── WorkManager Workers ─────────────────────────────────────────────────────
 # R8 sẽ xóa Worker class nếu không có rules này → WorkManager crash khi enqueue
+# FIX crash 30/09/2026: giữ thêm androidx.work.** để stack trace bản release
+# đọc được tên lớp thật thay vì X3.I.c (không đổi hành vi runtime).
+-keep class androidx.work.** { *; }
+-keepclassmembers class androidx.work.** { *; }
+-dontwarn androidx.work.**
 -keep class * extends androidx.work.Worker { *; }
 -keep class * extends androidx.work.CoroutineWorker { *; }
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class com.nas.naswebdav.*Worker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+    *;
 }
 
 # ─── WebSocket Callback ──────────────────────────────────────────────────────

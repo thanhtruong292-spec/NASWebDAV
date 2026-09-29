@@ -240,6 +240,22 @@ class PreferencesRepository(context: Context) {
         prefs(PREFS_NAS).edit().putBoolean(KEY_SCREEN_RECORD_QUICK, added).apply()
     }
 
+    // ─── Storage cache (DashboardStorageCard): giữ số liệu lần quét gần nhất ───
+    // Mở app hiện số cũ ngay, fetch nền làm mới sau — không còn load trắng mỗi lần mở.
+    fun getStorageSummaryJson(): String =
+        prefs(PREFS_CACHE).getString(KEY_STORAGE_SUMMARY, "") ?: ""
+
+    fun setStorageSummaryJson(json: String) {
+        prefs(PREFS_CACHE).edit().putString(KEY_STORAGE_SUMMARY, json).apply()
+    }
+
+    fun getStorageUsageJson(): String =
+        prefs(PREFS_CACHE).getString(KEY_STORAGE_USAGE, "") ?: ""
+
+    fun setStorageUsageJson(json: String) {
+        prefs(PREFS_CACHE).edit().putString(KEY_STORAGE_USAGE, json).apply()
+    }
+
     // UX3: che do dashboard Tinh gon (chi file/backup/media) vs Chuyen gia
     // (day du widget sysadmin). Luu prefs de giu lua chon qua session.
     fun isDashboardSimpleMode(): Boolean =
@@ -274,6 +290,8 @@ class PreferencesRepository(context: Context) {
         const val KEY_ALERT_CPU = "alert_cpu_threshold"
         const val KEY_ALERT_RAM = "alert_ram_threshold"
         const val KEY_LAST_CACHE_CLEAR = "last_cache_clear"
+        const val KEY_STORAGE_SUMMARY = "storage_summary_json"
+        const val KEY_STORAGE_USAGE = "storage_usage_json"
         const val VIEWED_FILES_LIMIT = 5000
         const val SEARCH_HISTORY_LIMIT = 15
 

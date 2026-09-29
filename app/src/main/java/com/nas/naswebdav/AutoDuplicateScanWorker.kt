@@ -217,10 +217,13 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                 for (file in uniqueGroup) { val hash = hashResult[file.path]; if (!hash.isNullOrEmpty()) hashGroups.getOrPut(hash) { mutableListOf() }.add(file) }
                 for ((_, identicalFiles) in hashGroups) {
                     if (identicalFiles.size > 1) {
-                        // F3: hash GAN VOI ETAG tu dau. Moi file: chup ETag truoc,
-                        // hash duoi ETag do (If-Match + recheck), nhom theo cap
-                        // (hash, etag). ETag lay sau hash co the la phien ban chua
-                        // duyet -> MOVE sai. Thieu/yeu ETag -> bo ca nhom.
+                        // F3 (sua hoi quy nhom ETag): NHOM THEO HASH NOI DUNG,
+                        // ETag rieng tung file. Ban cu nhom theo cap (hash,etag)
+                        // -> hai file cung SHA-256 nhung ETag "v1"/"v2" roi hai
+                        // nhom don -> khong nhan la trung. Quy tac moi: nhom theo
+                        // hash; moi file giu ETag rieng da chup cung hash de
+                        // survivor/victim check + MOVE If-Match theo ETag cua
+                        // chinh file do.
                         val fullHashes = mutableMapOf<String, Pair<String, String>>()
                         val hashSnapshot = mutableMapOf<String, Pair<Long, Long>>()
                         var fullOk = true
@@ -237,17 +240,17 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                             hashSnapshot[file.path] = Pair(file.contentLength, file.lastModified)
                         }
                         if (!fullOk) continue
-                        val verified = fullHashes.entries.groupBy({ it.value }, { it.key })
+                        val verified = fullHashes.entries.groupBy({ it.value.first }, { it.key })
                             .filter { it.value.size > 1 }
-                        for ((hashEtag, paths) in verified) {
-                            val (expectedHash, boundEtag) = hashEtag
+                        for ((expectedHash, paths) in verified) {
                             val verifiedFiles = identicalFiles.filter { it.path in paths }
                             if (verifiedFiles.size < 2) continue
                             val sorted = verifiedFiles.sortedWith(compareBy({ it.path.length }, { it.lastModified }))
                             // Survivor = sorted.first(). ETag hien tai phai DUNG
-                            // ETag da chup (khong hash lai, khong lay ETag moi) —
-                            // doi la bo nhom.
+                            // ETag RIENG da chup cua chinh survivor (khong dung
+                            // chung boundEtag) — doi la bo nhom.
                             val survivor = sorted.first()
+                            val survivorBoundEtag = fullHashes[survivor.path]?.second
                             val survivorSnap = hashSnapshot[survivor.path]
                             val survivorEtagNow = try {
                                 webDavManager.headFileHeaders(survivor.path)?.get("ETag")?.trim()
@@ -257,9 +260,9 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                 webDavManager.headFileHeaders(survivor.path)?.get("Content-Length")?.toLongOrNull()
                             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                             catch (_: Exception) { null }
-                            val survivorOk = survivorSnap != null &&
+                            val survivorOk = survivorSnap != null && survivorBoundEtag != null &&
                                 survivorLen != null && survivorLen == survivorSnap.first &&
-                                survivorEtagNow != null && survivorEtagNow == boundEtag
+                                survivorEtagNow != null && survivorEtagNow == survivorBoundEtag
                             if (!survivorOk) {
                                 SystemLogger.log("WARNING", "AutoClean",
                                     "Bỏ qua nhóm (survivor đổi/mất sau hash): ${survivor.path}")
@@ -273,26 +276,27 @@ class AutoDuplicateScanWorker(appContext: Context, workerParams: WorkerParameter
                                     kotlinx.coroutines.delay(500)
                                 }
                                 if (!isActive) break
-                                // Victim: ETag hien tai phai DUNG ETag da chup cung
-                                // hash (khong lay ETag moi). Size van check de loai
-                                // som. Thieu/khac -> bo qua, khong MOVE.
+                                // Victim: ETag hien tai phai DUNG ETag RIENG da chup
+                                // cung hash cua chinh file nay (khong lay ETag moi,
+                                // khong dung chung boundEtag). Size van check de
+                                // loai som. Thieu/khac -> bo qua, khong MOVE.
                                 val snap = hashSnapshot[trashFile.path]
+                                val victimBoundEtag = fullHashes[trashFile.path]?.second
                                 val victimHeaders = try {
                                     webDavManager.headFileHeaders(trashFile.path)
                                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                                 catch (_: Exception) { null }
                                 val victimLen = victimHeaders?.get("Content-Length")?.toLongOrNull()
                                 val victimEtagNow = victimHeaders?.get("ETag")?.trim()?.takeIf { it.isNotEmpty() }
-                                if (snap == null || victimLen == null || victimLen != snap.first ||
-                                    victimEtagNow == null || victimEtagNow != boundEtag) {
+                                if (snap == null || victimBoundEtag == null || victimLen == null || victimLen != snap.first ||
+                                    victimEtagNow == null || victimEtagNow != victimBoundEtag) {
                                     SystemLogger.log("WARNING", "AutoClean",
                                         "Bỏ qua (đổi phiên bản sau hash): ${trashFile.path}")
                                     continue
                                 }
-                                // F3: MOVE voi CHINH ETag da chup cung hash (boundEtag).
-                                // Verify sau MOVE that bai -> moveFileToTrash tra
-                                // false (khong tinh success am tham).
-                                if (moveFileToTrash(authCtx, trashFile.path, boundEtag, expectedHash)) { movedCount++; savedBytes += trashFile.contentLength }
+                                // F3: MOVE voi CHINH ETag da chup cung hash cua file
+                                // nay. Verify sau MOVE that bai -> tra false.
+                                if (moveFileToTrash(authCtx, trashFile.path, victimBoundEtag, expectedHash)) { movedCount++; savedBytes += trashFile.contentLength }
                             }
                         }
                     }

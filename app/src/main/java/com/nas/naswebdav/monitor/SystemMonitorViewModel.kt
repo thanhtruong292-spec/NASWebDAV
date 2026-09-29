@@ -121,11 +121,59 @@ class SystemMonitorViewModel(
         internal set
 
     // ═══ STORAGE SUMMARY (thong ke file toan NAS) ═══
-
-    var storageSummary by androidx.compose.runtime.mutableStateOf(StorageSummary())
+    // Đọc cache lần quét trước để mở app hiện số cũ ngay, fetch nền làm mới sau.
+    var storageSummary by androidx.compose.runtime.mutableStateOf(readCachedStorageSummary())
         internal set
     var isFetchingStorageSummary by androidx.compose.runtime.mutableStateOf(false)
         internal set
+
+    companion object {
+        private fun readCachedStorageSummary(): StorageSummary {
+            return try {
+                val raw = com.nas.naswebdav.utils.PreferencesRepository
+                    .get(com.nas.naswebdav.NasApplication.instance)
+                    .getStorageSummaryJson()
+                if (raw.isBlank()) return StorageSummary()
+                parseStorageSummaryJson(org.json.JSONObject(raw))
+            } catch (_: Exception) { StorageSummary() }
+        }
+
+        internal fun parseStorageSummaryJson(json: org.json.JSONObject): StorageSummary {
+            fun typeObj(key: String): org.json.JSONObject = json.optJSONObject("by_type")?.optJSONObject(key) ?: org.json.JSONObject()
+            val img = typeObj("image")
+            val vid = typeObj("video")
+            val doc = typeObj("doc")
+            val aud = typeObj("audio")
+            val arc = typeObj("archive")
+            val oth = typeObj("other")
+            val largestArr = json.optJSONArray("largest")
+            val largest: List<LargestFile> = largestArr?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
+                    LargestFile(path = it.optString("path", ""), bytes = it.optLong("bytes", 0L))
+                }
+            } ?: emptyList()
+            return StorageSummary(
+                totalFiles = json.optInt("total_files", 0),
+                totalDirs = json.optInt("total_dirs", 0),
+                totalBytes = json.optLong("total_bytes", 0L),
+                imageFiles = img.optInt("files", 0),
+                imageBytes = img.optLong("bytes", 0L),
+                videoFiles = vid.optInt("files", 0),
+                videoBytes = vid.optLong("bytes", 0L),
+                docFiles = doc.optInt("files", 0),
+                docBytes = doc.optLong("bytes", 0L),
+                audioFiles = aud.optInt("files", 0),
+                audioBytes = aud.optLong("bytes", 0L),
+                archiveFiles = arc.optInt("files", 0),
+                archiveBytes = arc.optLong("bytes", 0L),
+                otherFiles = oth.optInt("files", 0),
+                otherBytes = oth.optLong("bytes", 0L),
+                largest = largest,
+                partial = json.optBoolean("partial", false),
+                updatedAt = json.optLong("cached_at", 0L)
+            )
+        }
+    }
 
     /** Timestamp de PanelFreshnessTag hien do tuoi du lieu (giong lastMetricsRefreshAt). */
     fun storageUpdatedAt(now: Long): Long = storageSummary.updatedAt
@@ -210,10 +258,10 @@ class SystemMonitorViewModel(
                     val diskCapacity = diskPartsStrArr.getOrNull(1) ?: ""
                     
                     val fanRpmRaw = json.opt("fan_rpm")
-                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Int) else null
+                    val fanRpm = if (fanRpmRaw != null && fanRpmRaw != org.json.JSONObject.NULL) (fanRpmRaw as? Number)?.toInt() else null
 
                     val fanPctRaw = json.opt("fan_percent")
-                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Int) else null
+                    val fanPercent = if (fanPctRaw != null && fanPctRaw != org.json.JSONObject.NULL) (fanPctRaw as? Number)?.toInt() else null
 
                     val newStatus = NasSystemStatus(
                         temp = json.optString("temperature", "--°C"),
@@ -781,41 +829,16 @@ class SystemMonitorViewModel(
                 val req = okhttp3.Request.Builder().url(url).get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
-                    val json = org.json.JSONObject(resp.body?.string() ?: "{}")
+                    val raw = resp.body?.string() ?: "{}"
+                    val json = org.json.JSONObject(raw)
                     if (json.has("error")) return@use
-                    fun typeObj(key: String): org.json.JSONObject = json.optJSONObject("by_type")?.optJSONObject(key) ?: org.json.JSONObject()
-                    val img = typeObj("image")
-                    val vid = typeObj("video")
-                    val doc = typeObj("doc")
-                    val aud = typeObj("audio")
-                    val arc = typeObj("archive")
-                    val oth = typeObj("other")
-                    val largestArr = json.optJSONArray("largest")
-                    val largest: List<LargestFile> = largestArr?.let { arr ->
-                        (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map {
-                            LargestFile(path = it.optString("path", ""), bytes = it.optLong("bytes", 0L))
-                        }
-                    } ?: emptyList()
-                    val parsed = StorageSummary(
-                        totalFiles = json.optInt("total_files", 0),
-                        totalDirs = json.optInt("total_dirs", 0),
-                        totalBytes = json.optLong("total_bytes", 0L),
-                        imageFiles = img.optInt("files", 0),
-                        imageBytes = img.optLong("bytes", 0L),
-                        videoFiles = vid.optInt("files", 0),
-                        videoBytes = vid.optLong("bytes", 0L),
-                        docFiles = doc.optInt("files", 0),
-                        docBytes = doc.optLong("bytes", 0L),
-                        audioFiles = aud.optInt("files", 0),
-                        audioBytes = aud.optLong("bytes", 0L),
-                        archiveFiles = arc.optInt("files", 0),
-                        archiveBytes = arc.optLong("bytes", 0L),
-                        otherFiles = oth.optInt("files", 0),
-                        otherBytes = oth.optLong("bytes", 0L),
-                        largest = largest,
-                        partial = json.optBoolean("partial", false),
-                        updatedAt = System.currentTimeMillis()
-                    )
+                    val parsed = parseStorageSummaryJson(json).copy(updatedAt = System.currentTimeMillis())
+                    try {
+                        json.put("cached_at", parsed.updatedAt)
+                        com.nas.naswebdav.utils.PreferencesRepository
+                            .get(com.nas.naswebdav.NasApplication.instance)
+                            .setStorageSummaryJson(json.toString())
+                    } catch (_: Exception) {}
                     withContext(Dispatchers.Main) {
                         storageSummary = parsed
                     }

@@ -114,7 +114,8 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_14_15,
                 MIGRATION_15_16,
                 MIGRATION_16_17,
-                MIGRATION_17_18 // P2-8: files_cache.accountKey
+                MIGRATION_17_18, // P2-8: files_cache.accountKey
+                MIGRATION_18_19 // P2-muc3+muc4: file_fingerprints accountKey/sourceKey/contentHash
             )
             // FIX F1 CRITICAL: Không dùng fallbackToDestructiveMigration() nữa.
             // Migration v13→v14→v15 là no-op (cùng identityHash) — explicit migrations
@@ -166,13 +167,19 @@ open class NasApplication : Application(), ImageLoaderFactory {
             // tagCurrentAuth() chỉ gắn AuthState làm OkHttp tag — không có interceptor này thì
             // header không bao giờ được gửi đi (fastApiClient khác với optimizedClient của WebDavManager).
             .addInterceptor { chain ->
-                val authState = WebDavManager.currentAuthState()
-                val req = if (authState.user.isNotEmpty()) {
-                    chain.request().newBuilder()
-                        .header("Authorization", authState.authHeader)
-                        .build()
+                val request = chain.request()
+                val req = if (request.header("Authorization") != null) {
+                    request
                 } else {
-                    chain.request()
+                    val authState = request.tag(WebDavManager.AuthState::class.java)
+                        ?: WebDavManager.currentAuthState()
+                    if (authState.user.isNotEmpty()) {
+                        request.newBuilder()
+                            .header("Authorization", authState.authHeader)
+                            .build()
+                    } else {
+                        request
+                    }
                 }
                 chain.proceed(req)
             }
@@ -381,10 +388,21 @@ open class NasApplication : Application(), ImageLoaderFactory {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {}
         }
 
-        // Dang ky Discovery Worker dinh ky de bat cac job livestream do NAS tu
-        // khoi (TikTok watcher auto-record). Khong co worker nay thi khi user
-        // dong app, may dien thoai khong bao gio biet co job ngam dang chay.
-        LivestreamDiscoveryWorker.schedule(this)
+        // Đăng ký Discovery Worker định kỳ để bắt các job livestream do NAS tự
+        // khởi (TikTok watcher auto-record). Không có worker này thì khi user
+        // đóng app, máy điện thoại không bao giờ biết có job ngầm đang chạy.
+        // Bọc try-catch: lỗi đặt lịch WorkManager không được phép crash app.
+        try {
+            LivestreamDiscoveryWorker.schedule(this)
+        } catch (e: Exception) {
+            android.util.Log.w("NasApp", "Không đặt lịch LivestreamDiscovery được: ${e.message}")
+        }
+        // Cảnh báo cookies TikTok sắp hết / đã hết mỗi giờ, kể cả khi app đóng.
+        try {
+            CookiesExpiryWorker.schedule(this)
+        } catch (e: Exception) {
+            android.util.Log.w("NasApp", "Không đặt lịch CookiesExpiry được: ${e.message}")
+        }
     }
 }
 

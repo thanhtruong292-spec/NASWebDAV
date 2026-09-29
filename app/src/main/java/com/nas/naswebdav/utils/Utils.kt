@@ -432,8 +432,9 @@ object ImageFingerprint {
                     var sampleSize = 1
                     while (info.size.width / sampleSize > 300 || info.size.height / sampleSize > 300) sampleSize *= 2
                     val targetSize = android.util.Size(info.size.width / sampleSize, info.size.height / sampleSize)
-                    decoder.setTargetSize(targetSize.width.coerceAtLeast(1), targetSize.height.coerceAtLeast(1))
-                    try { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_HARDWARE } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE }
+                    // Dùng ALLOCATOR_SOFTWARE để cho phép đọc pixel qua getPixels() trong computeAHash.
+                    // ALLOCATOR_HARDWARE cấm CPU đọc pixel và ném IllegalStateException.
+                    decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
                 }
             } else {
                 val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
