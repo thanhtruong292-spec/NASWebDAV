@@ -988,6 +988,18 @@ init_db()
 # ============ LAN IP WHITELIST ============
 # Đọc danh sách IP LAN được phep truy cap (không cần Tailscale)
 # File /etc/nas/lan_whitelist.conf, moi dong 1 IP hoac CIDR (vd: 192.168.1.0/24)
+# Regex validate input de chong Command Injection
+_RE_SAFE_IP = _re_module.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+_RE_SAFE_CIDR = _re_module.compile(r'^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$')
+
+def _validate_ip(ip):
+    """Validate IP address format. Return True if valid."""
+    return bool(ip and _RE_SAFE_IP.match(ip))
+
+def _validate_cidr(cidr):
+    """Validate CIDR subnet format. Return True if valid."""
+    return bool(cidr and _RE_SAFE_CIDR.match(cidr))
+
 _lan_whitelist = set()
 _lan_subnets = []
 
@@ -14550,6 +14562,21 @@ def _tiktok_sigi_object_slice(html):
     """
     if not html:
         return ""
+    # TikTok nhúng state trong thẻ <script id="SIGI_STATE" type="application/json">
+    # hoặc <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">
+    # Lưu ý: SIGI_STATE chứa LiveRoom và stream_data đầy đủ nên phải ưu tiên tìm trước.
+    m = _re_module.search(r'<script[^>]*id=["\']SIGI_STATE["\'][^>]*>(.*?)</script>', html, _re_module.DOTALL)
+    if m:
+        content = m.group(1).strip()
+        if content.startswith("{") and content.endswith("}"):
+            return content
+
+    m2 = _re_module.search(r'<script[^>]*id=["\']__UNIVERSAL_DATA_FOR_REHYDRATION__["\'][^>]*>(.*?)</script>', html, _re_module.DOTALL)
+    if m2:
+        content = m2.group(1).strip()
+        if content.startswith("{") and content.endswith("}"):
+            return content
+
     lowered = html.lower()
     # FIX-AUDIT-L6: SIGI_STATE=null; roi object script khac co the bi nhan lam
     # state (html.find('{',idx) nhay qua null). Duyet tung marker: neu giua
@@ -14608,7 +14635,7 @@ def _parse_tiktok_live_room_state(html):
     TikTok no longer inlines raw .flv/.m3u8 URLs in the live page HTML; the
     authoritative signal lives in the embedded app state (SIGI_STATE / webapp
     sharing / __INITIAL_STATE__) as a LiveRoom object with liveRoomStatus
-    (1=live, 2=preparing, 3=replay/paused, 4=ended) and roomId.
+    (1=live, 2=live, 3=replay/paused, 4=ended) and roomId.
     Returns (is_live, room_id, status, detail).
     """
     if not html:
@@ -14667,7 +14694,7 @@ def _dig_tiktok_room(state):
             return cand["liveRoom"]
         if "liveRoomUserInfo" in cand and isinstance(cand["liveRoomUserInfo"], dict):
             return cand["liveRoomUserInfo"].get("liveRoom")
-    if isinstance(state, dict) and ("roomId" in state or "liveRoomStatus" in state):
+    if isinstance(state, dict) and ("roomId" in state or "liveRoomStatus" in state or "status" in state):
         return state
     return None
 
@@ -14679,14 +14706,23 @@ def _eval_tiktok_room(room):
     except Exception:
         status = -1
     rid = str(room.get("roomId", room.get("id", "")) or "")
+    if not rid:
+        try:
+            sd = room.get("streamData", {}).get("pull_data", {}).get("stream_data", "")
+            if sd and isinstance(sd, str):
+                sd_obj = json.loads(sd)
+                rid = str(sd_obj.get("common", {}).get("room_id", "") or "")
+        except Exception:
+            pass
     return _eval_tiktok_status(status, rid)
 
 
 def _eval_tiktok_status(status, rid):
-    if status == 1:
+    # TikTok Webcast status: 1 = LIVE, 2 = LIVE, 3 = REPLAY/PAUSED, 4 = ENDED/OFFLINE
+    if status in (1, 2):
         return True, rid, status, ""
-    if status in (2, 3):
-        return False, rid, status, "preparing/replay"
+    if status == 3:
+        return False, rid, status, "replay"
     if status == 4:
         return False, rid, status, "offline"
     return False, rid, status, "unknown status %s" % status
@@ -14711,11 +14747,57 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
     xuat hien roomId: mo rong ra object JSON can bang nho nhat chua no (brace
     balance, bo qua trong chuoi), chi extract trong object do. Khong room_id:
     fallback toan trang (hanh vi cu) de khong break caller chua co room."""
-    if not html or (".flv" not in html and ".m3u8" not in html):
+    if not html:
         return []
-    # Khong co room_id -> KHONG scan toan trang (tranh lay media phong khac).
-    # Chi scan room_id cu the moi co y nghia room-bound; thieu identity -> [].
-    if not room_id:
+
+    # 1. Trích xuất trực tiếp từ cấu trúc LiveRoom trong SIGI_STATE (chính xác 100%, đúng phòng đích)
+    sigi_json = _tiktok_sigi_object_slice(html)
+    if sigi_json:
+        try:
+            state = json.loads(sigi_json)
+            lr = _dig_tiktok_room(state)
+            if lr and isinstance(lr, dict):
+                target_rid = str(lr.get("roomId", lr.get("id", "")) or "")
+                sdata = lr.get("streamData", {})
+                pdata = sdata.get("pull_data", {}) if isinstance(sdata, dict) else {}
+                inner_sd = pdata.get("stream_data", "") if isinstance(pdata, dict) else ""
+                if inner_sd and isinstance(inner_sd, str):
+                    sd_obj = json.loads(inner_sd)
+                    sd_rid = str(sd_obj.get("common", {}).get("room_id", "") or "")
+                    if not target_rid:
+                        target_rid = sd_rid
+                    if not room_id or room_id in (target_rid, sd_rid):
+                        d = sd_obj.get("data", {})
+                        urls_found = []
+                        for qual in ("hd", "sd", "ld", "origin"):
+                            if qual in d and isinstance(d[qual], dict):
+                                flv = d[qual].get("main", {}).get("flv")
+                                if flv and "only_audio=1" not in flv and flv not in urls_found:
+                                    urls_found.append(flv)
+                        for qual, qv in d.items():
+                            if isinstance(qv, dict):
+                                flv = qv.get("main", {}).get("flv")
+                                if flv and "only_audio=1" not in flv and flv not in urls_found:
+                                    urls_found.append(flv)
+                                hls = qv.get("main", {}).get("hls")
+                                if hls and hls not in urls_found:
+                                    urls_found.append(hls)
+                        if urls_found:
+                            def _flv_rank(u):
+                                if "_hd.flv" in u:
+                                    return 0
+                                if "_ld.flv" in u:
+                                    return 1
+                                if ".m3u8" in u:
+                                    return 2
+                                if "_sd.flv" in u:
+                                    return 3
+                                return 9
+                            return sorted(set(urls_found), key=_flv_rank)
+        except Exception as e:
+            log.warning("[Livestream] Lỗi trích xuất stream_data từ SIGI: %s", e)
+
+    if ".flv" not in html and ".m3u8" not in html:
         return []
     # Khong co room_id -> KHONG scan toan trang (tranh lay media phong khac).
     # Chi scan room_id cu the moi co y nghia room-bound; thieu identity -> [].
@@ -15058,7 +15140,6 @@ def _check_tiktok_user_live(username):
             "page not available",
             "couldn\\'t find this account",
             "\"liveroomstatus\":4",  # 4 = ended
-            "\"liveroomstatus\":2",  # 2 = preparing
             "\"liveroom\":null",
         )
         for sig in offline_signals:
@@ -15723,6 +15804,7 @@ def api_livestream_record():
             )
         direct_tiktok_flv = False
         direct_output_file = ""
+        _wrapper_dir = ""
         # FIX-P2-1: file_stem la prefix ten file THUC te cua job nay (khong
         # duoi, khong chua random cua job_id). Duy nhat theo gioi han cua
         # timestamp_str (giay) + stable_id. Dung de match chinh xac file cua
