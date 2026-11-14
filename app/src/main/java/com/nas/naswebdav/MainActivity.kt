@@ -6,24 +6,15 @@ package com.nas.naswebdav
 
 // Import các Composable đã tách file
 
-import com.nas.naswebdav.ui.screens.MainMenuScreen
 
-import com.nas.naswebdav.ui.screens.BrowserScreen
-import com.nas.naswebdav.ui.screens.openExternalVideoPlayer
 
-import com.nas.naswebdav.ui.screens.LoginScreen
 
-import com.nas.naswebdav.ui.screens.ExoPlayerScreen
 
-import com.nas.naswebdav.ui.screens.ImageViewerScreen
 
 import com.nas.naswebdav.ui.dialogs.BiometricLockScreen
 
-import com.nas.naswebdav.ui.screens.GuestPassScreen
 
-import com.nas.naswebdav.ui.screens.SocialExtractorScreen
 
-import com.nas.naswebdav.ui.screens.SmartOrganizerScreen
 
 import com.nas.naswebdav.ui.screens.NasTheme
 import com.nas.naswebdav.ui.screens.RecordingOverlayBg
@@ -35,7 +26,6 @@ import com.nas.naswebdav.ui.screens.DarkSurface
 
 import android.os.Bundle
 
-import androidx.activity.compose.BackHandler
 
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -49,29 +39,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import com.nas.naswebdav.ui.screens.TextPrimary
+import com.nas.naswebdav.ui.screens.TextSecondary
 
 import coil.decode.VideoFrameDecoder
 import coil.annotation.ExperimentalCoilApi
 
-import androidx.navigation.compose.*
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-
 import kotlinx.coroutines.launch
 
-import androidx.lifecycle.viewModelScope
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+
 import com.nas.naswebdav.auth.AuthSessionViewModel
 import com.nas.naswebdav.browser.FileBrowserViewModel
 import com.nas.naswebdav.device.DeviceManagementViewModel
@@ -338,19 +325,39 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
         }
 
-        if (sharedUris.isEmpty()) return
+        val safeUris = sharedUris.filter { uri ->
+            android.content.ContentResolver.SCHEME_CONTENT.equals(uri.scheme, ignoreCase = true) &&
+                !uri.authority.isNullOrBlank() &&
+                !uri.authority.equals(packageName, ignoreCase = true) &&
+                !uri.authority!!.startsWith("$packageName.", ignoreCase = true)
+        }
+        if (safeUris.isEmpty()) return
 
         val savedUrl = SecurePrefsHelper.getUrl(applicationContext)
         val savedUser = SecurePrefsHelper.getUser(applicationContext)
         val savedPass = SecurePrefsHelper.getPass(applicationContext)
-        if (savedUrl.isBlank()) return
+        if (savedUrl.isBlank() || savedUser.isBlank() || savedPass.isBlank()) return
+        val normalizedBaseUrl = if (savedUrl.endsWith("/")) savedUrl else "$savedUrl/"
 
-        WebDavManager.connect(savedUrl, savedUser, savedPass)
-
-        sharedUris.forEach { uri ->
+        safeUris.forEach { uri ->
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 var tempFile: java.io.File? = null
+                WebDavManager.threadLocalAuth.set(WebDavManager.AuthState(normalizedBaseUrl, savedUser, savedPass))
                 try {
+                    contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        val fdLink = java.io.File("/proc/self/fd/${pfd.fd}")
+                        if (fdLink.exists()) {
+                            val resolvedPath = fdLink.canonicalPath
+                            val privateRoots = listOfNotNull(
+                                applicationInfo?.dataDir?.let { runCatching { java.io.File(it).canonicalPath }.getOrDefault(it) },
+                                runCatching { filesDir.canonicalPath }.getOrNull(),
+                                runCatching { cacheDir.canonicalPath }.getOrNull()
+                            )
+                            if (privateRoots.any { root -> resolvedPath == root || resolvedPath.startsWith("$root${java.io.File.separator}") }) {
+                                throw SecurityException("Rejected share URI pointing to private app storage")
+                            }
+                        }
+                    } ?: throw SecurityException("Unable to open descriptor for shared URI")
                     val rawName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                         if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
@@ -379,6 +386,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     android.util.Log.e("ShareUpload", "Upload failed: ${e.message}")
                 } finally {
+                    WebDavManager.threadLocalAuth.remove()
                     tempFile?.delete()
                 }
             }
@@ -437,19 +445,31 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
  * WebDavViewModel facade method. Orchestrates refresh of all domain VMs on
  * app foreground (e.g. via OnLifecycleEvent callback).
  */
-private fun refreshNasStateOnForeground(
+private suspend fun refreshNasStateOnForeground(
     domainProvider: DomainViewModelProvider,
     context: android.content.Context,
+    refreshFileBrowser: Boolean,
     force: Boolean = false
 ) {
     // Smart network check (was on AuthSessionVM facade)
-    domainProvider.authSession.checkSmartNetwork(context)
+    val previousBaseUrl = WebDavManager.currentBaseUrl
+    try {
+        domainProvider.authSession.ensureSmartNetwork(context)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        android.util.Log.w("NasForeground", "Route selection failed: ${e.message}")
+    }
+    if (refreshFileBrowser) {
+        domainProvider.fileBrowser.refreshAfterConnectionCheck(previousBaseUrl, WebDavManager.currentBaseUrl)
+    }
     // Dashboard monitoring (was on SystemMonitorVM facade)
     domainProvider.systemMonitor.startDashboardMonitoring(resetStatusPoll = false)
     // Thumbnail status (was on SmartToolsVM facade)
     domainProvider.smartTools.fetchThumbStatus()
     // Live data (was on LivestreamVM facade)
-    domainProvider.livestream.fetchLivestreamStatusOnly(context)
+    // SPEC_LIVESTREAM_LIMITS §4.3: refresh gom (status + cap + queue).
+    domainProvider.livestream.refreshLivestreamState(context)
     domainProvider.livestream.fetchTikTokLiveWatch(context)
     // USB import + storage (was on AutoBackup/DeviceMgmt)
     domainProvider.autoBackup.fetchUsbImportStatus()
@@ -476,15 +496,17 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
     // that MainActivity's setContent provides — no more facade pass-through.
     val autoBackupVM = LocalAutoBackupVM.current
     val deviceMgmtVM = LocalDeviceManagementVM.current
-    val fileBrowserVM = LocalFileBrowserVM.current
-    val livestreamVM = LocalLivestreamVM.current
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        autoBackupVM.lockNowRequested = false
-    }
     var showBiometricLock by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var hasCompletedFirstResume by remember { mutableStateOf(false) }
     var requireBiometricOnReturn by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(autoBackupVM.lockNowRequested) {
+        if (autoBackupVM.lockNowRequested) {
+            showBiometricLock = true
+            autoBackupVM.lockNowRequested = false
+        }
+    }
 
     var mediaUrl by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
 
@@ -524,7 +546,20 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
                     val isLoginScreen = navController.currentDestination?.route == "login" ||
                         navController.currentDestination == null
                     if (!isLoginScreen) {
-                        refreshNasStateOnForeground(domainProvider, mContext.applicationContext, force = true)
+                        lifecycleOwner.lifecycleScope.launch {
+                            try {
+                                refreshNasStateOnForeground(
+                                    domainProvider,
+                                    mContext.applicationContext,
+                                    refreshFileBrowser = navController.currentDestination?.route == com.nas.naswebdav.ui.navigation.NasRoutes.FILES,
+                                    force = true
+                                )
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                android.util.Log.w("NasForeground", "NAS refresh failed: ${e.message}")
+                            }
+                        }
                     }
                     if (!hasCompletedFirstResume) {
                         hasCompletedFirstResume = true
@@ -593,280 +628,24 @@ fun NasAppNavigation(domainProvider: DomainViewModelProvider, onStartScreenRecor
 
 
 
-    androidx.navigation.compose.NavHost(navController = navController, startDestination = "login") {
-
-        composable("login") {
-
-            LoginScreen {
-
-                navController.navigate("main_menu") {
-
-                    popUpTo("login") { inclusive = true }
-
-                }
-
-            }
-
-        }
-
-        
-
-        composable("main_menu") {
-
-            // VÔ HIỆU HÓA BACK CỨNG: Chặn thoát app từ Menu chính
-
-            androidx.activity.compose.BackHandler { /* Do nothing */ }
-
-            com.nas.naswebdav.ui.screens.MainMenuScreen(
-
-                onOpenFiles = {
-
-                    fileBrowserVM.resetToDefaultMode()
-
-                    navController.navigate("browser")
-
-                },
-
-                onOpenFolder = { webdavPath ->
-
-                    fileBrowserVM.openSpecificUrl(webdavPath, "Downloads")
-
-                    navController.navigate("browser")
-
-                },
-
-                onGlobalSearch = { keyword ->
-
-                    fileBrowserVM.searchGlobal(keyword)
-
-                    navController.navigate("browser")
-
-                },
-
-                onOpenLatestPhotos = {
-
-                    fileBrowserVM.showLatestPhotos()
-
-                    navController.navigate("browser")
-
-                },
-
-                onOpenRecentVideos = {
-
-                    fileBrowserVM.showRecentVideos()
-
-                    navController.navigate("browser")
-
-                },
-
-                onOpenTrash = {
-
-                    val trashUrl = buildWebDavTrashTargetUrl(
-                        WebDavManager.currentBaseUrl,
-                        fileBrowserVM.currentUrl.ifBlank { WebDavManager.currentBaseUrl },
-                        "",
-                        false
-                    )
-
-                    fileBrowserVM.openSpecificUrl(trashUrl, "Thùng rác")
-
-                    navController.navigate("browser")
-
-                },
-
-                onOpenPerformance = {
-
-                    navController.navigate("performance")
-
-                },
-
-                onLogout = {
-
-                    domainProvider.livestream.viewModelScope.launch {
-
-                        domainProvider.repository.addSystemLog("INFO", "Network", "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
-
-                    }
-
-                    navController.navigate("login") {
-
-                        popUpTo(0)
-
-                    }
-
-                },
-
-                // ── TÍNH NĂNG MỚI ─────────────────────────────────────────────────
-
-                onOpenOrganizer = { navController.navigate("smart_organizer") },
-
-                onOpenGuestPass = { navController.navigate("guest_pass") },
-
-                onOpenSocialExtractor = { navController.navigate("social_extractor") },
-
-                onStartScreenRecord = onStartScreenRecord
-
-            )
-
-        }
-
-
-
-        composable("browser") {
-
-            com.nas.naswebdav.ui.screens.BrowserScreen(
-
-                onVideo = { url ->
-                    val auth = WebDavManager.currentAuthState()
-                    openExternalVideoPlayer(
-                        context = mContext,
-                        url = url,
-                        user = auth.user,
-                        pass = auth.pass,
-                        onError = {
-                            mediaUrl = url
-                            navController.navigate("video")
-                        }
-                    )
-                },
-
-                onImage = { url ->
-
-                    mediaUrl = url
-
-                    navController.navigate("image")
-
-                },
-
-                onLogout = {
-
-                    domainProvider.livestream.viewModelScope.launch {
-
-                        domainProvider.repository.addSystemLog("INFO", "Network", "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
-
-                    }
-
-                    navController.navigate("login") {
-
-                        popUpTo(0)
-
-                    }
-
-                },
-
-                onBackToMenu = {
-
-                    fileBrowserVM.resetToDefaultMode()
-
-                    navController.navigate("main_menu") {
-
-                        popUpTo("main_menu") { inclusive = true }
-
-                    }
-
-                }
-
-            )
-
-        }
-
-
-
-        composable("performance") {
-
-            com.nas.naswebdav.ui.screens.PerformanceScreen(
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
-
-
-        composable("video") {
-
-            // AUTH FIX: snapshot credentials at composition time so the in-app player
-            // matches the external player path (which already snapshots tap-time auth).
-            val auth = remember { WebDavManager.currentAuthState() }
-
-            com.nas.naswebdav.ui.screens.ExoPlayerScreen(
-
-                url = mediaUrl,
-
-                user = auth.user,
-
-                pass = auth.pass,
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
-
-
-        composable("image") {
-
-            com.nas.naswebdav.ui.screens.ImageViewerScreen(
-
-                initialUrl = mediaUrl,
-
-                user = WebDavManager.currentUser,
-
-                pass = WebDavManager.currentPass,
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
-
-
-        // ─── TÍNH NĂNG MỚI: Guest Pass ────────────────────────────────────
-
-        composable("guest_pass") {
-
-            GuestPassScreen(
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
-
-
-        // ─── TÍNH NĂNG MỚI: Social Extractor ──────────────────────────────
-
-        composable("social_extractor") {
-
-            SocialExtractorScreen(
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
-
-
-        // ─── TÍNH NĂNG MỚI: Smart Organizer ────────────────────────────────
-
-        composable("smart_organizer") {
-
-            SmartOrganizerScreen(
-
-                onBack = { navController.popBackStack() }
-
-            )
-
-        }
-
+    // CC-005 P1: single graph — dùng NasNavHost tập trung (LOGIN/DASHBOARD/APPS/FILES/SYSTEM/MORE + full-screen).
+    // Chỉ vào thẳng Dashboard khi phiên WebDAV hiện tại còn sống trong process.
+    // Credential lưu trong SecurePrefs không đồng nghĩa đã xác thực: sau cold start
+    // phải hiện Login để người dùng nhìn thấy và khôi phục kết nối minh bạch.
+    val conditionalStart = androidx.compose.runtime.remember {
+        val activeAuth = WebDavManager.currentAuthState()
+        if (activeAuth.baseUrl.isNotBlank() && activeAuth.user.isNotBlank() && activeAuth.pass.isNotBlank())
+            com.nas.naswebdav.ui.navigation.NasRoutes.DASHBOARD
+        else com.nas.naswebdav.ui.navigation.NasRoutes.LOGIN
     }
-
-
+    com.nas.naswebdav.ui.navigation.NasNavHost(
+        domainProvider = domainProvider,
+        navController = navController,
+        mediaUrl = mediaUrl,
+        onSetMediaUrl = { mediaUrl = it },
+        onStartScreenRecord = onStartScreenRecord,
+        startDestination = conditionalStart,
+    )
 
     // Hiển thị lớp Khóa Sinh trắc học đè lên trên mọi giao diện
 
@@ -964,14 +743,16 @@ fun ScreenRecordFloatingOverlay() {
                         Column {
                             Text(
                                 text = "Đang quay màn hình: $timeString",
-                                color = Color.White,
+                                color = TextPrimary,
                                 fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
                             )
                             Text(
                                 text = "${networkMode.ifBlank { "NAS" }} - đoạn ${segIdx + 1}, đã gửi $uploadedSegments, chờ $pendingSegments",
-                                color = Color.Gray,
-                                fontSize = 11.sp
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum")
                             )
                         }
                     }
@@ -988,7 +769,7 @@ fun ScreenRecordFloatingOverlay() {
                     ) {
                         Text(
                             text = "Dừng",
-                            color = Color.White,
+                            color = TextSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )

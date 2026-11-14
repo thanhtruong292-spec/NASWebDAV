@@ -114,7 +114,7 @@ fun QuickActionSelectorDialog(
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(action.title, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text(action.subtitle, color = TextSecondary, fontSize = 11.sp)
+                            Text(action.subtitle, color = TextSecondary, fontSize = 12.sp)
                         }
                         if (isSelected) {
                             Icon(Icons.Default.CheckCircle, null, tint = AccentCyan, modifier = Modifier.size(20.dp))
@@ -192,8 +192,8 @@ fun SystemLogsSummaryCard(realtimeNow: Long = System.currentTimeMillis()) {
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(log.module, color = logColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    Text(timeStr, color = TextSecondary, fontSize = 10.sp)
+                                    Text(log.module, color = logColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text(timeStr, color = TextSecondary, fontSize = 12.sp)
                                 }
                                 Text(
                                     com.nas.naswebdav.ui.dialogs.formatLogMessage(log.message),

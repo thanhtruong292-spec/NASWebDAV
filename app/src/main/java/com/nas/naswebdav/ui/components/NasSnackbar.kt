@@ -34,7 +34,7 @@ fun NasSnackbarHost(
             containerColor = DarkElevated,
             contentColor = TextPrimary,
             actionColor = AccentCyan,
-            dismissActionContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            dismissActionContentColor = TextPrimary,
             shape = RoundedCornerShape(8.dp),
         )
     }

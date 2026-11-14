@@ -9,13 +9,16 @@ import androidx.security.crypto.MasterKeys
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.io.File
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
@@ -115,7 +118,8 @@ open class NasApplication : Application(), ImageLoaderFactory {
                 MIGRATION_15_16,
                 MIGRATION_16_17,
                 MIGRATION_17_18, // P2-8: files_cache.accountKey
-                MIGRATION_18_19 // P2-muc3+muc4: file_fingerprints accountKey/sourceKey/contentHash
+                MIGRATION_18_19, // P2-muc3+muc4: file_fingerprints accountKey/sourceKey/contentHash
+                MIGRATION_19_20
             )
             // FIX F1 CRITICAL: Không dùng fallbackToDestructiveMigration() nữa.
             // Migration v13→v14→v15 là no-op (cùng identityHash) — explicit migrations
@@ -476,8 +480,29 @@ object AppConfig {
     const val SMART_SWITCH_PING_TIMEOUT_MS = 2000
 
     const val SOCIAL_DOWNLOAD_FOLDER = "Downloads/social/"
+    const val LIVESTREAM_FOLDER = "Livestream/"
+
+    // SPEC_LIVESTREAM_LIMITS §4.3: 1 noi gom endpoint paths (tranh rai rac).
+    object ApiEndpoints {
+        const val LIVESTREAM_RECORD = "/api/livestream/record"
+        const val LIVESTREAM_STATUS = "/api/livestream/status"
+        const val LIVESTREAM_STOP = "/api/livestream/stop"
+        const val LIVESTREAM_QUEUE = "/api/livestream/queue"
+        const val ADMIN_LIMITS = "/api/admin/limits"
+        const val SOCIAL_DOWNLOAD = "/api/social/download"
+        const val TIKTOK_LIVE_WATCH = "/api/tiktok/live_watch"
+    }
 
     const val GUEST_PASS_DEFAULT_MINUTES = 60
+
+    // CC-005 P1: WebDAV login defaults — gom từ LoginScreen/MainMenuScreen
+    const val WEBDAV_SCHEME_DEFAULT = "http"
+    const val WEBDAV_SCHEME_SECURE = "https"
+    const val WEBDAV_PORT = 8822
+    const val WEBDAV_ROOT_PATH = "/webdav/"
+    const val WEBDAV_URL_SUFFIX = ":8822/webdav/"
+    const val WEBDAV_HTTPS_PROBE_TIMEOUT_MS = 2500L
+    val DEFAULT_NAS_IPS = listOf("192.168.100.254", "100.90.135.102")
 }
 
 fun String.toApiBaseUrl(): String {
@@ -499,7 +524,19 @@ fun String.toFastMediaUrl(): String {
 
     if (parsedPath.isBlank()) return this
 
-    val encodedPath = java.net.URLEncoder.encode(parsedPath, "UTF-8").replace("+", "%20")
+    // FIX-SEARCH-PLAYBACK: encode theo segment, giu '/'. Ban cu encode ca
+    // path (URLEncoder.encode) bien '/' thanh '%2F' — Flask van decode duoc
+    // nhung de trat khi so sanh prefix/rewrite Tailscale-LAN, va de vo khi
+    // path co san '%2F'/'%20'. Tach segment roi encode tung doan nhu
+    // encodeWebDavSegment de khop backend quote(rel, safe="/").
+    val encodedPath = parsedPath.split("/").joinToString("/") { segment ->
+        if (segment.isEmpty()) "" else runCatching {
+            java.net.URLEncoder.encode(
+                runCatching { java.net.URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment),
+                "UTF-8"
+            ).replace("+", "%20")
+        }.getOrDefault(segment)
+    }
     return "$apiBase/api/media?path=$encodedPath"
 }
 
@@ -712,59 +749,93 @@ object SmartNetworkManager {
     private const val CACHE_DURATION_MS = 5_000L
 
     @Volatile private var cachedActiveUrl: String? = null
+    private val routeProbeMutex = Mutex()
+    private val networkGeneration = AtomicLong(0L)
 
-    suspend fun getActiveBaseUrl(context: Context): String =
+    suspend fun getActiveBaseUrl(context: Context): String = resolveActiveBaseUrl(context, allowFallback = true)
+
+    /** Route used by foreground UI: unlike background workers, never report an unpingable fallback as connected. */
+    suspend fun getVerifiedBaseUrl(context: Context): String = resolveActiveBaseUrl(context, allowFallback = false)
+
+    private suspend fun resolveActiveBaseUrl(context: Context, allowFallback: Boolean): String =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val savedList = SecurePrefsHelper.getUrlList(context)
-            if (savedList.isEmpty()) return@withContext ""
+            routeProbeMutex.withLock {
+                var result: String? = null
+                while (result == null) {
+                    val probeGeneration = networkGeneration.get()
+                    val savedList = SecurePrefsHelper.getUrlList(context)
+                    if (savedList.isEmpty()) {
+                        result = ""
+                        continue
+                    }
 
-            // ÉP FALLBACK TAILSCALE: luôn đưa URL Tailscale đã cấu hình vào danh sách
-            // ứng viên (kể cả khi user chỉ lưu 1 URL LAN). Khi LAN mất, SmartSwitch
-            // sẽ tự chuyển sang Tailscale thay vì kẹt ở URL LAN chết.
-            val tailUrl = SecurePrefsHelper.getTailscaleBaseUrl(context)
-            val urlList = if (tailUrl.isNotEmpty() && !savedList.contains(tailUrl)) {
-                savedList + tailUrl
-            } else {
-                savedList
-            }
+                    // ÉP FALLBACK TAILSCALE: luôn đưa URL Tailscale đã cấu hình vào danh sách
+                    // ứng viên (kể cả khi user chỉ lưu 1 URL LAN). Khi LAN mất, SmartSwitch
+                    // sẽ tự chuyển sang Tailscale thay vì kẹt ở URL LAN chết.
+                    val tailUrl = SecurePrefsHelper.getTailscaleBaseUrl(context)
+                    val urlList = if (tailUrl.isNotEmpty() && !savedList.contains(tailUrl)) {
+                        savedList + tailUrl
+                    } else {
+                        savedList
+                    }
 
-            // Offline: không ping mù — trả URL đầu tiên ngay.
-            if (!NetworkMonitor.isOnline.value) return@withContext urlList.first()
-            val now = System.currentTimeMillis()
+                    // Offline: không ping mù — trả URL đầu tiên ngay.
+                    if (!NetworkMonitor.isOnline.value) {
+                        result = if (allowFallback) urlList.first() else ""
+                        continue
+                    }
+                    val now = System.currentTimeMillis()
 
-            // Nếu cache còn hạn, trả về kết quả đã đánh giá ĐÚNG NHẤT thay vì lấy đại urlList.first()
-            if (now - lastPingTime < CACHE_DURATION_MS && lastPingResult && cachedActiveUrl != null) {
-                return@withContext cachedActiveUrl ?: urlList.first()
-            }
+                    // Nếu cache còn hạn, không đo lại tuyến NAS ở mỗi worker request.
+                    val cachedResult = synchronized(this) {
+                        if (now - lastPingTime < CACHE_DURATION_MS) {
+                            if (lastPingResult) cachedActiveUrl?.takeIf { it in urlList }
+                            else if (allowFallback) urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first() else ""
+                        } else null
+                    }
+                    if (cachedResult != null) {
+                        if (probeGeneration != networkGeneration.get()) continue
+                        result = cachedResult
+                        continue
+                    }
 
-            val user = SecurePrefsHelper.getUser(context)
-            val pass = SecurePrefsHelper.getPass(context)
-            val reachableUrls = coroutineScope {
-                val deferreds = urlList.map { url -> async(kotlinx.coroutines.Dispatchers.IO) { if (checkNasReachabilityQuickly(url, user, pass)) url else null } }
-                deferreds.mapNotNull { it.await() }
-            }
-            if (reachableUrls.isNotEmpty()) {
-                // TÍNH NĂNG: Ưu tiên mạng LAN - Tốc độ Gigabit (Nếu có cả LAN và Tailscale đều kết nối thành công, Tự Động Gạch Bỏ Tailscale)
-                val lanResult = reachableUrls.find { !com.nas.naswebdav.isTailscaleUrl(it) }
-                val bestResult = lanResult ?: reachableUrls.first()
+                    val user = SecurePrefsHelper.getUser(context)
+                    val pass = SecurePrefsHelper.getPass(context)
+                    val bestResult = selectFirstReachableConnectionUrl(urlList) { url ->
+                        checkNasReachabilityQuickly(url, user, pass)
+                    }
+                    if (probeGeneration != networkGeneration.get()) continue
+                    if (bestResult != null) {
+                        val cacheUpdated = synchronized(this) {
+                            if (probeGeneration != networkGeneration.get()) false else {
+                                lastPingResult = true
+                                lastPingTime = System.currentTimeMillis()
+                                cachedActiveUrl = bestResult
+                                true
+                            }
+                        }
+                        if (!cacheUpdated) continue
 
-                synchronized(this) {
-                    lastPingResult = true; lastPingTime = now
-                    cachedActiveUrl = bestResult
+                        android.util.Log.i(TAG, "✅ Chọn mạng tốt nhất: $bestResult")
+                        result = bestResult
+                        continue
+                    }
+                    val cacheUpdated = synchronized(this) {
+                        if (probeGeneration != networkGeneration.get()) false else {
+                            lastPingResult = false
+                            lastPingTime = System.currentTimeMillis()
+                            cachedActiveUrl = null
+                            true
+                        }
+                    }
+                    if (!cacheUpdated) continue
+                    // Tất cả URL không phản hồi: worker dùng fallback; UI sẽ nhận rỗng.
+                    val fallback = urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first()
+                    android.util.Log.w(TAG, "⚠️ Không ping được URL NAS nào! Fallback: $fallback")
+                    result = if (allowFallback) fallback else ""
                 }
-
-                android.util.Log.i(TAG, "✅ Chọn mạng tốt nhất: $bestResult")
-                return@withContext bestResult
+                result ?: ""
             }
-            synchronized(this) {
-                lastPingResult = false
-                cachedActiveUrl = null
-            }
-            // Tất cả URL LAN đều không phản hồi → ÉP FALLBACK Tailscale (nếu có) thay vì
-            // trả URL LAN chết gây kẹt kết nối.
-            val fallback = urlList.firstOrNull { com.nas.naswebdav.isTailscaleUrl(it) } ?: urlList.first()
-            android.util.Log.w(TAG, "⚠️ Không ping được URL LAN nào! Fallback: $fallback")
-            fallback
         }
 
     suspend fun getActiveApiHost(context: Context): String =
@@ -778,32 +849,37 @@ object SmartNetworkManager {
     private val lanPingClient = okhttp3.OkHttpClient.Builder()
         .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(false)
         .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
         .build()
 
     private val tailscalePingClient = okhttp3.OkHttpClient.Builder()
         .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(false)
         .connectionPool(okhttp3.ConnectionPool(1, 30, java.util.concurrent.TimeUnit.SECONDS))
         .build()
 
     private fun checkNasReachabilityQuickly(lanUrl: String, user: String, pass: String): Boolean {
         if (lanUrl.isEmpty()) return false
         return try {
-            val parsedHost = java.net.URL(lanUrl).host ?: return false
-            val apiUrl = "http://$parsedHost:${AppConfig.API_PORT}/api/ping"
+            // CC-004 P0-3: giu protocol goc (https/relay) thay vi ep http cung.
+            // Truoc day ping luon http://host:5050 -> chet voi TLS/relay chi mo https.
+            val parsed = java.net.URL(if (lanUrl.startsWith("http://") || lanUrl.startsWith("https://")) lanUrl else "http://$lanUrl")
+            val parsedHost = parsed.host ?: return false
+            val protocol = if (parsed.protocol == "https") "https" else "http"
+            val apiUrl = "$protocol://$parsedHost:${AppConfig.API_PORT}/api/ping"
 
             // Tailscale relay cần 3-5 giây cho lần handshake đầu tiên → dùng tailscalePingClient
             val isTailscale = com.nas.naswebdav.isTailscaleUrl(lanUrl)
             val client = if (isTailscale) tailscalePingClient else lanPingClient
 
-            val request = okhttp3.Request.Builder()
-                .url(apiUrl)
-                .head()
-                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
-                .build()
-
-            client.newCall(request).execute().use { it.isSuccessful }
+            isApiOrWebDavReachable(
+                client,
+                apiUrl,
+                lanUrl,
+                WebDavManager.AuthState(user = user, pass = pass).authHeader
+            )
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
     }
 
@@ -813,11 +889,59 @@ object SmartNetworkManager {
         val user = SecurePrefsHelper.getUser(context)
         val pass = SecurePrefsHelper.getPass(context)
         val result = checkNasReachabilityQuickly(lanUrl, user, pass)
-        lastPingResult = result; lastPingTime = System.currentTimeMillis()
         result
     }
 
-    fun invalidateCache() { lastPingTime = 0L }
+    fun invalidateCache() {
+        synchronized(this) {
+            networkGeneration.incrementAndGet()
+            lastPingTime = 0L
+        }
+    }
+}
+
+/** Probe LAN candidates in their saved order, then Tailscale only if LAN fails. */
+internal suspend fun selectFirstReachableConnectionUrl(
+    urls: List<String>,
+    isReachable: suspend (String) -> Boolean
+): String? {
+    for (url in prioritizeConnectionUrls(urls)) {
+        if (isReachable(url)) return url
+    }
+    return null
+}
+
+internal fun isApiOrWebDavReachable(client: OkHttpClient, apiUrl: String, webDavUrl: String, authHeader: String): Boolean {
+    // WebDAV is the path the app actually uses. Check it first so a healthy
+    // file route is not held behind an unrelated/stalled API health endpoint.
+    try {
+        val propfindBody = "<?xml version=\"1.0\" encoding=\"utf-8\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>"
+            .toRequestBody("application/xml; charset=utf-8".toMediaTypeOrNull())
+        val webDavRequest = okhttp3.Request.Builder()
+            .url(webDavUrl)
+            .method("PROPFIND", propfindBody)
+            .header("Authorization", authHeader)
+            .header("Depth", "0")
+            .build()
+        if (client.newCall(webDavRequest).execute().use { it.code == 207 || it.isSuccessful }) return true
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        // A failed WebDAV probe must not suppress the independent API probe.
+    }
+
+    val apiRequest = okhttp3.Request.Builder()
+        .url(apiUrl)
+        .head()
+        .header("Authorization", authHeader)
+        .build()
+    return try {
+        client.newCall(apiRequest).execute().use { it.isSuccessful }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

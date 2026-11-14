@@ -38,8 +38,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.painterResource
-import com.nas.naswebdav.R
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -71,14 +69,23 @@ import androidx.core.content.edit
 
 // ============ LoginScreen (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
-private const val URL_PREFIX = "http://"
-private const val URL_SUFFIX = ":8822/webdav/"
-private val DEFAULT_NAS_IPS = listOf("192.168.100.254", "100.90.135.102")
-
+// CC-005 P1: URL defaults gom vào AppConfig (WEBDAV_PORT 8822, DEFAULT_NAS_IPS).
 private fun ipToFullUrl(ip: String): String {
     val trimmed = ip.trim()
+    // Không phá URL user đã nhập scheme — giữ nguyên.
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-    return if (trimmed.contains(":")) "${URL_PREFIX}$trimmed/webdav/" else "${URL_PREFIX}$trimmed${URL_SUFFIX}"
+    val prefix = "${com.nas.naswebdav.AppConfig.WEBDAV_SCHEME_DEFAULT}://"
+    return if (trimmed.contains(":")) "${prefix}$trimmed${com.nas.naswebdav.AppConfig.WEBDAV_ROOT_PATH}"
+        else "${prefix}$trimmed${com.nas.naswebdav.AppConfig.WEBDAV_URL_SUFFIX}"
+}
+
+/** Với IP trần, thử HTTPS trước HTTP; login sẽ ưu tiên nhóm LAN trước Tailscale. */
+private fun bareIpToLoginCandidates(ip: String): List<String> {
+    val trimmed = ip.trim()
+    if (trimmed.isEmpty()) return emptyList()
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return listOf(trimmed)
+    val secure = "${com.nas.naswebdav.AppConfig.WEBDAV_SCHEME_SECURE}://$trimmed${com.nas.naswebdav.AppConfig.WEBDAV_URL_SUFFIX}"
+    return listOf(secure, ipToFullUrl(trimmed))
 }
 
 private fun fullUrlToIp(url: String): String = try { java.net.URL(url).host } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { url }
@@ -96,27 +103,28 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val authVM = LocalAuthSessionVM.current
     val globalUiVM = LocalGlobalUiVM.current
     val density = LocalDensity.current
+    // Khi bàn phím mở, thu gọn phần nhận diện để vùng nhập và nút kết nối
+    // vẫn nằm trong viewport. Không tự focus hay tự bật bàn phím khi mở app.
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val userFocusRequester = remember { FocusRequester() }
     val rawHistory = remember {
         runCatching { SecurePrefsHelper.getUrlList(context) }.getOrElse { emptyList() }
     }
     var historyIps by remember {
-        mutableStateOf((DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
+        mutableStateOf((com.nas.naswebdav.AppConfig.DEFAULT_NAS_IPS + rawHistory.map { fullUrlToIp(it) }).distinct().filter { it.isNotEmpty() })
     }
     var ipInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(historyIps.firstOrNull() ?: "") }
 
-    // Auto-focus username field when screen appears for better TalkBack / keyboard UX
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(300) // wait for animation to finish
-        runCatching { userFocusRequester.requestFocus() }
-    }
+    // Do not open the keyboard automatically on cold start. The user needs to
+    // see the whole connection form first; tapping the username field still
+    // uses the requester for an explicit focus action.
     var user by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(runCatching { SecurePrefsHelper.getUser(context) }.getOrElse { "" })
     }
-    var pass by androidx.compose.runtime.saveable.rememberSaveable {
+    var pass by remember {
         mutableStateOf(runCatching { SecurePrefsHelper.getPass(context) }.getOrElse { "" })
     }
-    var passwordVisible by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var passwordVisible by remember { mutableStateOf(false) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var expanded by remember { mutableStateOf(false) }
     var ipFieldWidthPx by remember { mutableIntStateOf(0) }
@@ -126,7 +134,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val prefsRepo = remember(context) {
         com.nas.naswebdav.utils.PreferencesRepository.get(context)
     }
-    var macAddress by remember { mutableStateOf(prefsRepo.getMacAddress()) }
+    var macAddress by remember(prefsRepo) { mutableStateOf(prefsRepo.getMacAddress()) }
     var showWolDialog by remember { mutableStateOf(false) }
     var showRebootConfirm by remember { mutableStateOf(false) }
     var emergencyMsg by remember { mutableStateOf("") }
@@ -144,7 +152,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             isCheckingPings = true
             try {
                 val fullUrls = (historyIps + ipInput).distinct().filter { it.isNotBlank() }.map { ipToFullUrl(it) }
-                if (fullUrls.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                if (fullUrls.isNotEmpty()) {
                     ipPingStatus = com.nas.naswebdav.pingUrlsForDisplay(fullUrls, user, pass)
                 } else {
                     ipPingStatus = emptyMap()
@@ -171,28 +179,80 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     }
 
     Box(
-        Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(DarkSurface, DarkCard, Color(0xFF101B2E))
+                )
+            )
     ) {
     Column(
         Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 24.dp),
+            .imePadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = if (imeVisible) 8.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.Top
     ) {
-        Image(
-            painter = painterResource(R.drawable.ic_nas_server),
-            contentDescription = "Máy chủ NAS",
-            modifier = Modifier
-                .size(180.dp)
-                .clip(RoundedCornerShape(16.dp)),
-            contentScale = ContentScale.Fit
-        )
-        Spacer(Modifier.height(16.dp))
-        Text("Kết nối NAS", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(if (imeVisible) 4.dp else 20.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "NASWEB",
+                    color = AccentCyan,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.8.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Text("Kết nối máy chủ", color = TextPrimary,
+                    style = if (imeVisible) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold, maxLines = 1)
+                if (!imeVisible) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Truy cập an toàn vào WebDAV của bạn", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (!imeVisible) {
+                Box(
+                    Modifier.size(56.dp).background(AccentCyan.copy(alpha = 0.14f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Dns, contentDescription = "Máy chủ NAS", tint = AccentCyan, modifier = Modifier.size(30.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(if (imeVisible) 8.dp else 24.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = AppShapes.Dialog,
+            color = DarkCard.copy(alpha = 0.96f),
+            tonalElevation = 6.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
+        ) {
+        Column(Modifier.padding(if (imeVisible) 14.dp else 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(if (imeVisible) 30.dp else 36.dp)
+                        .background(InfoContainer, AppShapes.Input),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Dns, contentDescription = "DNS", tint = AccentCyan, modifier = Modifier.size(if (imeVisible) 18.dp else 22.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("Đường truyền & tài khoản", color = TextPrimary, fontWeight = FontWeight.Bold)
+                    if (!imeVisible) Text("Chọn máy chủ nhanh nhất", color = TextSecondary, fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.height(if (imeVisible) 10.dp else 18.dp))
         ExposedDropdownMenuBox(
             expanded = expanded,
             onExpandedChange = { expanded = it },
@@ -207,6 +267,14 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     .onGloballyPositioned { ipFieldWidthPx = it.size.width }
                     .menuAnchor(),
                 singleLine = true,
+                shape = AppShapes.Input,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = AccentCyan,
+                    unfocusedBorderColor = OutlineVariantDark,
+                    focusedLabelColor = AccentCyan,
+                    unfocusedLabelColor = TextSecondary,
+                    cursorColor = AccentCyan
+                ),
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
             )
             if (historyIps.isNotEmpty()) {
@@ -241,7 +309,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                                     Text(ipOption, modifier = Modifier.weight(1f))
                                     // Hiển thị ping time (nếu có)
                                     if (rtt > 0) {
-                                        Text("${rtt}ms", fontSize = 11.sp, color = TextTertiary)
+                                        Text("${rtt}ms", fontSize = 12.sp, color = TextTertiary)
                                         Spacer(Modifier.width(4.dp))
                                     }
                                 }
@@ -260,15 +328,41 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = user, onValueChange = { user = it }, label = { Text("Tên đăng nhập") }, modifier = Modifier.fillMaxWidth().focusRequester(userFocusRequester), singleLine = true)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (imeVisible) 8.dp else 12.dp))
+        OutlinedTextField(
+            value = user,
+            onValueChange = { user = it },
+            label = { Text("Tên đăng nhập") },
+            modifier = Modifier.fillMaxWidth().focusRequester(userFocusRequester),
+            singleLine = true,
+            shape = AppShapes.Input,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AccentCyan,
+                unfocusedBorderColor = OutlineVariantDark,
+                focusedLabelColor = AccentCyan,
+                unfocusedLabelColor = TextSecondary,
+                cursorColor = AccentCyan
+            )
+        )
+        Spacer(Modifier.height(if (imeVisible) 8.dp else 12.dp))
         OutlinedTextField(
             value = pass,
             onValueChange = { pass = it },
             label = { Text("Mật khẩu") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            shape = AppShapes.Input,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                autoCorrect = false
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AccentCyan,
+                unfocusedBorderColor = OutlineVariantDark,
+                focusedLabelColor = AccentCyan,
+                unfocusedLabelColor = TextSecondary,
+                cursorColor = AccentCyan
+            ),
             visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
             trailingIcon = {
                 val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
@@ -278,11 +372,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 }
             }
         )
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(if (imeVisible) 10.dp else 18.dp))
         val interactionSource = remember { MutableInteractionSource() }
         val btnContent: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
             if (authVM.isLoading) {
-                Icon(Icons.Default.Stop, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Stop, contentDescription = "Dừng đăng nhập", tint = TextPrimary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Dừng đăng nhập", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             } else {
@@ -295,10 +389,13 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 if (authVM.isLoading) {
                     authVM.cancelLogin()
                 } else {
-                    val fullUrl = ipToFullUrl(ipInput); val currentIp = fullUrlToIp(fullUrl)
+                    // CC-005 P1: IP trần -> thử https trước http (connect đua song song, https thắng nếu mở).
+                    val typedCandidates = bareIpToLoginCandidates(ipInput)
+                    val fullUrl = typedCandidates.firstOrNull() ?: ipToFullUrl(ipInput)
+                    val currentIp = fullUrlToIp(fullUrl)
                     val reachableUrls = ipPingStatus.filterValues { it > 0L }.entries.sortedBy { it.value }.map { it.key }
                     val allUrls = (historyIps + currentIp).distinct().filter { it.isNotEmpty() }.map { ipToFullUrl(it) }
-                    val fullUrlList = (listOf(fullUrl) + reachableUrls + allUrls).distinct()
+                    val fullUrlList = (typedCandidates + reachableUrls + allUrls).distinct()
                     historyIps = fullUrlList.map { fullUrlToIp(it) }.distinct().filter { it.isNotEmpty() }
                     authVM.connect(fullUrlList.map { it.trim() }, user.trim(), pass.trim(), onSuccess = {
                         com.nas.naswebdav.scheduleIdleDuplicateScan(context, fullUrlList.first()); com.nas.naswebdav.scheduleIdleSpeedTest(context, fullUrlList.first()); com.nas.naswebdav.scheduleFingerprintWorker(context); onLoginSuccess()
@@ -311,9 +408,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             interactionSource = interactionSource,
             customContent = btnContent
         )
+        }
+        }
 
         // ── BIOMETRIC QUICK-LOGIN: chi hien khi biometric_enabled + co credentials da luu ──
-        val biometricEnabled = prefsRepo.isBiometricEnabled()
+        val biometricEnabled = remember(prefsRepo) { prefsRepo.isBiometricEnabled() }
         val hasSavedCreds = remember {
             runCatching {
                 SecurePrefsHelper.getUser(context).isNotEmpty() &&
@@ -382,7 +481,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "Điều khiển từ xa (không cần đăng nhập)",
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = TextTertiary,
             fontWeight = FontWeight.Medium
         )
@@ -394,8 +493,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     macAddress = prefsRepo.getMacAddress().ifBlank { macAddress }
                     showWolDialog = true
                 },
-                modifier = Modifier.weight(1f).height(46.dp),
-                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(24.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, AccentCyan)
             ) {
                 Icon(Icons.Default.PowerSettingsNew, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
@@ -405,8 +504,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             // NUT 2: Restart NAS — POST /api/power/reboot truc tiep voi IP + auth tu form
             OutlinedButton(
                 onClick = { showRebootConfirm = true },
-                modifier = Modifier.weight(1f).height(46.dp),
-                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(24.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, AccentOrange)
             ) {
                 Icon(Icons.Default.RestartAlt, null, tint = AccentOrange, modifier = Modifier.size(18.dp))
@@ -428,7 +527,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "Phiên bản ${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             color = TextSecondary,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.fillMaxWidth(),

@@ -2,6 +2,7 @@ package com.nas.naswebdav.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,18 +33,19 @@ private fun AppCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(AppSpacing.MD))
+            .clip(AppShapes.Card)
             .background(DarkCard)
+            .border(1.dp, DarkCardBorder, AppShapes.Card)
             .clickable { onClick() }
-            .padding(AppSpacing.LG),
+            .padding(AppSpacing.XL),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.SM),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = name,
-            modifier = Modifier.size(32.dp),
-            tint = iconTint,
-        )
+        Box(
+            modifier = Modifier.size(44.dp).clip(AppShapes.Input).background(iconTint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(imageVector = icon, contentDescription = name, modifier = Modifier.size(24.dp), tint = iconTint)
+        }
         Text(
             text = name,
             style = AppTypography.BodyLarge,

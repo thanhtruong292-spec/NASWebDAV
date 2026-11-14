@@ -57,8 +57,13 @@ import androidx.core.content.edit
 
 // ============ Disk Profile bottom sheet (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+private val NonNumericProfileRegex = Regex("[^0-9.]")
+private val LoggedSizeRegex = Regex("""\(([\d.,]+)\s*(B|KB|MB|GB|TB)\)""", RegexOption.IGNORE_CASE)
+private val DiskKeySanitizeRegex = Regex("[^A-Za-z0-9_.-]+")
+private val MgSeriesRegex = Regex("""\bMG\d{2}""")
+
 private fun parseProfileSizeBytes(raw: String): Long {
-    val value = raw.replace(",", ".").replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: return 0L
+    val value = raw.replace(",", ".").replace(NonNumericProfileRegex, "").toDoubleOrNull() ?: return 0L
     val upper = raw.uppercase(java.util.Locale.US)
     val multiplier = when {
         "TIB" in upper -> 1024.0 * 1024.0 * 1024.0 * 1024.0
@@ -83,10 +88,10 @@ private fun profilePercent(raw: String): Float =
     raw.replace("%", "").trim().toFloatOrNull()?.coerceIn(0f, 100f) ?: 0f
 
 private fun profileTempValue(raw: String): Float? =
-    raw.replace(Regex("[^0-9.]"), "").toFloatOrNull()?.takeIf { it > 0f }
+    raw.replace(NonNumericProfileRegex, "").toFloatOrNull()?.takeIf { it > 0f }
 
 private fun profileParseLoggedSizeBytes(message: String): Long {
-    val match = Regex("""\(([\d.,]+)\s*(B|KB|MB|GB|TB)\)""", RegexOption.IGNORE_CASE).find(message) ?: return 0L
+    val match = LoggedSizeRegex.find(message) ?: return 0L
     val value = match.groupValues[1].replace(",", ".").toDoubleOrNull() ?: return 0L
     val unit = match.groupValues[2].uppercase(java.util.Locale.US)
     val multiplier = when (unit) {
@@ -127,9 +132,9 @@ private fun profileDiskKey(disk: OmvDiskInfo?, fallback: String): String {
     val serial = disk?.serial?.trim().orEmpty()
     val model = disk?.model?.trim().orEmpty()
     return when {
-        serial.isNotBlank() -> "disk_${serial.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
-        model.isNotBlank() -> "disk_${model.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
-        else -> "disk_${fallback.replace(Regex("[^A-Za-z0-9_.-]+"), "_")}"
+        serial.isNotBlank() -> "disk_${serial.replace(DiskKeySanitizeRegex, "_")}"
+        model.isNotBlank() -> "disk_${model.replace(DiskKeySanitizeRegex, "_")}"
+        else -> "disk_${fallback.replace(DiskKeySanitizeRegex, "_")}"
     }
 }
 
@@ -137,7 +142,7 @@ private fun profileDiskEnduranceTbPerYear(model: String): Int? {
     val upper = model.uppercase(java.util.Locale.US)
     return when {
         "MG04" in upper -> 550
-        Regex("""\bMG\d{2}""").containsMatchIn(upper) -> 550
+        MgSeriesRegex.containsMatchIn(upper) -> 550
         "N300" in upper -> 180
         "MN04" in upper || "MN05" in upper -> 180
         "MN08" in upper || "MN09" in upper || "MN10" in upper -> 300
@@ -184,15 +189,19 @@ internal fun DiskProfileBottomSheet(
     val omvDisk = selectNasTargetDisk(deviceVM.omvOverview.disks)
     val activeDiskKey = profileDiskKey(omvDisk, hddDisk?.mount ?: "unknown")
     var installedAt by remember(activeDiskKey) {
+        // AUDIT-20261104: remember chi doc (pure). Ghi lan dau doi vao LaunchedEffect
+        // ben duoi de khong tao side-effect trong composition (strict mode / recompose
+        // co the goi remember nhieu lan -> ghi prefs lap lai + recomposition loop).
         val serialValue = hwPrefs.getHardwareProfileLong("${activeDiskKey}_installed_at", 0L)
         val legacyValue = hwPrefs.getHardwareProfileLong("toshiba_n300_installed_at", 0L)
-        val value = if (serialValue > 0L) serialValue else legacyValue
-        val now = System.currentTimeMillis()
-        if (value <= 0L) {
+        mutableStateOf(if (serialValue > 0L) serialValue else legacyValue)
+    }
+    // Ghi moc lan dau mot lan duy nhat sau composition (khong phai trong remember).
+    LaunchedEffect(activeDiskKey) {
+        if (installedAt <= 0L) {
+            val now = System.currentTimeMillis()
             hwPrefs.setHardwareProfileLong("${activeDiskKey}_installed_at", now)
-            mutableStateOf(now)
-        } else {
-            mutableStateOf(value)
+            installedAt = now
         }
     }
     val isTrackingNewDisk = true
@@ -415,7 +424,7 @@ internal fun DiskProfileBottomSheet(
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text("Theo dõi sức khỏe HDD", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text("$diskModel • $diskSerial", color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("$diskModel • $diskSerial", color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -427,7 +436,7 @@ internal fun DiskProfileBottomSheet(
                                 indication = androidx.compose.foundation.LocalIndication.current
                             ) { showResetTrackingConfirm = true }
                         ) {
-                            Text("Đặt lại mốc theo dõi", color = AccentOrange, fontSize = 10.sp)
+                            Text("Đặt lại mốc theo dõi", color = AccentOrange, fontSize = 12.sp)
                         }
                     }
                 }
@@ -553,7 +562,7 @@ internal fun DiskProfileBottomSheet(
                     Text("Khuyến nghị vận hành hôm nay", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(operationAdvice, color = TextSecondary, fontSize = 11.sp, lineHeight = 14.sp)
+                Text(operationAdvice, color = TextSecondary, fontSize = 12.sp, lineHeight = 14.sp)
             }
             Spacer(Modifier.height(6.dp))
             Column(
@@ -568,7 +577,7 @@ internal fun DiskProfileBottomSheet(
                         Spacer(Modifier.width(6.dp))
                         Text("Chế độ vận hành", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(operationModeLabel, color = AccentCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(operationModeLabel, color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -626,11 +635,11 @@ internal fun DiskProfileBottomSheet(
                         Spacer(Modifier.width(6.dp))
                         Text("Theo dõi thư mục lớn", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(if (deviceVM.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 10.sp)
+                    Text(if (deviceVM.isFetchingStorageUsage) "Đang tải" else trashWarning, color = TextSecondary, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(6.dp))
                 if (storageUsage.isEmpty()) {
-                    Text("Chưa có dữ liệu thư mục. App sẽ tự tải khi NAS API sẵn sàng.", color = TextSecondary, fontSize = 11.sp)
+                    Text("Chưa có dữ liệu thư mục. App sẽ tự tải khi NAS API sẵn sàng.", color = TextSecondary, fontSize = 12.sp)
                 } else {
                     storageUsage.take(4).forEach { item ->
                         WriteTaskRow(item.name, "${item.size} • ${item.files} tệp", if (item.path == ".trash") AccentOrange else AccentCyan)
@@ -680,7 +689,7 @@ internal fun DiskProfileBottomSheet(
                         Spacer(Modifier.width(6.dp))
                         Column {
                             Text("Tiến trình phân bổ dữ liệu", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text(writeRiskLabel, color = TextSecondary, fontSize = 10.sp)
+                            Text(writeRiskLabel, color = TextSecondary, fontSize = 12.sp)
                         }
                     }
                     Icon(if (writePanelExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = TextSecondary, modifier = Modifier.size(20.dp))
@@ -699,7 +708,7 @@ internal fun DiskProfileBottomSheet(
             Text(
                 "Các chỉ số mới chỉ dùng dữ liệu hiện có để dự báo, không thay đổi tác vụ ghi, WebDAV, đăng nhập hoặc lịch nền.",
                 color = TextSecondary,
-                fontSize = 9.sp,
+                fontSize = 12.sp,
                 lineHeight = 12.sp
             )
         }
@@ -728,7 +737,7 @@ private fun OperationModeChip(
             }
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
-        Text(label, color = if (selected) AccentCyan else TextSecondary, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        Text(label, color = if (selected) AccentCyan else TextSecondary, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
@@ -748,11 +757,11 @@ private fun NewDiskChecklistItem(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(4.dp))
-            Text(title, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(4.dp))
         Text(status, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Nhắc kiểm tra S.M.A.R.T", color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Nhắc kiểm tra S.M.A.R.T", color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -765,8 +774,8 @@ private fun WriteTaskRow(title: String, value: String, color: Color) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(title, color = TextSecondary, fontSize = 11.sp)
-        Text(value, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = TextSecondary, fontSize = 12.sp)
+        Text(value, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -787,10 +796,10 @@ private fun HardwareMetricCell(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = color, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(4.dp))
-            Text(title, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(4.dp))
         Text(value, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(subtitle, color = TextSecondary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(subtitle, color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

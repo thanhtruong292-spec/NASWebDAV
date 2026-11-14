@@ -259,7 +259,8 @@ fun FileItemGridCell(
                 onDismiss = { showActionSheet = false },
                 onDownload = {
                     showActionSheet = false
-                    val request = android.app.DownloadManager.Request(file.path.toUri())
+                    // CC-004 P1-1: chuan hoa URL truoc khi dua cho DownloadManager
+                    val request = android.app.DownloadManager.Request(com.nas.naswebdav.toValidUrl(file.path).toUri())
                         .setTitle(file.name)
                         .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                         .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
@@ -272,7 +273,9 @@ fun FileItemGridCell(
                 onCopyLink = {
                     showActionSheet = false
                     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
+                    // CC-004 P1-1: copy URL da chuan hoa (encode segment) — path raw
+                    // co space/dau/#?&% dan vao trien khai khac se hong.
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", com.nas.naswebdav.toValidUrl(file.path)))
                     commonDialogType = DialogType.SUCCESS
                     commonDialogMessage = "Đã sao chép liên kết tệp!"
                     showCommonDialog = true
@@ -328,7 +331,7 @@ fun FileItemGridCell(
                 if (isVideo && thumbState == ThumbState.SUCCESS) {
                     Icon(
                         Icons.Default.PlayCircle,
-                        contentDescription = null,
+                        contentDescription = "Phát video",
                         tint = TextPrimary.copy(alpha = 0.85f),
                         modifier = Modifier.size(28.dp).align(Alignment.Center)
                     )
@@ -337,7 +340,7 @@ fun FileItemGridCell(
                 // Folder: outlined FolderOpen với tint theo FileTypeColors
                 Icon(
                     imageVector = AppIcons.FolderOpen,
-                    contentDescription = null,
+                    contentDescription = "Thư mục",
                     tint = FileTypeColors.Folder,
                     modifier = Modifier.size(36.dp)
                 )
@@ -345,7 +348,7 @@ fun FileItemGridCell(
                 // File: dùng fileRowIcon/icon helper, tint theo phân loại
                 Icon(
                     imageVector = fileRowIcon(file.name, isDirectory = false),
-                    contentDescription = null,
+                    contentDescription = "Tệp",
                     tint = fileRowTint(file.name, isDirectory = false),
                     modifier = Modifier.size(32.dp).align(Alignment.Center)
                 )
@@ -363,7 +366,7 @@ fun FileItemGridCell(
                 Text(
                     text = displaySize,
                     color = TextPrimary,
-                    fontSize = 8.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -390,7 +393,7 @@ fun FileItemGridCell(
                             .padding(horizontal = 3.dp, vertical = 1.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(stringResource(R.string.label_days_left, daysLeft), color = TextPrimary, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
+                        Text(stringResource(R.string.label_days_left, daysLeft), color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, lineHeight = 12.sp)
                     }
                 } else if (isNewFile) {
                     Box(
@@ -609,11 +612,13 @@ fun WebDavCachedThumbnail(
                     .data(java.io.File(localThumbPath!!))
                     .crossfade(true)
                     .build(),
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
+                contentDescription = "Hình thu nhỏ", modifier = modifier, contentScale = ContentScale.Crop
             )
         }
         ThumbStrategy.CLIENT_IMAGE -> {
-            val safeUrl = url.replace(" ", "%20")
+            // CC-004 P1-1: dung toValidUrl (encode theo segment) thay vi replace
+            // space tho — URL co '#', '?', '%', dau tieng Viet bi 404 truoc day.
+            val safeUrl = com.nas.naswebdav.toValidUrl(url)
             AsyncImage(
                 model = coil.request.ImageRequest.Builder(LocalContext.current)
                     .data(safeUrl)
@@ -628,20 +633,20 @@ fun WebDavCachedThumbnail(
                         onError = { _, _ -> onStateChange(ThumbState.ERROR) }
                     )
                     .build(),
-                contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop
+                contentDescription = "Hình thu nhỏ", modifier = modifier, contentScale = ContentScale.Crop
             )
         }
         ThumbStrategy.ERROR -> {
             Box(modifier = modifier.background(DarkCard), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.BrokenImage, null, tint = AccentRed, modifier = Modifier.size(28.dp))
+                    Icon(Icons.Default.BrokenImage, "Lỗi hình ảnh", tint = AccentRed, modifier = Modifier.size(28.dp))
                     Spacer(Modifier.height(2.dp))
                     Box(
                         modifier = Modifier
                             .background(AccentRed, AppShapes.Badge)
                             .padding(horizontal = 4.dp, vertical = 1.dp)
                     ) {
-                        Text("!", color = TextPrimary, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text("!", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -685,8 +690,9 @@ fun openExternalVideoPlayer(
             proxyUrl to true
         }
 
+        val mime = com.nas.naswebdav.utils.MediaUtils.mimeForFile(videoUrl.substringBefore('?'))
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(videoUrl.toUri(), "video/*")
+            setDataAndType(videoUrl.toUri(), mime)
             setPackage("org.videolan.vlc")
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -696,7 +702,7 @@ fun openExternalVideoPlayer(
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             val chooser = android.content.Intent.createChooser(
                 android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                    setDataAndType(videoUrl.toUri(), "video/*")
+                    setDataAndType(videoUrl.toUri(), mime)
                     addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 },
                 "Chọn trình phát video"
@@ -742,7 +748,7 @@ fun FileActionBottomSheet(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (file.isDirectory) {
-                Icon(Icons.Default.Folder, contentDescription = null, tint = AccentOrange,
+                Icon(Icons.Default.Folder, "Thư mục", tint = AccentOrange,
                     modifier = Modifier.size(48.dp))
             } else {
                 Box(

@@ -162,14 +162,14 @@ fun BiometricSettingsDialogCompat(
                     Text(
                         if (enabled) "Khoá khi app vào nền theo thời gian dưới"
                         else "Tắt — app không bao giờ tự khoá",
-                        color = TextTertiary, fontSize = 11.sp
+                        color = TextTertiary, fontSize = 12.sp
                     )
                 }
             }
 
             // Delay picker
             Spacer(Modifier.height(5.dp))
-            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("THỜI GIAN CHỜ KHOÁ (sau khi app vào nền)", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             val delayOptions = listOf(
                 0 to "Khoá NGAY",
@@ -240,7 +240,7 @@ fun BiometricSettingsDialogCompat(
                         prefsRepo.setBiometricEnabled(true)
                         prefsRepo.setBiometricLockDelaySec(delaySec)
                         deviceVM.logUserAction("Security", "Kích hoạt khoá sinh trắc học cục bộ.")
-                        autoBackupVM.lockNowRequested = true
+                        autoBackupVM.requestLockNow()
                         onDismiss()
                     },
                     enabled = bioStatus == "available",
@@ -253,7 +253,7 @@ fun BiometricSettingsDialogCompat(
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: \"Khoá NGAY\" trong delay = không có buffer khi switch app/đọc thông báo. Đề xuất 5-30 giây.",
-                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 12.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -302,7 +302,7 @@ fun BandwidthThrottleDialog(
             Text(
                 "Áp dụng cho tất cả upload qua WebDAV (auto-backup ảnh, share file, batch ops). " +
                     "Dùng để tránh app chiếm hết băng thông Wi-Fi/LAN.",
-                color = TextTertiary, fontSize = 11.sp, lineHeight = 14.sp
+                color = TextTertiary, fontSize = 12.sp, lineHeight = 14.sp
             )
 
             Spacer(Modifier.height(6.dp))
@@ -359,7 +359,7 @@ fun BandwidthThrottleDialog(
             Spacer(Modifier.height(4.dp))
             Text(
                 "Lưu ý: giới hạn này CHỈ ảnh hưởng upload từ điện thoại lên NAS, không ảnh hưởng tốc độ NAS ↔ Internet.",
-                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 12.sp, lineHeight = 13.sp
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -409,13 +409,13 @@ fun SleepScheduleDialog(
                 Text("Lịch ngủ NAS", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { autoBackupVM.fetchSleepSchedule() }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                    Icon(Icons.Default.Refresh, null, tint = TextTertiary, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Refresh, "Làm mới lịch ngủ NAS", tint = TextTertiary, modifier = Modifier.size(16.dp))
                 }
             }
             Text(
                 "Tự động parking head + ngừng quay HDD ngoài giờ dùng → giảm hao mòn (đặc biệt với ổ đã già). " +
                     "NAS vẫn online (ping/SSH OK), chỉ HDD spindown. Khi có request đụng disk → tự wake.",
-                color = TextTertiary, fontSize = 11.sp, lineHeight = 14.sp
+                color = TextTertiary, fontSize = 12.sp, lineHeight = 14.sp
             )
 
             // Current HDD state badge
@@ -438,7 +438,7 @@ fun SleepScheduleDialog(
                     Text("HDD: ${sched.currentHddState}", color = stateColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     Text(
                         if (sched.inWindowNow) "Đang trong khung giờ ngủ" else "Ngoài khung giờ ngủ",
-                        color = TextTertiary, fontSize = 11.sp
+                        color = TextTertiary, fontSize = 12.sp
                     )
                 }
             }
@@ -457,13 +457,13 @@ fun SleepScheduleDialog(
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Bật lịch ngủ", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = TextTertiary, fontSize = 11.sp)
+                    Text(if (localEnabled) "Sẽ spindown theo lịch dưới" else "Chưa kích hoạt", color = TextTertiary, fontSize = 12.sp)
                 }
             }
 
             // Time range
             Spacer(Modifier.height(8.dp))
-            Text("KHUNG GIỜ NGỦ (24h)", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("KHUNG GIỜ NGỦ (24h)", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 Text("Từ", color = TextTertiary, fontSize = 13.sp)
@@ -491,13 +491,13 @@ fun SleepScheduleDialog(
             Text(
                 if (localStartHour < localEndHour) "Trong ngày (${localStartHour}h-${localEndHour}h)"
                 else "Qua đêm (${localStartHour}h-${localEndHour}h sáng hôm sau)",
-                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp,
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 12.sp,
                 modifier = Modifier.padding(top = 3.dp)
             )
 
             // Mode picker
             Spacer(Modifier.height(8.dp))
-            Text("CHẾ ĐỘ NGỦ", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("CHẾ ĐỘ NGỦ", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 listOf(
@@ -508,7 +508,7 @@ fun SleepScheduleDialog(
                     FilterChip(
                         selected = selected,
                         onClick = { localMode = value },
-                        label = { Text(label, fontSize = 11.sp) },
+                        label = { Text(label, fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = AccentPurple.copy(alpha = 0.2f),
                             selectedLabelColor = AccentPurple,
@@ -529,7 +529,7 @@ fun SleepScheduleDialog(
                     "spindown" -> "HDD ngừng quay, NAS vẫn online (mạng, SSH, ping OK). Wake tự động khi có request."
                     else -> "NAS suspend hoàn toàn — cần WoL để đánh thức. KHÔNG khuyến nghị khi đang theo dõi TikTok live."
                 },
-                color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp, lineHeight = 13.sp,
+                color = TextTertiary.copy(alpha = 0.7f), fontSize = 12.sp, lineHeight = 13.sp,
                 modifier = Modifier.padding(top = 3.dp)
             )
 
@@ -545,7 +545,7 @@ fun SleepScheduleDialog(
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Chỉ ngủ khi NAS rảnh", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("CPU<30% + không có recording + không backup chạy", color = TextTertiary, fontSize = 11.sp)
+                    Text("CPU<30% + không có recording + không backup chạy", color = TextTertiary, fontSize = 12.sp)
                 }
             }
 
@@ -585,13 +585,13 @@ fun SleepScheduleDialog(
             if (autoBackupVM.sleepScheduleMessage.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 val msgColor = if (autoBackupVM.sleepScheduleMessage.startsWith("Lỗi")) AccentRed else AccentGreen
-                Text(autoBackupVM.sleepScheduleMessage, color = msgColor, fontSize = 11.sp)
+                Text(autoBackupVM.sleepScheduleMessage, color = msgColor, fontSize = 12.sp)
             }
             if (sched.lastActionState.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Lần ngủ cuối: ${sched.lastActionState}",
-                    color = TextTertiary.copy(alpha = 0.7f), fontSize = 10.sp
+                    color = TextTertiary.copy(alpha = 0.7f), fontSize = 12.sp
                 )
             }
             Spacer(Modifier.height(8.dp))

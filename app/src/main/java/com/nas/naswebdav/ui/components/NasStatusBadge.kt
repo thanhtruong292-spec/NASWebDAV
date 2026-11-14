@@ -128,7 +128,7 @@ fun NasStatusPill(
         if (icon != null) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = text,
                 tint = color,
                 modifier = Modifier.size(10.dp),
             )

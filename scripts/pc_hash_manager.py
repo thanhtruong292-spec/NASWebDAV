@@ -69,16 +69,16 @@ def propfind(session, base, path, depth=1):
                                      "Content-Type": "application/xml; charset=utf-8"},
                             timeout=30)
     except Exception as e:
-        _log(f"[WARN] PROPFIND loi {url}: {e}")
+        _log("[WARN] PROPFIND loi %s: %s" % (url, e))
         return []
     if r.status_code not in (200, 207):
-        _log(f"[WARN] PROPFIND {url} -> HTTP {r.status_code}")
+        _log("[WARN] PROPFIND %s -> HTTP %s" % (url, r.status_code))
         return []
     out = []
     try:
         root = ET.fromstring(r.content)
     except Exception as e:
-        _log(f"[WARN] PROPFIND {url} XML loi: {e}")
+        _log("[WARN] PROPFIND %s XML loi: %s" % (url, e))
         return []
     for resp in root.iter():
         if not resp.tag.endswith("response"):
@@ -168,9 +168,9 @@ def flush_pending(session, api, dry_run):
     try:
         r = session.post(api + "/api/hash/save", json={"items": batch}, timeout=60)
         if r.status_code != 200:
-            _log(f"[WARN] save batch HTTP {r.status_code}")
+            _log("[WARN] save batch HTTP %s" % (r.status_code,))
     except Exception as e:
-        _log(f"[WARN] save batch loi: {e}")
+        _log("[WARN] save batch loi: %s" % (e,))
 
 
 def process_one(session, webdav_base, api, path, dry_run, max_bytes):
@@ -189,11 +189,11 @@ def process_one(session, webdav_base, api, path, dry_run, max_bytes):
         if not sha:
             _bump("failed")
             if max_bytes > 0:
-                _log(f"[SKIP] {path} — qua lon")
+                _log("[SKIP] %s — qua lon" % (path,))
             return
     except Exception as e:
         _bump("failed")
-        _log(f"[FAIL] hash {path}: {e}")
+        _log("[FAIL] hash %s: %s" % (path, e))
         return
     _bump("hashed")
     with _pending_lock:
@@ -203,8 +203,8 @@ def process_one(session, webdav_base, api, path, dry_run, max_bytes):
     if need_flush:
         flush_pending(session, api, dry_run)
     if _stats["total"] % 50 == 0:
-        _log(f"... {_stats['total']} file | moi={_stats['hashed']} "
-             f"co-san={_stats['cached']} loi={_stats['failed']}")
+        _log("... %s file | moi=%s co-san=%s loi=%s" % (
+            _stats["total"], _stats["hashed"], _stats["cached"], _stats["failed"]))
 
 
 def report_duplicates(session, api, min_size, report_path):
@@ -213,20 +213,21 @@ def report_duplicates(session, api, min_size, report_path):
                         params={"min_size": min_size}, timeout=120)
         data = r.json()
     except Exception as e:
-        _log(f"[WARN] lay duplicates loi: {e}")
+        _log("[WARN] lay duplicates loi: %s" % (e,))
         return
     groups = data.get("groups", [])
     wasted = sum(g.get("wasted_bytes", 0) for g in groups)
-    _log(f"TRUNG LAP: {len(groups)} nhom, lang phi ~{wasted // 1048576}MB")
+    _log("TRUNG LAP: %s nhom, lang phi ~%sMB" % (len(groups), wasted // 1048576))
     for g in groups[:20]:
-        _log(f"  - {g['count']} file x {g['files'][0].split('/')[-1]} "
-             f"({g['wasted_bytes'] // 1024}KB) sha={g['sha256'][:12]}...")
+        _log("  - %s file x %s (%sKB) sha=%s..." % (
+            g["count"], g["files"][0].split("/")[-1],
+            g["wasted_bytes"] // 1024, g["sha256"][:12]))
         for p in g["files"][:5]:
-            _log(f"      {p}")
+            _log("      %s" % (p,))
     if report_path:
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
-        _log(f"Da ghi bao cao: {report_path}")
+        _log("Da ghi bao cao: %s" % (report_path,))
 
 
 def main():
@@ -253,11 +254,11 @@ def main():
                    else base + "/webdav")
     api = args.api_url.rstrip("/") if args.api_url else base
 
-    _log(f"WebDAV: {webdav_base} | API: {api}")
+    _log("WebDAV: %s | API: %s" % (webdav_base, api))
     root = propfind(session, webdav_base, "")
-    _log(f"PROPFIND root -> {len(root)} muc")
+    _log("PROPFIND root -> %s muc" % (len(root),))
     files = list(walk(session, webdav_base))
-    _log(f"Tim thay {len(files)} file.")
+    _log("Tim thay %s file." % (len(files),))
     if not files:
         return
     t0 = time.time()
@@ -268,8 +269,8 @@ def main():
             f.result()
     flush_pending(session, api, args.dry_run)
     dt = time.time() - t0
-    _log(f"XONG trong {dt:.0f}s: tong={_stats['total']} moi={_stats['hashed']} "
-         f"co-san={_stats['cached']} loi={_stats['failed']}")
+    _log("XONG trong %.0fs: tong=%s moi=%s co-san=%s loi=%s" % (
+        dt, _stats["total"], _stats["hashed"], _stats["cached"], _stats["failed"]))
     if not args.dry_run:
         report_duplicates(session, api, args.min_size, args.report)
 

@@ -8,6 +8,7 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.Request
@@ -23,6 +24,25 @@ object OnDemandThumbGenerator {
     private const val IMAGE_LIMIT_BYTES = 10L * 1024 * 1024
     private const val VIDEO_LIMIT_BYTES = 100L * 1024 * 1024
     private const val MAX_DOWNLOAD_BUFFER = 131072
+    // CC-005 P1: Semaphore giới hạn 2 generate song song — tránh OOM khi grid
+    // scroll nhanh spawn hàng chục coroutine decode cùng lúc.
+    private val generateSemaphore = kotlinx.coroutines.sync.Semaphore(2)
+
+    /** CC-005 P1: encode URL theo segment (giữ '/') — dùng chung encodeWebDavSegment. */
+    private fun encodeThumbUrl(rawUrl: String): String {
+        val qIdx = rawUrl.indexOf('?')
+        val base = if (qIdx >= 0) rawUrl.substring(0, qIdx) else rawUrl
+        val query = if (qIdx >= 0) rawUrl.substring(qIdx) else ""
+        val schemeIdx = base.indexOf("://")
+        if (schemeIdx < 0) return rawUrl
+        val afterScheme = base.indexOf('/', schemeIdx + 3)
+        if (afterScheme < 0) return rawUrl
+        val prefix = base.substring(0, afterScheme)
+        val path = base.substring(afterScheme).split("/").joinToString("/") { seg ->
+            if (seg.isEmpty()) seg else encodeWebDavSegment(seg)
+        }
+        return prefix + path + query
+    }
 
     /** Chi tu render khi mang khong tinh phi (Wi-Fi/LAN). 4G thi bo qua de
      * NAS xu luc idle — tranh dot data di dong tai file 10-100MB. */
@@ -41,6 +61,20 @@ object OnDemandThumbGenerator {
         maxImageBytes: Long = IMAGE_LIMIT_BYTES,
         maxVideoBytes: Long = VIDEO_LIMIT_BYTES
     ): File? = withContext(Dispatchers.IO) {
+        // CC-005 P1: giới hạn song song bằng Semaphore.
+        generateSemaphore.withPermit {
+            generateAndUploadInner(sourceUrl, auth, isVideo, context, maxImageBytes, maxVideoBytes)
+        }
+    }
+
+    private suspend fun generateAndUploadInner(
+        sourceUrl: String,
+        auth: String,
+        isVideo: Boolean,
+        context: Context,
+        maxImageBytes: Long = IMAGE_LIMIT_BYTES,
+        maxVideoBytes: Long = VIDEO_LIMIT_BYTES
+    ): File? = withContext(Dispatchers.IO) {
         val limit = if (isVideo) maxVideoBytes else maxImageBytes
         val safeHash = Integer.toHexString(sourceUrl.hashCode())
         val thumbDir = context.getDir("persistent_thumbnails", Context.MODE_PRIVATE)
@@ -48,8 +82,10 @@ object OnDemandThumbGenerator {
         val tempFile = File.createTempFile("thumb_source_", ".media", context.cacheDir)
         var bitmap: Bitmap? = null
         try {
+            // CC-005 P1: encode theo segment (tránh 404 với tên file có dấu/cách).
+            val encodedUrl = encodeThumbUrl(sourceUrl)
             val sourceRequest = Request.Builder()
-                .url(sourceUrl.replace(" ", "%20"))
+                .url(encodedUrl)
                 .header("Authorization", auth)
                 .head()
                 .build()
@@ -60,7 +96,7 @@ object OnDemandThumbGenerator {
             if (contentLength != null && contentLength > limit) return@withContext null
 
             val downloadRequest = Request.Builder()
-                .url(sourceUrl.replace(" ", "%20"))
+                .url(encodedUrl)
                 .header("Authorization", auth)
                 .build()
             client.newCall(downloadRequest).execute().use { response ->

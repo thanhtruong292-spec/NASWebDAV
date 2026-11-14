@@ -1,6 +1,7 @@
 package com.nas.naswebdav.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -144,7 +145,7 @@ fun NasAlertDialog(
                         containerColor = AccentCyan,
                         contentColor = DarkSurface
                     ),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = AppShapes.Button
                 ) { Text(confirmText, fontWeight = FontWeight.SemiBold) }
             }
         },
@@ -153,7 +154,7 @@ fun NasAlertDialog(
                 OutlinedButton(
                     onClick = onDismiss,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = AppShapes.Button
                 ) { Text(dismissText) }
             }
         },
@@ -163,8 +164,8 @@ fun NasAlertDialog(
         text = {
             Column(content = content)
         },
-        containerColor = DarkCard,
-        shape = RoundedCornerShape(16.dp),
+        containerColor = DarkElevated,
+        shape = AppShapes.Dialog,
         properties = DialogProperties(usePlatformDefaultWidth = false),
         modifier = modifier.padding(horizontal = 24.dp)
     )
@@ -185,7 +186,7 @@ fun NasBottomSheetContent(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(DarkCard, RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+            .background(DarkElevated, RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
             .padding(horizontal = 20.dp)
             .padding(top = 16.dp, bottom = 24.dp)
             .navigationBarsPadding()
@@ -247,7 +248,8 @@ fun NasCard(
             onClick = onClick,
             modifier = modifier,
             colors = CardDefaults.cardColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(10.dp),
+            shape = AppShapes.Card,
+            border = BorderStroke(1.dp, DarkCardBorder),
         ) {
             Column(content = content)
         }
@@ -255,7 +257,8 @@ fun NasCard(
         Card(
             modifier = modifier,
             colors = CardDefaults.cardColors(containerColor = DarkCard),
-            shape = RoundedCornerShape(10.dp),
+            shape = AppShapes.Card,
+            border = BorderStroke(1.dp, DarkCardBorder),
         ) {
             Column(content = content)
         }
@@ -284,7 +287,7 @@ fun NasDialogButtonRow(
             text = primaryText,
             modifier = Modifier.weight(1f),
             height = 36.dp,
-            shape = RoundedCornerShape(10.dp),
+            shape = AppShapes.Button,
             enabled = primaryEnabled,
             gradientColors = primaryGradientColors,
         )
@@ -292,7 +295,7 @@ fun NasDialogButtonRow(
             onClick = onSecondary,
             modifier = Modifier.weight(1f),
             enabled = primaryEnabled,
-            shape = RoundedCornerShape(10.dp),
+            shape = AppShapes.Button,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
         ) {
             Text(secondaryText, color = TextSecondary, fontSize = 13.sp)
@@ -318,7 +321,7 @@ fun NasModalBottomSheet(
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
-        containerColor = DarkSurface,
+        containerColor = DarkElevated,
         scrimColor = DarkSurface.copy(alpha = 0.6f),
         dragHandle = { NasBottomSheetHandle() },
         modifier = modifier,

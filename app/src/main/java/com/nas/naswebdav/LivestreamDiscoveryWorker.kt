@@ -11,6 +11,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nas.naswebdav.utils.SystemLogger
 import okhttp3.Credentials
 import okhttp3.Request
 import org.json.JSONObject
@@ -30,13 +31,14 @@ class LivestreamDiscoveryWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "LivestreamDiscovery", "Bắt đầu tick phát hiện livestream")
         try {
             val user = SecurePrefsHelper.getUser(applicationContext)
             val pass = SecurePrefsHelper.getPass(applicationContext)
             val baseUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             if (baseUrl.isEmpty()) return@withContext Result.success()
 
-            val apiUrl = baseUrl.toApiBaseUrl() + "/api/livestream/status"
+            val apiUrl = baseUrl.toApiBaseUrl() + AppConfig.ApiEndpoints.LIVESTREAM_STATUS
             val reqBuilder = Request.Builder().url(apiUrl)
             if (user.isNotEmpty() && pass.isNotEmpty()) {
                 reqBuilder.header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
@@ -63,8 +65,13 @@ class LivestreamDiscoveryWorker(
                 // theo work name "LIVESTREAM_MONITOR_<jobId>" - tu chan trung lap.
                 LivestreamMonitorWorker.enqueue(applicationContext, jobId, host, platform)
             }
+            SystemLogger.log("INFO", "LivestreamDiscovery", "Hoàn tất tick phát hiện livestream")
             Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
+            if (isStopped) {
+                return@withContext Result.retry()
+            }
             // Không retry nếu network lỗi — cho tick sau (15p). Log để dashboard hiển thị.
             android.util.Log.w("LivestreamDiscovery", "Discovery tick failed: ${e.message}")
             Result.success()
@@ -79,7 +86,7 @@ class LivestreamDiscoveryWorker(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
             val request = PeriodicWorkRequestBuilder<LivestreamDiscoveryWorker>(
-                60, TimeUnit.MINUTES
+                15, TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
                 .setBackoffCriteria(

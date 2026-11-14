@@ -57,6 +57,10 @@ import androidx.core.content.edit
 
 // ============ Dashboard cards (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+private val UptimeSecondsCardRegex = Regex(",\\s*\\d+\\s*giây")
+private val FanPercentRegex = Regex("""(\d+)\s*%""")
+private val FanRpmRegex = Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE)
+
 // Palette hằng số cho BigMenuTile — stable reference, tránh tạo List mới mỗi recomposition.
 private val TilePaletteOrange = kotlinx.collections.immutable.persistentListOf(AccentOrange, AccentOrange.copy(alpha = 0.8f))
 private val TilePalettePurpleCyan = kotlinx.collections.immutable.persistentListOf(AccentPurple, AccentCyan)
@@ -105,7 +109,7 @@ internal fun MainDashboardHeader(
             Text("v${com.nas.naswebdav.BuildConfig.VERSION_NAME}", style = AppTypography.LabelMedium.copy(color = TextSecondary.copy(alpha = 0.7f)))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Chainedbox L1 Pro", style = AppTypography.BodyLarge.copy(color = TextSecondary))
-                Text("  \u2022  ", style = AppTypography.BodyLarge.copy(color = TextSecondary))
+                Text(" | ", style = AppTypography.BodyLarge.copy(color = BulletSeparator))
                 Box(
                     modifier = Modifier
                         .clip(AppShapes.Badge)
@@ -150,7 +154,7 @@ internal fun MainDashboardHeader(
                 ) {
                     Icon(
                         if (deviceVM.isOnLan) Icons.Default.NetworkWifi else Icons.Default.Language,
-                        contentDescription = null,
+                        contentDescription = "Mạng NAS",
                         tint = if (deviceVM.isOnLan) AccentGreen else AccentCyan,
                         modifier = Modifier.size(12.dp)
                     )
@@ -162,11 +166,11 @@ internal fun MainDashboardHeader(
                 }
                 val ut = systemVM.systemStatus.uptime
                 if (ut.isNotBlank() && ut != "--") {
-                    val cleanUt = ut.replace(Regex(",\\s*\\d+\\s*giây"), "")
+                    val cleanUt = ut.replace(UptimeSecondsCardRegex, "")
                     Spacer(Modifier.width(AppSpacing.SM))
                     Icon(Icons.Default.Schedule, null, tint = AccentCyan, modifier = Modifier.size(11.dp))
                     Spacer(Modifier.width(AppSpacing.XXS + AppSpacing.XS))
-                    Text(cleanUt, style = AppTypography.BodyMedium.copy(color = AccentCyan, fontWeight = FontWeight.SemiBold))
+                    Text(cleanUt, style = AppTypography.BodyMedium.copy(color = AccentCyan, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
                 }
                 Spacer(Modifier.width(AppSpacing.SM))
                 Row(
@@ -178,7 +182,7 @@ internal fun MainDashboardHeader(
                 ) {
                     Text(
                         "v${com.nas.naswebdav.BuildConfig.VERSION_NAME}",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = AccentPurple,
                         fontWeight = FontWeight.Bold
                     )
@@ -188,10 +192,10 @@ internal fun MainDashboardHeader(
         
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
+                modifier = Modifier.size(48.dp).clip(CircleShape).background(DarkCard).clickable { onPowerMenuChange(true) },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.PowerSettingsNew, contentDescription = "Nguồn", tint = AccentRed, modifier = Modifier.size(18.dp))
                 
                 DropdownMenu(
                     expanded = showPowerMenu,
@@ -219,6 +223,7 @@ internal fun MainDashboardHeader(
         }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun DashboardSystemOverviewCard(
     realtimeNow: Long,
@@ -245,49 +250,51 @@ internal fun DashboardSystemOverviewCard(
                 // giai ma/render anh-video nen CPU NAS thap khi duyet file.
                 Text(
                     "NAS lưu trữ • Điện thoại tự giải mã & hiển thị",
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = TextSecondary
                 )
                 Spacer(Modifier.height(AppSpacing.SM - AppSpacing.XS))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     GaugeCard(
                         title = "CPU", value = systemVM.systemStatus.cpu,
                         subValue = systemVM.systemStatus.cpuTemp,
                         icon = Icons.Default.Memory,
                         gradientColors = GaugePaletteCpu,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(0.48f),
                         onClick = {
                             onShowProcessList("cpu")
                         }
                     )
+                    val ramPercent = systemVM.systemStatus.ramPercent.toFloatOrNull()
+                        ?.takeIf { systemVM.systemStatus.ram != "--" }
                     GaugeCard(
-                        title = "RAM", value = systemVM.systemStatus.ram, subValue = "${systemVM.systemStatus.ramPercent}%",
+                        title = "RAM", value = systemVM.systemStatus.ram,
+                        subValue = ramPercent?.let { "$it%" } ?: "Chờ dữ liệu",
                         icon = Icons.Default.DeveloperBoard,
                         gradientColors = GaugePaletteRam,
-                        modifier = Modifier.weight(1f),
-                        overridePercent = systemVM.systemStatus.ramPercent.replace("%", "").trim().toFloatOrNull(),
+                        modifier = Modifier.fillMaxWidth(0.48f),
+                        overridePercent = ramPercent,
                         onClick = {
                             onShowProcessList("mem")
                         }
                     )
 
-                    val hddDisk = systemVM.systemStatus.diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
-                        ?: systemVM.systemStatus.diskParts.find { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
-                    if (hddDisk != null) {
-                        val fmtTotal = hddDisk.total.let {
-                            val n = it.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
-                            if (it.contains("GB", true) && n >= 1000f) "%.1f TB".format(java.util.Locale.US, n / 1024f) else it
-                        }
-                        GaugeCard(
-                            title = "HDD", value = "${hddDisk.used} / $fmtTotal",
-                            subValue = "${hddDisk.percent}%",
-                            icon = Icons.Default.Storage,
-                            gradientColors = GaugePaletteHdd,
-                            modifier = Modifier.weight(1f),
-                            overridePercent = hddDisk.percent,
-                            onClick = onOpenNewDiskProfile
-                        )
-                    } else Spacer(Modifier.weight(1f))
+                    val diskMetric = systemVM.systemStatus.dashboardDiskMetric()
+                    GaugeCard(
+                        title = "Ổ CỨNG",
+                        value = diskMetric?.capacity ?: "Chưa có dữ liệu",
+                        subValue = diskMetric?.percent?.let { "Đã dùng %.1f%%".format(java.util.Locale.getDefault(), it) }
+                            ?: if (diskMetric == null) "Đang chờ NAS phản hồi" else "Dung lượng filesystem",
+                        icon = Icons.Default.Storage,
+                        gradientColors = GaugePaletteHdd,
+                        modifier = Modifier.fillMaxWidth(0.48f),
+                        overridePercent = diskMetric?.percent,
+                        onClick = onOpenNewDiskProfile
+                    )
 
                     val smartStatusText = deviceVM.smartInfo.status.uppercase().trim()
 
@@ -301,21 +308,16 @@ internal fun DashboardSystemOverviewCard(
                         isSmartFailed -> SmartPaletteFailed // FAILED hiển thị màu Đỏ
                         else -> SmartPaletteUnknown // Màu xám cho UNKNOWN, ĐANG TẢI, LỖI...
                     }
-                    val smartPercent = when {
-                        isSmartOk -> 100f
-                        isSmartEmmc -> 100f
-                        isSmartFailed -> 0f
-                        else -> 50f
-                    }
                     GaugeCard(
                         title = "S.M.A.R.T",
                         value = smartStatusText,
                         // Nhiệt độ HDD THỰC TẾ (live, refresh mỗi poll) thay vì nhiệt lúc quét SMART (kẹt cố định).
-                        subValue = systemVM.systemStatus.temp.replace("°C", "°").replace("--", ""),
+                        subValue = systemVM.systemStatus.temp.takeUnless { it.startsWith("--") }?.replace("°C", "°")
+                            ?: deviceVM.smartInfo.temperature.takeUnless { it.startsWith("--") }?.replace("°C", "°"),
                         icon = Icons.Default.HealthAndSafety,
                         gradientColors = smartColors,
-                        modifier = Modifier.weight(1f),
-                        overridePercent = smartPercent,
+                        modifier = Modifier.fillMaxWidth(0.48f),
+                        overridePercent = null,
                         onClick = onOpenSmartDetails
                     )
                 }
@@ -325,8 +327,8 @@ internal fun DashboardSystemOverviewCard(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val fanStatusStr = systemVM.systemStatus.fanStatus
                                     val fanPercentFromApi = systemVM.systemStatus.fanPercent
-                                    val statusPercent = Regex("""(\d+)\s*%""").find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                                    val rpmFromApi = systemVM.systemStatus.fanRpm ?: Regex("""(\d+)\s*rpm""", RegexOption.IGNORE_CASE).find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val statusPercent = FanPercentRegex.find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                                    val rpmFromApi = systemVM.systemStatus.fanRpm ?: FanRpmRegex.find(fanStatusStr)?.groupValues?.getOrNull(1)?.toIntOrNull()
                                     val percentFromRpm = rpmFromApi?.let { rpm -> ((rpm * 100f) / 4300f).toInt() }
                                     val rawPercent = fanPercentFromApi ?: statusPercent ?: percentFromRpm ?: 0
 
@@ -340,7 +342,7 @@ internal fun DashboardSystemOverviewCard(
                                     Spacer(Modifier.width(AppSpacing.SM))
                                     Column {
                                         Text("Quạt tản nhiệt", style = AppTypography.BodyMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold))
-                                        Text(displayStatusStr, style = AppTypography.LabelMedium.copy(color = if (isFanDisplayRunning) AccentGreen else AccentRed))
+                                        Text(displayStatusStr, style = AppTypography.LabelMedium.copy(color = if (isFanDisplayRunning) AccentGreen else AccentRed, fontFeatureSettings = "tnum"))
                                     }
                                 }
                                 // Single Combined Fan Mode Toggle Button (Cycle: Tùy chỉnh -> Bật -> Tắt)
@@ -382,7 +384,7 @@ internal fun DashboardSystemOverviewCard(
                                     if (currentMode == "custom") {
                                         IconButton(
                                             onClick = { showFanSettings = true },
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier.minimumInteractiveComponentSize().size(24.dp)
                                         ) {
                                             Icon(Icons.Default.Settings, contentDescription = "Cài đặt nhiệt độ", tint = AccentCyan, modifier = Modifier.size(16.dp))
                                         }
@@ -448,11 +450,11 @@ internal fun DashboardStorageCard(
     ) {
         Column(Modifier.padding(horizontal = AppSpacing.SM, vertical = AppSpacing.SM - AppSpacing.XS)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("LƯU TRỮ", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
+                Text("LƯU TRỮ • WebDAV đã quét", fontSize = PanelTitleSize, color = PanelTitleCyan, fontWeight = FontWeight.Black,
                     letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.weight(1f))
                 if (s.partial) {
-                    Text("quét dở", fontSize = 11.sp, color = AccentOrange)
+                    Text("quét dở — chưa đầy đủ", fontSize = 12.sp, color = AccentOrange)
                     Spacer(Modifier.width(AppSpacing.XS))
                 }
                 PanelFreshnessTag(systemVM.storageUpdatedAt(realtimeNow), realtimeNow, staleAfterMs = 300_000L)
@@ -477,9 +479,20 @@ internal fun DashboardStorageCard(
                 }
             } else {
                 // Tong quan: N file • M thu muc • tong dung luong
+                // CODEX 09/10: HDD gauge (2.57TB/3.58TB) la filesystem used toan mount
+                // /srv/dev-disk-by-label-data tu /api/status; card nay chi la NOI DUNG
+                // WebDAV da quet duoi root (bo .trash/.nas_meta/an, co the partial).
+                // Khi partial=true KHONG goi la tong hoan chinh.
                 Text(
-                    "${formatStorageCount(s.totalFiles)} tệp • ${formatStorageCount(s.totalDirs)} thư mục • ${formatStorageBytes(s.totalBytes)}",
+                    if (s.partial)
+                        "Đã quét ${formatStorageCount(s.totalFiles)} tệp • ${formatStorageCount(s.totalDirs)} thư mục • ${formatStorageBytes(s.totalBytes)} (chưa đầy đủ)"
+                    else
+                        "${formatStorageCount(s.totalFiles)} tệp • ${formatStorageCount(s.totalDirs)} thư mục • ${formatStorageBytes(s.totalBytes)}",
                     fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextPrimary
+                )
+                Text(
+                    "Nội dung WebDAV đã quét (không gồm filesystem ngoài root)",
+                    fontSize = 12.sp, color = TextSecondary
                 )
                 Spacer(Modifier.height(AppSpacing.XS))
                 // Breakdown theo loai — thanh ty le + so file/dung luong.
@@ -492,12 +505,12 @@ internal fun DashboardStorageCard(
                 // Top file lon nhat.
                 if (s.largest.isNotEmpty()) {
                     Spacer(Modifier.height(AppSpacing.XS))
-                    Text("FILE LỚN NHẤT", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    Text("FILE LỚN NHẤT", fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         color = TextTertiary, letterSpacing = PanelTitleLetterSpacing)
                     s.largest.take(5).forEach { f ->
                         Row(verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(vertical = 2.dp)) {
-                            Icon(Icons.Default.InsertDriveFile, contentDescription = null,
+                            Icon(Icons.Default.InsertDriveFile, contentDescription = "Tệp",
                                 tint = TextTertiary, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(AppSpacing.XS))
                             Text(
@@ -531,7 +544,7 @@ private fun StorageTypeRow(label: String, files: Int, bytes: Long, total: Long, 
             )
             Spacer(Modifier.width(AppSpacing.XS))
             Text("${formatStorageCount(files)} • ${formatStorageBytes(bytes)}",
-                fontSize = 11.sp, color = TextSecondary)
+                fontSize = 12.sp, color = TextSecondary)
         }
     }
 }
@@ -612,9 +625,7 @@ internal fun OmvServicesHardwarePanel() {
                             Spacer(Modifier.width(AppSpacing.XS))
                             Icon(
                                 if (omvExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = null,
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
+                                contentDescription = "Mở rộng dịch vụ", tint = TextSecondary, modifier = Modifier.size(20.dp)
                             )
                         }
                     }

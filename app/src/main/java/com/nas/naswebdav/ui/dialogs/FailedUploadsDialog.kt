@@ -53,7 +53,7 @@ fun FailedUploadsDialog(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Default.Warning,
-                            contentDescription = null,
+                            contentDescription = "Cảnh báo",
                             tint = MaterialTheme.colorScheme.error
                         )
                         Spacer(Modifier.width(8.dp))
@@ -87,7 +87,7 @@ fun FailedUploadsDialog(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Icon(
                                     Icons.Default.CheckCircle,
-                                    contentDescription = null,
+                                    contentDescription = "Không có upload thất bại",
                                     modifier = Modifier.size(48.dp),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
@@ -132,7 +132,7 @@ fun FailedUploadsDialog(
                                     onDismiss()
                                 }
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Refresh, contentDescription = "Thử lại tất cả", modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Retry tất cả")
                             }
@@ -170,7 +170,7 @@ private fun FailedUploadItem(
         ) {
             Icon(
                 Icons.Default.CloudOff,
-                contentDescription = null,
+                contentDescription = "Lỗi upload",
                 modifier = Modifier.size(32.dp),
                 tint = MaterialTheme.colorScheme.error
             )

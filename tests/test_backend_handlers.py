@@ -21,7 +21,14 @@ class TestBackendCodeQuality(unittest.TestCase):
         )
         # Check that _wrapper_dir = "" exists before any if direct_tiktok_flv
         has_wrapper_dir_default = False
+        found_if = False
+        statements = []
         for stmt in func.body:
+            if isinstance(stmt, ast.Try):
+                statements.extend(stmt.body)
+            else:
+                statements.append(stmt)
+        for stmt in statements:
             if isinstance(stmt, ast.Assign):
                 for t in stmt.targets:
                     if isinstance(t, ast.Name) and t.id == "_wrapper_dir":
@@ -29,8 +36,10 @@ class TestBackendCodeQuality(unittest.TestCase):
             if isinstance(stmt, ast.If):
                 test = stmt.test
                 if isinstance(test, ast.Name) and test.id == "direct_tiktok_flv":
+                    found_if = True
                     self.assertTrue(has_wrapper_dir_default, "_wrapper_dir must be initialized before if direct_tiktok_flv")
                     break
+        self.assertTrue(found_if, "Could not find 'if direct_tiktok_flv' in api_livestream_record")
 
     def test_ytdlp_bin_used_in_api_ytdlp_download(self):
         """Verify api_ytdlp_download references ytdlp_bin when building the cmd.

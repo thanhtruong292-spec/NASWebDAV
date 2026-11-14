@@ -21,6 +21,7 @@ import com.nas.naswebdav.WebDavManager
 import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -54,66 +55,85 @@ class DeviceManagementViewModel(
     // ═══ STATE — owned by DeviceManagementViewModel ═══
 
     var isSmbEnabled by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var isLoadingSmb by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     var lanWhitelistIps by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
-        internal set
+        private set
     var lanWhitelistSubnets by androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
-        internal set
+        private set
     var lanWhitelistLoading by androidx.compose.runtime.mutableStateOf(true)
-        internal set
+        private set
     var lanWhitelistError by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var lanWhitelistStatus by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     var dockerContainers by androidx.compose.runtime.mutableStateOf<List<DockerContainer>>(emptyList())
-        internal set
+        private set
     var isFetchingDocker by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var isDockerRunning by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
+    private var dockerFetchJob: Job? = null
     var isTogglingDocker by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     var omvOverview by androidx.compose.runtime.mutableStateOf(OmvOverview())
-        internal set
+        private set
     var isFetchingOmvOverview by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
+    private var omvOverviewFetchJob: Job? = null
 
     var smartInfo by androidx.compose.runtime.mutableStateOf(SmartInfo("Đang tải...", "--", ""))
-        internal set
+        private set
     var lastSmartRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     private var lastOmvOverviewFetchAt = 0L
+    private var smartDataFetchJob: Job? = null
     var showSmartDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var showDockerDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
     var speedTestResult by androidx.compose.runtime.mutableStateOf(SpeedTestResult("--", "--"))
-        internal set
+        private set
     var isTestingSpeed by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var lastAutoSpeedTime by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
 
-    val isOnLan: Boolean
-        get() {
-            val currentUrl = com.nas.naswebdav.WebDavManager.currentBaseUrl
-            if (currentUrl.isNotBlank()) return !com.nas.naswebdav.isTailscaleUrl(currentUrl)
-            return com.nas.naswebdav.shared.SharedStateHolder.isOnLan.value
+    // CC-003: isOnLan phản ứng được với recompose. Bản cũ là getter thuần đọc
+    // WebDavManager.currentBaseUrl (không phải Compose State) rồi mới đọc
+    // SharedStateHolder.value (đọc .value lẻ không subscribe) nên badge LAN/
+    // Tailscale không bao giờ vẽ lại sau checkSmartNetwork. Giờ giữ Compose
+    // State, đồng bộ từ SharedStateHolder.isOnLan flow.
+    var isOnLan: Boolean by androidx.compose.runtime.mutableStateOf(
+        runCatching {
+            val base = com.nas.naswebdav.WebDavManager.currentBaseUrl
+            if (base.isNotBlank()) !com.nas.naswebdav.isTailscaleUrl(base)
+            else com.nas.naswebdav.shared.SharedStateHolder.isOnLan.value
+        }.getOrDefault(true)
+    )
+        private set
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            com.nas.naswebdav.shared.SharedStateHolder.isOnLan.collect { onLan ->
+                withContext(Dispatchers.Main) { isOnLan = onLan }
+            }
         }
+    }
 
     var isFanModeUpdating by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     var storageFolderUsage by androidx.compose.runtime.mutableStateOf<List<StorageFolderUsage>>(readCachedStorageUsage())
-        internal set
+        private set
     var isFetchingStorageUsage by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
+    private var storageUsageFetchJob: Job? = null
     private var storageUsageUpdatedAt = readCachedStorageUsageAt()
 
     companion object {
@@ -151,22 +171,22 @@ class DeviceManagementViewModel(
     }
 
     var systemLogs by androidx.compose.runtime.mutableStateOf(listOf<SystemLog>())
-        internal set
+        private set
     var systemLogsList by androidx.compose.runtime.mutableStateOf<List<SystemLog>>(emptyList())
     var lastLogsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var showLogDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var isFetchingLogs by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // Failed uploads từ SyncAction table (actionType=UPLOAD_FAILED) — cho UI retry/delete
     var failedUploads by androidx.compose.runtime.mutableStateOf<List<com.nas.naswebdav.SyncAction>>(emptyList())
-        internal set
+        private set
     var showFailedUploadsDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var isLoadingFailedUploads by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     /**
      * Tải danh sách UPLOAD_FAILED rows từ SyncAction table.
@@ -197,24 +217,8 @@ class DeviceManagementViewModel(
     fun retryFailedUpload(context: android.content.Context, actionId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val constraints = androidx.work.Constraints.Builder()
-                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                    .build()
-                val inputData = androidx.work.workDataOf(
-                    com.nas.naswebdav.OfflineSyncWorker.KEY_RETRY_ACTION_ID to actionId
-                )
-                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
-                    .setConstraints(constraints)
-                    .setInputData(inputData)
-                    .setBackoffCriteria(
-                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
-                    )
-                    .build()
-                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
-                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
-                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
-                    request
-                )
+                // CC-005 P1: single schedule — giữ đúng 1 unique work.
+                com.nas.naswebdav.OfflineSyncWorker.schedule(context, retryActionId = actionId)
                 com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
                     "Enqueue retry cho failed upload id=$actionId (priority)")
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -252,20 +256,8 @@ class DeviceManagementViewModel(
     fun retryAllFailedUploads(context: android.content.Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val constraints = androidx.work.Constraints.Builder()
-                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                    .build()
-                val request = androidx.work.OneTimeWorkRequestBuilder<com.nas.naswebdav.OfflineSyncWorker>()
-                    .setConstraints(constraints)
-                    .setBackoffCriteria(
-                        androidx.work.BackoffPolicy.EXPONENTIAL, 15L, java.util.concurrent.TimeUnit.SECONDS
-                    )
-                    .build()
-                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
-                    com.nas.naswebdav.OfflineSyncWorker.UNIQUE_WORK_NAME,
-                    androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
-                    request
-                )
+                // CC-005 P1: single schedule — giữ đúng 1 unique work.
+                com.nas.naswebdav.OfflineSyncWorker.schedule(context)
                 com.nas.naswebdav.utils.SystemLogger.log("INFO", "DeviceMgmt",
                     "Enqueue retry-all failed uploads")
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -313,9 +305,10 @@ class DeviceManagementViewModel(
     }
 
     /** Load Docker container list — Phase 2b wired */
-    fun loadDockerContainers() {
+    fun loadDockerContainers(): Job? {
+        if (isFetchingDocker) return dockerFetchJob
         isFetchingDocker = true
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder()
@@ -344,6 +337,8 @@ class DeviceManagementViewModel(
                 withContext(Dispatchers.Main) { isFetchingDocker = false }
             }
         }
+        dockerFetchJob = job
+        return job
     }
 
     /** Toggle Docker daemon on/off — Phase 2b wired */
@@ -408,11 +403,12 @@ class DeviceManagementViewModel(
         }
     }
 
-    fun fetchSmartData(minIntervalMs: Long = 15_000L) {
+    fun fetchSmartData(minIntervalMs: Long = 15_000L): Job? {
         val now = System.currentTimeMillis()
-        if (minIntervalMs > 0L && now - lastSmartRefreshAt < minIntervalMs) return
+        if (smartDataFetchJob?.isActive == true) return smartDataFetchJob
+        if (minIntervalMs > 0L && now - lastSmartRefreshAt < minIntervalMs) return null
         lastSmartRefreshAt = now
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/disk/smart").build()
@@ -441,15 +437,17 @@ class DeviceManagementViewModel(
                 }
             }
         }
+        smartDataFetchJob = job
+        return job
     }
 
-    fun fetchOmvOverview(minIntervalMs: Long = 15_000L) {
+    fun fetchOmvOverview(minIntervalMs: Long = 15_000L): Job? {
         val now = System.currentTimeMillis()
-        if (minIntervalMs > 0L && now - lastOmvOverviewFetchAt < minIntervalMs) return
-        if (isFetchingOmvOverview) return
+        if (isFetchingOmvOverview) return omvOverviewFetchJob
+        if (minIntervalMs > 0L && now - lastOmvOverviewFetchAt < minIntervalMs) return null
         lastOmvOverviewFetchAt = now
         isFetchingOmvOverview = true
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
                 val request = okhttp3.Request.Builder().url("$apiBaseUrl/api/omv/overview").build()
@@ -508,6 +506,8 @@ class DeviceManagementViewModel(
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
             finally { withContext(Dispatchers.Main) { isFetchingOmvOverview = false } }
         }
+        omvOverviewFetchJob = job
+        return job
     }
 
     private fun parseOmvNetwork(netArr: org.json.JSONArray): List<OmvNetworkInfo> =
@@ -695,13 +695,16 @@ class DeviceManagementViewModel(
     /** Fetch storage folder usage — Phase 2b wired.
      * Mở app hiện cache cũ ngay, chỉ fetch nền khi quá 30s (trừ khi force bằng
      * minIntervalMs = 0L từ kéo-refresh tay). Fetch xong lưu cache cho lần sau. */
-    fun fetchStorageUsage(minIntervalMs: Long = STORAGE_USAGE_INTERVAL_MS) {
-        if (isFetchingStorageUsage) return
-        if (minIntervalMs > 0 && System.currentTimeMillis() - storageUsageUpdatedAt < minIntervalMs) return
+    fun fetchStorageUsage(minIntervalMs: Long = STORAGE_USAGE_INTERVAL_MS): Job? {
+        if (isFetchingStorageUsage) return storageUsageFetchJob
+        if (minIntervalMs > 0 && System.currentTimeMillis() - storageUsageUpdatedAt < minIntervalMs) return null
         isFetchingStorageUsage = true
-        viewModelScope.launch(Dispatchers.IO) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                // CC-004 P0-1: guard apiBase rong — cold-start fetch truoc restore
+                // dung Builder.url("/api/storage/usage") nem, catch silent.
+                if (apiBase.isBlank()) return@launch
                 val req = okhttp3.Request.Builder().url("$apiBase/api/storage/usage").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
@@ -742,6 +745,8 @@ class DeviceManagementViewModel(
                 withContext(Dispatchers.Main) { isFetchingStorageUsage = false }
             }
         }
+        storageUsageFetchJob = job
+        return job
     }
 
     fun showSystemLogs() { showLogDialog = true }
@@ -987,11 +992,11 @@ class DeviceManagementViewModel(
     // ═══ USB IMPORT (Phase 7d.3 — moved from WebDavViewModel facade) ═══
 
     var usbImportState by androidx.compose.runtime.mutableStateOf(UsbImportState())
-        internal set
+        private set
     var usbImportMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var isUsbImportLoading by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     private val lastUsbImportStatusFetchAt = AtomicLong(0L)
     private val usbImportStatusInFlight = AtomicBoolean(false)
@@ -1264,14 +1269,16 @@ class DeviceManagementViewModel(
     fun loadRulesConfig(
         onResult: (enabled: Boolean, pauseOnDiskLow: Boolean, pauseOnHeat: Boolean, cpuThreshold: Int, ramThreshold: Int) -> Unit,
     ) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        onResult(
-            p.getBoolean("alert_enabled", true),
-            p.getBoolean("alert_pause_disk_low", true),
-            p.getBoolean("alert_pause_heat", false),
-            p.getInt("alert_cpu_threshold", 90),
-            p.getInt("alert_ram_threshold", 85),
-        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+            onResult(
+                p.getBoolean("alert_enabled", true),
+                p.getBoolean("alert_pause_disk_low", true),
+                p.getBoolean("alert_pause_heat", false),
+                p.getInt("alert_cpu_threshold", 90),
+                p.getInt("alert_ram_threshold", 85),
+            )
+        }
     }
 
     fun saveRulesConfig(
@@ -1282,15 +1289,17 @@ class DeviceManagementViewModel(
         ramThreshold: Int,
         onResult: (Boolean, String) -> Unit,
     ) {
-        val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
-        p.edit {
-            putBoolean("alert_enabled", enabled)
-            putBoolean("alert_pause_disk_low", pauseOnDiskLow)
-            putBoolean("alert_pause_heat", pauseOnHeat)
-            putInt("alert_cpu_threshold", cpuThreshold)
-            putInt("alert_ram_threshold", ramThreshold)
+        viewModelScope.launch(Dispatchers.IO) {
+            val p = NasApplication.instance.getSharedPreferences("nas_prefs", android.content.Context.MODE_PRIVATE)
+            p.edit {
+                putBoolean("alert_enabled", enabled)
+                putBoolean("alert_pause_disk_low", pauseOnDiskLow)
+                putBoolean("alert_pause_heat", pauseOnHeat)
+                putInt("alert_cpu_threshold", cpuThreshold)
+                putInt("alert_ram_threshold", ramThreshold)
+            }
+            onResult(true, "Đã lưu quy tắc cảnh báo")
         }
-        onResult(true, "Đã lưu quy tắc cảnh báo")
     }
 
     // ═══ DEVICE APPROVAL (Phase 7d.3 — moved from WebDavViewModel facade) ═══
@@ -1298,13 +1307,39 @@ class DeviceManagementViewModel(
     var showApprovalDialog by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var pendingIpAddress by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var pendingCountryCode by androidx.compose.runtime.mutableStateOf("VN")
+        private set
     var approvalMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
+    // CC-005 P1: pending list + timestamp — hiển thị số lượng chờ duyệt trong
+    // dialog, timeout 60s tự đóng (dialog observe approvalDeadlineMs).
+    val pendingApprovals = androidx.compose.runtime.mutableStateListOf<String>()
+    var approvalDeadlineMs by androidx.compose.runtime.mutableStateOf(0L)
+        private set
+
+    /**
+     * CC-005 P1: đặt IP chờ duyệt + deadline 60s. Dialog IpApprovalDialog tự
+     * đóng khi quá hạn (LaunchedEffect delay). Gọi khi nhận event IP lạ.
+     */
+    fun requestIpApproval(ip: String, country: String = "VN", message: String = "") {
+        if (ip.isNotBlank() && !pendingApprovals.contains(ip)) pendingApprovals.add(ip)
+        pendingIpAddress = ip
+        pendingCountryCode = country.ifBlank { "VN" }
+        approvalMessage = message
+        approvalDeadlineMs = System.currentTimeMillis() + 60_000L
+        showApprovalDialog = true
+    }
+
+    /** CC-005 P1: đóng dialog duyệt (manual hoặc timeout) — xóa deadline. */
+    fun dismissIpApproval() {
+        showApprovalDialog = false
+        approvalDeadlineMs = 0L
+    }
 
     fun approveDeviceIp(ip: String) {
-        showApprovalDialog = false
+        pendingApprovals.remove(ip)
+        dismissIpApproval()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val base = WebDavManager.currentBaseUrl.toApiBaseUrl()
@@ -1329,7 +1364,8 @@ class DeviceManagementViewModel(
     }
 
     fun denyDeviceIp(ip: String) {
-        showApprovalDialog = false
+        pendingApprovals.remove(ip)
+        dismissIpApproval()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val base = WebDavManager.currentBaseUrl.toApiBaseUrl()

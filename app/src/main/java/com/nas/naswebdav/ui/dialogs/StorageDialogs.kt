@@ -141,7 +141,7 @@ fun UsbImportDialog(
             Text(
                 "NAS tự phát hiện ổ cứng/USB gắn qua cổng USB 3.0 và copy dữ liệu vào thư mục USB Import.",
                 color = TextTertiary,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 lineHeight = 14.sp
             )
             Spacer(Modifier.height(8.dp))
@@ -161,7 +161,7 @@ fun UsbImportDialog(
                 Spacer(Modifier.height(4.dp))
                 Text(state.message.ifBlank { "Đang chờ trạng thái từ NAS" }, color = TextPrimary, fontSize = 13.sp)
                 if (state.detectedDevicesInfo.isNotBlank()) {
-                    Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Text("Đã phát hiện: ${state.detectedDevicesInfo}", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
                 if (state.activeDevice.isNotBlank() || state.destDir.isNotBlank()) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -169,7 +169,7 @@ fun UsbImportDialog(
                             Text(
                                 state.activeDevice,
                                 color = TextTertiary,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(0.32f)
@@ -187,7 +187,7 @@ fun UsbImportDialog(
                             Text(
                                 state.destDir,
                                 color = TextTertiary,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(0.68f)
@@ -197,10 +197,10 @@ fun UsbImportDialog(
                 }
                 Spacer(Modifier.height(8.dp))
                 if (state.currentFile.isNotBlank()) {
-                    Text("File đang copy", color = TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    Text("File đang copy", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text(state.currentFile, color = TextPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (state.currentSource.isNotBlank()) {
-                        Text("Từ: ${state.currentSource}", color = TextTertiary, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Từ: ${state.currentSource}", color = TextTertiary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(
@@ -214,17 +214,17 @@ fun UsbImportDialog(
                         Text(
                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesDone)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.currentFileBytesTotal)}",
                             color = TextPrimary,
-                            fontSize = 10.sp
+                            fontSize = 12.sp
                         )
                         Text(
                             "${(currentFileProgress * 100f).toInt()}%",
                             color = TextTertiary,
-                            fontSize = 10.sp
+                            fontSize = 12.sp
                         )
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                Text("Tổng tiến trình", color = TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Text("Tổng tiến trình", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 LinearProgressIndicator(
                     progress = { progress.coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)),
@@ -233,25 +233,25 @@ fun UsbImportDialog(
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${state.filesDone}/${state.filesTotal} file", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${state.filesDone}/${state.filesTotal} file", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         if (state.bytesTotal > 0L)
                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesProcessed)} / ${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesTotal)}"
                         else com.nas.naswebdav.utils.FormatUtils.formatBytes(state.bytesDone),
                         color = TextTertiary,
-                        fontSize = 11.sp
+                        fontSize = 12.sp
                     )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Bỏ qua ${state.filesSkipped} • Lỗi ${state.filesFailed}", color = TextTertiary, fontSize = 10.sp)
+                    Text("Bỏ qua ${state.filesSkipped} • Lỗi ${state.filesFailed}", color = TextTertiary, fontSize = 12.sp)
                     Text(
                         "${com.nas.naswebdav.utils.FormatUtils.formatBytes(state.copySpeedBps)}/s • ETA ${usbEtaLabel(state.etaSeconds)}",
                         color = TextTertiary,
-                        fontSize = 10.sp
+                        fontSize = 12.sp
                     )
                 }
                 if (state.lastError.isNotBlank()) {
-                    Text(state.lastError, color = AccentRed, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(state.lastError, color = AccentRed, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (state.status == "needs_action" && state.needsAction && state.pendingConflictsCount > 0) {
                     Spacer(Modifier.height(8.dp))
@@ -273,7 +273,7 @@ fun UsbImportDialog(
                             Text(
                                 "${item.destName.ifBlank { item.rel }} • cũ $oldSize / mới $newSize",
                                 color = TextPrimary,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -283,19 +283,19 @@ fun UsbImportDialog(
                                 onClick = { deviceVM.resolveUsbImportConflicts("skip") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 shape = RoundedCornerShape(8.dp)
-                            ) { Text("Bỏ qua", fontSize = 11.sp) }
+                            ) { Text("Bỏ qua", fontSize = 12.sp) }
                             Button(
                                 onClick = { deviceVM.resolveUsbImportConflicts("rename") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                                 shape = RoundedCornerShape(8.dp)
-                            ) { Text("Đổi tên", fontSize = 11.sp) }
+                            ) { Text("Đổi tên", fontSize = 12.sp) }
                             Button(
                                 onClick = { deviceVM.resolveUsbImportConflicts("overwrite") },
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
                                 shape = RoundedCornerShape(8.dp)
-                            ) { Text("Ghi đè", fontSize = 11.sp) }
+                            ) { Text("Ghi đè", fontSize = 12.sp) }
                         }
                     }
                 }
@@ -352,14 +352,14 @@ fun UsbImportDialog(
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Resume sau restart", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = TextTertiary, fontSize = 10.sp)
+                                Text("Copy tiếp vào cùng thư mục nếu NAS/API bị restart.", color = TextTertiary, fontSize = 12.sp)
                             }
                             Switch(checked = resumeEnabled, onCheckedChange = { resumeEnabled = it })
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Checksum SHA-256", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = TextTertiary, fontSize = 10.sp)
+                                Text("Chậm hơn nhưng ghi manifest để kiểm chứng file.", color = TextTertiary, fontSize = 12.sp)
                             }
                             Switch(checked = verifyChecksum, onCheckedChange = { verifyChecksum = it })
                         }
@@ -516,7 +516,7 @@ fun NasConfigBackupDialog(
             Text(
                 "Backup toàn bộ cấu hình NAS (nas_api server, watcher TikTok, fan, cookies, nginx, OMV WebDAV, ...) " +
                     "thành 1 file .tar.gz lưu trên eMMC. Có thể tải về điện thoại hoặc đẩy lên OneDrive để dự phòng.",
-                color = TextTertiary, fontSize = 11.sp, lineHeight = 14.sp
+                color = TextTertiary, fontSize = 12.sp, lineHeight = 14.sp
             )
             Spacer(Modifier.height(6.dp))
 
@@ -551,7 +551,7 @@ fun NasConfigBackupDialog(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     "BACKUP HIỆN CÓ (${sysMonitorVM.nasConfigBackups.size})",
-                    color = TextTertiary, fontSize = 11.sp,
+                    color = TextTertiary, fontSize = 12.sp,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
                 Spacer(Modifier.weight(1f))
@@ -580,7 +580,7 @@ fun NasConfigBackupDialog(
                                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     "${backup.createdAt}  •  ${backup.sizeHuman}",
-                                    color = TextTertiary, fontSize = 10.sp
+                                    color = TextTertiary, fontSize = 12.sp
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -621,7 +621,7 @@ fun NasConfigBackupDialog(
                                     ) {
                                         Icon(Icons.Default.CloudUpload, null, tint = AccentBlue, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("OneDrive", color = AccentBlue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("OneDrive", color = AccentBlue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     TextButton(
                                         onClick = { pendingRestoreFilename = backup.filename },
@@ -631,7 +631,7 @@ fun NasConfigBackupDialog(
                                     ) {
                                         Icon(Icons.Default.Restore, null, tint = AccentOrange, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("Khôi phục", color = AccentOrange, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Khôi phục", color = AccentOrange, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                     TextButton(
                                         onClick = { pendingDeleteFilename = backup.filename },
@@ -640,7 +640,7 @@ fun NasConfigBackupDialog(
                                     ) {
                                         Icon(Icons.Default.Delete, null, tint = AccentRed, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(2.dp))
-                                        Text("Xoá", color = AccentRed, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Xoá", color = AccentRed, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -654,7 +654,7 @@ fun NasConfigBackupDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     NasLoadingSpinner(size = 14.dp, color = AccentBlue, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
-                    Text("Đang tải file từ NAS để share...", color = TextTertiary, fontSize = 11.sp)
+                    Text("Đang tải file từ NAS để share...", color = TextTertiary, fontSize = 12.sp)
                 }
             }
             if (sysMonitorVM.isRestoringNasConfigBackup) {
@@ -662,7 +662,7 @@ fun NasConfigBackupDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     NasLoadingSpinner(size = 16.dp, color = AccentOrange, strokeWidth = 2.dp)
                     Spacer(Modifier.width(6.dp))
-                    Text("Đang khôi phục + restart services...", color = AccentOrange, fontSize = 11.sp)
+                    Text("Đang khôi phục + restart services...", color = AccentOrange, fontSize = 12.sp)
                 }
             }
 

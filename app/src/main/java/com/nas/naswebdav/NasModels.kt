@@ -351,6 +351,17 @@ data class SocialDownloadItem(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+/** SPEC_LIVESTREAM_LIMITS §4.1: 1 entry hang doi server-side (persist HDD, TTL 24h). */
+data class LivestreamQueueEntry(
+    val queueId: String = "",
+    val url: String = "",
+    val quality: String = "best",
+    val watchUsername: String = "",
+    val position: Int = 0,
+    val status: String = "queued",
+    val lastError: String = ""
+)
+
 /** A single CPU/RAM/Net metrics snapshot for the realtime metrics graph. */
 data class MetricsSnapshot(
     val timestamp: String = "",

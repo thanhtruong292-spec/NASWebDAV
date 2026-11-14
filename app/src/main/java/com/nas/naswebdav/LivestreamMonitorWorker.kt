@@ -13,6 +13,7 @@ import androidx.work.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import com.nas.naswebdav.utils.SystemLogger
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -70,7 +71,8 @@ class LivestreamMonitorWorker(
         }
 
         private fun notificationIdForJob(jobId: String): Int {
-            return NOTIFICATION_BASE_ID + (Math.abs(jobId.hashCode()) % 100)
+            // CC-005 P0: dung full 24-bit hash (truoc %100 va cham giua 2 job).
+            return NOTIFICATION_BASE_ID + (jobId.hashCode() and 0xFFFFFF)
         }
 
         fun enqueue(context: Context, jobId: String, nasHost: String, platform: String): androidx.work.Operation {
@@ -84,6 +86,17 @@ class LivestreamMonitorWorker(
                     KEY_PLATFORM to platform,
                     KEY_NOTIF_ID to notifId
                 ))
+                // CC-005 P0: constraints + backoff (truoc day khong co -> chay ca
+                // khi mat mang, fail ngay lap tuc mat notification/job mo coi).
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                        .build()
+                )
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL,
+                    30, java.util.concurrent.TimeUnit.SECONDS
+                )
                 .addTag(WORK_NAME_PREFIX + jobId)
                 .addTag("LIVESTREAM_ALL")  // Tag chung để query tất cả
                 .build()
@@ -147,6 +160,7 @@ class LivestreamMonitorWorker(
         val jobId    = inputData.getString(KEY_JOB_ID)    ?: return@withContext Result.failure()
         val nasHost  = inputData.getString(KEY_NAS_HOST)  ?: return@withContext Result.failure()
         val platform = inputData.getString(KEY_PLATFORM)  ?: "livestream"
+        SystemLogger.log("INFO", "LivestreamMonitor", "Bắt đầu theo dõi ghi livestream: $jobId")
 
         val platformLabel = when (platform) {
             "tiktok"   -> "TikTok"
@@ -202,18 +216,28 @@ class LivestreamMonitorWorker(
         val pass = SecurePrefsHelper.getPass(applicationContext)
 
         val activeBaseUrl = com.nas.naswebdav.SmartNetworkManager.getActiveBaseUrl(applicationContext)
-        val statusUrl = (if (activeBaseUrl.isNotEmpty()) activeBaseUrl else "http://$nasHost").toApiBaseUrl() + "/api/livestream/status"
+        // CC-005 P0: KHONG fallback http://$nasHost plaintext (ro auth header qua
+        // mang khong ma hoa). Base rong -> failure ro rang de user login lai.
+        if (activeBaseUrl.isBlank()) {
+            android.util.Log.e("LivestreamMonitor", "No active NAS base URL for $jobId — fail fast")
+            return@withContext Result.failure(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to "Mat ket noi NAS — dang nhap lai"))
+        }
+        val statusUrl = activeBaseUrl.toApiBaseUrl() + AppConfig.ApiEndpoints.LIVESTREAM_STATUS
         var consecutiveErrors = 0
         var finalStatus = "recording"
         var finalErrorReason = ""
+        // CC-005 P0: deadline 6h — truoc day while(!isStopped) treo vo han neu
+        // NAS quen job (leak worker + pin + notification ma).
+        val monitorDeadlineMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L
 
-        while (!isStopped) {
-            // FIX: backoff khi lien tiep loi (NAS reboot, mat mang). Khoe thi
-            // poll 3s; loi >=2 -> 6s, 9s, 12s, capped 30s. Tranh hammering khi
-            // co nhieu Worker cung loi luc.
+        while (!isStopped && System.currentTimeMillis() < monitorDeadlineMs) {
+            // SPEC_LIVESTREAM_LIMITS §4.3: dung AppConfig poll + gian khi background.
+            // Khoe -> 3s foreground / 15s background; loi -> backoff capped 30s.
+            val basePoll = AppConfig.LIVESTREAM_POLL_INTERVAL_MS
+            val bgMultiplier = if (AppConfig.IS_APP_FOREGROUND) 1L else 5L
             val pollDelay = when {
-                consecutiveErrors == 0 -> 3_000L
-                else -> (3_000L * (consecutiveErrors + 1)).coerceAtMost(30_000L)
+                consecutiveErrors == 0 -> basePoll * bgMultiplier
+                else -> (basePoll * (consecutiveErrors + 1) * bgMultiplier).coerceAtMost(30_000L)
             }
             delay(pollDelay)
 
@@ -225,17 +249,24 @@ class LivestreamMonitorWorker(
                 }
 
                 val response = httpClient.newCall(requestBuilder.build()).execute()
+                val httpCode = response.code
                 val bodyStr = response.use { resp ->
                     if (!resp.isSuccessful) {
                         consecutiveErrors++
-                        // DEAD CODE FIX: bỏ `if (consecutiveErrors >= 5) return@use null` ngay trước return@use null
-                        // — if vô dụng vì đằng nào cũng return null. Logic ngắt vòng lặp nằm ở `if (bodyStr == null)` bên ngoài.
+                        // SPEC §4.3: phan biet transient (5xx/429/408/timeout) -> retry/backoff,
+                        // chi failure khi terminal that. 401/403 auth sai -> van retry vai lan
+                        // (user co the doi pass), khong chet ngay.
                         return@use null
                     }
                     resp.body?.string() ?: "{}"
                 }
                 if (bodyStr == null) {
-                    if (consecutiveErrors >= 5) break
+                    // Transient HTTP loi: cho toi 10 lan (~1-2 phut backoff) roi Result.retry()
+                    // de WorkManager lich lai, giu notification — khong mat job mo coi.
+                    if (consecutiveErrors >= 10) {
+                        android.util.Log.w("LivestreamMonitor", "Transient HTTP $httpCode x10, retry later for $jobId")
+                        return@withContext Result.retry()
+                    }
                     continue
                 }
                 val json = JSONObject(bodyStr)
@@ -295,32 +326,40 @@ class LivestreamMonitorWorker(
                         "error_reason"  to errorReason
                     ))
 
-                    // Nếu stream kết thúc → thoát vòng lặp
-                    if (finalStatus !in listOf("recording")) {
+                    // SPEC §4.3: stopping/finalizing/starting van la non-terminal (flush/finalize)
+                    // -> tiep tuc poll. Chi terminal that (finished/error/stopped/cancelled/timeout)
+                    // moi thoat vong lap.
+                    if (finalStatus in listOf("finished", "error", "stopped", "cancelled", "timeout")) {
                         break
                     }
                 }
 
                 if (!found) {
-                    // Job không còn trên NAS → coi như xong
+                    // Job tam vang (NAS restart / status lag) -> coi la transient, cho toi
+                    // 10 lan roi Result.retry() de WorkManager lich lai, giu notification.
                     consecutiveErrors++
-                    if (consecutiveErrors >= 3) {
-                        finalStatus = "error"
-                        break
+                    if (consecutiveErrors >= 10) {
+                        android.util.Log.w("LivestreamMonitor", "Job $jobId missing x10, retry later")
+                        return@withContext Result.retry()
                     }
-                } else if (finalStatus !in listOf("recording")) {
+                } else if (finalStatus in listOf("finished", "error", "stopped", "cancelled", "timeout")) {
                     break
                 }
 
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 consecutiveErrors++
                 android.util.Log.w("LivestreamMonitor", "Poll error ($consecutiveErrors/10): ${e.message}")
-                if (consecutiveErrors >= 10) break
+                if (consecutiveErrors >= 10) {
+                    // Transient (mat mang 30-60s): retry, khong mat notification/job mo coi.
+                    return@withContext Result.retry()
+                }
             }
         }
 
         if (isStopped) {
-            return@withContext Result.failure()
+            // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
+            SystemLogger.log("WARNING", "LivestreamMonitor", "Hệ thống dừng worker — sẽ retry theo backoff, KHÔNG trả failure")
+            return@withContext Result.retry()
         }
 
         // Hiện thông báo hoàn tất tùy theo kết quả
@@ -329,9 +368,11 @@ class LivestreamMonitorWorker(
         if (finalStatus == "error") {
             val msg = if (finalErrorReason.isNotEmpty()) "Lỗi: $finalErrorReason" else "Lỗi: Không tải được video. Nguồn livestream rỗng hoặc yt-dlp báo lỗi."
             showCompletionNotification(notifId, platformLabel, "⚠️", msg)
+            SystemLogger.log("WARNING", "LivestreamMonitor", "Hoàn tất theo dõi livestream $jobId (trạng thái: lỗi)")
             return@withContext Result.failure(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "error", "error_reason" to safeDataText(finalErrorReason, 512)))
         } else {
-            showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã được lưu vào thư mục Livestream/ trên NAS")
+            showCompletionNotification(notifId, platformLabel, platformIcon, "Video đã được lưu vào thư mục ${AppConfig.LIVESTREAM_FOLDER} trên NAS")
+            SystemLogger.log("INFO", "LivestreamMonitor", "Hoàn tất theo dõi livestream $jobId (trạng thái: $finalStatus)")
             return@withContext Result.success(workDataOf(OUT_JOB_ID to jobId, OUT_STATUS to "finished"))
         }
     }

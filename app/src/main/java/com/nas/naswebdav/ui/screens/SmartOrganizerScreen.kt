@@ -58,8 +58,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // ── Màu dùng chung (nhân bản private từ MediaScreens.kt để giữ self-contained, không đổi giá trị) ──
-private val SoDarkSurface = Color.Black
-private val SoDarkCard    = Color.Black
+private val SoDarkSurface = DarkSurface
+private val SoDarkCard    = DarkCard
 private val SoAccentCyan  = AccentCyan
 private val SoTextPrimary = TextPrimary
 private val SoTextSecondary = TextTertiary
@@ -82,7 +82,8 @@ fun SmartOrganizerScreen(
 ) {
     val smartVM = LocalSmartToolsVM.current
     // ── STATE ──
-    val sourceUrl = WebDavManager.currentBaseUrl
+    var sourceUrl by remember { mutableStateOf(WebDavManager.currentBaseUrl) }
+    var showFolderPicker by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf(OrganizerFilter.ALL) }
     val isScanning = smartVM.organizerScanning
     val isOrganizing = smartVM.organizerExecuting
@@ -93,12 +94,23 @@ fun SmartOrganizerScreen(
 
     // ── Hàm quét ──
     val scanAndPreview: () -> Unit = {
-        smartVM.smartOrganizeScan(selectedFilter)
+        smartVM.smartOrganizeScan(selectedFilter, sourceUrl)
     }
 
     // ── Hàm thực thi sắp xếp ──
     val startOrganize: () -> Unit = {
-        smartVM.smartOrganizeExecute(selectedFilter)
+        smartVM.smartOrganizeExecute(selectedFilter, sourceUrl)
+    }
+
+    if (showFolderPicker) {
+        FolderPickerDialog(
+            startingUrl = sourceUrl.ifBlank { WebDavManager.currentBaseUrl },
+            onDismiss = { showFolderPicker = false },
+            onFolderSelected = { pickedUrl ->
+                sourceUrl = pickedUrl
+                showFolderPicker = false
+            }
+        )
     }
 
     // ── GIAO DIỆN ──
@@ -120,7 +132,7 @@ fun SmartOrganizerScreen(
                         Icon(Icons.Default.ArrowBack, "Quay lại", tint = SoTextPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SoDarkSurface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
             )
         },
         containerColor = SoDarkSurface
@@ -138,7 +150,8 @@ fun SmartOrganizerScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = SoDarkCard),
-                shape = RoundedCornerShape(16.dp)
+                shape = AppShapes.Card,
+                border = BorderStroke(1.dp, DarkCardBorder)
             ) {
                 Column(Modifier.padding(10.dp)) {
                     Text("Thư mục nguồn", fontSize = 12.sp, color = SoTextSecondary)
@@ -152,8 +165,8 @@ fun SmartOrganizerScreen(
                             .clip(RoundedCornerShape(12.dp))
                             .background(DarkSurface)
                             .border(1.dp, SoAccentCyan.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                            .clickable {
-                                android.widget.Toast.makeText(context, "Sẽ sớm hỗ trợ chọn thư mục con!", android.widget.Toast.LENGTH_SHORT).show()
+                            .clickable(enabled = WebDavManager.currentBaseUrl.isNotEmpty()) {
+                                showFolderPicker = true
                             }
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -376,7 +389,7 @@ fun SmartOrganizerScreen(
                         if (totalFiles == 0) {
                             Spacer(Modifier.height(12.dp))
                             Text(
-                                "✅ Tất cả tệp đã được sắp xếp đúng thư mục!",
+                                "Tất cả tệp đã được sắp xếp đúng thư mục!",
                                 fontSize = 14.sp,
                                 color = SoAccentGreen,
                                 fontWeight = FontWeight.Medium
@@ -469,7 +482,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(monthNum, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary)
-                        Text(year, fontSize = 8.sp, color = TextPrimary.copy(alpha = 0.8f))
+                        Text(year, fontSize = 12.sp, color = TextPrimary.copy(alpha = 0.8f))
                     }
                 }
 
@@ -493,7 +506,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                         Spacer(Modifier.height(4.dp))
                         Text(
                             group.sampleFiles.take(3).joinToString(", "),
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             color = SoTextSecondary.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -527,7 +540,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 fileName,
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 color = SoTextSecondary.copy(alpha = 0.9f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -537,7 +550,7 @@ private fun OrganizerGroupCard(group: OrganizerGroup) {
                     if (group.count > group.sampleFiles.size) {
                         Text(
                             "... và ${group.count - group.sampleFiles.size} tệp khác",
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = SoAccentCyan,
                             modifier = Modifier.padding(top = 4.dp)
                         )

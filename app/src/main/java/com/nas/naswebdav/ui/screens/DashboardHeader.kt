@@ -4,13 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nas.naswebdav.BuildConfig
@@ -28,122 +32,150 @@ import com.nas.naswebdav.ui.components.StatusLevel
  * │ 🌐 LAN  ⏱ 12d 3h  v1.0.48                      │
  * └─────────────────────────────────────────────────┘
  */
+private val UptimeSecondsRegex = Regex(",\\s*\\d+\\s*giây")
+
 @Composable
 fun DashboardHeader(
     systemStatus: String,
+    connectionStatus: String = "",
     networkLabel: String,
     isOnLan: Boolean,
+    networkAvailable: Boolean,
     uptime: String,
     apiLatencyMs: Long?,
     apiFailureCount: Int,
+    simpleMode: Boolean,
+    onModeChange: (Boolean) -> Unit,
     onPowerMenuClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isOnline = systemStatus.contains("Online", true) || systemStatus.contains("Đã kết nối", true)
+    // "Đang kiểm tra môi trường LAN..." is a transient state, not a live
+    // connection. Only promote an authenticated/active route to Online.
+    val connectionIsOnline = connectionStatus.contains("Đã kết nối", true) ||
+        connectionStatus.contains("Đã xác thực", true) ||
+        connectionStatus.startsWith("LAN", true) ||
+        connectionStatus.startsWith("Tailscale", true) ||
+        connectionStatus.startsWith("Chuyển sang LAN", true) ||
+        connectionStatus.startsWith("Chuyển sang Tailscale", true)
+    val isConnecting = connectionStatus.startsWith("Đang ", true) || networkLabel == "Đang dò mạng"
+    val isOnline = networkAvailable && (systemStatus.contains("Online", true) || connectionIsOnline)
     val statusLevel = when {
         isOnline -> StatusLevel.Success
-        systemStatus.contains("Chờ", true) -> StatusLevel.Warning
+        isConnecting || systemStatus.contains("Chờ", true) -> StatusLevel.Warning
         else -> StatusLevel.Error
     }
+    val statusText = when {
+        isOnline -> "Online"
+        isConnecting -> "Đang kết nối"
+        else -> "Offline"
+    }
 
-    Row(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = AppSpacing.LG, vertical = AppSpacing.MD),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
+        shape = RoundedCornerShape(24.dp),
+        color = DarkCard.copy(alpha = 0.96f),
+        tonalElevation = 4.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.XS)) {
-            // Title row
-            Text(
-                text = "NAS Dashboard",
-                style = AppTypography.HeadlineLarge,
-                color = TextPrimary,
-            )
-
-            // NAS name + status badge
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "Chainedbox L1 Pro",
-                    style = AppTypography.BodyLarge,
-                    color = TextSecondary,
-                )
-                Spacer(Modifier.width(AppSpacing.SM))
-                NasStatusBadge(
-                    level = statusLevel,
-                    text = if (isOnline) "Online" else "Offline",
-                )
-            }
-
-            // Network + uptime + version row
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.SM),
-            ) {
-                // Network badge (LAN / Tailscale)
-                NasStatusPill(
-                    level = if (isOnLan) StatusLevel.Success else StatusLevel.Info,
-                    text = networkLabel,
-                )
-
-                // Uptime
-                val cleanUp = uptime.replace(Regex(",\\s*\\d+\\s*giây"), "")
-                if (cleanUp.isNotBlank() && cleanUp != "--") {
-                    Icon(
-                        imageVector = com.nas.naswebdav.ui.screens.AppIcons.History,
-                        contentDescription = null,
-                        modifier = Modifier.size(11.dp),
-                        tint = AccentCyan,
-                    )
-                    Text(
-                        text = cleanUp,
-                        style = AppTypography.BodySmall,
-                        color = AccentCyan,
-                    )
-                }
-
-                // Version badge
-                Text(
-                    text = "v${BuildConfig.VERSION_NAME}",
-                    style = AppTypography.LabelSmall,
-                    color = AccentPurple,
-                )
-
-                // API latency
-                apiLatencyMs?.let { latency ->
-                    Text(
-                        text = "API ${latency}ms",
-                        style = AppTypography.LabelSmall,
-                        color = TextTertiary,
-                    )
-                }
-
-                // API failures
-                if (apiFailureCount > 0) {
-                    Text(
-                        text = "${apiFailureCount} lỗi",
-                        style = AppTypography.LabelSmall,
-                        color = AccentRed,
-                    )
-                }
-            }
-        }
-
-        // Power button
-        Box(
+        Row(
             modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(DarkCard)
-                .clickable { onPowerMenuClick() },
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = Icons.Default.PowerSettingsNew,
-                contentDescription = "Nguồn",
-                tint = AccentRed,
-                modifier = Modifier.size(18.dp),
-            )
+            Box(
+                Modifier
+                    .size(46.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(AccentCyan, AccentPurple))),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Dns, contentDescription = "DNS", tint = DarkSurface, modifier = Modifier.size(24.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("NAS Dashboard", style = AppTypography.TitleLarge, color = TextPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    NasStatusBadge(level = statusLevel, text = statusText)
+                }
+                Text("Chainedbox L1 Pro", style = AppTypography.BodyMedium, color = TextSecondary)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    NasStatusPill(
+                        level = when {
+                            isConnecting -> StatusLevel.Warning
+                            !networkAvailable -> StatusLevel.Error
+                            isOnLan -> StatusLevel.Success
+                            else -> StatusLevel.Info
+                        },
+                        text = networkLabel,
+                    )
+                    val cleanUp = uptime.replace(UptimeSecondsRegex, "")
+                    if (cleanUp.isNotBlank() && cleanUp != "--") {
+                        Icon(AppIcons.History, null, Modifier.size(12.dp), tint = AccentCyan)
+                        Text(cleanUp, style = AppTypography.LabelSmall, color = AccentCyan, maxLines = 1)
+                    }
+                    Text("v${BuildConfig.VERSION_NAME}", style = AppTypography.LabelSmall, color = AccentPurple, maxLines = 1, softWrap = false)
+                    apiLatencyMs?.let { Text("${it}ms", style = AppTypography.LabelSmall, color = TextTertiary, maxLines = 1) }
+                    if (apiFailureCount > 0) {
+                        Text("${apiFailureCount} lỗi", style = AppTypography.LabelSmall, color = AccentRed)
+                    }
+                }
+                Surface(
+                    modifier = Modifier.padding(top = 4.dp),
+                    shape = AppShapes.Pill,
+                    color = DarkElevated,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
+                ) {
+                    Row(Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        DashboardModeOption(
+                            label = "Tổng quan",
+                            selected = simpleMode,
+                            onClick = { onModeChange(true) }
+                        )
+                        DashboardModeOption(
+                            label = "Nâng cao",
+                            selected = !simpleMode,
+                            onClick = { onModeChange(false) }
+                        )
+                    }
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(ErrorContainer)
+                    .clickable { onPowerMenuClick() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.PowerSettingsNew, "Nguồn", tint = AccentRed, modifier = Modifier.size(20.dp))
+            }
         }
+    }
+}
+
+@Composable
+private fun DashboardModeOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = AppShapes.Pill,
+        color = if (selected) InfoContainer else Color.Transparent,
+    ) {
+        Text(
+            text = label,
+            style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold),
+            color = if (selected) AccentCyan else TextTertiary,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        )
     }
 }

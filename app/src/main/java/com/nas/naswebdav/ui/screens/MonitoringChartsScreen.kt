@@ -30,8 +30,8 @@ import com.nas.naswebdav.LocalSystemMonitorVM
 import com.nas.naswebdav.MetricsSnapshot
 
 
-private val _ChartDarkCard    = DarkSurface
-private val _ChartDarkSurface = Color.Black
+private val _ChartDarkCard    = DarkCard
+private val _ChartDarkSurface = DarkSurface
 private val _ChartAccentBlue  = AccentBlue
 private val _ChartAccentCyan  = AccentCyan
 private val _ChartAccentGreen = AccentGreen
@@ -43,7 +43,7 @@ private val _ChartTextPrimary = TextPrimary
 private val _ChartTextSecond  = TextTertiary
 private val _ChartPanelTitle  = AccentCyan
 private val _ChartReportTitle = AccentPurple
-private val _ChartPanelTitleSize = 11.sp
+private val _ChartPanelTitleSize = 12.sp
 private val _ChartPanelTitleLetterSpacing = 1.5.sp
 
 // Ke thua nguong tu GaugeCard (MainMenuScreen.kt) de bieu do duong dong bo voi GaugeCard tron.
@@ -97,7 +97,7 @@ private fun lerpColor(a: Color, b: Color, t: Float): Color {
 @Composable
 fun MonitoringChartCard() {
     val sysMonitorVM = LocalSystemMonitorVM.current
-    val tabLabels  = listOf("🌡️ Nhiệt độ", "📊 Tài nguyên", "📶 Mạng")
+    val tabLabels  = listOf("Nhiệt độ", "Tài nguyên", "Mạng")
     val hourLabels = listOf("1h", "6h", "24h")
     val hourValues = listOf(1, 6, 24)
     var showReport by remember { mutableStateOf(false) }
@@ -113,7 +113,8 @@ fun MonitoringChartCard() {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = _ChartDarkCard),
-        shape = RoundedCornerShape(10.dp)
+        shape = AppShapes.Card,
+        border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
     ) {
         Column(Modifier.padding(8.dp)) {
             // Mo doc quyen: chart mo dong bo voi ExclusivePanelState — khi mo
@@ -140,7 +141,7 @@ fun MonitoringChartCard() {
                         else -> "Mới ${ageSec / 60}p"
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text(refreshLabel, fontSize = 9.sp, color = if (ageSec in 0..89) _ChartTextSecond else _ChartAccentOrange)
+                    Text(refreshLabel, fontSize = 12.sp, color = if (ageSec in 0..89) _ChartTextSecond else _ChartAccentOrange)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     hourLabels.forEachIndexed { i, label ->
@@ -157,7 +158,7 @@ fun MonitoringChartCard() {
                                 sysMonitorVM.fetchMetricsHistory(hourValues[i])
                             }
                         ) {
-                            Text(label, fontSize = 10.sp,
+                            Text(label, fontSize = 12.sp,
                                 color = if (selected) _ChartAccentCyan else _ChartTextSecond,
                                 modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
                         }
@@ -165,7 +166,7 @@ fun MonitoringChartCard() {
                     Spacer(Modifier.width(4.dp))
                     Icon(
                         if (chartExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = null,
+                        contentDescription = if (chartExpanded) "Thu gọn" else "Mở rộng",
                         tint = _ChartTextSecond,
                         modifier = Modifier.size(20.dp)
                     )
@@ -198,7 +199,7 @@ fun MonitoringChartCard() {
                                 Box(Modifier.size(6.dp).background(AccentRed, androidx.compose.foundation.shape.CircleShape))
                                 Spacer(Modifier.width(4.dp))
                             }
-                            Text(label, fontSize = 10.sp,
+                            Text(label, fontSize = 12.sp,
                                 color = if (sel) _ChartAccentGreen else _ChartTextSecond,
                                 textAlign = TextAlign.Center)
                         }
@@ -220,7 +221,7 @@ fun MonitoringChartCard() {
                         contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Default.ErrorOutline, null, tint = _ChartAccentRed, modifier = Modifier.size(22.dp))
-                            Text(error, fontSize = 10.sp, color = _ChartTextSecond, textAlign = TextAlign.Center)
+                            Text(error, fontSize = 12.sp, color = _ChartTextSecond, textAlign = TextAlign.Center)
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = _ChartAccentCyan.copy(alpha = 0.15f),
@@ -230,7 +231,7 @@ fun MonitoringChartCard() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Icon(Icons.Default.Refresh, null, tint = _ChartAccentCyan, modifier = Modifier.size(14.dp))
-                                    Text("Thử lại", fontSize = 11.sp, color = _ChartAccentCyan, fontWeight = FontWeight.Medium)
+                                    Text("Thử lại", fontSize = 12.sp, color = _ChartAccentCyan, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }
@@ -242,7 +243,7 @@ fun MonitoringChartCard() {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = _ChartAccentCyan, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.height(6.dp))
-                            Text("Đang tải dữ liệu...", fontSize = 11.sp, color = _ChartTextSecond)
+                            Text("Đang tải dữ liệu...", fontSize = 12.sp, color = _ChartTextSecond)
                         }
                     }
                 }
@@ -252,7 +253,7 @@ fun MonitoringChartCard() {
                         .background(_ChartDarkSurface, RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Chưa có dữ liệu giám sát", fontSize = 11.sp, color = _ChartTextSecond)
+                            Text("Chưa có dữ liệu giám sát", fontSize = 12.sp, color = _ChartTextSecond)
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = _ChartAccentCyan.copy(alpha = 0.15f),
@@ -262,7 +263,7 @@ fun MonitoringChartCard() {
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Icon(Icons.Default.Refresh, null, tint = _ChartAccentCyan, modifier = Modifier.size(14.dp))
-                                    Text("Làm mới", fontSize = 11.sp, color = _ChartAccentCyan, fontWeight = FontWeight.Medium)
+                                    Text("Làm mới", fontSize = 12.sp, color = _ChartAccentCyan, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }
@@ -291,16 +292,11 @@ fun MonitoringChartCard() {
                         Column {
                             Text("BÁO CÁO HÔM QUA", fontSize = _ChartPanelTitleSize, fontWeight = FontWeight.Black, color = _ChartReportTitle, letterSpacing = _ChartPanelTitleLetterSpacing)
                             if (report != null) {
-                                val icon = when {
-                                    report.healthScore >= 80 -> "🟢"
-                                    report.healthScore >= 60 -> "🟡"
-                                    else -> "🔴"
-                                }
-                                Text("$icon Sức khoẻ: ${report.healthScore}%  |  ${report.date}",
-                                    fontSize = 10.sp, color = _ChartTextSecond)
+                                Text("Sức khoẻ: ${report.healthScore}%  |  ${report.date}",
+                                    fontSize = 12.sp, color = _ChartTextSecond)
                             } else {
                                 Text(if (sysMonitorVM.isDailyReportLoading) "Đang tải..." else "Nhấn để xem báo cáo ngày hôm qua",
-                                    fontSize = 10.sp, color = _ChartTextSecond)
+                                    fontSize = 12.sp, color = _ChartTextSecond)
                             }
                         }
                     }
@@ -327,7 +323,7 @@ fun MonitoringChartCard() {
                             modifier = Modifier.fillMaxWidth().height(50.dp).background(_ChartDarkSurface, RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Chưa có dữ liệu báo cáo hôm qua.", fontSize = 11.sp, color = _ChartTextSecond)
+                            Text("Chưa có dữ liệu báo cáo hôm qua.", fontSize = 12.sp, color = _ChartTextSecond)
                         }
                     }
                 }
@@ -407,9 +403,9 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
                     val valStr = "${fmt.format(currentVal)}${s.unit}"
                     val styleLabel = if (s.isDashed) "- - - " else "━━ "
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(styleLabel, fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Black)
+                        Text(styleLabel, fontSize = 12.sp, color = s.color, fontWeight = FontWeight.Black)
                         Icon(s.icon, null, tint = s.color, modifier = Modifier.size(13.dp))
-                        Text("${s.label}: $valStr", fontSize = 11.sp, color = s.color, fontWeight = FontWeight.Bold)
+                        Text("${s.label}: $valStr", fontSize = 12.sp, color = s.color, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -699,7 +695,7 @@ fun NasMetricsLineChart(history: List<MetricsSnapshot>, tabIndex: Int) {
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(Icons.Default.Schedule, null, tint = TextTertiary, modifier = Modifier.size(12.dp))
-                Text("$prefixText$timeLabel", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Medium)
+                Text("$prefixText$timeLabel", fontSize = 12.sp, color = TextTertiary, fontWeight = FontWeight.Medium)
             }
         }
     }
@@ -726,7 +722,7 @@ fun NasDailyReportPanel(report: DailyReportData) {
         @Composable
         fun StatCell(label: String, value: String, color: Color = _ChartTextPrimary, modifier: Modifier = Modifier) {
             Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label, fontSize = 8.sp, color = _ChartTextSecond, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(label, fontSize = 12.sp, color = _ChartTextSecond, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(value, fontSize = 12.sp, color = color, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -769,6 +765,6 @@ fun NasDailyReportPanel(report: DailyReportData) {
             }
         }
         Text("Tổng mẫu: ${report.samples} điểm trong ngày ${report.date}",
-            fontSize = 9.sp, color = _ChartTextSecond)
+            fontSize = 12.sp, color = _ChartTextSecond)
     }
 }

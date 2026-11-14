@@ -52,7 +52,7 @@ fun ServiceStatusRow(
         ) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = "Dịch vụ",
                 modifier = Modifier.size(16.dp),
                 tint = if (isOnline) AccentGreen else TextTertiary,
             )

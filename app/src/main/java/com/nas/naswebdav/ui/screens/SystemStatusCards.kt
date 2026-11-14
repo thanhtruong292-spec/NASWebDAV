@@ -80,7 +80,7 @@ fun DashboardSystemStatusCards(
     // 1. Thumbnail Status
     LaunchedEffect(Unit) {
         smartToolsVM.fetchThumbStatus()
-        livestreamVM.syncLivestreamStateWithServer()
+        livestreamVM.refreshLivestreamState(mContext)
         deviceMgmtVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         var consecutiveFails = 0
         while (isActive) {
@@ -119,11 +119,11 @@ fun DashboardSystemStatusCards(
     // 4. Livestream — poll định kỳ để phát hiện job do Watcher daemon tự bắt
     val activeStreams = livestreamVM.activeLivestreams
     LaunchedEffect(Unit) {
-        livestreamVM.syncLivestreamStateWithServer()
+        livestreamVM.refreshLivestreamState(mContext)
         while (isActive) {
             livestreamVM.fetchLivestreamStatusOnly(mContext)
             livestreamVM.fetchTikTokLiveWatch(mContext)
-            val pollDelay = if (livestreamVM.activeLivestreams.isNotEmpty()) 3_000L else 10_000L
+            val pollDelay = if (livestreamVM.activeLivestreams.isNotEmpty()) com.nas.naswebdav.AppConfig.LIVESTREAM_POLL_INTERVAL_MS else 10_000L
             kotlinx.coroutines.delay(pollDelay)
         }
     }
@@ -191,12 +191,12 @@ fun DashboardSystemStatusCards(
                         Box(
                             Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
-                            Text("$activeCount đang thực thi", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
+                            Text("$activeCount đang thực thi", fontSize = 12.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(4.dp))
                         Icon(
                             if (tasksExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp)
+                            contentDescription = "Thu gọn", tint = TextSecondary, modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -219,12 +219,12 @@ fun DashboardSystemStatusCards(
                                     Text("Tạo ảnh thu nhỏ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text(
                                         when {
-                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> "✅ Hoàn tất"
-                                            smartToolsVM.thumbPaused -> "⏸ Tạm dừng"
-                                            smartToolsVM.thumbRunning -> "▶️ Đang tạo thumbnail"
-                                            else -> "💤 Tạm nghỉ"
+                                            smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> "Hoàn tất"
+                                            smartToolsVM.thumbPaused -> "Tạm dừng"
+                                            smartToolsVM.thumbRunning -> "Đang tạo thumbnail"
+                                            else -> "Tạm nghỉ"
                                         },
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         color = when {
                                             smartToolsVM.thumbTotal > 0 && smartToolsVM.thumbGenerated >= smartToolsVM.thumbTotal -> AccentGreen
                                             smartToolsVM.thumbPaused -> AccentOrange
@@ -237,7 +237,7 @@ fun DashboardSystemStatusCards(
                                     IconButton(onClick = { smartToolsVM.toggleThumbPause() }, modifier = Modifier.minimumInteractiveComponentSize()) {
                                         Icon(
                                             if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                            null,
+                                            if (smartToolsVM.thumbPaused) "Tiếp tục tạo thumbnail" else "Tạm dừng tạo thumbnail",
                                             tint = if (smartToolsVM.thumbPaused) AccentGreen else AccentOrange,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -256,7 +256,7 @@ fun DashboardSystemStatusCards(
                                 Spacer(Modifier.height(4.dp))
                                 Text(
                                     "Tệp: " + smartToolsVM.thumbLastFile.substringAfterLast("/"),
-                                    fontSize = 10.sp, color = AccentPurple.copy(alpha = 0.85f),
+                                    fontSize = 12.sp, color = AccentPurple.copy(alpha = 0.85f),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(start = 50.dp)
                                 )
@@ -271,12 +271,12 @@ fun DashboardSystemStatusCards(
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 // Số thumbnail đã tạo / tổng
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text("✓ Đã tạo:", fontSize = 10.sp, color = TextSecondary)
+                                    Text("✓ Đã tạo:", fontSize = 12.sp, color = TextSecondary)
                                     Text("${smartToolsVM.thumbGenerated}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentGreen)
-                                    Text("/ ${smartToolsVM.thumbTotal}", fontSize = 10.sp, color = TextSecondary)
+                                    Text("/ ${smartToolsVM.thumbTotal}", fontSize = 12.sp, color = TextSecondary)
                                     val thumbMissing = smartToolsVM.thumbTotal - smartToolsVM.thumbGenerated
                                     if (thumbMissing > 0) {
-                                        Text("• Còn ${thumbMissing} thiếu", fontSize = 10.sp, color = AccentOrange)
+                                        Text("• Còn ${thumbMissing} thiếu", fontSize = 12.sp, color = AccentOrange)
                                     }
                                 }
                                 Text("%.1f%%".format(thumbPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentPurple)
@@ -305,24 +305,24 @@ fun DashboardSystemStatusCards(
                                 Column(Modifier.weight(1f)) {
                                     Text("Quét trùng lặp", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     val dupStatusLabel = when {
-                                        smartToolsVM.duplicateFilesList.isNotEmpty() -> "✅ Đã tìm thấy ${smartToolsVM.duplicateFilesList.size} nhóm trùng"
-                                        dupIsPaused -> "⏸ Đã tạm dừng"
+                                        smartToolsVM.duplicateFilesList.isNotEmpty() -> "Đã tìm thấy ${smartToolsVM.duplicateFilesList.size} nhóm trùng"
+                                        dupIsPaused -> "Đã tạm dừng"
                                         !dupIsRunning -> "Chuẩn bị..."
-                                        else -> "🟢 Đang quét — Bước $dupStageNum/${dupTotalStages}"
+                                        else -> "Đang quét — Bước $dupStageNum/${dupTotalStages}"
                                     }
                                     val dupStatusColor = when {
                                         smartToolsVM.duplicateFilesList.isNotEmpty() -> AccentBlue // Xanh dương
                                         dupIsPaused -> AccentOrange // Cam
                                         else -> AccentGreen // Xanh lá
                                     }
-                                    Text(dupStatusLabel, fontSize = 11.sp, color = dupStatusColor)
+                                    Text(dupStatusLabel, fontSize = 12.sp, color = dupStatusColor)
                                 }
                                 if (dupIsRunning || dupIsPaused) {
                                     IconButton(onClick = { smartToolsVM.togglePauseDuplicateScan() }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) AccentGreen else AccentOrange, modifier = Modifier.size(18.dp))
+                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (dupIsPaused) "Tiếp tục quét trùng" else "Tạm dừng quét trùng", tint = if (dupIsPaused) AccentGreen else AccentOrange, modifier = Modifier.size(18.dp))
                                     }
                                     IconButton(onClick = { smartToolsVM.cancelDuplicateScan(mContext) }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                        Icon(Icons.Default.Stop, null, tint = AccentRed, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.Stop, "Hủy quét trùng", tint = AccentRed, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -336,7 +336,7 @@ fun DashboardSystemStatusCards(
                                 ) {
                                     Text(
                                         dupStage,
-                                        fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                                        fontSize = 12.sp, fontWeight = FontWeight.Medium,
                                         color = AccentBlue,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -347,7 +347,7 @@ fun DashboardSystemStatusCards(
                             if (dupStageDesc.isNotBlank()) {
                                 Text(
                                     dupStageDesc,
-                                    fontSize = 10.sp, color = TextSecondary.copy(alpha = 0.85f),
+                                    fontSize = 12.sp, color = TextSecondary.copy(alpha = 0.85f),
                                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                                     lineHeight = 13.sp,
                                     modifier = Modifier.padding(top = 2.dp)
@@ -365,21 +365,21 @@ fun DashboardSystemStatusCards(
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("$dupScanned", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                                        Text("Tổng tệp", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Tổng tệp", fontSize = 12.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("$dupFound", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AccentRed)
-                                        Text("Trùng lặp", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Trùng lặp", fontSize = 12.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(fmtMs(dupElapsed), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = AccentGreen)
-                                        Text("Thời gian", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Thời gian", fontSize = 12.sp, color = TextSecondary)
                                     }
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
                                     if (dupEta >= 0) {
-                                        Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = AccentBlue)
+                                        Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 12.sp, color = AccentBlue)
                                     }
                                 }
                             }
@@ -420,14 +420,14 @@ fun DashboardSystemStatusCards(
                                     Text("Đồng Bộ NAS", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     if (autoBackupVM.autoBackupIsPaused) {
                                         Spacer(Modifier.width(8.dp))
-                                        Text("⏸ Tạm dừng", fontSize = 10.sp, color = AccentOrange,
+                                        Text("Tạm dừng", fontSize = 12.sp, color = AccentOrange,
                                             modifier = Modifier.background(AccentOrange.copy(alpha = 0.12f), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
                                     }
                                     Spacer(Modifier.weight(1f))
                                     // Nút Tạm dừng / Tiếp tục
                                     IconButton(
                                         onClick = { autoBackupVM.toggleAutoBackupPause() },
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.minimumInteractiveComponentSize().size(28.dp)
                                     ) {
                                         Icon(
                                             if (autoBackupVM.autoBackupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
@@ -439,7 +439,7 @@ fun DashboardSystemStatusCards(
                                     // Nút Huỷ bỏ
                                     IconButton(
                                         onClick = { autoBackupVM.cancelAutoBackup(mContext) },
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.minimumInteractiveComponentSize().size(28.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.Stop,
@@ -467,8 +467,8 @@ fun DashboardSystemStatusCards(
                                 }
 
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    Text(fileProgress, fontSize = 11.sp,
+                                    Text("Tệp: ${autoBackupVM.autoBackupCurrentFile}", fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                    Text(fileProgress, fontSize = 12.sp,
                                         color = if (autoBackupVM.autoBackupIsPaused) AccentOrange else AccentGreen,
                                         modifier = Modifier.padding(start = 4.dp))
                                 }
@@ -476,7 +476,7 @@ fun DashboardSystemStatusCards(
                                 if (autoBackupVM.autoBackupSourcePath.isNotEmpty()) {
                                     val srcDir = autoBackupVM.autoBackupSourcePath.substringBeforeLast("/")
                                     val src = srcDir.substringAfterLast("0/").trim('/')
-                                    Text("Từ: /$src", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("Từ: /$src", fontSize = 12.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
 
                                 Spacer(Modifier.height(6.dp))
@@ -489,9 +489,9 @@ fun DashboardSystemStatusCards(
                                 Spacer(Modifier.height(4.dp))
 
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Tổng tiến trình: ${autoBackupVM.autoBackupProcessedCount} / ${autoBackupVM.autoBackupTotalCount} tệp", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
+                                    Text("Tổng tiến trình: ${autoBackupVM.autoBackupProcessedCount} / ${autoBackupVM.autoBackupTotalCount} tệp", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = TextSecondary)
                                     val totalPercent = if(autoBackupVM.autoBackupTotalCount > 0) (autoBackupVM.autoBackupProcessedCount * 100f / autoBackupVM.autoBackupTotalCount) else 0f
-                                    Text("%.1f%%".format(totalPercent), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                    Text("%.1f%%".format(totalPercent), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                         color = if (autoBackupVM.autoBackupIsPaused) AccentOrange else AccentGreen)
                                 }
                             }
@@ -521,18 +521,18 @@ fun DashboardSystemStatusCards(
                                     Text("USB Import", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                                     Text(
                                         if (usbImport.status == "cancelling") "Đang hủy copy USB" else "Đang copy từ ${usbImport.detectedDevicesInfo.ifBlank { usbImport.activeDevice.ifBlank { "ổ USB" } }}",
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         color = AccentCyan
                                     )
                                     if (usbImport.currentFile.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
-                                        Text("Tệp: ${usbImport.currentFile}", fontSize = 11.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("Tệp: ${usbImport.currentFile}", fontSize = 12.sp, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     if (usbImport.currentSource.isNotBlank()) {
-                                        Text("Từ: ${usbImport.currentSource}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("Từ: ${usbImport.currentSource}", fontSize = 12.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     if (usbImport.currentDest.isNotBlank()) {
-                                        Text("Lưu: ${usbImport.currentDest}", fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("Lưu: ${usbImport.currentDest}", fontSize = 12.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     Spacer(Modifier.height(6.dp))
                                     LinearProgressIndicator(
@@ -545,20 +545,20 @@ fun DashboardSystemStatusCards(
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                         Text(
                                             "${usbImport.filesDone}/${usbImport.filesTotal} tệp • ${com.nas.naswebdav.utils.FormatUtils.formatBytes(usbImport.bytesProcessed)}",
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = TextSecondary
                                         )
                                         Text(
                                             "${com.nas.naswebdav.utils.FormatUtils.formatBytes(usbImport.copySpeedBps)}/s • ETA ${usbImportEtaLabel(usbImport.etaSeconds)}",
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = AccentCyan
                                         )
                                     }
                                 }
                                 IconButton(onClick = { deviceMgmtVM.cancelUsbImport() }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                    Icon(Icons.Default.Stop, null, tint = AccentRed, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Stop, "Hủy nhập USB", tint = AccentRed, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -582,7 +582,7 @@ fun DashboardSystemStatusCards(
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text("Ghi hình livestream", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                    Text("🔴 Đang ghi hình (${activeStreams.size} kênh)", fontSize = 10.sp, color = AccentOrange)
+                                    Text("Đang ghi hình (${activeStreams.size} kênh)", fontSize = 12.sp, color = AccentOrange)
                                 }
                             }
                             
@@ -627,17 +627,17 @@ fun DashboardSystemStatusCards(
                                             val secondaryLabel = when {
                                                 job.outputFile.isNotEmpty() -> {
                                                     val fileName = job.outputFile.substringAfterLast('/')
-                                                    if (job.outputFile.startsWith("Livestream/")) job.outputFile else "Livestream/$fileName"
+                                                    if (job.outputFile.startsWith(AppConfig.LIVESTREAM_FOLDER)) job.outputFile else AppConfig.LIVESTREAM_FOLDER + fileName
                                                 }
-                                                else -> "Livestream/đang tạo file..."
+                                                else -> AppConfig.LIVESTREAM_FOLDER + "đang tạo file..."
                                             }
-                                            Text(secondaryLabel, fontSize = 10.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                            Text(secondaryLabel, fontSize = 12.sp, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                             
                                             val sizeAndSpeed = buildString {
                                                 if (job.fileSize.isNotEmpty()) append(job.fileSize) else append("0 B")
                                                 if (job.speed.isNotEmpty()) append(" • ${job.speed}")
                                             }
-                                            Text(sizeAndSpeed, fontSize = 10.sp, color = AccentGreen, modifier = Modifier.padding(start = 8.dp))
+                                            Text(sizeAndSpeed, fontSize = 12.sp, color = AccentGreen, modifier = Modifier.padding(start = 8.dp))
                                         }
                                     }
                                 }

@@ -86,6 +86,35 @@ class RoomMediaRegression(unittest.TestCase):
         html = 'window.SIGI_STATE=null;</script><script>{"LiveRoom":{"liveRoomStatus":1,"roomId":"9999"}}</script>'
         self.assertFalse(self.ns["_parse_tiktok_live_room_state"](html)[0])
 
+    def test_modern_sigi_state_script_tag_with_status_2_is_live(self):
+        stream_json = json.dumps({
+            "common": {"room_id": 7691711556303522580},
+            "data": {
+                "hd": {"main": {"flv": "https://cdn/stream_hd.flv", "hls": "https://cdn/stream_hd.m3u8"}}
+            }
+        })
+        payload = {
+            "LiveRoom": {
+                "liveRoomUserInfo": {
+                    "liveRoom": {
+                        "status": 2,
+                        "streamData": {
+                            "pull_data": {
+                                "stream_data": stream_json
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        html = '<html><head><script id="SIGI_STATE" type="application/json">%s</script></head></html>' % json.dumps(payload)
+        is_live, rid, status, detail = self.ns["_parse_tiktok_live_room_state"](html)
+        self.assertTrue(is_live)
+        self.assertEqual(rid, "7691711556303522580")
+        self.assertEqual(status, 2)
+        urls = self.extract(html, rid)
+        self.assertEqual(urls, ["https://cdn/stream_hd.flv", "https://cdn/stream_hd.m3u8"])
+
 
 class GeneratedReconnectRegression(unittest.TestCase):
     def test_unrelated_offline_room_does_not_stop_target(self):

@@ -1,15 +1,9 @@
 package com.nas.naswebdav.ui.components
 
-import androidx.compose.animation.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.nas.naswebdav.ui.screens.*
@@ -27,11 +21,8 @@ import com.nas.naswebdav.ui.screens.*
  * │ chủ     dụng            thống             │
  * └──────────────────────────────────────────┘
  *
- * - Active: Cyan accent color + filled icon
- * - Inactive: TextTertiary, outline icon
- * - Height: 56dp (Material3 standard)
- * - Background: True black #000000 (AMOLED)
- * - No elevation, top border: 1dp DarkDivider
+ * Native Material navigation owns tab semantics and touch targets.
+ * The outer Scaffold owns system-bar insets.
  */
 enum class NasTab(
     val route: String,
@@ -41,7 +32,7 @@ enum class NasTab(
 ) {
     Dashboard("dashboard", "Trang chủ", AppIcons.Dashboard, AppIcons.Dashboard),
     Apps("apps", "Ứng dụng", AppIcons.Build, AppIcons.Build),
-    Files("files", "File", AppIcons.Folder, AppIcons.FolderOpen),
+    Files("files", "Tệp", AppIcons.Folder, AppIcons.FolderOpen),
     System("system", "Hệ thống", AppIcons.Settings, AppIcons.Settings),
     More("more", "Thêm", AppIcons.More, AppIcons.More),
 }
@@ -59,68 +50,34 @@ fun NasNavigationBar(
     onTabSelected: (NasTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = DarkSurface,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = AppSpacing.SM, vertical = AppSpacing.XS)
-                .clip(RoundedCornerShape(AppSpacing.LG)),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            NasTab.entries.forEach { tab ->
-                val isActive = currentRoute == tab.route
-                BottomNavItem(
-                    tab = tab,
-                    isActive = isActive,
-                    onClick = { onTabSelected(tab) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BottomNavItem(
-    tab: NasTab,
-    isActive: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    val contentColor = if (isActive) PanelTitleCyan else TextTertiary
-    val bgColor = if (isActive) PanelTitleCyan.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent
-
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(AppSpacing.MD))
-            .background(bgColor)
-            .clickable {
-                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                onClick()
-            }
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+    NavigationBar(
+        modifier = modifier.fillMaxWidth(),
+        containerColor = DarkCard,
+        tonalElevation = 0.dp,
+        windowInsets = WindowInsets(0, 0, 0, 0),
     ) {
-        Icon(
-            imageVector = if (isActive) tab.selectedIcon else tab.icon,
-            contentDescription = tab.label,
-            modifier = Modifier.size(22.dp),
-            tint = contentColor,
-        )
-        Text(
-            text = tab.label,
-            style = AppTypography.LabelSmall,
-            color = contentColor,
-            maxLines = 1,
-            fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-        )
+        NasTab.entries.forEach { tab ->
+            val isActive = currentRoute == tab.route
+            NavigationBarItem(
+                selected = isActive,
+                onClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onTabSelected(tab)
+                },
+                icon = {
+                    Icon(if (isActive) tab.selectedIcon else tab.icon, null, modifier = Modifier.size(24.dp))
+                },
+                label = { Text(tab.label, style = AppTypography.BodySmall, maxLines = 1) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentCyan,
+                    selectedTextColor = AccentCyan,
+                    indicatorColor = DarkElevated,
+                    unselectedIconColor = TextTertiary,
+                    unselectedTextColor = TextTertiary,
+                ),
+            )
+        }
     }
 }
 

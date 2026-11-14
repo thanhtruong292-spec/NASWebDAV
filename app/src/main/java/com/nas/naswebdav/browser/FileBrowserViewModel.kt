@@ -16,6 +16,7 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.encodeWebDavSegment
 import com.nas.naswebdav.buildWebDavRestoreTargetUrl
 import com.nas.naswebdav.ThumbnailAuditData
+import com.nas.naswebdav.utils.SystemLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,9 +31,47 @@ import java.util.Stack
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+internal fun rebaseWebDavUrl(url: String, oldBaseUrl: String, newBaseUrl: String): String? {
+    val oldBase = oldBaseUrl.trimEnd('/') + "/"
+    if (!url.startsWith(oldBase)) return null
+    return newBaseUrl.trimEnd('/') + "/" + url.removePrefix(oldBase)
+}
+
+internal fun relativeWebDavSearchRoot(baseUrl: String, folderUrl: String): String? = runCatching {
+    val base = java.net.URI(baseUrl)
+    val folder = java.net.URI(folderUrl)
+    if (!base.scheme.equals(folder.scheme, ignoreCase = true) ||
+        !base.rawAuthority.equals(folder.rawAuthority, ignoreCase = true)) return@runCatching null
+    val prefix = base.path.trimEnd('/') + "/"
+    val path = folder.path.trimEnd('/') + "/"
+    if (!path.startsWith(prefix)) null else path.removePrefix(prefix).trim('/')
+}.getOrNull()
+
+private suspend fun okhttp3.Call.awaitSearchBody(): String? = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { cancel() }
+    enqueue(object : okhttp3.Callback {
+        override fun onFailure(call: okhttp3.Call, error: java.io.IOException) {
+            if (continuation.isActive) continuation.resumeWithException(error)
+        }
+
+        override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+            try {
+                val body = response.use { if (it.isSuccessful) it.body?.string() else null }
+                if (continuation.isActive) continuation.resume(body)
+            } catch (error: Exception) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+        }
+    })
+}
 
 /**
  * FileBrowserViewModel — Primary owner of file-browser state.
@@ -60,16 +99,19 @@ class FileBrowserViewModel(
     // ═══ NAVIGATION STATE (Phase 7a.1 — moved from facade) ═══
 
     var currentUrl by androidx.compose.runtime.mutableStateOf("")
+        private set
     internal val urlStack: Stack<String> = Stack()
     var errorMessage by androidx.compose.runtime.mutableStateOf<String?>(null)
+        private set
     var isSpecialMode by androidx.compose.runtime.mutableStateOf(false)
+        private set
     var specialTitle by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     // ═══ FILE LIST STATE ═══
 
     var fileList by androidx.compose.runtime.mutableStateOf<List<NasFile>>(emptyList())
-        internal set
+        private set
 
     /** Set tracks file paths pending deletion — prevents files from reappearing after refresh. */
     internal val pendingDeletes: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -89,32 +131,32 @@ class FileBrowserViewModel(
     // ═══ LOADING / ERROR STATE ═══
 
     var isLoading by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ═══ BATCH OPERATION STATE ═══
 
     var isBatchProcessing by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var batchProcessType by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var batchProcessProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
-        internal set
+        private set
     var batchProcessCurrentFile by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     // ═══ IMAGE VIEWER COUNTER ═══
 
     var totalImagesInFolder by androidx.compose.runtime.mutableIntStateOf(0)
-        internal set
+        private set
     var loadedImagesCount by androidx.compose.runtime.mutableIntStateOf(0)
-        internal set
+        private set
 
     // ═══ TEXT PREVIEW ═══
 
     var textPreviewContent by androidx.compose.runtime.mutableStateOf<String?>(null)
         internal set
     var textPreviewName by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     // ═══ PLACEHOLDER METHODS — implement Phase 5b ═══
 
@@ -164,6 +206,21 @@ class FileBrowserViewModel(
         }
     }
 
+    fun refreshAfterConnectionCheck(oldBaseUrl: String, activeBaseUrl: String) {
+        if (activeBaseUrl.isBlank()) return
+        if (currentUrl.isBlank()) {
+            resetToDefaultMode()
+            return
+        }
+        if (oldBaseUrl != activeBaseUrl) {
+            currentUrl = rebaseWebDavUrl(currentUrl, oldBaseUrl, activeBaseUrl) ?: activeBaseUrl
+            for (index in 0 until urlStack.size) {
+                urlStack[index] = rebaseWebDavUrl(urlStack[index], oldBaseUrl, activeBaseUrl) ?: activeBaseUrl
+            }
+        }
+        refresh()
+    }
+
     fun resetToDefaultMode() {
         isSpecialMode = false
         specialTitle = ""
@@ -208,16 +265,20 @@ class FileBrowserViewModel(
             clearSearch()
             return
         }
+        val searchToken = ++searchGeneration
         searchJob?.cancel()
+        searchCallGroup?.let(WebDavManager::cancelActiveCalls)
         val searchRootUrl = currentUrl.ifBlank { WebDavManager.currentBaseUrl }
         if (searchRootUrl.isBlank()) {
             clearSearch()
             return
         }
         _isSearchActive.value = true
+        _searchResults.value = emptyList()
         // Token chong job cu (bi cancel cham) de ket qua cu len sau khi job
         // moi da xong — moi pass kiem tra token truoc khi post Main.
-        val searchToken = ++searchGeneration
+        val callGroup = "$searchCallGroupPrefix:$searchToken"
+        searchCallGroup = callGroup
         searchJob = viewModelScope.launch(Dispatchers.IO) {
             // Debounce 300ms: go "anh" lien tuc chi cham 1 lan BFS thay vi
             // 3 lan (moi lan 3 luong PROPFIND khap NAS).
@@ -226,14 +287,29 @@ class FileBrowserViewModel(
 
             val results = ConcurrentHashMap<String, NasFile>()
             val normalizedSearchRoot = if (searchRootUrl.endsWith("/")) searchRootUrl else "$searchRootUrl/"
-            val relativeRoot = if (searchRootUrl.startsWith(WebDavManager.currentBaseUrl)) {
-                searchRootUrl.removePrefix(WebDavManager.currentBaseUrl).trim('/')
-            } else ""
+            val relativeRoot = relativeWebDavSearchRoot(WebDavManager.currentBaseUrl, searchRootUrl)
+
+            // Cached scoped results are visible while the NAS index request runs.
+            try {
+                repository.searchCacheUnder(normalizedSearchRoot, normalizedQuery).forEach { file ->
+                    results[file.path] = file
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                SystemLogger.log("WARNING", "FileBrowser", "Room cache search failed silently")
+            }
+            if (results.isNotEmpty() && searchToken == searchGeneration) {
+                val cachedList = results.values.toList()
+                withContext(Dispatchers.Main) {
+                    if (searchToken == searchGeneration) _searchResults.value = cachedList
+                }
+            }
 
             // Pass 0: Gọi Server API /api/search quét siêu tốc trực tiếp trong phạm vi thư mục hiện tại
             try {
                 val apiBaseUrl = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                if (apiBaseUrl.isNotBlank()) {
+                if (apiBaseUrl.isNotBlank() && relativeRoot != null) {
                     val encodedQ = java.net.URLEncoder.encode(normalizedQuery, "UTF-8")
                     val encodedRoot = java.net.URLEncoder.encode(relativeRoot, "UTF-8")
                     val searchApiUrl = "$apiBaseUrl/api/search?q=$encodedQ&root=$encodedRoot"
@@ -242,57 +318,61 @@ class FileBrowserViewModel(
                         .header("Authorization", WebDavManager.currentAuthHeader())
                         .get()
                         .build()
-                    NasApplication.instance.fastApiClient.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val jsonStr = response.body?.string()
-                            if (!jsonStr.isNullOrEmpty()) {
-                                val jsonObj = org.json.JSONObject(jsonStr)
-                                if (jsonObj.optBoolean("success", false)) {
-                                    val arr = jsonObj.optJSONArray("results")
-                                    if (arr != null && arr.length() > 0) {
-                                        val apiFiles = mutableListOf<NasFile>()
-                                        for (i in 0 until arr.length()) {
-                                            val obj = arr.getJSONObject(i)
-                                            val file = NasFile(
-                                                name = obj.getString("name"),
-                                                path = obj.getString("path"),
-                                                isDirectory = obj.getBoolean("isDirectory"),
-                                                contentType = obj.optString("contentType", ""),
-                                                contentLength = obj.optLong("contentLength", 0L),
-                                                lastModified = obj.optLong("lastModified", 0L)
-                                            )
-                                            results[file.path] = file
-                                            apiFiles.add(file)
-                                        }
-                                        repository.saveDiscoveredFiles(apiFiles, searchRootUrl)
-                                        val apiList = results.values.toList()
-                                        if (searchToken != searchGeneration) return@launch // query moi da chay
-                                        withContext(Dispatchers.Main) {
-                                            if (searchToken != searchGeneration) return@withContext
-                                            _searchResults.value = apiList
-                                            _isSearchActive.value = false
-                                        }
-                                        return@launch // Đã có kết quả chính xác 100% trong thư mục hiện tại!
-                                    }
+                    val jsonStr = NasApplication.instance.fastApiClient.newCall(request).awaitSearchBody()
+                    if (!jsonStr.isNullOrEmpty()) {
+                        val jsonObj = org.json.JSONObject(jsonStr)
+                        if (jsonObj.optBoolean("success", false)) {
+                            val arr = jsonObj.optJSONArray("results")
+                            if (arr != null && (arr.length() > 0 || jsonObj.optBoolean("index_ready", false))) {
+                                val authoritative = if (jsonObj.has("index_ready")) {
+                                    jsonObj.optBoolean("index_ready", false)
+                                } else arr.length() > 0
+                                val apiFiles = mutableListOf<NasFile>()
+                                if (authoritative) results.clear()
+                                for (i in 0 until arr.length()) {
+                                    val obj = arr.getJSONObject(i)
+                                    // FIX-SEARCH-ENCODE: backend cu tra path RAW (space/dau/#?&
+                                    // giu nguyen) gay hong Intent VLC + ExoPlayer. Chuan hoa qua
+                                    // toValidUrl (encode theo segment, giu '/') de khop PROPFIND
+                                    // va de toFastMediaUrl khong double-encode.
+                                    val rawPath = obj.getString("path")
+                                    // CODEX P1: toValidUrl giu slash goc — dir tu backend khong co "/"
+                                    // thi tu them theo isDirectory, file giu nguyen de GET truc tiep dung.
+                                    val isDir = obj.getBoolean("isDirectory")
+                                    val dirFixed = if (isDir && !rawPath.endsWith("/")) "$rawPath/" else rawPath
+                                    val normPath = com.nas.naswebdav.toValidUrl(dirFixed)
+                                    val file = NasFile(
+                                        name = obj.getString("name"),
+                                        path = normPath,
+                                        isDirectory = isDir,
+                                        contentType = obj.optString("contentType", ""),
+                                        contentLength = obj.optLong("contentLength", 0L),
+                                        lastModified = obj.optLong("lastModified", 0L)
+                                    )
+                                    results[file.path] = file
+                                    apiFiles.add(file)
                                 }
+                                for ((parent, files) in apiFiles.groupBy {
+                                    it.path.trimEnd('/').substringBeforeLast('/') + "/"
+                                }) {
+                                    repository.saveDiscoveredFiles(files, parent)
+                                }
+                                val apiList = results.values.toList()
+                                if (searchToken != searchGeneration) return@launch // query moi da chay
+                                withContext(Dispatchers.Main) {
+                                    if (searchToken != searchGeneration) return@withContext
+                                    _searchResults.value = apiList
+                                    if (authoritative) _isSearchActive.value = false
+                                }
+                                if (authoritative) return@launch
                             }
                         }
                     }
                 }
-            } catch (_: Exception) {}
-
-            // Pass 1: Room Cache — query SQL giới hạn trong root (LIMIT 200),
-            // thay full-table scan 25k rows vào RAM.
-            try {
-                repository.searchCacheUnder(normalizedSearchRoot, normalizedQuery).forEach { file ->
-                    results[file.path] = file
-                }
-            } catch (_: Exception) {}
-            if (results.isNotEmpty() && searchToken == searchGeneration) {
-                val cachedList = results.values.toList()
-                withContext(Dispatchers.Main) {
-                    if (searchToken == searchGeneration) _searchResults.value = cachedList
-                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                SystemLogger.log("WARNING", "FileBrowser", "API search pass failed silently")
             }
 
             // Pass 2: Quét đa luồng nhẹ nhàng (3 workers + delay 35ms) để không gây treo hay hao phí tài nguyên NAS
@@ -309,6 +389,8 @@ class FileBrowserViewModel(
             val workerCount = 3 // 3 luồng vừa phải tránh gây áp lực CPU NAS
 
             val updateMutex = Mutex()
+            // CC-004 P1-8b: buffer gom file de batch-insert SQLite (200 file/lan).
+            val pendingBatch = java.util.Collections.synchronizedList(mutableListOf<Pair<NasFile, String>>())
 
             coroutineScope {
                 repeat(workerCount) {
@@ -344,8 +426,27 @@ class FileBrowserViewModel(
 
                             try {
                                 delay(35) // Tạm dừng 35ms giữa mỗi folder để duy trì CPU NAS < 5%
-                                val children = WebDavManager.listFiles(folderUrl)
-                                repository.saveDiscoveredFiles(children, folderUrl) // Lưu bản đồ SQLite ngầm
+                                // CC-004 P1-8: timeout tung PROPFIND 15s — 1 folder treo
+                                // (HDD spin-up) khong kep ca search 400 folders.
+                                val children = try {
+                                    withTimeout(15_000) { WebDavManager.listFiles(folderUrl, callGroup) }
+                                } catch (_: kotlinx.coroutines.TimeoutCancellationException) { emptyList() }
+                                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                catch (_: Exception) { emptyList() }
+                                // CC-004 P1-8b: batch DB — gom 10 folders roi ghi 1 lan,
+                                // thay vi moi folder 1 transaction SQLite (cham + lock).
+                                pendingBatch.addAll(children.map { it to folderUrl })
+                                if (pendingBatch.size >= 200 || queue.isEmpty()) {
+                                    try {
+                                        val grouped = pendingBatch.groupBy({ it.second }, { it.first })
+                                        for ((parent, files) in grouped) {
+                                            repository.saveDiscoveredFiles(files, parent)
+                                        }
+                                    } catch (_: Exception) {
+                                        SystemLogger.log("WARNING", "FileBrowser", "Batch DB insert failed silently")
+                                    }
+                                    pendingBatch.clear()
+                                }
                                 var hasNewMatch = false
                                 for (file in children) {
                                     if (matchesQuery(file.name, normalizedQuery) && results.size < maxResults) {
@@ -369,12 +470,26 @@ class FileBrowserViewModel(
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (_: Exception) {
+                                SystemLogger.log("WARNING", "FileBrowser", "Worker iteration failed silently")
                             } finally {
                                 activeWorkers.decrementAndGet()
                             }
                         }
                     }
                 }
+            }
+
+            // CC-004 P1-8b: flush phan con lai trong buffer batch-insert.
+            if (pendingBatch.isNotEmpty()) {
+                try {
+                    val grouped = pendingBatch.groupBy({ it.second }, { it.first })
+                    for ((parent, files) in grouped) {
+                        repository.saveDiscoveredFiles(files, parent)
+                    }
+                } catch (_: Exception) {
+                    SystemLogger.log("WARNING", "FileBrowser", "Final batch DB insert failed silently")
+                }
+                pendingBatch.clear()
             }
 
             withContext(Dispatchers.Main) {
@@ -453,11 +568,16 @@ class FileBrowserViewModel(
     private var searchJob: Job? = null
     // Tang moi lan searchGlobal() chay — job cu (cancel cham) khong duoc de
     // ket qua cu len sau khi job moi da co ket qua.
-    private var searchGeneration = 0
+    @Volatile private var searchGeneration = 0
+    private val searchCallGroupPrefix = "file-search:${java.util.UUID.randomUUID()}"
+    private var searchCallGroup: String? = null
 
     /** Clear recursive search state and cancel any in-progress search. */
     fun clearSearch() {
+        searchGeneration++
         searchJob?.cancel()
+        searchCallGroup?.let(WebDavManager::cancelActiveCalls)
+        searchCallGroup = null
         _isSearchActive.value = false
         _searchResults.value = emptyList()
     }
@@ -930,8 +1050,11 @@ class FileBrowserViewModel(
     fun fetchTextPreview(path: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // CC-004 P1-3: chuan hoa URL truoc khi GET — path raw co space/dau/#?&%
+                // se gay IllegalArgumentException / 404 trong OkHttp.
+                val safePath = com.nas.naswebdav.toValidUrl(path)
                 val request = okhttp3.Request.Builder()
-                    .url(path)
+                    .url(safePath)
                     .header("Authorization", WebDavManager.currentAuthHeader())
                     .get()
                     .build()

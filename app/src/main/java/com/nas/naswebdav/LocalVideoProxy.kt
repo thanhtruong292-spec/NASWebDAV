@@ -36,6 +36,17 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         private const val READ_TIMEOUT_MS = 30_000
         private const val SERVER_IDLE_TIMEOUT_MS = 10 * 60_000L // Giữ proxy sống theo phiên phát để seek lại sau pause dài
         private const val BUFFER_SIZE = 65_536 // 64KB buffer cho stream
+        // CC-004 P1-7: giữ proxy đang chạy để caller mới stop trước khi mở mới —
+        // trước đây mỗi openExternalVideoPlayer tạo instance mới, socket cũ leak
+        // tới idle-timeout (10p) giữ Basic Auth trong RAM + chiếm port/thread.
+        @Volatile private var activeProxy: LocalVideoProxy? = null
+        @Synchronized fun takeOver(next: LocalVideoProxy) {
+            try { activeProxy?.stop() } catch (_: Exception) {}
+            activeProxy = next
+        }
+        @Synchronized fun releaseIfMine(mine: LocalVideoProxy) {
+            if (activeProxy === mine) activeProxy = null
+        }
     }
 
     @Volatile private var serverSocket: ServerSocket? = null
@@ -51,6 +62,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
         // FIX: đóng proxy cũ (nếu có) trước khi tạo mới để tránh leak
         // thread/socket khi caller goi start() nhieu lan tren cung instance.
         stop()
+        takeOver(this)
         // Mở ServerSocket chỉ trên loopback (127.0.0.1) — tránh LAN peer dùng proxy
         // để forward NAS Basic Auth và đọc dữ liệu trái phép.
         val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).also { serverSocket = it }
@@ -94,6 +106,7 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
                 }
             } finally {
                 runCatching { server.close() }
+                releaseIfMine(this@LocalVideoProxy)
                 Log.d(TAG, "Proxy server closed")
             }
         }, "LocalVideoProxy-server").apply {
@@ -160,6 +173,14 @@ class LocalVideoProxy(private val user: String, private val pass: String) {
 
                     // Chuyển tiếp Range header từ VLC để hỗ trợ seek
                     clientHeaders["range"]?.let { setRequestProperty("Range", it) }
+                    // CC-004 P1-7: chuyen tiep Dieu kien tien trinh de VLC/ExoPlayer
+                    // resume dung (If-Range/If-Match/If-None-Match/If-Modified-Since).
+                    // Thieu: seek sau pause dai bi 200 full thay vi 206 -> lag/OOM.
+                    clientHeaders["if-range"]?.let { setRequestProperty("If-Range", it) }
+                    clientHeaders["if-match"]?.let { setRequestProperty("If-Match", it) }
+                    clientHeaders["if-none-match"]?.let { setRequestProperty("If-None-Match", it) }
+                    clientHeaders["if-modified-since"]?.let { setRequestProperty("If-Modified-Since", it) }
+                    clientHeaders["if-unmodified-since"]?.let { setRequestProperty("If-Unmodified-Since", it) }
 
                     // Headers chuẩn
                     setRequestProperty("User-Agent", "NASWebDAV-Proxy/1.0")

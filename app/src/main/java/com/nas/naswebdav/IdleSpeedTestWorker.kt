@@ -40,11 +40,31 @@ import androidx.core.content.edit
 
 class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "SpeedTest", "Bắt đầu đo tốc độ ổ đĩa (idle/background job)")
+        // AUDIT-20261104: worker co the chay lau (>10s) phai setForeground truoc.
+        try {
+            val channelId = "speedtest_channel"
+            val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(NotificationChannel(channelId, "SpeedTest", NotificationManager.IMPORTANCE_LOW))
+            val notif = NotificationCompat.Builder(applicationContext, channelId)
+                .setContentTitle("Đang đo tốc độ ổ đĩa...")
+                .setSmallIcon(android.R.drawable.ic_popup_sync).setOngoing(true).build()
+            setForeground(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ForegroundInfo(1005, notif, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                } else {
+                    ForegroundInfo(1005, notif)
+                }
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("IdleSpeedTestWorker", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+        }
         // Terminal config: thiếu URL/credentials là config bug → failure, không retry vô hạn
-        val currentUrl = inputData.getString("currentUrl") ?: return@withContext Result.failure()
+        val currentUrl = inputData.getString("currentUrl")
+        if (currentUrl.isNullOrBlank()) { SystemLogger.log("WARNING", "SpeedTest", "Thiếu currentUrl — kết thúc thất bại"); return@withContext Result.failure() }
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (user.isEmpty() || pass.isEmpty()) return@withContext Result.failure()
+        if (user.isEmpty() || pass.isEmpty()) { SystemLogger.log("WARNING", "SpeedTest", "Thiếu credentials — kết thúc thất bại"); return@withContext Result.failure() }
 
         try {
             val apiBaseUrl = currentUrl.toApiBaseUrl()
@@ -69,18 +89,21 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
                     response.code == 408 || response.code == 429 -> {
                         SystemLogger.log("WARNING", "SpeedTest",
                             "Speed test endpoint ${response.code} — sẽ retry (transient)")
+                        SystemLogger.log("INFO", "SpeedTest", "Hoàn tất đo tốc độ disques (transient retry)")
                         return@withContext Result.retry()
                     }
                     // 4xx khác: auth/permission/route không tồn tại → không tự hồi phục
                     response.code in 400..499 -> {
                         SystemLogger.log("WARNING", "SpeedTest",
                             "Speed test endpoint trả về ${response.code} — không retry (client error)")
+                        SystemLogger.log("INFO", "SpeedTest", "Hoàn tất đo tốc độ disques (client error ${response.code})")
                         return@withContext Result.failure()
                     }
                     // 5xx + IO errors: transient → retry theo backoff
                     else -> {
                         SystemLogger.log("WARNING", "SpeedTest",
                             "Speed test endpoint trả về ${response.code} — sẽ retry")
+                        SystemLogger.log("INFO", "SpeedTest", "Hoàn tất đo tốc độ disques (server error ${response.code}, retry)")
                         return@withContext Result.retry()
                     }
                 }
@@ -88,12 +111,14 @@ class IdleSpeedTestWorker(appContext: Context, workerParams: WorkerParameters) :
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            // P0-4: user cancel → failure, KHÔNG retry
+            // P0-4: user cancel → retry theo backoff (system stop ≠ fatal error)
             if (isStopped) {
-                return@withContext Result.failure()
+                SystemLogger.log("WARNING", "SpeedTest", "Hệ thống dừng worker speed test — sẽ retry theo backoff")
+                return@withContext Result.retry()
             }
             SystemLogger.log("WARNING", "SpeedTest",
                 "Không thể thực thi speed test: ${e.message} — sẽ retry")
+            SystemLogger.log("INFO", "SpeedTest", "Hoàn tất đo tốc độ disques (lỗi: ${e.message})")
             return@withContext Result.retry()
         }
     }

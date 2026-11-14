@@ -25,19 +25,22 @@ internal object AppTypography {
         fontSize = 36.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = (-1).sp,
-        lineHeight = 42.sp
+        lineHeight = 42.sp,
+        fontFeatureSettings = "tnum"
     )
     val HeadlineLarge = TextStyle(
         fontSize = 28.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = (-0.5).sp,
-        lineHeight = 34.sp
+        lineHeight = 34.sp,
+        fontFeatureSettings = "tnum"
     )
     val HeadlineMedium = TextStyle(
         fontSize = 22.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.sp,
-        lineHeight = 28.sp
+        lineHeight = 28.sp,
+        fontFeatureSettings = "tnum"
     )
     val TitleLarge = TextStyle(
         fontSize = 18.sp,
@@ -73,31 +76,35 @@ internal object AppTypography {
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.5.sp,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        fontFeatureSettings = "tnum"
     )
     val LabelMedium = TextStyle(
-        fontSize = 10.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.3.sp,
-        lineHeight = 14.sp
+        lineHeight = 16.sp,
+        fontFeatureSettings = "tnum"
     )
     val LabelSmall = TextStyle(
-        fontSize = 9.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.3.sp,
-        lineHeight = 12.sp
+        lineHeight = 16.sp,
+        fontFeatureSettings = "tnum"
     )
     val Caption = TextStyle(
-        fontSize = 10.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.Normal,
         letterSpacing = 0.2.sp,
-        lineHeight = 14.sp
+        lineHeight = 16.sp,
+        fontFeatureSettings = "tnum"
     )
     val SectionTitle = TextStyle(
-        fontSize = 11.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.Black,
         letterSpacing = 1.5.sp,
-        lineHeight = 14.sp
+        lineHeight = 16.sp
     )
 }
 
@@ -121,12 +128,12 @@ internal object AppSpacing {
 // ════════════════════════════════════════════════════════════════════════════
 
 internal object AppShapes {
-    val Card = RoundedCornerShape(12.dp)
-    val Badge = RoundedCornerShape(6.dp)
-    val Button = RoundedCornerShape(8.dp)
-    val Dialog = RoundedCornerShape(16.dp)
+    val Card = RoundedCornerShape(18.dp)
+    val Badge = RoundedCornerShape(8.dp)
+    val Button = RoundedCornerShape(14.dp)
+    val Dialog = RoundedCornerShape(24.dp)
     val Pill = RoundedCornerShape(50.dp)
-    val Input = RoundedCornerShape(8.dp)
+    val Input = RoundedCornerShape(14.dp)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

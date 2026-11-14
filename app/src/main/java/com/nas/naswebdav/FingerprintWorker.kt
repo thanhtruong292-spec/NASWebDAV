@@ -39,10 +39,22 @@ import java.util.concurrent.atomic.AtomicReference
 
 class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "FingerprintWorker", "Bắt đầu tạo chữ ký số (fingerprint) cho tập tin")
+        // AUDIT-20261104: worker quet hang tram file (>10s) phai setForeground truoc —
+        // neu khong Android 12+ kill worker giua chung. Loi foreground thi tiep tuc chay.
+        try {
+            setForeground(makeForegroundInfo("fingerprint_channel", "Fingerprint", 1002, "Đang tạo chữ ký số..."))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("FingerprintWorker", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+        }
         val app = applicationContext as NasApplication; val db = app.database
         val webDavManager = loadWebDavManager() ?: return@withContext Result.failure()
         try {
-            val filesToProcess = db.fileDao().getFilesWithoutFingerprint()
+            // CODEX P1: truyen accountKey cua phien hien tai — ban cu goi key=""
+            // nen file cache moi (mang key tai khoan) khong duoc chon, worker
+            // bao hoan tat gia. currentAccountKey() dung AuthState vua connect.
+            val acctKey = currentAccountKey()
+            val filesToProcess = db.fileDao().getFilesWithoutFingerprint(acctKey)
             if (filesToProcess.isEmpty()) { SystemLogger.log("INFO", "FingerprintWorker", "Không phát hiện tập tin yêu cầu tạo chữ ký số (fingerprint)."); return@withContext Result.success() }
             SystemLogger.log("INFO", "FingerprintWorker", "Khởi tạo quá trình cấp phát chữ ký số cho ${filesToProcess.size} tập tin...")
             var successCount = 0; var failCount = 0
@@ -59,6 +71,10 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                 try {
                     // Phone-side: tải raw image 512KB đầu tiên qua WebDAV Range,
                     // decode bitmap + tính aHash trên phone CPU — KHÔNG gọi NAS /api/thumb
+                    // CC-005 P0: validate url host == saved host (chong SSRF via DB path bi nhiem)
+                    val reqHost = runCatching { java.net.URI(file.path).host.orEmpty().lowercase() }.getOrDefault("")
+                    val savedHost = runCatching { java.net.URI(savedUrl).host.orEmpty().lowercase() }.getOrDefault("")
+                    if (reqHost.isNotEmpty() && savedHost.isNotEmpty() && reqHost != savedHost) { failCount++; continue }
                     val authHeader = WebDavManager.AuthState(user = savedUser, pass = savedPass).authHeader
                     val thumbRequest = okhttp3.Request.Builder()
                         .url(file.path)
@@ -68,7 +84,25 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
                     NasApplication.instance.sharedHttpClient.newCall(thumbRequest).execute().use { resp ->
                         when {
                             resp.isSuccessful || resp.code == 206 -> {
-                                val imageBytes = resp.body?.bytes() ?: return@use run { failCount++ }
+                                // CC-005 P0: capped body 1MB (server co the bo qua Range -> tra full file OOM)
+                                val imageBytes: ByteArray? = run {
+                                    val stream = resp.body?.byteStream() ?: return@use run { failCount++ }
+                                    val out = java.io.ByteArrayOutputStream(524288)
+                                    val buf = ByteArray(8192)
+                                    var tot = 0
+                                    stream.use { ins ->
+                                        while (true) {
+                                            if (isStopped) { retryableErrors++; failCount++; return@run null }
+                                            val r = ins.read(buf)
+                                            if (r <= 0) break
+                                            tot += r
+                                            if (tot > 1048576) { failCount++; return@run null }
+                                            out.write(buf, 0, r)
+                                        }
+                                    }
+                                    out.toByteArray()
+                                }
+                                if (imageBytes == null || imageBytes.isEmpty()) return@use run { failCount++ }
                                 // Peek full dimensions to set inSampleSize
                                 val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                                 BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
@@ -135,16 +169,22 @@ class FingerprintWorker(appContext: Context, workerParams: WorkerParameters) : N
             }
             // Quy tắc theo guideline repo: isStopped → retry (không success để khỏi nuốt cancellation)
             // Log INFO tổng kết trước, decision + log kết quả thật phía dưới
+            // CC-005 P0: bound retry runAttemptCount<3 (truoc retry vo han khi NAS 5xx lien tuc).
             return@withContext when {
                 isStopped -> {
                     SystemLogger.log("WARNING", "FingerprintWorker",
                         "Worker bị stop giữa chừng — retry pass (success=$successCount fail=$failCount retryable=$retryableErrors)")
                     Result.retry()
                 }
-                retryableErrors > 0 -> {
+                retryableErrors > 0 && runAttemptCount < 3 -> {
                     SystemLogger.log("WARNING", "FingerprintWorker",
                         "Có $retryableErrors retryable error(s) — sẽ retry (success=$successCount fail=$failCount)")
                     Result.retry()
+                }
+                retryableErrors > 0 -> {
+                    SystemLogger.log("WARNING", "FingerprintWorker",
+                        "Retryable qua 3 lan — dung lai, success tam (success=$successCount fail=$failCount)")
+                    Result.success()
                 }
                 else -> {
                     SystemLogger.log("SUCCESS", "FingerprintWorker",

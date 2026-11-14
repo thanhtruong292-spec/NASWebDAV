@@ -167,7 +167,7 @@
     <string name="autodup_launch_cleanup">Launching scheduled duplicate cleanup.</string>
     <string name="autodup_auto_schedule_log">Auto duplicate cleanup ran on schedule</string>
     <string name="autodup_no_fastpath">Cannot reach FastPath API</string>
-    <string name="autodup_maintenance_complete">Maintenance done: %1$d duplicates found, %2$d processed, %3$s freed, completed in %4$d min.</string>
+    <string name="autodup_maintenance_complete">Maintenance done: %1$d duplicates found, %2$d processed, %3$s duplicate data deleted, completed in %4$d min.</string>
 
     <!-- Shared status dialog titles -->
     <string name="dialog_status_success">Success</string>

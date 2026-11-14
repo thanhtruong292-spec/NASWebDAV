@@ -1,6 +1,8 @@
 package com.nas.naswebdav.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -49,17 +51,24 @@ fun NasEmptyState(
         verticalArrangement = Arrangement.spacedBy(AppSpacing.SM, Alignment.CenterVertically),
     ) {
         // Large dimmed icon
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = iconTint,
-        )
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(iconTint.copy(alpha = 0.14f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                modifier = Modifier.size(32.dp),
+                tint = iconTint,
+            )
+        }
 
         // Title
         Text(
             text = title,
-            style = AppTypography.BodyLarge,
+            style = AppTypography.TitleMedium,
             color = TextPrimary,
             textAlign = TextAlign.Center,
         )

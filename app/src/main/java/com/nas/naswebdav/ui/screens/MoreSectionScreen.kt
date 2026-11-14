@@ -1,7 +1,9 @@
 package com.nas.naswebdav.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,18 +34,19 @@ private fun MenuItemRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(AppSpacing.SM))
+            .clip(AppShapes.Input)
+            .background(DarkCardHover.copy(alpha = 0.45f))
             .clickable { onClick() }
             .padding(horizontal = AppSpacing.LG, vertical = AppSpacing.MD),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(AppSpacing.MD),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            modifier = Modifier.size(22.dp),
-            tint = iconTint,
-        )
+        Box(
+            modifier = Modifier.size(36.dp).clip(AppShapes.Input).background(iconTint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(imageVector = icon, contentDescription = label, modifier = Modifier.size(20.dp), tint = iconTint)
+        }
         Text(
             text = label,
             style = AppTypography.BodyLarge,
@@ -93,6 +96,7 @@ fun MoreSectionScreen(
                 .padding(horizontal = AppSpacing.LG),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
             shape = AppShapes.Card,
+            border = BorderStroke(1.dp, DarkCardBorder),
         ) {
             Column {
                 MenuItemRow(

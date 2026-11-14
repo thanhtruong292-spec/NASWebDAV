@@ -1,0 +1,6 @@
+ok
+1|1|/srv/dev-disk-by-label-data/New folder
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/mmcblk1p1  7.0G  4.8G  1.9G  73% /
+d5719f5d20aa2a1294a8d3bd4422c891627a159feed0acb84e451fdc5424f71d  /opt/nas_api_server.py
+a8bcf63a146709fb854a9fba8f416eee89496ad42c6e1fc2f9c05108e2c642d6  /opt/nas_api_server.py.index-final-candidate-20261114-v3

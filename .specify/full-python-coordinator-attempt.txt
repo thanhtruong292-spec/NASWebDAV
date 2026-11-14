@@ -1,0 +1,20 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Android\NASWebDAV
+plugins: anyio-4.13.0, base-url-2.1.0, playwright-0.7.2
+collecting ... collected 113 items / 1 error
+
+=================================== ERRORS ====================================
+_______________ ERROR collecting tests/test_social_extractor.py _______________
+tests\test_social_extractor.py:22: in <module>
+    _social_logic = load_social_logic()
+                    ^^^^^^^^^^^^^^^^^^^
+tests\social_logic_loader.py:21: in load_social_logic
+    start = source.index(start_marker)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   ValueError: substring not found
+=========================== short test summary info ===========================
+ERROR tests/test_social_extractor.py - ValueError: substring not found
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+============================== 1 error in 4.45s ===============================

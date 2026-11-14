@@ -35,50 +35,50 @@ class AutoBackupViewModel(
     var isAutoBackupRunning by androidx.compose.runtime.mutableStateOf(false)
         internal set
     var autoBackupCurrentFile by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var autoBackupSourcePath by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var autoBackupDestPath by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var autoBackupProgress by androidx.compose.runtime.mutableFloatStateOf(0f)
-        internal set
+        private set
     var autoBackupProcessedCount by androidx.compose.runtime.mutableIntStateOf(0)
-        internal set
+        private set
     var autoBackupTotalCount by androidx.compose.runtime.mutableIntStateOf(0)
-        internal set
+        private set
     var autoBackupElapsedTime by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var autoBackupIsPaused by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var autoBackupFileBytesTotal by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var autoBackupFileBytesWritten by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var autoBackupUploadSpeedBps by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
 
     // ═══ BACKUP SCHEDULE ═══
 
     var backupSchedule by androidx.compose.runtime.mutableStateOf(BackupSchedule())
-        internal set
+        private set
     var backupScheduleMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     // ═══ USB IMPORT ═══
 
     var usbImportState by androidx.compose.runtime.mutableStateOf(UsbImportState())
-        internal set
+        private set
     var usbImportMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var isUsbImportLoading by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ═══ SLEEP SCHEDULE ═══
 
     var sleepSchedule by androidx.compose.runtime.mutableStateOf(SleepSchedule())
-        internal set
+        private set
     var sleepScheduleMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
     var lockNowRequested by androidx.compose.runtime.mutableStateOf(false)
         internal set
 

@@ -147,7 +147,7 @@ fun ToolboxDialog(
             }
             Spacer(Modifier.height(AppSpacing.SM))
             if (showBiometricSettings) {
-                com.nas.naswebdav.ui.dialogs.DialogsBiometricSettingsDialog(
+                com.nas.naswebdav.ui.dialogs.BiometricSettingsDialogCompat(
                     prefsRepo = prefsRepo,
                     onDismiss = {
                         showBiometricSettings = false
@@ -347,8 +347,7 @@ fun ToolboxDialog(
                                 android.widget.Toast.makeText(context, "Đã gửi lệnh quét ${ta.missing} ảnh còn thiếu vào nền.", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             else -> {
-                                smartToolsVM.triggerThumbnailScan()
-                                android.widget.Toast.makeText(context, "Đã kích hoạt quét tiếp phần còn lại của thư viện.", android.widget.Toast.LENGTH_SHORT).show()
+                                android.widget.Toast.makeText(context, "Không có ảnh nào thiếu thumbnail.", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
                     }

@@ -1,0 +1,38 @@
+Internal NAS verification, 2026-11-14
+Owner: index_validation_review
+No backend daemon import/execution, deployment, AV changes or third-party upload.
+Fixtures used isolated temporary public directories and SQLite; no validation DB touched.
+
+Source hashes observed with sha256sum:
+3f5aa7e3726686444288b36c51082abf806eca3eec96a6acba704d22541f7f75  /opt/nas_api_server.py.index-final-candidate-20261114
+029e570964b8b5c66a502b2502d43bd74ef0fc89eb752324f07a185821369a0c  /opt/nas_api_server.py.index-final-candidate-20261114-v2
+
+RED command:
+ssh -o BatchMode=yes -o ConnectTimeout=5 root@100.90.135.102 "python3 /tmp/verify_incremental_index_runtime_review.py /opt/nas_api_server.py.index-final-candidate-20261114 /srv/dev-disk-by-label-data"
+Exit code: 1
+AssertionError: Same-inode alias bypassed hidden-target validation
+
+GREEN command:
+ssh -o BatchMode=yes -o ConnectTimeout=5 root@100.90.135.102 "python3 /tmp/verify_incremental_index_runtime_review.py /opt/nas_api_server.py.index-final-candidate-20261114-v2 /srv/dev-disk-by-label-data"
+Exit code: 0
+Python: 3.5.3
+First scan: checked_dirs=3, enumerated_dirs=3, index_ready=true
+Unchanged scan: checked_dirs=3, enumerated_dirs=0, index_ready=true
+alias_add_delete_restart_cycle_boundary=passed
+unchanged_resolution_skipped=passed
+retargeted_private_alias_denied=passed
+same_inode_ancestor_retarget_denied=passed
+Expected incomplete-directory warnings occurred only while fixtures deliberately
+retargeted public aliases to hidden/outside paths or removed old descendants.
+
+Local fixture file:
+scripts/verify_incremental_index_runtime.py
+python -m py_compile scripts/verify_incremental_index_runtime.py: passed
+git diff --check -- scripts/verify_incremental_index_runtime.py: passed
+
+Runtime availability, read-only inspection:
+/usr/bin/python3: 3.5.3, pytest spec=None, Flask installed
+/opt/bin/python3.8: 3.8.3, ast.unparse=False, pytest spec=None, flask spec=None
+Docker client: 19.03.15, daemon inactive; no daemon/container started.
+The existing full audit tests call ast.unparse and therefore require Python 3.9+
+as written. Full pytest was not run on NAS: no suitable existing runtime/dependencies.

@@ -57,7 +57,7 @@ fun DuplicateConfigDialog(
     onDismiss: () -> Unit
 ) {
     val viewModel = LocalSmartToolsVM.current
-    var isLightningMode by remember { mutableStateOf(true) }
+    val isLightningMode = false
     var isForceRestartDuplicate by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -68,22 +68,6 @@ fun DuplicateConfigDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Thiết lập hệ thống kiểm tra hàng nghìn tệp trên Server NAS.", fontSize = 13.sp, color = TextTertiary)
                 
-                // Option 1: Lightning Mode
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { isLightningMode = !isLightningMode }.padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = isLightningMode,
-                        onCheckedChange = { isLightningMode = it },
-                        colors = CheckboxDefaults.colors(checkedColor = AccentOrange)
-                    )
-                    Column(modifier = Modifier.padding(start = 4.dp)) {
-                        Text("⚡ Chế độ nhanh (Khuyến nghị)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) AccentOrange else TextPrimary)
-                        Text("Nhanh gấp 100 lần. Bỏ qua phân tích nội dung, chỉ dùng ETag gốc (dung lượng, tên, ngày sửa). Có thể quét rất nhanh tới 500.000 tệp.", fontSize = 11.sp, color = TextTertiary, lineHeight = 14.sp)
-                    }
-                }
-
                 // Option 2: Force Restart
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { isForceRestartDuplicate = !isForceRestartDuplicate }.padding(vertical = 4.dp),
@@ -92,7 +76,7 @@ fun DuplicateConfigDialog(
                     Checkbox(checked = isForceRestartDuplicate, onCheckedChange = { isForceRestartDuplicate = it })
                     Column(modifier = Modifier.padding(start = 4.dp)) {
                         Text("Quét lại từ đầu", fontSize = 14.sp, color = TextPrimary)
-                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 11.sp, color = TextTertiary)
+                        Text("Thực hiện quét lại toàn bộ ổ cứng NAS, bỏ qua lịch sử lưu tạm.", fontSize = 12.sp, color = TextTertiary)
                     }
                 }
 
@@ -107,14 +91,27 @@ fun DuplicateConfigDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text("🤖 Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 11.sp, color = TextTertiary, lineHeight = 14.sp)
+                        Text("Tự động dọn dẹp (hàng tuần)", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                        Text("Chạy nền 7 ngày/lần khi điện thoại đang sạc pin và có Wi-Fi. Tự động chuyển tệp trùng vào thùng rác (.trash), giữ lại tệp có đường dẫn ngắn nhất.", fontSize = 12.sp, color = TextTertiary, lineHeight = 16.sp)
                     }
                     Switch(
                         checked = viewModel.autoCleanEnabled,
                         onCheckedChange = { viewModel.toggleAutoClean(context, it) },
                         colors = SwitchDefaults.colors(checkedThumbColor = AccentBlue, checkedTrackColor = AccentBlue.copy(alpha = 0.5f))
                     )
+                }
+
+                // Nút Lịch sử quét gần nhất
+                TextButton(
+                    onClick = {
+                        onDismiss()
+                        viewModel.loadDuplicateResultsFromCache(context)
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                ) {
+                    Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Mở lại kết quả quét gần nhất", color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.Bold)
                 }
             }
         },
@@ -126,7 +123,9 @@ fun DuplicateConfigDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
             ) {
-                Text("🚀 Bắt đầu quét")
+                Icon(Icons.Default.Search, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Bắt đầu quét", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
@@ -194,17 +193,17 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                         data class FilterOption(val key: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
                         val filters = listOf(
                             FilterOption("all", "Tất cả (${groupedDuplicates.size})", Icons.Default.SelectAll),
-                            FilterOption("image", "🖼 Ảnh", Icons.Default.Image),
-                            FilterOption("video", "🎬 Video", Icons.Default.PlayCircle),
-                            FilterOption("doc", "📄 Khác", Icons.Default.InsertDriveFile)
+                            FilterOption("image", "Ảnh", Icons.Default.Image),
+                            FilterOption("video", "Video", Icons.Default.PlayCircle),
+                            FilterOption("doc", "Khác", Icons.Default.InsertDriveFile)
                         )
                         filters.forEach { opt ->
                             androidx.compose.material3.FilterChip(
                                 selected = selectedFilter == opt.key,
                                 onClick = { selectedFilter = opt.key },
-                                label = { Text(opt.label, fontSize = 10.sp, maxLines = 1) },
-                                leadingIcon = if (selectedFilter == opt.key) {{ Icon(Icons.Default.Done, null, Modifier.size(14.dp)) }} else null,
-                                modifier = Modifier.height(30.dp)
+                                label = { Text(opt.label, fontSize = 12.sp, maxLines = 1) },
+                                leadingIcon = { Icon(if (selectedFilter == opt.key) Icons.Default.Done else opt.icon, null, Modifier.size(14.dp)) },
+                                modifier = Modifier.height(32.dp)
                             )
                         }
                     }
@@ -222,13 +221,15 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentBlue)
+                        Icon(Icons.Default.AutoFixHigh, contentDescription = "Chọn thông minh", modifier = Modifier.size(18.dp), tint = AccentBlue)
                         Spacer(Modifier.width(4.dp))
                         Text("Chọn thông minh", fontWeight = FontWeight.Bold, color = AccentBlue)
                     }
 
                     androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth()) {
-                        items(items = filteredGroups, key = { it.first().contentLength }) { group ->
+                        // AUDIT-20261104: key cu dung contentLength -> nhieu nhom cung size
+                        // bi trung key, LazyColumn tai su dung sai item. Key = path dau + size.
+                        items(items = filteredGroups, key = { g -> "${g.firstOrNull()?.path.orEmpty()}|${g.firstOrNull()?.contentLength ?: 0L}|${g.size}" }) { group ->
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(containerColor = DarkCardHover),
@@ -269,7 +270,7 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                         WebDavCachedThumbnail(url = dupFile.path, auth = auth, isVideo = isVideo, modifier = Modifier.fillMaxSize())
                                                     }
                                                 } else {
-                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = null, tint = TextTertiary, modifier = Modifier.align(Alignment.Center).size(40.dp))
+                                                    Icon(Icons.Default.InsertDriveFile, contentDescription = "Không có tệp", tint = TextTertiary, modifier = Modifier.align(Alignment.Center).size(40.dp))
                                                 }
 
                                                 // 2. Lớp phủ đỏ mờ nếu đang được tick chọn xóa
@@ -298,17 +299,17 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
                                                 ) {
                                                     Text(
                                                         text = dupFile.name,
-                                                        fontSize = 8.sp,
+                                                        fontSize = 12.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = TextPrimary,
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
-                                                        lineHeight = 10.sp
+                                                        lineHeight = 14.sp
                                                     )
                                                     val parentFolder = dupFile.path.substringBeforeLast("/").substringAfterLast("/")
                                                     Text(
-                                                        text = "📁 $parentFolder",
-                                                        fontSize = 7.sp,
+                                                        text = parentFolder,
+                                                        fontSize = 12.sp,
                                                         color = TextTertiary,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
@@ -325,11 +326,26 @@ fun DuplicateFilesDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
+            // CC-005 P1: confirm + undo — nút Xóa mở confirm nội bộ, sau khi xóa
+            // caller (SmartToolsVM) post snackbar "Đã xóa N • Hoàn tác" qua GlobalUiVM.
+            var showDeleteConfirm by remember { mutableStateOf(false) }
             Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                 // Hiển thị nút Xóa hàng loạt màu đỏ nổi bật nếu có file đang được tick
                 if (viewModel.selectedDuplicates.isNotEmpty()) {
-                    TextButton(onClick = { viewModel.deleteSelectedDuplicates(viewModel.selectedDuplicates.toList()) }) {
-                        Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = AccentRed, fontWeight = FontWeight.Bold)
+                    if (showDeleteConfirm) {
+                        TextButton(onClick = { showDeleteConfirm = false }) {
+                            Text("Không thể hoàn tác • Hủy", color = TextTertiary)
+                        }
+                        TextButton(onClick = {
+                            showDeleteConfirm = false
+                            viewModel.deleteSelectedDuplicates(viewModel.selectedDuplicates.toList())
+                        }) {
+                            Text("Xóa vĩnh viễn bản trùng (giữ 1 bản)", color = AccentRed, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        TextButton(onClick = { showDeleteConfirm = true }) {
+                            Text("Xóa (${viewModel.selectedDuplicates.size}) mục", color = AccentRed, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
                 TextButton(onClick = {

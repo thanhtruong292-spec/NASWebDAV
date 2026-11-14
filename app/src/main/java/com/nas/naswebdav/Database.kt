@@ -2,13 +2,32 @@ package com.nas.naswebdav
 
 import androidx.room.*
 
+private const val VERIFIED_DUPLICATE_GROUPS = """
+WITH physical AS (
+ SELECT f.* FROM files_cache f JOIN verified_hash_cache h
+ ON h.path=f.path AND h.accountKey=:key AND h.sha256=f.fullHash AND h.contentLength=f.contentLength
+ WHERE f.isDirectory=0 AND length(f.fullHash)=64 AND h.fileId<>''
+ AND (f.accountKey=:key OR f.accountKey='') AND f.parentPath NOT LIKE '%/.trash/%'
+ AND NOT EXISTS (
+  SELECT 1 FROM verified_hash_cache h2 JOIN files_cache f2 ON f2.path=h2.path
+  WHERE h2.accountKey=:key AND h2.fileId=h.fileId AND h2.path<h.path
+  AND h2.sha256=f2.fullHash AND h2.contentLength=f2.contentLength
+  AND f2.fullHash=f.fullHash AND f2.contentLength=f.contentLength AND f2.isDirectory=0
+  AND (f2.accountKey=:key OR f2.accountKey='') AND f2.parentPath NOT LIKE '%/.trash/%'
+ )
+), duplicate_groups AS (
+ SELECT fullHash,contentLength FROM physical GROUP BY fullHash,contentLength HAVING COUNT(*)>1
+)
+"""
+
 @Entity(
     tableName = "files_cache",
     indices = [
         Index(value = ["parentPath"]),
         Index(value = ["contentLength"]), // Phục vụ Stage 1 Hashing nhanh chóng
         Index(value = ["isDirectory"]),
-        Index(value = ["name"]) // FIX SEARCH: Index cho tìm kiếm toàn cục nhanh hơn
+        Index(value = ["name"]), // FIX SEARCH: Index cho tìm kiếm toàn cục nhanh hơn
+        Index(value = ["accountKey", "fullHash", "contentLength"])
     ]
 )
 data class CachedFile(
@@ -49,16 +68,16 @@ interface FileDao {
     @Query("DELETE FROM files_cache")
     fun clearAllFiles()
 
-    @Query("SELECT path FROM files_cache WHERE isDirectory = 0 LIMIT 5000")
-    fun getAllCachedFilePaths(): List<String>
+    @Query("SELECT path FROM files_cache WHERE isDirectory = 0 AND (accountKey = :key OR accountKey = '') LIMIT 5000")
+    fun getAllCachedFilePaths(key: String = ""): List<String>
 
     // TỐI ƯU OOM: Tránh load toàn bộ List<String> vào RAM
     @Query("SELECT EXISTS(SELECT 1 FROM files_cache WHERE path = :path LIMIT 1)")
     fun exists(path: String): Boolean
 
-    // Dialog Thuoc tinh file dung de tra cuu hash da scan
-    @Query("SELECT * FROM files_cache WHERE path = :path LIMIT 1")
-    fun getFileByPath(path: String): CachedFile?
+    // Dialog Thuoc tinh file dung de tra cuu hash da scan — scope theo phien.
+    @Query("SELECT * FROM files_cache WHERE path = :path AND (accountKey = :key OR accountKey = '') LIMIT 1")
+    fun getFileByPath(path: String, key: String = ""): CachedFile?
 
     // TỐI ƯU SQL: Loại trừ thư mục .trash để ảnh/video đã xóa không xuất hiện
     @Query("""
@@ -101,7 +120,7 @@ interface FileDao {
     @Query("""
     WITH duplicate_sizes AS (
         SELECT contentLength FROM files_cache
-        WHERE isDirectory = 0 AND contentLength >= 4096
+        WHERE isDirectory = 0 AND contentLength >= 0
         AND (accountKey = :key OR accountKey = '')
         GROUP BY contentLength
         HAVING COUNT(*) > 1
@@ -118,11 +137,11 @@ interface FileDao {
     @Query("""
     SELECT COUNT(*) FROM files_cache
     WHERE isDirectory = 0
-    AND (accountKey = :key OR accountKey = '')
+    AND (accountKey = :key OR accountKey = '') AND parentPath NOT LIKE '%/.trash/%'
     AND contentLength IN (
         SELECT contentLength FROM files_cache
-        WHERE isDirectory = 0 AND contentLength >= 4096
-        AND (accountKey = :key OR accountKey = '')
+        WHERE isDirectory = 0 AND contentLength >= 0
+        AND (accountKey = :key OR accountKey = '') AND parentPath NOT LIKE '%/.trash/%'
         GROUP BY contentLength
         HAVING COUNT(*) > 1
     )
@@ -132,8 +151,8 @@ interface FileDao {
     // LẤY DANH SÁCH CÁC KÍCH THƯỚC FILE BỊ TRÙNG (chỉ trả về Long, không load CachedFile)
     @Query("""
     SELECT contentLength FROM files_cache
-    WHERE isDirectory = 0 AND contentLength >= 4096
-    AND (accountKey = :key OR accountKey = '')
+    WHERE isDirectory = 0 AND contentLength >= 0
+    AND (accountKey = :key OR accountKey = '') AND parentPath NOT LIKE '%/.trash/%'
     GROUP BY contentLength
     HAVING COUNT(*) > 1
     ORDER BY contentLength DESC
@@ -150,7 +169,7 @@ interface FileDao {
 
     // HASH STAGE 1: Tìm các file có cùng dung lượng byte (Cực nhanh)
     // TỐI ƯU PHASE 8: Loại bỏ file rác cỏn con < 4KB
-    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 4096 AND (accountKey = :key OR accountKey = '') LIMIT 1500")
+    @Query("SELECT * FROM files_cache WHERE isDirectory = 0 AND contentLength >= 0 AND (accountKey = :key OR accountKey = '') LIMIT 1500")
     fun getAllLargeFiles(key: String = ""): List<CachedFile>
 
     // TỐI ƯU HÓA: Dùng SQLite Native (Sử dụng CTE) thay cho Group By trên RAM
@@ -163,23 +182,46 @@ interface FileDao {
     @Query("UPDATE files_cache SET partialHash = :hash WHERE path = :path")
     fun updatePartialHash(path: String, hash: String)
 
+    @Query("UPDATE files_cache SET fullHash=:hash WHERE path=:path AND contentLength=:size AND lastModified=:modified AND (accountKey=:key OR accountKey='')")
+    fun updateVerifiedFullHash(path: String, hash: String, size: Long, modified: Long, key: String)
+
+    @Query("UPDATE files_cache SET fullHash=NULL WHERE path=:path AND (accountKey=:key OR accountKey='')")
+    fun invalidateVerifiedHash(path: String, key: String)
+
+    @Query(VERIFIED_DUPLICATE_GROUPS + "SELECT p.* FROM physical p JOIN duplicate_groups g ON g.fullHash=p.fullHash AND g.contentLength=p.contentLength ORDER BY p.fullHash,p.path LIMIT 1500")
+    fun getVerifiedDuplicateFiles(key: String): List<CachedFile>
+
+    @Query(VERIFIED_DUPLICATE_GROUPS + "SELECT COUNT(*) FROM physical p JOIN duplicate_groups g ON g.fullHash=p.fullHash AND g.contentLength=p.contentLength")
+    fun countVerifiedDuplicateFiles(key: String): Int
+
+    @Query("SELECT * FROM files_cache WHERE isDirectory=0 AND contentLength=:size AND path>:after AND (accountKey=:key OR accountKey='') AND parentPath NOT LIKE '%/.trash/%' ORDER BY path LIMIT :limit")
+    fun getFilesBySizePage(size: Long, key: String, after: String, limit: Int): List<CachedFile>
+
+    @Query("SELECT * FROM files_cache WHERE isDirectory=0 AND fullHash=:hash AND contentLength=:size AND (accountKey=:key OR accountKey='') AND parentPath NOT LIKE '%/.trash/%' ORDER BY path LIMIT 1")
+    fun getVerifiedKeeper(hash: String, size: Long, key: String): CachedFile?
+
     // PHASE 5: Cập nhật Image Fingerprint
     @Query("UPDATE files_cache SET imageFingerprint = :fingerprint WHERE path = :path")
     fun updateImageFingerprint(path: String, fingerprint: String)
 
     // Lấy các file chưa có Fingerprint để cho Worker chạy ngầm băm (chỉ lấy file ảnh và video nhẹ)
+    // CC-005 P0: loc theo accountKey (truoc khong scope -> phien sau doc fingerprint phien truoc)
     @Query("""
-        SELECT * FROM files_cache 
-        WHERE isDirectory = 0 
-        AND imageFingerprint IS NULL 
+        SELECT * FROM files_cache
+        WHERE isDirectory = 0
+        AND imageFingerprint IS NULL
         AND parentPath NOT LIKE '%/.trash/%'
+        AND (accountKey = :key OR accountKey = '')
         AND (name LIKE '%.jpg' OR name LIKE '%.jpeg' OR name LIKE '%.png' OR name LIKE '%.webp' OR name LIKE '%.heic')
         ORDER BY lastModified DESC LIMIT 500
     """)
-    fun getFilesWithoutFingerprint(): List<CachedFile>
+    fun getFilesWithoutFingerprint(key: String = ""): List<CachedFile>
 
     @Query("DELETE FROM files_cache WHERE path = :path")
     fun deleteFileByPath(path: String)
+
+    @Query("DELETE FROM files_cache WHERE path=:path AND accountKey=:key")
+    fun deleteFileForAccount(path: String, key: String)
 }
 
 @Entity(tableName = "system_logs")
@@ -288,13 +330,13 @@ interface FingerprintDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertFingerprint(fingerprint: FileFingerprint)
 
-    // Tìm file có hash CHÍNH XÁC trùng khớp
-    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash LIMIT 1")
-    fun findByExactHash(hash: String): FileFingerprint?
+    // Tìm file có hash CHÍNH XÁC trùng khớp — scope theo phien.
+    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND (accountKey = :key OR accountKey = '') LIMIT 1")
+    fun findByExactHash(hash: String, key: String = ""): FileFingerprint?
 
-    // Tim theo hash + size (phien ban nguon) — aHash va cham duoc.
-    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size LIMIT 5")
-    fun findByHashAndSize(hash: String, size: Long): List<FileFingerprint>
+    // Tim theo hash + size (phien ban nguon) — aHash va cham duoc, scope theo phien.
+    @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size AND (accountKey = :key OR accountKey = '') LIMIT 5")
+    fun findByHashAndSize(hash: String, size: Long, key: String = ""): List<FileFingerprint>
 
     // P2-muc3: tim theo hash + size + TAI KHOAN — khong dung ban NAS A cho NAS B.
     @Query("SELECT * FROM file_fingerprints WHERE hash = :hash AND fileSize = :size AND (accountKey = :key OR accountKey = '') LIMIT 5")
@@ -304,13 +346,13 @@ interface FingerprintDao {
     @Query("SELECT * FROM file_fingerprints WHERE sourceKey = :source AND (accountKey = :key OR accountKey = '') ORDER BY timestamp DESC LIMIT 5")
     fun findBySource(source: String, key: String): List<FileFingerprint>
 
-    // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker
-    @Query("SELECT * FROM file_fingerprints LIMIT 10000")
-    fun getAllFingerprints(): List<FileFingerprint>
+    // Lấy TẤT CẢ fingerprint để so sánh Hamming Distance (dùng cho aHash gần giống), có LIMIT chống OOM Worker — scope theo phien.
+    @Query("SELECT * FROM file_fingerprints WHERE (accountKey = :key OR accountKey = '') LIMIT 10000")
+    fun getAllFingerprints(key: String = ""): List<FileFingerprint>
 
-    // Xóa fingerprint theo đường dẫn
-    @Query("DELETE FROM file_fingerprints WHERE filePath = :path")
-    fun deleteByPath(path: String)
+    // Xóa fingerprint theo đường dẫn — scope theo phien.
+    @Query("DELETE FROM file_fingerprints WHERE filePath = :path AND (accountKey = :key OR accountKey = '')")
+    fun deleteByPath(path: String, key: String = "")
 
     // Đếm tổng số vân tay đã lưu
     @Query("SELECT COUNT(*) FROM file_fingerprints")
@@ -390,6 +432,8 @@ interface SyncActionDao {
     fun getAllPendingActionsScoped(activeHost: String, activeUser: String, activePort: Int, activeRoot: String, limit: Int): List<SyncAction>
 
     // UPLOAD_FAILED xếp cuối để action bình thường không bị starve khi queue đầy.
+    // CC-005 P0: unscoped - chi dung cho debug/count, KHONG dung cho replay (leak cross-account). Dung getAllPendingActionsScoped.
+    @Deprecated("Dung getAllPendingActionsScoped de tranh replay cross-account", ReplaceWith("getAllPendingActionsScoped(activeHost, activeUser, activePort, activeRoot, limit)"))
     @Query("SELECT * FROM sync_queue WHERE runState = 'PENDING' ORDER BY actionType != 'UPLOAD_FAILED' DESC, timestamp ASC LIMIT 200")
     fun getAllPendingActions(): List<SyncAction>
 
@@ -610,9 +654,37 @@ val MIGRATION_18_19 = object : androidx.room.migration.Migration(18, 19) {
     }
 }
 
+@Entity(tableName = "verified_hash_cache", primaryKeys = ["accountKey", "path"], indices = [Index(value = ["accountKey", "fileId"])])
+data class VerifiedHashCache(
+    val accountKey: String,
+    val path: String,
+    val contentLength: Long,
+    val version: String,
+    val sha256: String,
+    @ColumnInfo(defaultValue = "''") val fileId: String = ""
+)
+
+@Dao
+interface VerifiedHashDao {
+    @Query("SELECT * FROM verified_hash_cache WHERE accountKey=:account AND path=:path LIMIT 1")
+    fun get(account: String, path: String): VerifiedHashCache?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun put(value: VerifiedHashCache)
+    @Query("DELETE FROM verified_hash_cache WHERE accountKey=:account AND path=:path")
+    fun remove(account: String, path: String)
+}
+
+val MIGRATION_19_20 = object : androidx.room.migration.Migration(19, 20) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS verified_hash_cache (accountKey TEXT NOT NULL, path TEXT NOT NULL, contentLength INTEGER NOT NULL, version TEXT NOT NULL, sha256 TEXT NOT NULL, fileId TEXT NOT NULL DEFAULT '', PRIMARY KEY(accountKey,path))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_verified_hash_cache_accountKey_fileId ON verified_hash_cache(accountKey,fileId)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_files_cache_accountKey_fullHash_contentLength ON files_cache(accountKey,fullHash,contentLength)")
+    }
+}
+
 @Database(
-    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class],
-    version = 19,
+    entities = [CachedFile::class, SystemLog::class, ScanCheckpoint::class, ThumbnailCache::class, FileFingerprint::class, SyncAction::class, HashCache::class, TrashMeta::class, VerifiedHashCache::class],
+    version = 20,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -624,4 +696,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun syncActionDao(): SyncActionDao
     abstract fun hashCacheDao(): HashCacheDao
     abstract fun trashMetaDao(): TrashMetaDao
+    abstract fun verifiedHashDao(): VerifiedHashDao
 }

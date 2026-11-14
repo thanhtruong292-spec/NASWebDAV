@@ -40,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,7 +57,17 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 class ScreenRecordService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // CC-005 P1: per-session scope — mỗi startRecording tạo scope riêng, cancel
+    // khi session kết thúc. Tránh dùng chung 1 scope: scope.cancel() ở session
+    // trước làm mọi session sau chết theo.
+    private var sessionScope: CoroutineScope? = null
+    private val scope: CoroutineScope
+        get() = sessionScope ?: serviceScope
+    // CC-005 P1: Mutex upload — uploadReadySegmentsOnce() được gọi đồng thời từ
+    // uploadLoop và vòng drain trong stopRecording; lock để không upload trùng
+    // segment (trùng index → NAS nhận 2 lần).
+    private val uploadMutex = kotlinx.coroutines.sync.Mutex()
     private var projection: MediaProjection? = null
     private var recorder: MediaRecorder? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -98,11 +109,17 @@ class ScreenRecordService : Service() {
             }
             ACTION_START -> startRecording(intent)
         }
-        return START_STICKY
+        // CC-005 P0: START_NOT_STICKY — OS kill thi khong restart white-room
+        // (START_STICKY cu restart khong Intent -> projection null -> NPE loop + ton pin)
+        return START_NOT_STICKY
     }
 
     private fun startRecording(intent: Intent) {
         if (projection != null) return
+        // CC-005 P1: tạo session scope mới cho mỗi lần quay.
+        sessionScope?.cancel()
+        sessionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        stopping.set(false)
         createChannel()
         if (!Settings.canDrawOverlays(this)) {
             logWarn("Không có quyền hiển thị trên cùng: chip REC sẽ không hiện, quay vẫn tiếp tục")
@@ -320,7 +337,17 @@ class ScreenRecordService : Service() {
 
     private data class UploadPassResult(val progressed: Boolean, val failed: Boolean)
 
-    private fun uploadReadySegmentsOnce(): UploadPassResult {
+    private suspend fun uploadReadySegmentsOnce(): UploadPassResult {
+        // CC-005 P1: lock Mutex — không upload trùng với vòng drain stopRecording.
+        uploadMutex.lock()
+        try {
+            return uploadReadySegmentsOnceLocked()
+        } finally {
+            uploadMutex.unlock()
+        }
+    }
+
+    private fun uploadReadySegmentsOnceLocked(): UploadPassResult {
         val ready = spoolDir.listFiles()
             ?.filter { it.name.endsWith(".ready") }
             ?.sortedBy { it.name }
@@ -554,8 +581,15 @@ class ScreenRecordService : Service() {
             } finally {
                 try { projection?.stop() } catch (_: Exception) {}
                 projection = null
-                scope.cancel()
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                // CC-005 P1: cancel per-session scope (không chạm serviceScope) +
+                // stopForeground khi xong — giữ segmentJob/uploadJob không leak.
+                runCatching { segmentJob?.cancelAndJoin() }
+                runCatching { uploadJob?.cancelAndJoin() }
+                sessionScope?.cancel()
+                sessionScope = null
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (_: Exception) {}
                 stopSelf()
             }
         }
@@ -566,7 +600,12 @@ class ScreenRecordService : Service() {
         hideRecordingOverlay()
         try { stopSegment() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
-        scope.cancel()
+        // CC-005 P1: chỉ cancel session scope, giữ serviceScope sống cho lần sau.
+        sessionScope?.cancel()
+        sessionScope = null
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {}
         // F1: mac dinh GIU spool + marker .ready (de lan sau thu lai). Chi xoa
         // khi finish OK hoac discardSession (user chu dong bo). Moi nhanh loi
         // (failRecording, catch ngoai, timeout, finish fail) deu giu.

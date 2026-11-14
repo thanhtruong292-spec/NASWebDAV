@@ -7,12 +7,16 @@ internal object SocialShareParser {
     private val trailingSharePunctuation = setOf('.', ',', ';', ':', '!', '?', ')', ']', '}')
 
     fun extractSupportedUrl(sharedText: String?): String? {
-        if (sharedText.isNullOrBlank()) return null
+        return extractAllSupportedUrls(sharedText).firstOrNull()
+    }
 
+    /** CC-005 P2: SEND_MULTIPLE — trích mọi URL hỗ trợ trong text (nhiều URL một lần). */
+    fun extractAllSupportedUrls(sharedText: String?): List<String> {
+        if (sharedText.isNullOrBlank()) return emptyList()
         return urlPattern.findAll(sharedText).mapNotNull { match ->
             val candidate = match.value.trimEnd { it in trailingSharePunctuation }
             candidate.takeIf(::isSupportedContentUrl)
-        }.firstOrNull()
+        }.distinct().toList()
     }
 
     private fun hostMatches(host: String, baseDomain: String): Boolean =

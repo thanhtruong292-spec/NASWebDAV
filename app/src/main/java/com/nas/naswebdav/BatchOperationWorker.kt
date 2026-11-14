@@ -13,6 +13,7 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.asContextElement
+import com.nas.naswebdav.utils.SystemLogger
 import org.json.JSONObject
 import java.net.URL
 import java.io.File
@@ -89,7 +90,8 @@ class BatchOperationWorker(
         if (payloadFile.isNotEmpty()) {
             try {
                 val file = File(payloadFile)
-                if (file.exists()) {
+                // CC-005 P0: cap payload 1MB (readText uncapped OOM + leak khi fail)
+                if (file.exists() && file.length() <= 1048576) {
                     val items = JSONObject(file.readText()).optJSONArray("files")
                     if (items != null) {
                         val paths = ArrayList<String>(items.length())
@@ -115,16 +117,17 @@ class BatchOperationWorker(
 
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result {
-        val operation = inputData.getString("operation") ?: return Result.failure()
+        val operation = inputData.getString("operation") ?: run { SystemLogger.log("WARNING", "BatchOperation", "Thiếu operation — kết thúc"); return Result.failure() }
+        SystemLogger.log("INFO", "BatchOperation", "Bắt đầu tác vụ batch: $operation")
         val (filePaths, fileNames) = loadBatchFiles()
         val destUrl = inputData.getString("destUrl") ?: ""
-        if (filePaths.isEmpty()) return Result.success()
+        if (filePaths.isEmpty()) { SystemLogger.log("INFO", "BatchOperation", "Không có file để xử lý — kết thúc thành công"); return Result.success() }
 
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
         val savedUrl = SmartNetworkManager.getActiveBaseUrl(applicationContext)
             .ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
-        if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) return Result.failure()
+        if (savedUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) { SystemLogger.log("WARNING", "BatchOperation", "Thiếu credentials/URL NAS — kết thúc thất bại"); return Result.failure() }
 
         return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(savedUrl, user, pass))) {
             val webDavManager = WebDavManager
@@ -343,9 +346,11 @@ class BatchOperationWorker(
                 kotlinx.coroutines.delay(100L)
             }
 
+            // CC-005 P0: isStopped -> retry de resume (truoc failure -> mat tien do, rerun tu dau)
             if (isStopped) {
                 android.util.Log.w(TAG, "Batch operation $operation was stopped/cancelled before completion ($successCount/$total succeeded)")
-                return@withContext Result.failure()
+                SystemLogger.log("WARNING", "BatchOperation", "Hệ thống dừng worker batch $operation — sẽ retry theo backoff")
+                return@withContext Result.retry()
             }
 
             setProgress(workDataOf(
@@ -415,12 +420,15 @@ class BatchOperationWorker(
                     .notify(NOTIFICATION_ID, doneNotification.build())
             } catch (_: SecurityException) {}
 
+            // CC-005 P0: xoa payload chi khi hoan tat (isStopped da return retry phia tren -> giu file de resume)
             try {
                 inputData.getString("payloadFile")?.let { File(it).delete() }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
 
+            // CC-005 P0: partial -> success kem failCount (truoc failure -> rerun ca batch, trung file da xong)
+            SystemLogger.log("INFO", "BatchOperation", "Hoàn tất tác vụ batch $operation (success=$successCount fail=$failCount/total=$total)")
             return@withContext if (failCount > 0) {
-                Result.failure(workDataOf(
+                Result.success(workDataOf(
                     "completed" to total,
                     "successCount" to successCount,
                     "failCount" to failCount

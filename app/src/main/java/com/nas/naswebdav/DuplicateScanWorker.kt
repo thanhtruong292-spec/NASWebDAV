@@ -61,11 +61,13 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
     private val channelId = "scan_channel"
 
     override suspend fun doWork(): Result {
-        val currentUrl = inputData.getString("currentUrl") ?: return Result.failure()
+        SystemLogger.log("INFO", "DuplicateScan", "Bắt đầu quét tệp trùng lặp trên NAS")
+        val currentUrl = inputData.getString("currentUrl")
+        if (currentUrl.isNullOrBlank()) { SystemLogger.log("WARNING", "DuplicateScan", "Thiếu currentUrl — kết thúc thất bại"); return Result.failure() }
         val forceRestart = inputData.getBoolean("forceRestart", false)
         val user = SecurePrefsHelper.getUser(applicationContext)
         val pass = SecurePrefsHelper.getPass(applicationContext)
-        if (user.isEmpty() || pass.isEmpty()) return Result.failure()
+        if (user.isEmpty() || pass.isEmpty()) { SystemLogger.log("WARNING", "DuplicateScan", "Thiếu credentials NAS — kết thúc thất bại"); return Result.failure() }
 
         return withContext(Dispatchers.IO + WebDavManager.threadLocalAuth.asContextElement(WebDavManager.AuthState(currentUrl, user, pass))) {
             try {
@@ -108,25 +110,6 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             kotlinx.coroutines.Dispatchers.Default + kotlinx.coroutines.SupervisorJob()
         )
         try {
-            // --- TÍNH NĂNG TỰ ĐỘNG DỌN RÁC SAU 7 NGÀY ---
-            // FIX #18: Lấy root WebDAV URL một cách an toàn từ SecurePrefs thay vì hardcode substring("/webdav/")
-            val rootWebDavUrl = SecurePrefsHelper.getUrl(applicationContext).trimEnd('/')
-            val trashUrl = "$rootWebDavUrl/.trash/"
-            val now = System.currentTimeMillis()
-            val sevenDaysInMillis = 7 * 24 * 60 * 60 * 1000L
-
-            // ThumbnailCache cleanup removed — client-side thumbnails no longer used, NAS handles thumbnails via /api/thumb
-
-            try {
-                val trashItems = webDavManager.listFiles(trashUrl)
-                for (item in trashItems) {
-                    if (!isActive) break
-                    if (now - item.lastModified > sevenDaysInMillis) {
-                        webDavManager.deleteFile(item.path, item.isDirectory)
-                    }
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
-
             // ═══════════════════════════════════════════════════
             // BIẾN THEO DÕI TIẾN TRÌNH CHÍNH XÁC
             // ═══════════════════════════════════════════════════
@@ -296,7 +279,12 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
 
                                             val parsedCurrentUrl = java.net.URL(currentUrl)
                                             val webDavBaseUrl = "${parsedCurrentUrl.protocol}://${parsedCurrentUrl.authority}"
-                                            val encodedPath = path.split("/").joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+                                            // BACKEND "path" co dang "/webdav/subdir/file.jpg" — da chua "/webdav",
+                                            // nen khong them lai de tranh duong bi lap "/webdav/webdav/...".
+                                            val webdavRelPath = if (path.startsWith("/webdav/")) path.substring("/webdav".length) else path
+                                            val encodedPath = webdavRelPath.split("/").joinToString("/") { segment ->
+                                                if (segment.isEmpty()) "" else java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                                            }
                                             val fullUrl = webDavBaseUrl + (if (encodedPath.startsWith("/")) encodedPath else "/$encodedPath")
                                             val parentUrl = fullUrl.substringBeforeLast("/") + "/"
                                             val parentFolderName = parentUrl.trimEnd('/').substringAfterLast("/")
@@ -388,7 +376,9 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 if (!isFastPathSuccess) {
                     currentStage.set("Quét qua WebDAV")
                     stageDescription.set("API nội bộ không khả dụng, quét từng thư mục bằng giao thức Webdav")
-                    val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>()
+                    // CC-005 P1: bound queue 2000 — tránh OOM khi NAS có hàng trăm
+                    // nghìn folder (unbounded LinkedBlockingQueue cũ nuốt RAM).
+                    val folderQueue = java.util.concurrent.LinkedBlockingQueue<String>(2000)
                     val checkpoint = db.checkpointDao().getCheckpoint("DuplicateScan")
 
                     if (checkpoint != null && !forceRestart) {
@@ -443,13 +433,19 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                                                 currentFileName.set(file.name)
         
                                                 if (file.isDirectory) {
-                                                    if (file.path.trimEnd('/') != folder.trimEnd('/')) {
-                                                        folderQueue.offer(file.path)
-                                                        totalFoldersDiscovered.incrementAndGet()
+                                                    // CC-005 P1: case normalize — dedup folder trùng chỉ khác
+                                                    // hoa/thường; queue đầy (bound) thì bỏ qua + log, không block.
+                                                    if (file.path.trimEnd('/').lowercase() != folder.trimEnd('/').lowercase()) {
+                                                        if (!folderQueue.offer(file.path)) {
+                                                            SystemLogger.log("WARNING", "IndexEngine",
+                                                                "Folder queue đầy (2000) — bỏ qua: ${file.path}")
+                                                        } else {
+                                                            totalFoldersDiscovered.incrementAndGet()
+                                                        }
                                                     }
                                                 } else {
                                                     val ext = file.name.lowercase().substringAfterLast('.', "")
-                                                    if (mediaExtensions.contains(ext)) {
+                                                    if (!file.name.startsWith(".")) {
                                                         localBatch.add(
                                                             CachedFile(
                                                                 path = file.path, name = file.name, isDirectory = false,
@@ -545,156 +541,30 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 // ═══════════════════════════════════════════════════
                 if (duplicateSizes.isNotEmpty()) {
                     totalHashesNeeded.set(actualDuplicatesCount)
-                    val isLightningMode = inputData.getBoolean("lightningMode", true)
-
-                    val totalSizeGroups = duplicateSizes.size
-                    var processedGroups = 0
-                    // SỐ LƯỢNG KẾT NỐI DB TỐI ƯU (Batch 1000)
-                    val pendingHashUpdates = mutableListOf<Pair<String, String>>()
-                    val pendingHashCacheUpdates = mutableListOf<HashCache>()
-                    val hashBufferMutex = Mutex()
-
-                    // BATCH 50 NHÓM MỘT LÚC CHO CSDL & MẠNG LƯỚI
-                    val BATCH_SIZE = 50
-                    val chunkedSizes = duplicateSizes.chunked(BATCH_SIZE)
-                    
-                    for (batchSizes in chunkedSizes) {
-                        if (!isActive) break
-                        while (DuplicateProgressState.isPaused.value && !isStopped) { delay(500) }
-                        
-                        // 1. Tải 50 nhóm file trong 1 truy vấn SQL duy nhất (Giảm 50x CSDL)
-                        val batchFiles = db.fileDao().getFilesBySizes(batchSizes, currentAccountKey()).groupBy { it.contentLength }
-                        
-                        val filesNeedHash = mutableListOf<CachedFile>()
-                        var currentBatchGroupsSize = 0
-                        
-                        // 2. Phân loại nội bộ từng nhóm
-                        for (size in batchSizes) {
-                            val group = batchFiles[size]
-                            if (group == null || group.size < 2) continue
-                            
-                            currentBatchGroupsSize += group.size
-                            
-                            val anchorFile = group.firstOrNull { it.imageFingerprint != null && it.imageFingerprint != "NOT_SUPPORTED" }
-                            if (anchorFile != null) {
-                                val anchorFP = anchorFile.imageFingerprint ?: continue
-                                for (file in group) {
-                                    if (!isActive) break
-                                    val cachedHash = db.hashCacheDao().getHash(file.path, file.contentLength, file.lastModified)
-                                    if (cachedHash != null) {
-                                        pendingHashUpdates.add(Pair(file.path, cachedHash))
-                                        continue
+                    val hashSemaphore = Semaphore(3)
+                    for ((groupIndex, size) in duplicateSizes.withIndex()) {
+                        var after = ""
+                        while (isActive) {
+                            while (DuplicateProgressState.isPaused.value) delay(500)
+                            val page = db.fileDao().getFilesBySizePage(size, currentAccountKey(), after, 128)
+                            if (page.isEmpty()) break
+                            coroutineScope {
+                                page.map { file -> async(Dispatchers.IO) {
+                                    hashSemaphore.withPermit {
+                                        if (verifyDuplicateFile(webDavManager, file)) hashesComputed.incrementAndGet()
                                     }
-                                    if (file.imageFingerprint != null && file.imageFingerprint != "NOT_SUPPORTED") {
-                                        if (ImageFingerprint.isSimilar(anchorFP, file.imageFingerprint)) {
-                                            pendingHashUpdates.add(Pair(file.path, "FINGERPRINT_$anchorFP"))
-                                        } else {
-                                            filesNeedHash.add(file)
-                                        }
-                                    } else {
-                                        filesNeedHash.add(file)
-                                    }
-                                }
-                            } else {
-                                for (file in group) {
-                                    val cachedHash = db.hashCacheDao().getHash(file.path, file.contentLength, file.lastModified)
-                                    if (cachedHash != null) {
-                                        pendingHashUpdates.add(Pair(file.path, cachedHash))
-                                    } else {
-                                        filesNeedHash.add(file)
-                                    }
-                                }
+                                } }.awaitAll()
                             }
-                        }
-
-                        // 3. HASH TRÊN PHONE: tải file qua WebDAV Range → SHA-256 bằng CPU điện thoại
-                        // Trước đây dùng NAS /api/disk/hash_batch → NAS tốn CPU, giờ phone lo.
-                        // FIX: lightning mode KHONG ghi LGH_ (size+mtime) — trung ten/size
-                        // khong phai trung noi dung. Bo qua file, giu partialHash null.
-                        if (filesNeedHash.isNotEmpty()) {
-                            if (isLightningMode) {
-                                android.util.Log.i("HashEngine",
-                                    "Lightning: bo qua hash ${filesNeedHash.size} file (chua xac minh)")
-                            } else {
-                                // Hash song song 3 coroutine — phone CPU tính SHA-256, NAS chỉ serve bytes
-                                val hashSemaphore = kotlinx.coroutines.sync.Semaphore(3)
-                                kotlinx.coroutines.coroutineScope {
-                                    filesNeedHash.map { dup ->
-                                        async(Dispatchers.IO) {
-                                            hashSemaphore.withPermit {
-                                                hashViaWebDavBuffered(webDavManager, pendingHashUpdates, pendingHashCacheUpdates, dup, hashBufferMutex)
-                                            }
-                                        }
-                                    }.awaitAll()
-                                }
-                            }
-                        }
-                        
-                        // KÍCH HOẠT FLUSH BUFFER VÀO DB NẾU ĐẠT 1000 file (Rút ngắn thời gian từ 30 phút xuống 10 giây)
-                        if (pendingHashUpdates.size >= 1000) {
-                            val chunk = pendingHashUpdates.toList()
-                            val cacheChunk = pendingHashCacheUpdates.toList()
-                            pendingHashUpdates.clear()
-                            pendingHashCacheUpdates.clear()
-                            db.withTransaction {
-                                for (update in chunk) {
-                                    db.fileDao().updatePartialHash(update.first, update.second)
-                                }
-                                if (cacheChunk.isNotEmpty()) {
-                                    db.hashCacheDao().insertHashes(cacheChunk)
-                                }
-                            }
-                        }
-
-                        // Cập nhật progress động cho Bước 2 và Bước 3
-                        processedGroups += batchSizes.size
-                        hashesComputed.addAndGet(currentBatchGroupsSize)
-                        
-                        val isStage2 = processedGroups <= (totalSizeGroups / 2).coerceAtLeast(1)
-                        if (isStage2) {
-                            currentStage.set("Phân tích file lặp (1/2)")
-                            stageNumber.set(2)
-                            stageDescription.set("Phân lớp sơ bộ nhóm dữ liệu ${processedGroups}/${totalSizeGroups / 2}...")
-                            
-                            val halfGroupTarget = (totalSizeGroups / 2).coerceAtLeast(1).toFloat()
-                            currentStagePercent.set((processedGroups / halfGroupTarget).coerceIn(0f, 1f))
-                        } else {
-                            currentStage.set("Xác minh mã băm (2/2)")
+                            after = page.last().path
+                            currentStage.set("Xác minh nội dung đầy đủ")
                             stageNumber.set(3)
-                            stageDescription.set("Xác nhận mã băm an toàn nhóm thứ ${processedGroups - totalSizeGroups / 2}...")
-                            
-                            val stage3Target = (totalSizeGroups - totalSizeGroups / 2).coerceAtLeast(1).toFloat()
-                            val processedInStage3 = (processedGroups - totalSizeGroups / 2).toFloat()
-                            currentStagePercent.set((processedInStage3 / stage3Target).coerceIn(0f, 1f))
+                            stageDescription.set("Đã xác minh ${hashesComputed.get()}/${totalHashesNeeded.get()} tệp ứng viên")
+                            currentStagePercent.set(hashesComputed.get().toFloat() / totalHashesNeeded.get().coerceAtLeast(1))
                         }
-
-                        val progress = processedGroups.toFloat() / totalSizeGroups
-                        progressPercent.set(0.5f + progress * 0.45f)
-                        currentFileName.set("Đang xử lý ${processedGroups}/$totalSizeGroups nhóm...")
-
-                        // Throttle: tránh đập liên tục vào NAS — tối đa 5 batch/giây (50 groups x 5 = 250 groups/s)
-                        delay(200)
+                        progressPercent.set(0.5f + (groupIndex + 1f) / duplicateSizes.size * 0.45f)
                     }
-                    
-                    // XỬ LÝ NỐT PHẦN BUFFER CÒN SÓT LẠI TRONG RAM KHI VÒNG LẶP KẾT THÚC
-                    if (pendingHashUpdates.isNotEmpty()) {
-                        db.withTransaction {
-                            for (update in pendingHashUpdates) {
-                                db.fileDao().updatePartialHash(update.first, update.second)
-                            }
-                            if (pendingHashCacheUpdates.isNotEmpty()) {
-                                db.hashCacheDao().insertHashes(pendingHashCacheUpdates)
-                            }
-                        }
-                    }
-
                     currentStagePercent.set(1f)
-                    progressPercent.set(0.95f)
-                    if (isLightningMode) {
-                        SystemLogger.log("INFO", "HashEngine", "Chế độ tối ưu (Lightning Mode): Phân tích băm (hash) tốc độ cao cho ${actualDuplicatesCount} tệp.")
-                    }
                 }
-
                 // SỬA LỖI: Không dùng cancel() để dừng job vì nó sẽ để lại một Future Pending của WorkManager
                 isUiUpdating.set(false)
                 uiUpdaterJob.join()
@@ -714,10 +584,12 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 delay(100) // Cho UI kịp vẽ ra bước mới
 
                 // Đếm lại duplicate groups chính xác từ DB (CHỈ ĐẾM, không load object)
-                val finalDuplicateCount = db.fileDao().countDuplicateFiles(currentAccountKey())
+                val finalDuplicateCount = db.fileDao().countVerifiedDuplicateFiles(currentAccountKey())
                 
                 currentStage.set("Hoàn tất")
-                stageDescription.set("Hoàn tất. Đã quét ${totalFilesIndexed.get()} tệp, tìm thấy $finalDuplicateCount tệp trùng.")
+                val unverified = maxOf(0, totalHashesNeeded.get() - hashesComputed.get())
+                val summary = "Đã quét ${totalFilesIndexed.get()} tệp; $finalDuplicateCount tệp trùng đã xác minh; $unverified tệp chưa xác minh."
+                stageDescription.set(summary)
                 progressPercent.set(1f)
                 currentStagePercent.set(1f)
                 DuplicateProgressState.stage.value = "Hoàn tất"
@@ -733,7 +605,8 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                     "currentFolderUrl" to "Hoàn tất quét ${totalFilesIndexed.get()} tệp",
                     "stageNumber" to 4,
                     "totalStages" to totalStages,
-                    "stageDescription" to "Hoàn tất! Đã quét ${totalFilesIndexed.get()} tệp."
+                    "stageDescription" to summary,
+                    "unverifiedCount" to unverified
                 ))
                 
                 // PHASE 6: Hiển thị Push Notification nếu có rác
@@ -742,7 +615,7 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
                 } else {
                     notificationBuilder
                         .setContentTitle("Dọn rác hoàn tất")
-                        .setContentText("Không tìm thấy tệp trùng lặp mới.")
+                        .setContentText(if (unverified > 0) "Còn $unverified tệp chưa xác minh; chưa thể kết luận không trùng." else "Không tìm thấy tệp trùng lặp mới.")
                         .setProgress(0, 0, false)
                         .setOngoing(false)
                     notificationManager.notify(notificationId, notificationBuilder.build())
@@ -750,13 +623,14 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
             }
 
             db.checkpointDao().clearCheckpoint("DuplicateScan")
+            SystemLogger.log("SUCCESS", "DuplicateScan", "Hoàn tất quét tệp trùng lặp")
             return@withContext Result.success()
 
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            // P0-4: user cancel → failure, KHÔNG retry
-            if (isStopped) return@withContext Result.failure()
+            // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
+            if (isStopped) return@withContext Result.retry()
             SystemLogger.log("WARNING", "DuplicateScan", "Lỗi tiến trình quét dữ liệu: ${e.message}")
             return@withContext Result.retry()
         } finally {
@@ -773,32 +647,16 @@ class DuplicateScanWorker(appContext: Context, workerParams: WorkerParameters) :
     }
     }
 
-    /** Helper: Hash trên phone CPU qua WebDAV (SHA-256 partial 1MB)
-     *  KHÔNG gọi NAS để tính hash — phone tải bytes rồi tự SHA-256 bằng MessageDigest.
-     *  Thread-safe: dùng Mutex để đồng bộ ghi vào buffer khi chạy song song */
-    private suspend fun hashViaWebDavBuffered(webDavManager: WebDavManager, buffer: MutableList<Pair<String,String>>, bufferHashCache: MutableList<HashCache>, dup: CachedFile, mutex: Mutex? = null) {
-        try {
-            // Phone CPU computes SHA-256 over the first 1MB (Range GET — NAS chỉ serve bytes).
-            val finalHash = webDavManager.getSha256PhoneStream(dup.path)
-
-            if (finalHash != null) {
-                if (mutex != null) {
-                    mutex.withLock {
-                        buffer.add(Pair(dup.path, finalHash))
-                        bufferHashCache.add(HashCache(dup.path, dup.contentLength, dup.lastModified, finalHash))
-                    }
-                } else {
-                    buffer.add(Pair(dup.path, finalHash))
-                    bufferHashCache.add(HashCache(dup.path, dup.contentLength, dup.lastModified, finalHash))
-                }
-            }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            android.util.Log.w("DuplicateScan", "hashViaWebDavBuffered: ${e.message}")
+    private suspend fun verifyDuplicateFile(manager: WebDavManager, file: CachedFile): Boolean {
+        return try {
+            manager.getCachedVerifiedSha256(file.path, file.contentLength) != null
+        } catch (error: CancellationException) { throw error }
+        catch (error: Exception) {
+            android.util.Log.w("DuplicateScan", "File could not be verified: ${file.path}", error)
+            false
         }
     }
-
 }
-
 // ════════════════════════════════════════════════════════════════════════════
 // NasWorker — Lớp cha chung cho tất cả Worker giao tiếp NAS
 // ════════════════════════════════════════════════════════════════════════════

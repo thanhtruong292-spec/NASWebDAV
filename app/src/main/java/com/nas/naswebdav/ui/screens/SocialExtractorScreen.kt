@@ -62,9 +62,9 @@ import kotlinx.coroutines.withContext
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Bảng màu ─────────────────────────────────────────────────────────────────
-private val SeDarkBg        = Color.Black
-private val SeDarkCard      = DarkSurface
-private val SeDarkCardAlt   = DarkSurface
+private val SeDarkBg        = DarkSurface
+private val SeDarkCard      = DarkCard
+private val SeDarkCardAlt   = DarkElevated
 private val SeAccentGreen   = AccentGreen
 private val SeAccentOrange  = AccentOrange
 private val SeAccentRed     = AccentRed
@@ -136,12 +136,12 @@ fun SocialExtractorScreen(
                         // usePipeMode hard-coded false: subtitle phải phản ánh đúng trạng thái
                         Text(
                             if (usePipeMode) "Stream Piping – 0MB điện thoại" else "NAS tự tải qua yt-dlp",
-                            fontSize = 11.sp, color = SeTextSecondary
+                            fontSize = 12.sp, color = SeTextSecondary
                         )
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = SeTextPrimary) }
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Trở lại", tint = SeTextPrimary) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SeDarkBg)
             )
@@ -159,14 +159,6 @@ fun SocialExtractorScreen(
 
             // ── Giải thích 2 chế độ ──────────────────────────────────────────
             ModeExplainCard(usePipeMode)
-            Spacer(Modifier.height(12.dp))
-
-            // ── Chuyển chế độ (chỉ để hiển thị, pipe mode đã tắt vĩnh viễn) ──
-            // onToggle = no-op: usePipeMode là const false, toggle UI chỉ để hiển thị.
-            ModeSwitchRow(
-                isPipeMode = usePipeMode,
-                onToggle = { /* usePipeMode = false (hard-coded); toggle UI is display-only */ }
-            )
             Spacer(Modifier.height(12.dp))
 
             // ── Input link ───────────────────────────────────────────────────
@@ -244,7 +236,7 @@ fun SocialExtractorScreen(
                     "Truyền trực tiếp: điện thoại chuyển dữ liệu từ CDN về NAS."
                 else
                     "NAS tự tải: NAS dùng yt-dlp và lưu trực tiếp vào ổ cứng.",
-                fontSize = 11.sp, color = SeTextSecondary, textAlign = TextAlign.Center
+                fontSize = 12.sp, color = SeTextSecondary, textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(12.dp))
         }
@@ -587,81 +579,6 @@ private fun ModeExplainCard(isPipeMode: Boolean) {
 }
 
 @Composable
-private fun ModeSwitchRow(isPipeMode: Boolean, onToggle: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // Truyền trực tiếp — disabled khi usePipeMode=false (feature chưa hỗ trợ)
-        ModeTab(
-            label = "⚡ Truyền trực tiếp",
-            desc = "Điện thoại truyền",
-            selected = isPipeMode,
-            enabled = false, // Stream piping chưa hỗ trợ server-side
-            gradientColors = listOf(SeAccentPink, SeAccentPurple),
-            modifier = Modifier.weight(1f),
-            onClick = { if (!isPipeMode) onToggle() }
-        )
-        // NAS tự tải — selected (luôn chọn)
-        ModeTab(
-            label = "☁️ yt-dlp",
-            desc = "NAS tự tải",
-            selected = !isPipeMode,
-            enabled = false, // Không cần toggle — chỉ có 1 chế độ khả dụng
-            gradientColors = listOf(SeAccentCyan, AccentCyan),
-            modifier = Modifier.weight(1f),
-            onClick = { if (isPipeMode) onToggle() }
-        )
-    }
-}
-
-@Composable
-private fun ModeTab(
-    label: String, desc: String, selected: Boolean,
-    gradientColors: List<Color>,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected) Brush.horizontalGradient(gradientColors)
-                else Brush.horizontalGradient(listOf(SeDarkCard, SeDarkCard))
-            )
-            .border(
-                width = if (selected) 0.dp else 1.dp,
-                color = if (selected) Color.Transparent else SeTextSecondary.copy(0.2f),
-                shape = RoundedCornerShape(12.dp)
-            )
-            .clickable(
-                enabled = enabled,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = androidx.compose.foundation.LocalIndication.current,
-                onClick = onClick
-            )
-            .padding(vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                color = when {
-                    selected && enabled -> TextPrimary
-                    enabled -> SeTextSecondary
-                    else -> SeTextSecondary.copy(0.45f) // disabled state: dimmed
-                })
-            Text(desc, fontSize = 10.sp,
-                color = when {
-                    selected && enabled -> TextPrimary.copy(0.75f)
-                    enabled -> SeTextSecondary.copy(0.6f)
-                    else -> SeTextSecondary.copy(0.35f) // disabled state: dimmed
-                })
-        }
-    }
-}
-
-@Composable
 private fun LinkInputCard(
     link: String,
     onLinkChange: (String) -> Unit,
@@ -684,11 +601,11 @@ private fun LinkInputCard(
                 trailingIcon = {
                     if (link.isNotEmpty()) {
                         IconButton(onClick = { onLinkChange("") }) {
-                            Icon(Icons.Default.Clear, null, tint = SeTextSecondary, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Clear, "Xoá link", tint = SeTextSecondary, modifier = Modifier.size(18.dp))
                         }
                     } else {
                         IconButton(onClick = onPasteClipboard) {
-                            Icon(Icons.Default.ContentPaste, null, tint = SeAccentCyan, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.ContentPaste, "Dán từ bộ nhớ tạm", tint = SeAccentCyan, modifier = Modifier.size(18.dp))
                         }
                     }
                 },
@@ -712,8 +629,8 @@ private fun LinkInputCard(
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
                     Text(
-                        if (platform != "Không rõ") "▶ $platform" else "⚠️ URL không nhận dạng được",
-                        fontSize = 10.sp,
+                        if (platform != "Không rõ") "▶ $platform" else "URL không nhận dạng được",
+                        fontSize = 12.sp,
                         color = if (platform != "Không rõ") SeAccentCyan else SeAccentOrange,
                         fontWeight = FontWeight.Bold
                     )
@@ -736,10 +653,10 @@ private fun DestFolderRow() {
         Icon(Icons.Default.FolderOpen, null, tint = AccentOrange, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
         Column {
-            Text("Lưu vào NAS:", fontSize = 10.sp, color = SeTextSecondary)
+            Text("Lưu vào NAS:", fontSize = 12.sp, color = SeTextSecondary)
             Text(
                 WebDavManager.currentBaseUrl + AppConfig.SOCIAL_DOWNLOAD_FOLDER,
-                fontSize = 11.sp, color = SeAccentCyan,
+                fontSize = 12.sp, color = SeAccentCyan,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
@@ -819,11 +736,11 @@ private fun StreamPipeProgressCard() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
                         "${(livestreamVM.streamPipeProgress * 100).toInt()}% — ${livestreamVM.streamPipeSpeedStr}",
-                        fontSize = 11.sp, color = SeTextSecondary
+                        fontSize = 12.sp, color = SeTextSecondary
                     )
                     Text(
                         "ETA: ${livestreamVM.streamPipeEtaStr}",
-                        fontSize = 11.sp, color = SeTextSecondary
+                        fontSize = 12.sp, color = SeTextSecondary
                     )
                 }
             }
@@ -873,15 +790,15 @@ private fun HistoryCard(history: List<SocialDownloadItem>) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             item.url.take(48) + if (item.url.length > 48) "…" else "",
-                            fontSize = 11.sp, color = SeTextPrimary,
+                            fontSize = 12.sp, color = SeTextPrimary,
                             maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
                         Row {
-                            Text(item.platform, fontSize = 10.sp, color = platformColor(item.platform))
+                            Text(item.platform, fontSize = 12.sp, color = platformColor(item.platform))
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 if (item.isSuccess) "✓ OK" else "✗ Thất bại",
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 color = if (item.isSuccess) SeAccentGreen else SeAccentRed
                             )
                         }
@@ -938,7 +855,7 @@ private fun MainActionButton(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (isPipeMode) "⚡ Bắt đầu truyền" else "☁️ Gửi về NAS",
+                    if (isPipeMode) "Bắt đầu truyền" else "Gửi về NAS",
                     color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp
                 )
             }
@@ -950,8 +867,10 @@ private fun MainActionButton(
 // Allowlist host (suffix) cho cac nen tang ho tro. Dung de:
 //  - validate link nguoi dung dan (chong URL gia mao kieu evil.com/?x=tiktok.com)
 //  - gioi han pham vi tiem JS / cau noi NasExtractor chi tren domain hop le
+// SPEC_LIVESTREAM_LIMITS §4.3: 1 allowlist dung chung dialog + extractor (+Shopee).
 private val SOCIAL_HOST_ALLOWLIST = listOf(
-    "tiktok.com", "fb.watch", "facebook.com", "youtube.com", "youtu.be", "instagram.com"
+    "tiktok.com", "fb.watch", "facebook.com", "youtube.com", "youtu.be", "instagram.com",
+    "shopee.vn", "shopee.com"
 )
 
 private fun extractHost(url: String): String? {
@@ -984,6 +903,7 @@ private fun detectPlatform(url: String): String {
         l.contains("facebook") || l.contains("fb.watch") -> "Facebook"
         l.contains("youtube") || l.contains("youtu.be") -> "YouTube"
         l.contains("instagram") -> "Instagram"
+        l.contains("shopee") -> "Shopee"
         l.startsWith("http") -> "Khác"
         else -> "Không rõ"
     }
@@ -994,5 +914,6 @@ private fun platformColor(platform: String): Color = when (platform) {
     "Facebook" -> AccentBlue
     "YouTube"  -> AccentRed
     "Instagram"-> AccentRed
+    "Shopee"   -> AccentOrange
     else       -> TextTertiary
 }

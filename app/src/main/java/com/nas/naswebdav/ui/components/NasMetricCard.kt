@@ -74,6 +74,7 @@ fun NasMetricCard(
                     style = AppTypography.BodyLarge.copy(
                         fontWeight = FontWeight.Bold,
                         color = valueColor,
+                        fontFeatureSettings = "tnum",
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -139,6 +140,7 @@ fun NasMetricCardClickable(
                     style = AppTypography.BodyLarge.copy(
                         fontWeight = FontWeight.Bold,
                         color = valueColor,
+                        fontFeatureSettings = "tnum",
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

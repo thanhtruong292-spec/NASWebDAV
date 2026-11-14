@@ -12,6 +12,7 @@ import com.nas.naswebdav.WebDavRepository
 import com.nas.naswebdav.adaptiveTimeoutMs
 import com.nas.naswebdav.buildLoginFailureMessage
 import com.nas.naswebdav.isTailscaleUrl
+import com.nas.naswebdav.prioritizeConnectionUrls
 import com.nas.naswebdav.recordLatency
 import com.nas.naswebdav.safeUrlHost
 import com.nas.naswebdav.shared.ConnectionStatus
@@ -19,8 +20,9 @@ import com.nas.naswebdav.shared.SharedStateHolder
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -41,6 +43,7 @@ class AuthSessionViewModel(
     // ─── INTERNAL STATE ─────────────────────────────────────────────────────
 
     private var loginJob: Job? = null
+    private val smartNetworkCheckMutex = Mutex()
 
     // ─── SHARED STATE (đọc từ UI via SharedStateHolder) ──────────────────────
 
@@ -56,7 +59,7 @@ class AuthSessionViewModel(
 
     /** True while a connect() call is in flight — backed by Compose State so LoginScreen recomposes. */
     var isLoading: Boolean by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ─── AUTH FUNCTIONS ─────────────────────────────────────────────────────
 
@@ -68,13 +71,7 @@ class AuthSessionViewModel(
         SharedStateHolder.updateConnectionStatus(ConnectionStatus.Cancelled)
     }
 
-    /**
-     * Kết nối WebDAV — ping tuần tự từng URL (LAN → Tailscale).
-     *
-     * SP5 FIX: Channel là bounded buffer (capacity=1) để tránh suspend vĩnh viễn
-     * nếu job gửi kết quả trước khi receiver gọi receive().
-     * Mỗi URL gửi 1 tin nhắn, receiver nhận 1 tin → capacity=1 đủ.
-     */
+    /** Kết nối WebDAV, ưu tiên LAN và chỉ dùng Tailscale làm đường dự phòng. */
     fun connect(
         urlList: List<String>,
         user: String,
@@ -103,71 +100,43 @@ class AuthSessionViewModel(
                     return@withContext false
                 }
 
-                // Bounded capacity = số URL — tránh leak buffer khi receiver thoát sớm
-                val channel = Channel<Pair<Boolean, String>>(capacity = urlList.size.coerceAtLeast(1))
-                val jobs = urlList.map { activeUrl ->
-                    launch(Dispatchers.IO) {
-                        if (activeUrl.isBlank()) {
-                            channel.trySend(Pair(false, ""))
-                            return@launch
-                        }
-
-                        val safeUrl = if (activeUrl.isNotEmpty() && !activeUrl.endsWith("/")) "$activeUrl/" else activeUrl
-
-                        withContext(Dispatchers.Main) {
-                            SharedStateHolder.updateConnectionStatus(ConnectionStatus.Connecting(safeUrl))
-                        }
-
-                        try {
-                            val timeoutMs = adaptiveTimeoutMs(safeUrl)
-                            val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
-                                .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-                                .build()
-
-                            val request = okhttp3.Request.Builder()
-                                .tag(String::class.java, "login")
-                                .url("${safeUrl.toApiBaseUrl()}/api/ping")
-                                .head()
-                                .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
-                                .build()
-
-                            val t0 = android.os.SystemClock.elapsedRealtime()
-                            pingClient.newCall(request).execute().use { response ->
-                                if (response.isSuccessful) {
-                                    recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
-                                    channel.trySend(Pair(true, safeUrl))
-                                } else {
-                                    channel.trySend(Pair(false, "$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})"))
-                                }
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-                            android.util.Log.e("NAS_AUTH", "Lỗi kết nối $activeUrl: ${e.message}")
-                            channel.trySend(Pair(false, "$activeUrl: ${e.message ?: "Mạng quá hạn"}"))
-                        }
-                    }
-                }
-
                 var successUrl = ""
-                var failCount = 0
-                val totalJobs = urlList.size
-
-                while (failCount < totalJobs) {
-                    val res = channel.receive()
-                    if (res.first) {
-                        successUrl = res.second
-                        break
-                    } else {
-                        if (res.second.isNotEmpty()) {
-                            errorDetails.add(res.second)
+                // Do not race candidate probes: their completion order is not route
+                // priority and used to let Tailscale overwrite a healthy LAN route.
+                val candidates = prioritizeConnectionUrls(urlList)
+                for (activeUrl in candidates) {
+                    val safeUrl = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
+                    withContext(Dispatchers.Main) {
+                        SharedStateHolder.updateConnectionStatus(ConnectionStatus.Connecting(safeUrl))
+                    }
+                    try {
+                        val timeoutMs = adaptiveTimeoutMs(safeUrl)
+                        val pingClient = NasApplication.instance.sharedHttpClient.newBuilder()
+                            .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+                            .build()
+                        val request = okhttp3.Request.Builder()
+                            .tag(String::class.java, "login")
+                            .url("${safeUrl.toApiBaseUrl()}/api/ping")
+                            .head()
+                            .header("Authorization", WebDavManager.AuthState(user = user, pass = pass).authHeader)
+                            .build()
+                        val t0 = android.os.SystemClock.elapsedRealtime()
+                        pingClient.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) {
+                                recordLatency(safeUrl, android.os.SystemClock.elapsedRealtime() - t0)
+                                successUrl = safeUrl
+                            } else {
+                                errorDetails.add("$activeUrl: WebDAV từ chối xác thực (HTTP ${response.code})")
+                            }
                         }
-                        failCount++
+                        if (successUrl.isNotEmpty()) break
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+                        android.util.Log.d("NAS_AUTH", "Probe thất bại $activeUrl: ${e.message}")
+                        errorDetails.add("$activeUrl: ${e.message ?: "Mạng quá hạn"}")
                     }
                 }
-
-                jobs.forEach { it.cancel() }
-                channel.close()
 
                 if (successUrl.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
@@ -178,7 +147,8 @@ class AuthSessionViewModel(
 
                     WebDavManager.connect(successUrl, user, pass)
                     SecurePrefsHelper.saveCredentials(NasApplication.instance, urlList, user, pass)
-                    repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại IP: $successUrl")
+                    val safeHostLabel = safeUrlHost(successUrl).ifEmpty { "NAS" }
+                    repository.addSystemLog("SUCCESS", "Network", "Truy cập WebDAV thành công qua User '$user' tại $safeHostLabel")
 
                     // Gọi authorize API phụ
                     val parsedUrl = try { java.net.URL(successUrl) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
@@ -205,6 +175,9 @@ class AuthSessionViewModel(
                     true
                 } else {
                     lastErrorDetail = buildLoginFailureMessage(urlList, errorDetails)
+                    // Chi ghi ERROR mot lan khi toan bo URL that bai — tranh spam
+                    // 5x Log.e cho moi probe (ping LAN + Tailscale deu mat 100%).
+                    android.util.Log.e("NAS_AUTH", "Tat ca ${urlList.size} URL that bai: $lastErrorDetail")
                     false
                 }
             }
@@ -236,61 +209,95 @@ class AuthSessionViewModel(
     fun checkSmartNetwork(context: android.content.Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                SmartNetworkManager.invalidateCache()
-                val activeUrl = SmartNetworkManager.getActiveBaseUrl(context)
-                if (activeUrl.isEmpty()) return@launch
-
-                val onLan = !isTailscaleUrl(activeUrl)
-                withContext(Dispatchers.Main) {
-                    SharedStateHolder.updateIsOnLan(onLan)
-                }
-
-                val currentBase = WebDavManager.currentBaseUrl
-                val safeActive = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
-
-                if (safeActive != currentBase && currentBase.isNotEmpty()) {
-                    val user = WebDavManager.currentUser
-                    val pass = WebDavManager.currentPass
-                    withContext(Dispatchers.Main) {
-                        SharedStateHolder.updateConnectionStatus(
-                            if (onLan) ConnectionStatus.SwitchedToLan(safeActive)
-                            else ConnectionStatus.SwitchedToTailscale(safeActive)
-                        )
-                    }
-                    withContext(Dispatchers.IO) {
-                        try {
-                            WebDavManager.connect(safeActive, user, pass)
-
-                            val host = safeUrlHost(safeActive)
-                            if (host.isNotEmpty()) {
-                                val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
-                                val authRequest = okhttp3.Request.Builder()
-                                    .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
-                                    .header("Authorization", authHeader)
-                                    .post(ByteArray(0).toRequestBody(null, 0, 0))
-                                    .build()
-                                try {
-                                    NasApplication.instance.fastApiClient.newCall(authRequest).execute().use { }
-                                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
-                    }
-                    withContext(Dispatchers.Main) {
-                        SharedStateHolder.updateCurrentUrl(safeActive)
-                        SharedStateHolder.updateConnectionStatus(
-                            if (onLan) ConnectionStatus.OnLan(safeActive)
-                            else ConnectionStatus.OnTailscale(safeActive)
-                        )
-                    }
-                    repository.addSystemLog(
-                        "INFO", "SmartSwitch",
-                        "Chuyển mạng: ${if (onLan) "LAN" else "Tailscale"} ($safeActive)"
-                    )
-                }
+                ensureSmartNetwork(context)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SmartSwitch", "Lỗi kiểm tra mạng thông minh: ${e.message}")
             }
         }
+    }
+
+    /**
+     * CODEX 09/10 (rusk URL cu): ban cu `checkSmartNetwork` la fire-and-forget —
+     * MainMenu goi xong fetch ngay voi base URL cu (LAN chet) nen storage/SMART
+     * trang, sau khi chuyen sang Tailscale khong ai fetch lai. Ham suspend nay
+     * lam cung logic nhung AWAIT duoc: caller (cold-open / pull-refresh) doi
+     * xong moi fetch, dam bao dung URL moi. Tra ve safeActive (co dau "/").
+     */
+    suspend fun ensureSmartNetwork(context: android.content.Context): String = smartNetworkCheckMutex.withLock {
+        ensureSmartNetworkLocked(context)
+    }
+
+    private suspend fun ensureSmartNetworkLocked(context: android.content.Context): String {
+        SharedStateHolder.updateConnectionStatus(ConnectionStatus.CheckingLan)
+        val activeUrl = try {
+            withContext(Dispatchers.IO) {
+                SmartNetworkManager.getVerifiedBaseUrl(context)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)
+            throw e
+        }
+        if (activeUrl.isEmpty()) {
+            SharedStateHolder.updateConnectionStatus(ConnectionStatus.NetworkError)
+            return WebDavManager.currentBaseUrl
+        }
+
+        val onLan = !isTailscaleUrl(activeUrl)
+        SharedStateHolder.updateIsOnLan(onLan)
+
+        val currentBase = WebDavManager.currentBaseUrl
+        val safeActive = if (activeUrl.endsWith("/")) activeUrl else "$activeUrl/"
+
+        var user = WebDavManager.currentUser
+        var pass = WebDavManager.currentPass
+        if (user.isEmpty() || pass.isEmpty()) {
+            val appCtx = context.applicationContext
+            user = runCatching { SecurePrefsHelper.getUser(appCtx) }.getOrDefault("")
+            pass = runCatching { SecurePrefsHelper.getPass(appCtx) }.getOrDefault("")
+        }
+
+        val needsConnect = currentBase.isEmpty() || safeActive != currentBase
+        if (needsConnect && (user.isEmpty() || pass.isEmpty())) {
+            SharedStateHolder.updateConnectionStatus(ConnectionStatus.AuthFailed)
+            return currentBase
+        }
+        if (needsConnect) {
+            SharedStateHolder.updateConnectionStatus(
+                if (onLan) ConnectionStatus.SwitchedToLan(safeActive)
+                else ConnectionStatus.SwitchedToTailscale(safeActive)
+            )
+            withContext(Dispatchers.IO) {
+                try {
+                    WebDavManager.connect(safeActive, user, pass)
+
+                    val host = safeUrlHost(safeActive)
+                    if (host.isNotEmpty()) {
+                        val authHeader = WebDavManager.AuthState(user = user, pass = pass).authHeader
+                        val authRequest = okhttp3.Request.Builder()
+                            .url("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/auth/authorize")
+                            .header("Authorization", authHeader)
+                            .post(ByteArray(0).toRequestBody(null, 0, 0))
+                            .build()
+                        try {
+                            NasApplication.instance.fastApiClient.newCall(authRequest).execute().use { }
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
+            }
+            val safeHostLabel = safeUrlHost(safeActive).ifEmpty { "NAS" }
+            repository.addSystemLog(
+                "INFO", "SmartSwitch",
+                "Chuyển mạng: ${if (onLan) "LAN" else "Tailscale"} ($safeHostLabel)"
+            )
+        }
+        SharedStateHolder.updateCurrentUrl(safeActive)
+        SharedStateHolder.updateConnectionStatus(
+            if (onLan) ConnectionStatus.OnLan(safeActive)
+            else ConnectionStatus.OnTailscale(safeActive)
+        )
+        return safeActive
     }
 
     // ─── OFFLINE QUEUE ──────────────────────────────────────────────────────
@@ -360,13 +367,13 @@ class AuthSessionViewModel(
     // ─── GUEST PASS (Phase 7d.3 — moved from facade) ────────────────────────
 
     var activeGuestPass by androidx.compose.runtime.mutableStateOf<com.nas.naswebdav.GuestPassInfo?>(null)
-        internal set
+        private set
 
     var isGuestPassLoading by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     var guestPassError by androidx.compose.runtime.mutableStateOf<String?>(null)
-        internal set
+        private set
 
     /**
      * Gọi POST /api/guest/create → NAS trả về thông tin user/host/FTP cho khách.

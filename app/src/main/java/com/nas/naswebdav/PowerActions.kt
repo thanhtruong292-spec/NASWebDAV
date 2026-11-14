@@ -128,9 +128,9 @@ suspend fun pingUrlsForDisplay(urlList: List<String>, user: String, pass: String
                     repeat(if (isTailscaleUrl(url)) 1 else 3) {
                         val start = SystemClock.elapsedRealtime()
                         try {
-                            val socket = java.net.Socket()
-                            socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
-                            socket.close()
+                            java.net.Socket().use { socket ->
+                                socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+                            }
                             best = minOf(best, SystemClock.elapsedRealtime() - start)
                         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                     }
@@ -244,8 +244,7 @@ fun uploadTorrentFileToNas(
                 .post(filePart)
                 .let(WebDavManager::tagCurrentAuth)
                 .build()
-            val client = NasApplication.instance.fastApiClient.newBuilder()
-                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS).build()
+            val client = NasApplication.instance.longRunningApiClient
             val text = client.newCall(req).execute().use { it.body?.string() ?: "" }
             val o = try { org.json.JSONObject(text) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { org.json.JSONObject() }
             withContext(Dispatchers.Main) {
@@ -301,10 +300,12 @@ fun sendPowerCommandFromLogin(
                 withContext(Dispatchers.Main) { onResult(false, "Vui lòng nhập IP của NAS") }
                 return@launch
             }
+            val isHttpsInput = trimmed.startsWith("https://")
             val host = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                if (trimmed.startsWith("https://")) trimmed.removePrefix("https://") else trimmed.removePrefix("http://")
+                if (isHttpsInput) trimmed.removePrefix("https://") else trimmed.removePrefix("http://")
             } else trimmed.substringBefore(":")
-            val apiUrl = "http://$host:${AppConfig.API_PORT}/api/$endpoint"
+            val scheme = if (isHttpsInput) "https" else "http"
+            val apiUrl = "$scheme://$host:${AppConfig.API_PORT}/api/$endpoint"
             val cmdName = when {
                 endpoint.contains("reboot") -> "Khởi động lại"
                 endpoint.contains("suspend") -> "Ngủ"

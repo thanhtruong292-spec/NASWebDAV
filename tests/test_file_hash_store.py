@@ -28,7 +28,9 @@ class HashStoreTests(unittest.TestCase):
     def test_save_validates_sha(self):
         """api_hash_save chi nhan sha256 64 ky tu hex."""
         src = _source()
-        self.assertIn("len(s) != 64", src)
+        # CC-005 P1: validate hex chat (a-f0-9{64}) thay vi chi check len
+        self.assertIn("a-f0-9", src)
+        self.assertIn("{64}", src)
         self.assertIn("INSERT OR REPLACE INTO file_hashes", src)
 
     def test_duplicates_groups_by_sha(self):

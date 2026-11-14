@@ -59,7 +59,7 @@ fun AlertRow(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = null,
+            contentDescription = message,
             modifier = Modifier.size(16.dp),
             tint = iconTint,
         )

@@ -54,8 +54,8 @@ import androidx.compose.runtime.getValue
 
 // ============ LOCAL GUEST PASS (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
-private val GpDarkSurface   = Color.Black
-private val GpDarkCard      = DarkSurface
+private val GpDarkSurface   = DarkSurface
+private val GpDarkCard      = DarkCard
 private val GpAccentGreen   = AccentGreen
 private val GpAccentOrange  = AccentOrange
 private val GpAccentRed     = AccentRed
@@ -72,25 +72,25 @@ fun GuestPassScreen(onBack: () -> Unit) {
     var durationMinutes by remember { mutableIntStateOf(AppConfig.GUEST_PASS_DEFAULT_MINUTES) }
     var copiedField by remember { mutableStateOf("") }
     Scaffold(topBar = {
-        TopAppBar(title = { Column { Text("Local Guest Pass", fontWeight = FontWeight.Bold, color = GpTextPrimary); Text("Cấp vé FTP tạm thời cho khách", fontSize = 11.sp, color = GpTextSecondary) } },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null, tint = GpTextPrimary) } },
+        TopAppBar(title = { Column { Text("Local Guest Pass", fontWeight = FontWeight.Bold, color = GpTextPrimary); Text("Cấp vé FTP tạm thời cho khách", fontSize = 12.sp, color = GpTextSecondary) } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Quay lại", tint = GpTextPrimary) } },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = GpDarkSurface))
     }, containerColor = GpDarkSurface) { pad ->
         Column(modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(12.dp))
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentPurple.copy(alpha = 0.08f)), shape = RoundedCornerShape(14.dp)) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpAccentPurple.copy(alpha = 0.08f)), shape = AppShapes.Card, border = BorderStroke(1.dp, GpAccentPurple.copy(alpha = 0.22f))) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
                     Icon(Icons.Default.Info, null, tint = GpAccentPurple, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(10.dp))
                     Text("NAS sẽ tự động tạo một tài khoản FTP tạm thời với quyền Chỉ đọc (Read-Only). Khách dùng FTP client (FileZilla, ES File Explorer...) để kết nối vào kho phim. Tài khoản tự xóa sau thời hạn.", fontSize = 12.sp, color = GpTextSecondary, lineHeight = 18.sp)
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp)) {
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = AppShapes.Card, border = BorderStroke(1.dp, DarkCardBorder)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Thời hạn Guest Pass", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = GpTextPrimary); Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(30 to "30 phút", 60 to "1 giờ", 180 to "3 giờ", 1440 to "1 ngày").forEach { (min, label) ->
-                            FilterChip(selected = durationMinutes == min, onClick = { durationMinutes = min }, label = { Text(label, fontSize = 11.sp) }, modifier = Modifier.weight(1f),
+                            FilterChip(selected = durationMinutes == min, onClick = { durationMinutes = min }, label = { Text(label, fontSize = 12.sp) }, modifier = Modifier.weight(1f),
                                 colors = FilterChipDefaults.filterChipColors(selectedContainerColor = GpAccentCyan.copy(alpha = 0.2f), selectedLabelColor = GpAccentCyan, containerColor = GpDarkSurface, labelColor = GpTextSecondary))
                         }
                     }
@@ -102,7 +102,7 @@ fun GuestPassScreen(onBack: () -> Unit) {
             var isPasswordVisible by remember(pass?.username) { mutableStateOf(false) }
             AnimatedVisibility(visible = pass != null) {
                 pass?.let { gp ->
-                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, GpAccentGreen.copy(alpha = 0.4f))) {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = GpDarkCard), shape = AppShapes.Card, border = BorderStroke(1.dp, GpAccentGreen.copy(alpha = 0.4f))) {
                         Column(Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, "Active guest pass", tint = GpAccentGreen, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)); Text("Guest Pass đang hoạt động", fontWeight = FontWeight.Bold, color = GpAccentGreen) }
                             Spacer(Modifier.height(14.dp))
@@ -111,7 +111,7 @@ fun GuestPassScreen(onBack: () -> Unit) {
                             GuestInfoRow("Username", gp.username, clipboardManager, copiedField, "user") { copiedField = "user" }; Spacer(Modifier.height(8.dp))
                             GuestInfoRow("Password", gp.password, clipboardManager, copiedField, "pass", isPassword = true, isPasswordVisible = isPasswordVisible, onTogglePasswordVisible = { isPasswordVisible = !isPasswordVisible }) { copiedField = "pass" }; Spacer(Modifier.height(8.dp))
                             val expiresMs = gp.expiresAt - System.currentTimeMillis(); val expiresMin = (expiresMs / 60000).coerceAtLeast(0)
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, "Time remaining", tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "⚠️ Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Timer, "Time remaining", tint = if (expiresMin < 10) GpAccentOrange else GpTextSecondary, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (expiresMin > 0) "Hết hạn sau $expiresMin phút" else "Sắp hết hạn / Đã hết hạn", fontSize = 12.sp, color = if (expiresMin < 10) GpAccentOrange else GpTextSecondary) }
                             Spacer(Modifier.height(14.dp))
                             Button(onClick = { authVM.revokeGuestPass() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), enabled = !authVM.isGuestPassLoading, colors = ButtonDefaults.buttonColors(containerColor = GpAccentRed.copy(alpha = 0.8f))) { Icon(Icons.Default.PersonRemove, "Revoke guest pass icon", modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Thu hồi ngay", fontWeight = FontWeight.Bold) }
                         }
@@ -147,17 +147,32 @@ private fun GuestInfoRow(
     onTogglePasswordVisible: (() -> Unit)? = null,
     onCopied: () -> Unit
 ) {
+    val context = LocalContext.current
     val isCopied = copiedField == fieldKey
     val displayValue = if (isPassword && !isPasswordVisible) "••••••••" else value
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(DarkElevated.copy(alpha = 0.4f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(label, fontSize = 10.sp, color = TextTertiary, fontWeight = FontWeight.Bold); Text(displayValue, fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold) }
+        Column(Modifier.weight(1f)) { Text(label, fontSize = 12.sp, color = TextTertiary, fontWeight = FontWeight.Bold); Text(displayValue, fontSize = 14.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold) }
         if (isPassword && onTogglePasswordVisible != null) {
             IconButton(onClick = onTogglePasswordVisible, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
-                Icon(if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle password visibility", tint = TextTertiary, modifier = Modifier.size(18.dp))
+                Icon(if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (isPasswordVisible) "Ẩn mật khẩu" else "Hiện mật khẩu", tint = TextTertiary, modifier = Modifier.size(18.dp))
             }
         }
-        IconButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value)); onCopied() }, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
-            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, "Copy button", tint = if (isCopied) AccentGreen else TextTertiary, modifier = Modifier.size(18.dp))
+        IconButton(onClick = {
+            if (isPassword) {
+                val sysClip = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText(label, value)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                    clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean("android.content.extra.IS_SENSITIVE", true)
+                    }
+                }
+                sysClip?.setPrimaryClip(clip) ?: clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value))
+            } else {
+                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(value))
+            }
+            onCopied()
+        }, modifier = Modifier.size(40.dp).minimumInteractiveComponentSize()) {
+            Icon(if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy, "Sao chép $label", tint = if (isCopied) AccentGreen else TextTertiary, modifier = Modifier.size(18.dp))
         }
     }
 }

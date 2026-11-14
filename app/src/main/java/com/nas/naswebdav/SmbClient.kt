@@ -12,6 +12,9 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.EnumSet
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 /**
  * SmbClient — Tối ưu upload/download file tới NAS qua SMB3 protocol (LAN).
@@ -42,6 +45,11 @@ object SmbManager {
     // Lock per-host để tránh race khi connect
     private val connectLocks = ConcurrentHashMap<String, Any>()
 
+    // CC-005 P0: last-used de evict stale session (truoc day cache vo han -> leak socket)
+    private val sessionLastUsed = ConcurrentHashMap<String, Long>()
+    private const val SMB_SESSION_TTL_MS = 10 * 60 * 1000L
+    private const val SMB_CONNECT_TIMEOUT_MS = 8000L
+
     private val smbClient = SMBClient()
 
     /**
@@ -53,7 +61,7 @@ object SmbManager {
      * @return DiskShare object đã authenticated, sẵn sàng upload
      * @throws Exception nếu kết nối thất bại
      */
-    fun connectAndOpenShare(
+    suspend fun connectAndOpenShare(
         host: String,
         user: String,
         pass: String,
@@ -61,35 +69,62 @@ object SmbManager {
     ): DiskShare {
         val sessionKey = "$host:$user:$share"
 
-        // Double-checked locking
+        // Double-checked locking — chi giu lock khi doc/ghi map, KHONG giu
+        // lock qua suspend (connect/auth chay tren Dispatchers.IO ben ngoai).
         val lock = connectLocks.getOrPut(sessionKey) { Any() }
-        synchronized(lock) {
+        fun cachedShare(): DiskShare? = synchronized(lock) {
             sessions[sessionKey]?.let { existingSession ->
-                if (existingSession.connection.isConnected) {
+                val lastUsed = sessionLastUsed[sessionKey] ?: 0L
+                val expired = System.currentTimeMillis() - lastUsed > SMB_SESSION_TTL_MS
+                if (!expired && runCatching { existingSession.connection.isConnected }.getOrDefault(false)) {
+                    sessionLastUsed[sessionKey] = System.currentTimeMillis()
+                    existingSession.connectShare(share) as DiskShare
+                } else {
+                    // Session expired — reconnect
+                    runCatching { existingSession.close() }
+                    sessions.remove(sessionKey)
+                    sessionLastUsed.remove(sessionKey)
+                    null
+                }
+            }
+        }
+        cachedShare()?.let { return it }
+
+        // CC-005 P0: connect blocking khong timeout -> treo UI vo han khi NAS
+        // chet. Wrap 8s timeout tren Dispatchers.IO; SmbClient stale evict theo TTL.
+        val session = withContext(Dispatchers.IO) {
+            withTimeout(SMB_CONNECT_TIMEOUT_MS) {
+                smbClient.connect(host)
+            }
+        }
+        val passChars = if (user.isNotBlank()) pass.toCharArray() else CharArray(0)
+        val authContext = if (user.isNotBlank()) {
+            AuthenticationContext(user, passChars, "")
+        } else {
+            AuthenticationContext.guest()
+        }
+        val authenticatedSession = try {
+            withContext(Dispatchers.IO) { session.authenticate(authContext) }
+        } finally {
+            // Zero password char array to prevent lingering on JVM heap.
+            if (user.isNotBlank()) java.util.Arrays.fill(passChars, '\u0000')
+        }
+        synchronized(lock) {
+            // Double-check: coroutine khac co the da connect xong trong luc cho.
+            sessions[sessionKey]?.let { existingSession ->
+                val lastUsed = sessionLastUsed[sessionKey] ?: 0L
+                val expired = System.currentTimeMillis() - lastUsed > SMB_SESSION_TTL_MS
+                if (!expired && runCatching { existingSession.connection.isConnected }.getOrDefault(false)) {
+                    runCatching { authenticatedSession.close() }
+                    sessionLastUsed[sessionKey] = System.currentTimeMillis()
                     return existingSession.connectShare(share) as DiskShare
                 }
-                // Session expired — reconnect
-                sessions.remove(sessionKey)
-            }
-
-            val session = smbClient.connect(host)
-            val passChars = if (user.isNotBlank()) pass.toCharArray() else CharArray(0)
-            val authContext = if (user.isNotBlank()) {
-                AuthenticationContext(user, passChars, "")
-            } else {
-                AuthenticationContext.guest()
-            }
-            val authenticatedSession = try {
-                session.authenticate(authContext)
-            } finally {
-                // Zero password char array to prevent lingering on JVM heap.
-                if (user.isNotBlank()) java.util.Arrays.fill(passChars, '\u0000')
             }
             sessions[sessionKey] = authenticatedSession
-
-            val diskShare = authenticatedSession.connectShare(share) as DiskShare
-            return diskShare
+            sessionLastUsed[sessionKey] = System.currentTimeMillis()
         }
+
+        return authenticatedSession.connectShare(share) as DiskShare
     }
 
     /**
@@ -205,9 +240,43 @@ object SmbManager {
             }
             true
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            android.util.Log.w("SmbClient", "SMB upload failed: ${e.message}")
+            android.util.Log.w("SmbClient", "SMB upload failed [${classifySmbError(e)}]: ${e.message}")
             false
         }
+    }
+
+    /**
+     * CC-005 P1: phân loại lỗi SMB — auth vs network vs not-found.
+     * Caller (AutoBackupWorker) dùng để quyết định: auth fail → báo user đổi
+     * pass, không retry; network → retry/backoff; not-found → tạo lại path.
+     */
+    enum class SmbErrorKind { AUTH, NETWORK, NOT_FOUND, OTHER }
+
+    fun classifySmbError(e: Throwable): SmbErrorKind {
+        var t: Throwable? = e
+        while (t != null) {
+            val cls = t.javaClass.name.lowercase()
+            val msg = (t.message ?: "").lowercase()
+            if (cls.contains("auth") || cls.contains("logon") ||
+                msg.contains("logon failure") || msg.contains("access denied") ||
+                msg.contains("bad username") || msg.contains("wrong password") ||
+                msg.contains("status_logon_failure") || msg.contains("status_access_denied")) {
+                return SmbErrorKind.AUTH
+            }
+            if (cls.contains("unknownhost") || cls.contains("connectexception") ||
+                cls.contains("sockettimeout") || cls.contains("timeout") ||
+                msg.contains("unreachable") || msg.contains("refused") ||
+                msg.contains("timed out") || msg.contains("network")) {
+                return SmbErrorKind.NETWORK
+            }
+            if (cls.contains("notfound") || cls.contains("nosuchfile") ||
+                msg.contains("not found") || msg.contains("no such file") ||
+                msg.contains("status_object_name_not_found") || msg.contains("status_no_such_file")) {
+                return SmbErrorKind.NOT_FOUND
+            }
+            t = t.cause
+        }
+        return SmbErrorKind.OTHER
     }
 
     /**
@@ -237,7 +306,7 @@ object SmbManager {
     /**
      * Kiểm tra kết nối SMB có khả dụng không.
      */
-    fun testConnection(host: String, user: String, pass: String, share: String): Boolean {
+    suspend fun testConnection(host: String, user: String, pass: String, share: String): Boolean {
         return try {
             val diskShare = connectAndOpenShare(host, user, pass, share)
             // Share tồn tại nếu kết nối thành công
@@ -278,5 +347,26 @@ object SmbManager {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
         }
         sessions.clear()
+        sessionLastUsed.clear()
+    }
+
+    /**
+     * CC-005 P0: evict session stale >TTL + shutdown client (chong leak socket).
+     * Goi khi logout / doi NAS / app background lau.
+     */
+    fun evictStale() {
+        val now = System.currentTimeMillis()
+        val stale = sessionLastUsed.filterValues { now - it > SMB_SESSION_TTL_MS }.keys
+        stale.forEach { key ->
+            sessions.remove(key)?.let { s -> runCatching { s.close() } }
+            sessionLastUsed.remove(key)
+            connectLocks.remove(key)
+        }
+    }
+
+    fun shutdown() {
+        closeAll()
+        connectLocks.clear()
+        runCatching { smbClient.close() }
     }
 }

@@ -22,6 +22,8 @@ import com.nas.naswebdav.NasInsights
 import com.nas.naswebdav.toApiBaseUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,88 +46,88 @@ class SystemMonitorViewModel(
     // ═══ SYSTEM STATUS ═══
 
     var systemStatus by androidx.compose.runtime.mutableStateOf(NasSystemStatus())
-        internal set
+        private set
     var temperatureHistory = androidx.compose.runtime.mutableStateListOf<Pair<Float, Float>>()
-        internal set
+        private set
 
     // ═══ METRICS ═══
 
     var metricsHistory = androidx.compose.runtime.mutableStateListOf<MetricsSnapshot>()
-        internal set
+        private set
     var metricsHours by androidx.compose.runtime.mutableIntStateOf(1)
-        internal set
+        private set
     var metricsChartTab by androidx.compose.runtime.mutableIntStateOf(0)
         internal set
     var isLoadingMetrics by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var metricsError by androidx.compose.runtime.mutableStateOf<String?>(null)
-        internal set
+        private set
     var dailyReport by androidx.compose.runtime.mutableStateOf<DailyReportData?>(null)
-        internal set
+        private set
     var isDailyReportLoading by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ═══ SYSTEM PROCESSES ═══
 
     var systemProcesses by androidx.compose.runtime.mutableStateOf<List<SystemProcess>>(emptyList())
-        internal set
+        private set
     var isLoadingProcesses by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ═══ NETWORK HEALTH ═══
 
     var networkPingMs by androidx.compose.runtime.mutableStateOf<Long?>(null)
-        internal set
+        private set
     var lastStatusRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var lastMetricsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var lastStorageRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var lastSmartRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var lastLogsRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
     var apiLatencyMs by androidx.compose.runtime.mutableStateOf<Long?>(null)
-        internal set
+        private set
     var apiFailureCount by androidx.compose.runtime.mutableIntStateOf(0)
-        internal set
+        private set
 
     // ═══ DISK HEALTH ═══
 
     var diskHealthCurrent by androidx.compose.runtime.mutableStateOf<DiskHealthSample?>(null)
-        internal set
+        private set
     var diskHealthHistory by androidx.compose.runtime.mutableStateOf<List<DiskHealthSample>>(emptyList())
-        internal set
+        private set
     var isFetchingDiskHealth by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var lastDiskHealthRefreshAt by androidx.compose.runtime.mutableLongStateOf(0L)
-        internal set
+        private set
 
     // ═══ NAS CONFIG BACKUPS ═══
 
     var nasConfigBackups by androidx.compose.runtime.mutableStateOf<List<NasConfigBackup>>(emptyList())
-        internal set
+        private set
     var isCreatingNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var isRestoringNasConfigBackup by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
     var nasConfigBackupMessage by androidx.compose.runtime.mutableStateOf("")
-        internal set
+        private set
 
     // ═══ NAS INSIGHTS ═══
 
     var nasInsights by androidx.compose.runtime.mutableStateOf(NasInsights())
-        internal set
+        private set
     var isFetchingNasInsights by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     // ═══ STORAGE SUMMARY (thong ke file toan NAS) ═══
     // Đọc cache lần quét trước để mở app hiện số cũ ngay, fetch nền làm mới sau.
     var storageSummary by androidx.compose.runtime.mutableStateOf(readCachedStorageSummary())
-        internal set
+        private set
     var isFetchingStorageSummary by androidx.compose.runtime.mutableStateOf(false)
-        internal set
+        private set
 
     companion object {
         private fun readCachedStorageSummary(): StorageSummary {
@@ -139,6 +141,13 @@ class SystemMonitorViewModel(
         }
 
         internal fun parseStorageSummaryJson(json: org.json.JSONObject): StorageSummary {
+            val scannedAt = json.optLong("scanned_at", 0L)
+            val cachedAt = json.optLong("cached_at", 0L)
+            val updatedAt = when {
+                scannedAt > 0L -> scannedAt * 1_000L
+                cachedAt > 0L -> cachedAt
+                else -> System.currentTimeMillis()
+            }
             fun typeObj(key: String): org.json.JSONObject = json.optJSONObject("by_type")?.optJSONObject(key) ?: org.json.JSONObject()
             val img = typeObj("image")
             val vid = typeObj("video")
@@ -170,7 +179,7 @@ class SystemMonitorViewModel(
                 otherBytes = oth.optLong("bytes", 0L),
                 largest = largest,
                 partial = json.optBoolean("partial", false),
-                updatedAt = json.optLong("cached_at", 0L)
+                updatedAt = updatedAt
             )
         }
     }
@@ -182,36 +191,80 @@ class SystemMonitorViewModel(
 
     private var statusPollingJob: Job? = null
     private var metricsPollingJob: Job? = null
+    private val statusFetchMutex = Mutex()
+    private val dailyReportLock = Any()
+    private val dailyReportRequestsInFlight = mutableSetOf<String>()
+    private var latestDailyReportRequestKey = ""
+    private var lastSuccessfulDailyReportKey = ""
+    private var lastSuccessfulDailyReportAt = 0L
+    private var lastStorageSummaryFetchAt = 0L
+    private var consecutiveStatusFailures = 0
+    @Volatile private var statusDataPending = false
 
     // ═══ WIRED METHODS — Phase 4b ═══
 
     fun startDashboardMonitoring(resetStatusPoll: Boolean = false) {
         statusPollingJob?.cancel()
         statusPollingJob = viewModelScope.launch(Dispatchers.IO) {
+            // CC-004 P1-3/P0-2: ton trong resetStatusPoll — pull-refresh reset backoff
+            // ve 0 de lay so lieu ngay; foreground resume giu backoff hien tai.
             var consecutiveFails = 0
             while (true) {
+                // CC-004 P0-1: guard apiBase rong — tra ve ngay thay vi dung
+                // Request.Builder.url("/api/status") nem ngoai le roi catch silent.
+                if (WebDavManager.currentBaseUrl.toApiBaseUrl().isBlank()) {
+                    delay(5_000L)
+                    continue
+                }
+                // CC-004 P1-3: chi poll khi app foreground — tiet kiem CPU/battery.
+                if (!com.nas.naswebdav.AppConfig.IS_APP_FOREGROUND) {
+                    delay(15_000L)
+                    continue
+                }
                 val ok = fetchStatusNow()
-                if (ok) { consecutiveFails = 0; delay(60_000L) }
-                else { consecutiveFails++; delay((60_000L + consecutiveFails.coerceAtMost(20) * 5_000L).coerceAtMost(120_000L)) }
+                if (ok) { consecutiveFails = 0; delay(if (statusDataPending) 3_000L else 60_000L) }
+                else { consecutiveFails++; delay((5_000L shl (consecutiveFails - 1).coerceAtMost(4)).coerceAtMost(60_000L)) }
             }
         }
     }
 
-    fun triggerStatusUpdate() {
-        viewModelScope.launch(Dispatchers.IO) {
+    /** CC-004 P1-3/P1-4: dung polling khi logout — tranh ban request voi cred cu. */
+    fun stopDashboardMonitoring() {
+        statusPollingJob?.cancel()
+        statusPollingJob = null
+    }
+
+    fun triggerStatusUpdate(): kotlinx.coroutines.Job {
+        return viewModelScope.launch(Dispatchers.IO) {
             fetchStatusNow()
         }
     }
 
     internal suspend fun fetchStatusNow(): Boolean {
-        return try {
+        return statusFetchMutex.withLock {
+        try {
             val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+            // CC-004 P0-1: guard apiBase rong — cold-start fetch truoc restore
+            // dung Request.Builder.url("/api/status") nem, catch silent ve false.
+            if (apiBase.isBlank()) {
+                markStatusFailure()
+                return@withLock false
+            }
             // Dùng /api/status thay vì /api/status/realtime vì cần full data (disk, uptime, string formats)
             val req = okhttp3.Request.Builder().url("$apiBase/api/status").get().let(WebDavManager::tagCurrentAuth).build()
             NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: "{}"
                     val json = org.json.JSONObject(body)
+                    val statusSnapshotStale = json.optString("status").startsWith("Lỗi:")
+                    if (!json.has("cpu") || !json.has("ram")) {
+                        statusDataPending = true
+                        withContext(Dispatchers.Main) {
+                            systemStatus = systemStatus.copy(status = "Đang tải dữ liệu")
+                        }
+                        return@use true
+                    }
+                    statusDataPending = statusSnapshotStale
                     
                     val diskPartsArr = json.optJSONArray("disk_parts")
                     val diskPartList = mutableListOf<com.nas.naswebdav.DiskPart>()
@@ -273,7 +326,7 @@ class SystemMonitorViewModel(
                         netRx = json.optString("net_rx", "0 B/s"),
                         netTx = json.optString("net_tx", "0 B/s"),
                         uptime = json.optString("uptime", "--"),
-                        status = "Đã kết nối",
+                        status = if (statusSnapshotStale) "Đã kết nối, dữ liệu cũ" else "Đã kết nối",
                         ramPercent = json.optString("ram_percent", "0"),
                         torrents = torrentList,
                         diskParts = diskPartList,
@@ -288,15 +341,30 @@ class SystemMonitorViewModel(
 
                     withContext(Dispatchers.Main) {
                         systemStatus = newStatus
-                        lastStatusRefreshAt = System.currentTimeMillis()
-                        appendOrUpdateLivePoint()
+                        if (!statusSnapshotStale) lastStatusRefreshAt = System.currentTimeMillis()
+                        consecutiveStatusFailures = 0
+                        if (!statusSnapshotStale) appendOrUpdateLivePoint()
                     }
                     true
-                } else false
+                } else {
+                    markStatusFailure(authFailed = resp.code == 401 || resp.code == 403)
+                    false
+                }
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             android.util.Log.w("SysMonitor", "fetchStatusNow: ${e.message}")
+            markStatusFailure()
             false
+        }
+        }
+    }
+
+    private suspend fun markStatusFailure(authFailed: Boolean = false) = withContext(Dispatchers.Main) {
+        consecutiveStatusFailures++
+        if (authFailed) {
+            systemStatus = systemStatus.copy(status = "API từ chối xác thực")
+        } else if (consecutiveStatusFailures >= 2) {
+            systemStatus = systemStatus.copy(status = "Không tải được dữ liệu hệ thống")
         }
     }
 
@@ -482,11 +550,25 @@ class SystemMonitorViewModel(
     }
 
     fun fetchDailyReport(date: String = "", minIntervalMs: Long = 30_000L) {
-        isDailyReportLoading = true
+        val now = System.currentTimeMillis()
+        val requestedDate = date.trim()
+        val dateKey = requestedDate.ifBlank {
+            "default:" + java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date(now))
+        }
+        synchronized(dailyReportLock) {
+            latestDailyReportRequestKey = dateKey
+            if (dateKey in dailyReportRequestsInFlight) return
+            if (dateKey == lastSuccessfulDailyReportKey &&
+                minIntervalMs > 0L && now - lastSuccessfulDailyReportAt < minIntervalMs
+            ) return
+            dailyReportRequestsInFlight.add(dateKey)
+            isDailyReportLoading = true
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
-                val dateParam = if (date.isNotBlank()) "?date=$date" else ""
+                if (apiBase.isBlank()) return@launch
+                val dateParam = if (requestedDate.isNotBlank()) "?date=$requestedDate" else ""
                 val req = okhttp3.Request.Builder().url("$apiBase/api/report/daily$dateParam").get().let(WebDavManager::tagCurrentAuth).build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
@@ -518,13 +600,24 @@ class SystemMonitorViewModel(
                     )
 
                     withContext(Dispatchers.Main) {
-                        dailyReport = report
+                        synchronized(dailyReportLock) {
+                            if (latestDailyReportRequestKey == dateKey) {
+                                dailyReport = report
+                                lastSuccessfulDailyReportKey = dateKey
+                                lastSuccessfulDailyReportAt = System.currentTimeMillis()
+                            }
+                        }
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                 android.util.Log.w("SysMonitor", "fetchDailyReport: ${e.message}")
             } finally {
-                withContext(Dispatchers.Main) { isDailyReportLoading = false }
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    synchronized(dailyReportLock) {
+                        dailyReportRequestsInFlight.remove(dateKey)
+                        isDailyReportLoading = dailyReportRequestsInFlight.isNotEmpty()
+                    }
+                }
             }
         }
     }
@@ -741,6 +834,8 @@ class SystemMonitorViewModel(
 
     fun fetchNasInsights(minIntervalMs: Long = 10_000L) {
         if (isFetchingNasInsights) return
+        val now = System.currentTimeMillis()
+        if (minIntervalMs > 0L && now - nasInsights.updatedAt < minIntervalMs) return
         isFetchingNasInsights = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -817,22 +912,40 @@ class SystemMonitorViewModel(
     }
 
     /** Thong ke file toan NAS — GET /api/storage/summary (server cache 5 phut).
-     * force=true de quet lai ngay (nut Lam moi tren card). */
+     * force=true de quet lai ngay (nut Lam moi tren card).
+     * FIX trang dashboard: quet dau 25s + mang cham co the vuot readTimeout 30s
+     * cua fastApiClient -> dung client 60s rieng; 429 (force lien tiep trong
+     * 60s) van kem cache cu trong body -> parse chu khong vut nhu truoc. */
     fun fetchStorageSummary(force: Boolean = false, minIntervalMs: Long = 30_000L) {
         if (isFetchingStorageSummary) return
-        if (!force && System.currentTimeMillis() - storageSummary.updatedAt < minIntervalMs) return
+        if (!force && System.currentTimeMillis() - lastStorageSummaryFetchAt < minIntervalMs) return
         isFetchingStorageSummary = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                // CC-004 P0-1: guard apiBase rong — nhu fetchStatusNow/fetchStorageUsage.
+                if (apiBase.isBlank()) return@launch
                 val url = "$apiBase/api/storage/summary" + if (force) "?force=1" else ""
                 val req = okhttp3.Request.Builder().url(url).get().let(WebDavManager::tagCurrentAuth).build()
-                NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use
-                    val raw = resp.body?.string() ?: "{}"
-                    val json = org.json.JSONObject(raw)
+                // Quet full-disk lan dau mat toi 25s (server) + Tailscale cham ->
+                // fastApiClient 30s de timeout trang. Client rieng 60s cho endpoint nay.
+                val summaryClient = NasApplication.instance.fastApiClient.newBuilder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                summaryClient.newCall(req).execute().use { resp ->
+                    val raw = runCatching { resp.body?.string() ?: "{}" }.getOrDefault("{}")
+                    // 429 rate-limit force van kem cache cu + retry_after -> van hien so.
+                    if (!resp.isSuccessful && resp.code != 429) {
+                        android.util.Log.w("SysMonitor", "fetchStorageSummary HTTP ${resp.code}")
+                        return@use
+                    }
+                    val json = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return@use
                     if (json.has("error")) return@use
-                    val parsed = parseStorageSummaryJson(json).copy(updatedAt = System.currentTimeMillis())
+                    // Body 429 khong co total_files (server het cache) -> giu so cu.
+                    if (json.optInt("total_files", -1) < 0 && json.optLong("total_bytes", -1L) < 0) return@use
+                    val parsed = parseStorageSummaryJson(json)
+                    val fetchedAt = System.currentTimeMillis()
                     try {
                         json.put("cached_at", parsed.updatedAt)
                         com.nas.naswebdav.utils.PreferencesRepository
@@ -841,6 +954,7 @@ class SystemMonitorViewModel(
                     } catch (_: Exception) {}
                     withContext(Dispatchers.Main) {
                         storageSummary = parsed
+                        lastStorageSummaryFetchAt = fetchedAt
                     }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
@@ -953,6 +1067,8 @@ class SystemMonitorViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val apiBase = WebDavManager.currentBaseUrl.toApiBaseUrl()
+                // CC-004 P0-1: guard apiBase rong — nhu fetchStatusNow.
+                if (apiBase.isBlank()) return@launch
                 val t0 = System.currentTimeMillis()
                 val req = okhttp3.Request.Builder().url("$apiBase/api/ping").head().build()
                 NasApplication.instance.fastApiClient.newCall(req).execute().use { resp ->

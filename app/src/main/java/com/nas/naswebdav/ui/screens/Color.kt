@@ -9,11 +9,11 @@ import androidx.compose.ui.unit.sp
 
 // Surface hierarchy: pure black base, cards use 5–10% white tint for
 // visual separation without lighting the OLED pixel unnecessarily.
-internal val DarkSurface = Color(0xFF000000)    // true black — OLED off
-internal val DarkCard = Color(0xFF0A0A0A)       // ~4% gray — minimal light bleed
-internal val DarkCardHover = Color(0xFF141414)   // ~8% gray — hover state
-internal val DarkElevated = Color(0xFF1A1A1A)    // ~10% gray — sheets/dialogs
-internal val DarkInput = Color(0xFF0F0F0F)       // input field background
+internal val DarkSurface = Color(0xFF020617)    // deep navy app canvas
+internal val DarkCard = Color(0xFF0B1220)       // elevated surface
+internal val DarkCardHover = Color(0xFF111C2F)   // pressed/hover surface
+internal val DarkElevated = Color(0xFF16243A)   // sheets/dialogs
+internal val DarkInput = Color(0xFF0B1628)      // input field background
 
 // Semantic accents — bright vivid colors chosen for OLED contrast.
 internal val AccentCyan = Color(0xFF60A5FA)     // primary action / links
@@ -32,15 +32,18 @@ internal val StatusInfo = AccentCyan
 // Text hierarchy — pure white primary, desaturated secondaries for OLED.
 internal val TextPrimary = Color(0xFFF8FAFC)
 internal val TextSecondary = Color(0xFFCBD5E1)
-internal val TextTertiary = Color(0xFF6B7280)
+internal val TextTertiary = Color(0xFF94A3B8)
+
+// Bullet / list separator used by dashboard/meta rows — consistent spacing and color.
+internal val BulletSeparator = TextSecondary
 
 // Panel titles and progress tracks.
 internal val PanelTitleCyan = Color(0xFF93C5FD)
 internal val PanelTitleGreen = Color(0xFF86EFAC)
 internal val PanelTitlePurple = Color(0xFFC4B5FD)
-internal val PanelTitleSize = 11.sp
+internal val PanelTitleSize = 12.sp
 internal val PanelTitleLetterSpacing = 1.5.sp
-internal val TrackGray = Color(0xFF1F2937)
+internal val TrackGray = Color(0xFF243248)
 internal val TrackGreen = Color(0xFF14532D)
 internal val TrackCyan = Color(0xFF1E3A8A)
 
@@ -84,11 +87,11 @@ internal val InfoContainer = AccentCyan.copy(alpha = 0.12f)
 // ════════════════════════════════════════════════════════════════════════════
 // SURFACE BORDERS — subtle elevation cues without lighting OLED pixels
 // ════════════════════════════════════════════════════════════════════════════
-internal val DarkCardBorder = Color(0xFF1A1A1A)
-internal val DarkDivider = Color(0xFF1F2937)
+internal val DarkCardBorder = Color(0xFF243248)
+internal val DarkDivider = Color(0xFF1E293B)
 
 // ════════════════════════════════════════════════════════════════════════════
 // SKELETON SHIMMER — loading placeholder gradient endpoints
 // ════════════════════════════════════════════════════════════════════════════
-internal val SkeletonBase = Color(0xFF0A0A0A)
-internal val SkeletonHighlight = Color(0xFF1A1A1A)
+internal val SkeletonBase = Color(0xFF0B1220)
+internal val SkeletonHighlight = Color(0xFF1A2A42)

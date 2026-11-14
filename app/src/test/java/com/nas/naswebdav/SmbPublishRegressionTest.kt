@@ -26,7 +26,7 @@ class SmbPublishRegressionTest {
     @Before
     fun setUp() {
         mockkObject(SmbManager)
-        every { SmbManager.connectAndOpenShare("host", "user", "pass", "share") } returns share
+        coEvery { SmbManager.connectAndOpenShare("host", "user", "pass", "share") } returns share
         every { share.fileExists("final") } returns false
         every { share.openFile("staged", any(), any(), any(), any(), any()) } returns staged
         // The visible destination must never become a streaming copy target.

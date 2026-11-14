@@ -15,7 +15,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nas.naswebdav.ui.screens.AccentCyan
-import com.nas.naswebdav.ui.screens.DarkCardHover
+import com.nas.naswebdav.ui.screens.AppShapes
+import com.nas.naswebdav.ui.screens.DarkInput
+import com.nas.naswebdav.ui.screens.OutlineVariantDark
 import com.nas.naswebdav.ui.screens.TextPrimary
 
 /**
@@ -41,7 +43,7 @@ fun CompactTextField(
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     textStyle: TextStyle? = null,
     accentColor: Color = AccentCyan,
-    shape: Shape = RoundedCornerShape(8.dp),
+    shape: Shape = AppShapes.Input,
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
@@ -66,11 +68,11 @@ fun CompactTextField(
         shape = shape,
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = accentColor,
-            unfocusedBorderColor = DarkCardHover,
+            unfocusedBorderColor = OutlineVariantDark,
             focusedLabelColor = accentColor,
             cursorColor = accentColor,
-            focusedContainerColor = DarkCardHover,
-            unfocusedContainerColor = DarkCardHover,
+            focusedContainerColor = DarkInput,
+            unfocusedContainerColor = DarkInput,
             focusedTextColor = TextPrimary,
             unfocusedTextColor = TextPrimary,
         ),

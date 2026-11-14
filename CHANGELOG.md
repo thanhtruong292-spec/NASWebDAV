@@ -5,6 +5,108 @@
 
 ---
 
+## [2026-10-08] CC-004 — Rà soát mở rộng toàn project: playback fallback, dashboard guard, backend P0/P1/P2 (backend + Android)
+
+Rà soát mở rộng theo yêu cầu: search→play, dashboard (số liệu/khởi động trắng/pull-refresh), giới hạn cứng livestream/social/ytdlp, encode path dài, proxy/VLC, cache/ETag, rate-limit, root/indexer.
+
+### Backend (`backend/nas_api_server.py`, 15 marker CC-004, Python 3.5)
+- **P0-1 indexer OOM**: `_get_webdav_public_dir` không bao giờ fallback `/` (log.error + return `""`); watchdog resolve root MỖI vòng, skip khi `""` hoặc `/`, sleep 1800 — tránh `os.walk("/")` quét toàn OS.
+- **P0-2 trusted-proxy**: `_request_client_ip` trả remote thay vì `""` khi không khớp proxy.
+- **P0-3 search injection**: `api_fast_search` validate Host/scheme, chặn `..`/`\`, `_escape_like` + `ESCAPE`.
+- **P0-4 path containment**: `_find_source_file` dùng chung `_resolve_webdav_request_path` (realpath containment) + `_validate_file_path`.
+- **P0-5 cap trước HW-gate**: livestream record đọc `_get_livestream_max_concurrent()` clamp 1–8 TRƯỚC hardware-gate (bản cũ check sau nên cap admin bị bỏ qua).
+- **P0-6 auth literal**: patch endpoint literal `api_fast_search` (Flask `view_functions` wrap).
+- **P1-1 root unify**: `get_webdav_root` ưu tiên `_get_webdav_public_dir()` (đọc config.php `$publicDir`) — gom 3 helper root về một nguồn.
+- **P1-4 cache/304**: ETag thêm inode (`"%x-%x-%x"` size-mtime-inode, chống copy/replace trùng size-mtime); hỗ trợ `If-None-Match` (weak-strip) + `If-Modified-Since` → 304; file <86400s `max-age=60` else `max-age=604800,immutable`.
+- **P1-7 force rate-limit**: `?force=1` (quét full disk 45s/HDD spin-up) rate-limit theo IP 60s → 429 kèm `cached/rate_limited/retry_after`.
+- **P2-3 non-blocking idle**: `api_system_idle` dùng `cpu_percent(interval=None)` thay vì block 0.4s.
+- **P2-5 ytdlp cap**: `_get_ytdlp_max_concurrent` (default 2, 1–4) + `_ADMIN_LIMIT_DEFS` + `api_ytdlp_download` trả 429 khi running ≥ cap.
+- Tương thích SPEC_LIVESTREAM_LIMITS (giữ 2/2 default RK3328, queue server-side, admin PATCH).
+
+### Android (26 file)
+- **P0-4 playback fallback (:5050 chết → WebDAV trực tiếp)**: `VideoPlayerScreen.kt` + `MediaScreens.kt` — `useWebDavDirect` state, `effectiveUrl=remember(url,useWebDavDirect)`, timeout + `/api/media` + no HTTP code → bật direct + dialog WARNING, không báo lỗi đỏ; `exoPlayer=remember(effectiveUrl,...)` (sửa bug remember{} cũ khiến fallback vô hiệu).
+- **Lỗi player chi tiết**: 401/404/416/timeout/decoder tách riêng qua Handler main-looper (toast cũ biến mất không đọc kịp).
+- **Encode path dài**: `toFastMediaUrl` + `toValidUrl` per-segment (decode-chống-double, giữ `/`, fix `%25` double-decode); search Pass0 chuẩn hóa ngay lúc parse; breadcrumb encode từng segment; copyLink/Download/Share đều qua `toValidUrl`.
+- **Dashboard guard**: `SystemMonitorViewModel`/`DeviceManagementViewModel` blank-guard `apiBase`; foreground-check + stop khi logout; `MainActivity.onLogout` stop-monitor + disconnect + reset.
+- **Proxy/VLC**: `LocalVideoProxy` singleton `takeOver/releaseIfMine` chống leak socket/thread/Basic-Auth; forward `Range` + `If-Range/If-Match/If-None-Match/If-Modified-Since/If-Unmodified-Since` (seek sau pause dài đúng 206).
+- **MIME**: `mimeForFile()` theo đuôi (mp4/mkv/avi/mov/mpeg/wmv/flv/ts/webm/ảnh) thay vì `video/*` cứng — VLC Intent + chooser đúng.
+- **Search Pass2**: `withTimeout(15s)` + batch-insert 200 grouped by parent (trước đây insert từng file, BFS không timeout có thể treo).
+- **HTTPS**: `PowerActions` + `checkNasReachabilityQuickly` giữ scheme https (trước ép cứng http).
+- **Disconnect**: `synchronized` xóa auth/threadLocal/cache.
+
+### Verify
+- `pytest tests/` → **138 passed, 10 skipped**; `py_compile` OK (cảnh báo `\s` dòng 17183 có sẵn, bỏ qua).
+- `compileDebugKotlin` → **BUILD SUCCESSFUL**; `assembleDebug` → **BUILD SUCCESSFUL** (`app-debug.apk` ~39–40MB).
+- Push Tailscale `NAS_HOST=100.90.135.102` → service `active`, `grep CC-004` = 15, `journalctl -p err` không entry, `py_compile` trên NAS OK, `/api/status|usage|summary|ping` live (401 khi chưa auth là đúng).
+- **Model**: agentgw-gpt-5.6-sol
+
+## [2026-10-08] Fix dashboard: số liệu thư mục sai + khởi động trắng + pull-refresh không cập nhật (backend + Android)
+
+Triệu chứng: liệt kê file/dung lượng ở màn hình chính sai; mỗi lần khởi động app load lại từ đầu mà trắng; pull-to-refresh không cập nhật trạng thái kết nối lẫn màn hình chính.
+
+### Nguyên nhân
+- Backend `get_storage_usage_summary` liệt kê CỨNG 3 thư mục `Livestream/Downloads/Backup` trong khi root thật (`New folder`) chứa ~30 thư mục cấp 1 (`Thư mục 1`, Facebook, TikTok, ...); `_safe_dir_usage` cap 4000 file/2s khiến thư mục lớn luôn `partial=True` (số thiếu).
+- App cold-start: `WebDavManager.authState` chỉ sống trong RAM, kill app là mất; `checkSmartNetwork` cũ đòi `currentBase.isNotEmpty()` nên base rỗng thì không bao giờ connect lại → mọi fetch dùng `apiBase` rỗng → dashboard trắng, file load từ zero mà chẳng được gì.
+- Pull-refresh thiếu `pingNas/triggerStatusUpdate/fetchStorageSummary(force)`; `DeviceManagementViewModel.isOnLan` là getter thuần (đọc `currentBaseUrl` không phải Compose State) nên badge LAN/Tailscale không recompose.
+
+### Sửa
+- Backend: `get_storage_usage_summary` quét ĐỘNG thư mục cấp 1 của root + deadline tổng 12s (mỗi thư mục 8000 file/1.5s); `_build_storage_usage_payload` dùng root đã resolve; path trash `.trash`.
+- App: `checkSmartNetwork` tự nối lại credential đã lưu khi base rỗng (cold-start restore); `MainMenuScreen` (mở app + pull-refresh) restore đồng bộ trước mọi fetch, gọi thêm `pingNas/triggerStatusUpdate/fetchStorageSummary(force)`; `isOnLan` thành Compose State collect từ `SharedStateHolder`.
+- DiskProfile: trash lookup `.trash`.
+
+### Verify
+- `pytest tests/` → **138 passed, 10 skipped**; `py_compile` OK.
+- `compileDebugKotlin` → **BUILD SUCCESSFUL**; `assembleDebug` → **BUILD SUCCESSFUL** (`app-debug.apk` ~39MB).
+- Push Tailscale `NAS_HOST=100.90.135.102` → service `active`, `CC-003` có mặt, `journalctl -p err` không entry, `py_compile` trên NAS OK.
+- **Model**: agentgw-gpt-5.6-sol
+
+## [2026-10-08] Fix search→play video tên dài/path loằng ngoằng (backend + Android)
+
+Triệu chứng: video tìm được từ tìm kiếm nhưng bấm vào báo không phát được, chỉ thấy thông báo rồi biến mất. File mp4 tên dài, nhiều dấu cách/ngoặc/dấu tiếng Việt/emoji (vd `[BraveDown.Com] [Facebook Video 🍋 ...] [1755859489] .mp4`).
+
+### Nguyên nhân
+- Backend `/api/search` ghép `rel_p` raw (space/dấu/#?& giữ nguyên) vào `path` URL → VLC/ExoPlayer cắt cụt ở `#`/`?`, space raw hỏng Intent.
+- App `toFastMediaUrl()` dùng `URLEncoder.encode(cả path)` biến `/` thành `%2F`, dễ trật khi rewrite Tailscale/LAN và double-encode `%20` → `%2520` → `/api/media` 404.
+- App nhận kết quả search dùng `path` raw trực tiếp làm playback URL, lệch với cache PROPFIND đã encode.
+
+### Sửa
+- Backend `api_fast_search`: `urllib.parse.quote(rel_p, safe="/")` theo segment, giữ `/` — client dùng trực tiếp được.
+- App `toFastMediaUrl()` (NasApplication.kt): tách segment rồi encode từng đoạn (decode-chống-double trước), giữ `/`, khớp `encodeWebDavSegment`/`quote(..., safe="/")`.
+- App `FileBrowserViewModel.searchGlobal` Pass 0: chuẩn hóa `path` search qua `toValidUrl()` ngay lúc parse JSON (tương thích NAS chưa update).
+
+### Verify
+- `pytest tests/` → **138 passed, 10 skipped**; `py_compile` OK.
+- `compileDebugKotlin` → **BUILD SUCCESSFUL**; `assembleDebug` → **BUILD SUCCESSFUL**.
+- Push Tailscale `NAS_HOST=100.90.135.102` → scp + `systemctl restart nas_api` OK, PID 30313, `FIX-SEARCH-ENCODE` có mặt, service `active`, log không traceback.
+- Round-trip quote/unquote tên file thật dài 81 ký tự (dấu + emoji) → OK, `isfile: True`; encode 3 mẫu tên dài/dấu/#?&/tiếng Thái → OK.
+- **Model**: agentgw-gpt-5.6-sol
+
+## [2026-10-08] SPEC_LIVESTREAM_LIMITS — gỡ giới hạn cứng livestream/social (backend + Android)
+
+Triển khai theo `docs/SPEC_LIVESTREAM_LIMITS.md` (APPROVED 2026-10-08, Q1=RAM-based range, Q2=server-side queue, Q3=admin-only). Default giữ 2/2, không nới bừa trên RK3328.
+
+### Backend (`backend/nas_api_server.py`, Python 3.5, không f-string/walrus)
+- **Config loader động**: env `NAS_*` > `/etc/nas/nas_api.conf` (JSON) > default; 17 key đợt 1 (social/live concurrent, max_hours 1–72, err/stall cooldown, ytdlp timeout, idle/RAM/load/CPU gate, cleanup/TTL, tiktok watch/html cap/timeout). Clamp range: live 1–8, social 1–16.
+- **`GET /api/admin/limits`** (auth LAN thường): trả toàn bộ key + `ram_mb`, `recommended_live_max/social_max` (RAM ≤1500MB → 2/2; 1500–3000 → 3/4; >3000 → 4/8), `heavy_gate_allowed`.
+- **`PATCH /api/admin/limits`** (`requires_admin` mới — Basic auth đúng tài khoản `daica`, chặn LAN-bypass/IP-cache; sai → 401): validate/clamp, atomic write tmp+rename chmod 600, vượt khuyến nghị RAM → `warning: "over_recommended"` + log.
+- **429 structured**: live `code=MAX_STREAMS`, social `code=MAX_DOWNLOADS` kèm `reason/cap/active/retry_after_s`; giữ `error` tiếng Việt cho client cũ.
+- **Hàng đợi server-side** (`POST/GET/DELETE /api/livestream/queue`): persist HDD `livestream_queue.json` (sống qua restart), TTL 24h, cap 20 (`QUEUE_FULL`), dedup URL, daemon promote 60s/vòng qua đúng flow record nội bộ (giữ mọi guard).
+- **Watcher tôn trọng cap động** (`_get_livestream_max_concurrent`, clamp 1–8).
+
+### Android
+- `LivestreamViewModel`: `serverLivestreamCap/Active` (refresh từ admin-limits + status), pre-flight chặn sớm khi đầy slot (không POST thừa), `LivestreamApiException` giữ code/cap/active, lỗi structured (`isLivestreamError/code/retryAfter`), queue methods (enqueue/fetch/cancel), `refreshLivestreamState()` gom 1 điểm.
+- `LivestreamRecordDialog` + legacy `DialogsLivestreamRecordDialog`: lỗi persistent (chỉ auto-clear success), CTA `MAX_STREAMS` → [Cho vào hàng đợi] [Theo dõi user] [Thử 720p], hiển thị hàng đợi + nút Hủy từng entry, VOD chỉ khi chắc (short link `tiktok.com/t/`, `vt/vm.tiktok` phải resolve `@user` trước).
+- `LivestreamMonitorWorker`: poll dùng `AppConfig.LIVESTREAM_POLL_INTERVAL_MS` + giãn 5x khi background; transient (HTTP lỗi/job tạm vắng/exception) → `Result.retry()` tới 10 lần, chỉ terminal thật (`finished/error/stopped/cancelled/timeout`) mới thoát.
+- `LivestreamDiscoveryWorker`: 60p → 15p (min WorkManager) + endpoint tập trung.
+- Thống nhất hằng số: mọi endpoint livestream/social/tiktok qua `AppConfig.ApiEndpoints`, folder qua `LIVESTREAM_FOLDER`/`SOCIAL_DOWNLOAD_FOLDER`; allowlist dialog+extractor dùng chung (+Shopee, hết báo giả "không hỗ trợ"); social parse `MAX_DOWNLOADS`.
+
+### Verify
+- Backend: `pytest tests/` → **138 passed, 10 skipped** (mới `tests/test_livestream_limits.py`: 13 passed — loader clamp, recommended RAM, 429 shape, admin auth, queue cap/TTL/persist/promote, watcher dynamic).
+- Android: `compileDebugKotlin` → **BUILD SUCCESSFUL** (chỉ warning deprecated có sẵn).
+- Chưa làm (cần NAS thật): đo RAM thực tế hiệu chỉnh ngưỡng §3.4, `push_server_to_nas.py` + restart + `journalctl` + cron/APK manual, `assembleDebug`.
+
+---
+
 ## [2026-09-25] Review độc lập P1 + R-hồi quy + P2 — sửa nhánh mất dữ liệu (main-fresh)
 
 Review độc lập đối chiếu SPEC_PRODUCTION.md phát hiện 8 P1 mất dữ liệu, 6 hồi quy/thiếu sót sau sửa, 9 P2 chức năng. Sửa theo đúng thứ tự báo cáo, mỗi mục commit riêng.
@@ -263,3 +365,39 @@ Xảy ra khi bất kỳ `ModalBottomSheet` bị dismiss trong khi có `TextField
 - **Thay đổi**: Auto-collapse các section ngoài màn hình chính để tối ưu hiển thị
 - **Lý do**: Không thể mở đồng thời 2 section detail (OMV + Monitor, v.v.)
 - **Model**: Gemini 2.5 Pro
+
+---
+
+## [2026-10-09] CC-005 - Ra soat bao phu toan app (backend P0/P1 + Android P0 Worker/DAO/Provider)
+
+### Backend (`backend/nas_api_server.py`, 29 marker CC-005)
+- P0 bao mat: backup 5 endpoints requires_auth->requires_admin; hash_batch cap 200 + containment; HLS session ^[a-f0-9]{12}$ + filename seg + realpath bound; thumb upload 5MB + SOI + GET ETag/304/cap; process_kill blocklist + admin; smb/service toggle -> admin; ytdlp + RapidAPI re-validate SSRF; qBT magnet-or-validate + 502 generic; torrent_add_file basename + sanitize; trash_batch cap 500; hash_save hex + realpath + size/mtime bound; verify ETag them ino; transcode cap 2 global + 1/IP + salt; restore 200MB + gzip magic + uncomp 500MB; guest secrets + cap 10; smart_scan cap + deadline; thumb_activity whitelist + TTL 180s.
+- P1: organize_legacy_videos cap 20000 + deadline 120s + bo hidden + truncated flag; speedtest rate-limit 5p/IP 429 + 50->20MB; trash_batch khong shadow global CACHE_FILE; generate_fast_index cap 100000 + deadline 120s.
+- Verify: py_compile OK (chi SyntaxWarning \s cu), pytest 138 passed 10 skipped, push NAS 100.90.135.102 PID 2875 active, grep 29, journalctl err empty.
+
+### Android (11 file .kt, ~30 marker CC-005)
+- P0 Worker: Fingerprint URL host-validate + capped 1MB + nullable fix; LongRunning SSRF host-check + jsonBody 64KB + 5xx/429/408 retry; Social capped 256KB + break 401/403/404 + notif 64k + normalize; Batch payload 1MB + isStopped retry + partial success; ScreenRecord NOT_STICKY; Monitor notifId + constraints + deadline 6h; Smb timeout/evict/shutdown.
+- P0 DAO/Provider: getFilesWithoutFingerprint accountKey scope; getAllPendingActions Deprecated; DocumentProvider ext sanitize + preload cap 20MB.
+- Verify: compileDebugKotlin OK, assembleDebug OK (APK 40253796 bytes 13:53), backend push OK.
+
+- Model: GPT 5.6 Sol (agentgw.cloud)
+
+---
+
+## [2026-10-09] CC-005 round 2 - P1/P2 con lai (backend ENV/cache/undo + Android nav/login/manifest/UX)
+
+### Backend (`backend/nas_api_server.py`, 29 -> 58 marker CC-005)
+- ENV: _cfg_str/_cfg_float/_cfg_sqlite_timeout/_get_webdav_port/_get_webdav_host_default/_get_guest_ftp_root/_get_vsftpd_user_dir; api_fast_search port/host ENV; SPEED_TEST_FILE ENV; sqlite timeout gom helper giu default.
+- Cache unify: _SMART_TTL 86400 + _OMV_OVERVIEW_TTL 900 + _STORAGE_SUMMARY_TTL comment unify, cache-hit khong spin-up HDD.
+- smart_organize: dry_run + manifest .nas_meta/smart_organize_<job>.json + prune 7 ngay + skip mtime<24h + POST undo (containment).
+- Guest: whitelist ^nasguest_[a-z0-9]{6}$ + realpath root + config containment; backup schedule POST + guest create/revoke -> requires_admin; log canh bao backup chua auth.conf (chi ten file).
+- Verify: py_compile OK (chi SyntaxWarning \s cu), pytest 138 passed 10 skipped, push PID 10179 active, journalctl err empty.
+
+### Android (~81 marker CC-005 kt + 2 manifest)
+- Nav: MainActivity dung NasNavHost single graph + conditional start + double-tap back + alias main_menu/browser cu; performLogout tap trung.
+- Login: AppConfig WEBDAV_SCHEME/PORT/ROOT_PATH/DEFAULT_NAS_IPS + bareIpToLoginCandidates (https truoc); manifest them READ_EXTERNAL_STORAGE(max32)/ACCESS_WIFI_STATE/USE_BIOMETRIC; share SEND_MULTIPLE; MediaPermission AND + dialog Settings khi partial.
+- UX: Browser onRefresh du + SystemStatus PullToRefreshContainer; IpApproval countdown 60s + pending; Duplicate confirm 2 buoc + partialHash key; GlobalUi snackbarNonce; SmbErrorKind classify; OnDemand Semaphore(2) + encode segment; OfflineSync single + UNMETERED 50MB; ScreenRecord sessionScope + uploadMutex + stopForeground; NavBar Role.Tab; Duplicate queue 2000 + lowercase; AutoBackup checkpoint/25 file.
+- Fix sau agent: MainActivity import launch, OnDemand withPermit import, CrashReporter breadcrumb setData + bo extra (private SDK7), SystemStatus PullToRefreshBox->Container.
+- Verify: compileDebugKotlin OK, assembleDebug OK (APK 40270296 bytes 18:58).
+
+- Model: GPT 5.6 Sol (agentgw.cloud)

@@ -46,8 +46,9 @@ internal object SocialDownloadRequestFactory {
             ?.takeIf(String::isNotBlank)
     }
 
+    // CC-005 P0: them 408 + bound 3 (truoc <2, thieu timeout retry)
     fun shouldRetry(statusCode: Int, runAttemptCount: Int): Boolean =
-        (statusCode == 429 || statusCode in 500..599) && runAttemptCount < 2
+        (statusCode == 429 || statusCode == 408 || statusCode in 500..599) && runAttemptCount < 3
 
     private fun jsonString(value: String): String = buildString(value.length + 2) {
         append('"')
@@ -95,8 +96,9 @@ class SocialDownloadWorker(
         private const val NOTIFICATION_BASE_ID = 9200
 
         fun enqueue(context: Context, socialUrl: String) {
+            val normalized = socialUrl.trim().trimEnd('/')  // CC-005 P0: chong dup job do trailing space/slash
             val request = OneTimeWorkRequestBuilder<SocialDownloadWorker>()
-                .setInputData(workDataOf(INPUT_URL to socialUrl))
+                .setInputData(workDataOf(INPUT_URL to normalized))
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -107,7 +109,7 @@ class SocialDownloadWorker(
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
-                "$UNIQUE_WORK_PREFIX:${Integer.toHexString(socialUrl.hashCode())}",
+                "$UNIQUE_WORK_PREFIX:${Integer.toHexString(normalized.hashCode())}",
                 ExistingWorkPolicy.KEEP,
                 request
             )
@@ -146,7 +148,8 @@ class SocialDownloadWorker(
 
             try {
                 callFactory.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string().orEmpty()
+                    // CC-005 P0: capped body 256KB (server tra HTML loi lon OOM)
+                    val responseBody = WebDavManager.readCappedBody(response, WebDavManager.MAX_JSON_BODY_BYTES).orEmpty()
                     val jobId = SocialDownloadRequestFactory.acceptedJobId(
                         response.code,
                         responseBody
@@ -193,6 +196,7 @@ class SocialDownloadWorker(
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "SocialDownload", "Bắt đầu tải video mạng xã hội")
         val socialUrl = SocialShareParser.extractSupportedUrl(inputData.getString(INPUT_URL))
             ?: return@withContext fail("Liên kết chia sẻ không được hỗ trợ.")
 
@@ -212,6 +216,12 @@ class SocialDownloadWorker(
             runAttemptCount = runAttemptCount,
             callFactory = NasApplication.instance.fastApiClient
         )
+
+        // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
+        if (isStopped) {
+            SystemLogger.log("WARNING", "SocialDownload", "Hệ thống dừng worker — sẽ retry theo backoff")
+            return@withContext Result.retry()
+        }
 
         val currentJobId = dlResult.jobId
         if (currentJobId != null) {
@@ -234,9 +244,11 @@ class SocialDownloadWorker(
                 return@withContext Result.failure(workDataOf("error" to "Job $socialUrl failed on NAS"))
             }
         }
+        SystemLogger.log("INFO", "SocialDownload", "Hoàn tất tải video mạng xã hội (jobId=$currentJobId, isRetry=${dlResult.isRetry})")
         if (dlResult.isRetry) return@withContext Result.retry()
 
         notifyResult("Không thể tải video", dlResult.error.orEmpty(), false, socialUrl)
+        SystemLogger.log("WARNING", "SocialDownload", "Hoàn tất tải video mạng xã hội (thất bại: ${dlResult.error.orEmpty()})")
         return@withContext Result.failure(dlResult.outputData)
     }
 
@@ -258,8 +270,11 @@ class SocialDownloadWorker(
                     .get()
                     .build()
                 val (status, errorMsg) = callFactory.newCall(pollReq).execute().use { resp ->
+                    // CC-005 P0: break terminal 401/403/404 (auth/sai job -> dung poll, truoc tiep tuc 15p)
+                    if (resp.code == 401 || resp.code == 403 || resp.code == 404) return@use Pair("failed", "HTTP ${resp.code}")
                     if (!resp.isSuccessful) return@use Pair("error", "HTTP ${resp.code}")
-                    val json = JSONObject(resp.body?.string() ?: "{}")
+                    val capped = WebDavManager.readCappedBody(resp, WebDavManager.MAX_JSON_BODY_BYTES) ?: "{}"
+                    val json = JSONObject(capped)
                     Pair(json.optString("status", "running"), json.optString("error", ""))
                 }
                 when (status) {
@@ -305,7 +320,7 @@ class SocialDownloadWorker(
             .build()
         try {
             NotificationManagerCompat.from(applicationContext).notify(
-                NOTIFICATION_BASE_ID + (notificationKey.hashCode() and 0x0FFF),
+                NOTIFICATION_BASE_ID + (notificationKey.hashCode() and 0xFFFF),  // CC-005 P0: giam collision 4k->64k
                 notification
             )
         } catch (_: SecurityException) {

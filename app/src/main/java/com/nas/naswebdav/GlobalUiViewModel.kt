@@ -20,13 +20,13 @@ import com.nas.naswebdav.ui.dialogs.DialogType
 class GlobalUiViewModel : ViewModel() {
 
     var showCommonDialog by mutableStateOf(false)
-        internal set
+        private set
 
     var commonDialogType by mutableStateOf(DialogType.SUCCESS)
-        internal set
+        private set
 
     var commonDialogMessage by mutableStateOf("")
-        internal set
+        private set
 
     fun show(type: DialogType, message: String) {
         commonDialogType = type
@@ -36,5 +36,32 @@ class GlobalUiViewModel : ViewModel() {
 
     fun dismiss() {
         showCommonDialog = false
+        commonDialogMessage = ""
+    }
+
+    // CC-005 P1: Snackbar consume-once — thay Toast rời rạc. post() tăng
+    // snackbarNonce để UI LaunchedEffect(nonce) show 1 lần rồi consume.
+    // Dùng GlobalUiVM đã có (single dialog host ở MainActivity) — không tạo
+    // SnackbarHostState thứ hai.
+    var snackbarNonce by mutableStateOf(0L)
+        private set
+
+    var snackbarMessage by mutableStateOf("")
+        private set
+
+    var snackbarActionLabel by mutableStateOf<String?>(null)
+        private set
+
+    fun postSnackbar(message: String, actionLabel: String? = null) {
+        if (message.isBlank()) return
+        snackbarMessage = message
+        snackbarActionLabel = actionLabel
+        snackbarNonce = System.currentTimeMillis()
+    }
+
+    fun consumeSnackbar() {
+        snackbarNonce = 0L
+        snackbarMessage = ""
+        snackbarActionLabel = null
     }
 }

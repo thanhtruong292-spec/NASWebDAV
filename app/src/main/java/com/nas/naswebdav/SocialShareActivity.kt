@@ -12,7 +12,7 @@ class SocialShareActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (intent?.action != Intent.ACTION_SEND) {
+        if (intent?.action != Intent.ACTION_SEND && intent?.action != Intent.ACTION_SEND_MULTIPLE) {
             finishAndRemoveTask()
             return
         }
@@ -21,7 +21,17 @@ class SocialShareActivity : Activity() {
         // on share mode: EXTRA_TEXT (plain caption), EXTRA_STREAM (media URI), or
         // EXTRA_HTML_TEXT (rich text with <a href>). We scan all three and take
         // the first supported URL we find.
+        // CC-005 P2: SEND_MULTIPLE — EXTRA_TEXT có thể là ArrayList<String> (nhiều URL một lần).
         val candidates = mutableListOf<String>()
+        if (intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                intent?.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.os.Parcelable::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent?.getParcelableArrayListExtra<android.os.Parcelable>(Intent.EXTRA_STREAM)
+            }?.forEach { p -> p.toString().takeIf { it.isNotBlank() }?.let { candidates += it } }
+            intent?.getStringArrayListExtra(Intent.EXTRA_TEXT)?.forEach { candidates += it }
+        }
         intent?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let { candidates += it }
         intent?.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT)?.toString()?.let { candidates += it }
         // EXTRA_STREAM: some apps (Facebook) put a content:// URI here that
@@ -48,10 +58,10 @@ class SocialShareActivity : Activity() {
             }
         }
 
-        val socialUrl = candidates.firstNotNullOfOrNull { text ->
-            SocialShareParser.extractSupportedUrl(text)
-        }
-        if (socialUrl == null) {
+        val socialUrls = candidates.flatMap { text ->
+            SocialShareParser.extractAllSupportedUrls(text)
+        }.distinct()
+        if (socialUrls.isEmpty()) {
             showToast(getString(R.string.social_share_invalid))
             finishAndRemoveTask()
             return
@@ -66,8 +76,11 @@ class SocialShareActivity : Activity() {
             return
         }
 
-        SocialDownloadWorker.enqueue(applicationContext, socialUrl)
-        showToast(getString(R.string.social_share_queued))
+        socialUrls.forEach { SocialDownloadWorker.enqueue(applicationContext, it) }
+        showToast(
+            if (socialUrls.size > 1) "Đã xếp hàng ${socialUrls.size} link"
+            else getString(R.string.social_share_queued)
+        )
         finishAndRemoveTask()
     }
 

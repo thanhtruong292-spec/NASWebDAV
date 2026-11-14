@@ -126,11 +126,9 @@ dependencies {
 
     // Sinh trắc học & Fragment hỗ trợ
     implementation(libs.androidx.biometric)
-    implementation(libs.androidx.appcompat)
 
     // ExoPlayer (Jetpack Media3) — khai báo duy nhất 1 lần
     implementation(libs.androidx.media3.exoplayer)
-    implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.session)
@@ -138,7 +136,6 @@ dependencies {
 
     // Duyệt cây thư mục an toàn cho tính năng Đồng bộ
     implementation(libs.androidx.documentfile)
-    implementation(libs.sardine.android)
 
     // Coil - Tải ảnh & video thumbnail
     implementation(libs.coil.compose)

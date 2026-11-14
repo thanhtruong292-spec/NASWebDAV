@@ -1,0 +1,86 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Android\NASWebDAV
+plugins: anyio-4.13.0, base-url-2.1.0, playwright-0.7.2
+collecting ... collected 50 items / 6 errors
+
+=================================== ERRORS ====================================
+_____________ ERROR collecting tests/test_audit_20261026_fixes.py _____________
+tests\test_audit_20261026_fixes.py:15: in <module>
+    SOURCE = SERVER_PATH.read_text(encoding="utf-8")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\backend\\nas_api_server.py'
+_______________ ERROR collecting tests/test_livestream_fixes.py _______________
+tests\test_livestream_fixes.py:27: in <module>
+    SOURCE = SERVER_PATH.read_text(encoding="utf-8")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\backend\\nas_api_server.py'
+______________ ERROR collecting tests/test_livestream_limits.py _______________
+tests\test_livestream_limits.py:21: in <module>
+    SOURCE = SERVER_PATH.read_text(encoding="utf-8")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\backend\\nas_api_server.py'
+________________ ERROR collecting tests/test_review_tiktok.py _________________
+tests\test_review_tiktok.py:16: in <module>
+    SOURCE = (Path(__file__).resolve().parents[1] / "backend" / "nas_api_server.py").read_text(encoding="utf-8")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\backend\\nas_api_server.py'
+_______________ ERROR collecting tests/test_social_extractor.py _______________
+tests\test_social_extractor.py:22: in <module>
+    _social_logic = load_social_logic()
+                    ^^^^^^^^^^^^^^^^^^^
+tests\social_logic_loader.py:18: in load_social_logic
+    source = source_path.read_text(encoding="utf-8")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\nas_api_server.py'
+____________ ERROR collecting tests/test_status_cache_recovery.py _____________
+tests\test_status_cache_recovery.py:10: in <module>
+    SERVER_TREE = ast.parse(SERVER_PATH.read_text(encoding="utf-8"))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:787: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\Truong\AppData\Local\Python\pythoncore-3.14-64\Lib\pathlib\__init__.py:771: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Android\\NASWebDAV\\backend\\nas_api_server.py'
+=========================== short test summary info ===========================
+ERROR tests/test_audit_20261026_fixes.py - FileNotFoundError: [Errno 2] No su...
+ERROR tests/test_livestream_fixes.py - FileNotFoundError: [Errno 2] No such f...
+ERROR tests/test_livestream_limits.py - FileNotFoundError: [Errno 2] No such ...
+ERROR tests/test_review_tiktok.py - FileNotFoundError: [Errno 2] No such file...
+ERROR tests/test_social_extractor.py - FileNotFoundError: [Errno 2] No such f...
+ERROR tests/test_status_cache_recovery.py - FileNotFoundError: [Errno 2] No s...
+!!!!!!!!!!!!!!!!!!! Interrupted: 6 errors during collection !!!!!!!!!!!!!!!!!!!
+============================== 6 errors in 1.70s ==============================

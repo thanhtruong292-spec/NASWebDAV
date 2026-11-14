@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import com.nas.naswebdav.ui.components.NasEmptyState
-import com.nas.naswebdav.ui.layout.adaptiveGridColumns
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -136,6 +135,7 @@ fun BrowserScreen(
     val smartToolsVM = LocalSmartToolsVM.current
     val autoBackupVM = LocalAutoBackupVM.current
     val authVM = LocalAuthSessionVM.current
+    val sharedConnectionStatus by com.nas.naswebdav.shared.SharedStateHolder.connectionStatus.collectAsStateWithLifecycle()
     val sysMonitorVM = LocalSystemMonitorVM.current
     val globalUiVM  = LocalGlobalUiVM.current
     // Trạng thái thanh tìm kiếm
@@ -164,6 +164,15 @@ fun BrowserScreen(
     LaunchedEffect(fileBrowserVM.currentUrl) { 
         viewedRefreshTick++
         selectedCategory = "ALL"
+    }
+
+    // Self-heal direct/restored navigation into Files. A saved back-stack can
+    // recreate this screen without the Dashboard callback that normally sets
+    // the root URL, which previously left the page looking completely blank.
+    LaunchedEffect(Unit) {
+        if (fileBrowserVM.currentUrl.isBlank() && WebDavManager.currentBaseUrl.isNotBlank()) {
+            fileBrowserVM.resetToDefaultMode()
+        }
     }
 
     // SORT — reactive từ FileBrowserViewModel (survive rotation).
@@ -324,78 +333,12 @@ fun BrowserScreen(
 
     // ============ DIALOG: Cấu hình Quét dọn Rác NHANH (PHASE 9) ============
     if (showDuplicateConfigDialog) {
-        AlertDialog(
-            onDismissRequest = { showDuplicateConfigDialog = false },
-            icon = { Icon(Icons.Default.Bolt, null, tint = AccentOrange, modifier = Modifier.size(36.dp)) },
-            title = { Text(stringResource(R.string.dialog_duplicate_config), fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.dialog_duplicate_config_desc), fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
-                    
-                    // Option 1: Lightning Mode
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { isLightningMode = !isLightningMode }.padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = isLightningMode,
-                            onCheckedChange = { isLightningMode = it },
-                            colors = CheckboxDefaults.colors(checkedColor = AccentOrange)
-                        )
-                        Column(modifier = Modifier.padding(start = 4.dp)) {
-                            Text(stringResource(R.string.dialog_duplicate_fast_mode), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (isLightningMode) AccentOrange else MaterialTheme.colorScheme.onSurface)
-                            Text(stringResource(R.string.dialog_duplicate_fast_desc), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
-                        }
-                    }
-
-                    // Option 2: Force Restart
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { isForceRestartDuplicate = !isForceRestartDuplicate }.padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = isForceRestartDuplicate, onCheckedChange = { isForceRestartDuplicate = it })
-                        Column(modifier = Modifier.padding(start = 4.dp)) {
-                            Text(stringResource(R.string.dialog_duplicate_rescan), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text(stringResource(R.string.dialog_duplicate_rescan_desc), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                        }
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-                    HorizontalDivider(color = TextTertiary.copy(alpha = 0.2f))
-                    Spacer(Modifier.height(8.dp))
-
-                    // Option 3: Tự động chạy ngầm (Auto Clean)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(stringResource(R.string.dialog_duplicate_auto_clean), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                            Text(stringResource(R.string.dialog_duplicate_auto_clean_desc), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, lineHeight = 14.sp)
-                        }
-                        Switch(
-                            checked = smartToolsVM.autoCleanEnabled,
-                            onCheckedChange = { smartToolsVM.toggleAutoClean(context, it) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = AccentBlue, checkedTrackColor = AccentBlue.copy(alpha = 0.5f))
-                        )
-                    }
-                }
+        com.nas.naswebdav.ui.dialogs.DuplicateConfigDialog(
+            context = context,
+            onStartScan = { forceRestart, lightning ->
+                smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = forceRestart, lightningMode = lightning)
             },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDuplicateConfigDialog = false
-                        smartToolsVM.startBackgroundDuplicateScan(context, forceRestart = isForceRestartDuplicate, lightningMode = isLightningMode)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-                ) {
-                    Text(stringResource(R.string.dialog_start_scan))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDuplicateConfigDialog = false }) { Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.outline) }
-            }
+            onDismiss = { showDuplicateConfigDialog = false }
         )
     }
 
@@ -503,8 +446,8 @@ fun BrowserScreen(
             }
         )
     }
-    val serverSearchResults by fileBrowserVM.searchResults.collectAsState()
-    val isServerSearchActive by fileBrowserVM.isSearchActive.collectAsState()
+    val serverSearchResults by fileBrowserVM.searchResults.collectAsStateWithLifecycle()
+    val isServerSearchActive by fileBrowserVM.isSearchActive.collectAsStateWithLifecycle()
     // Track when we enter search mode so first Back press only closes search,
     // not navigate away from BrowserScreen.
     LaunchedEffect(isSearching) {
@@ -630,7 +573,7 @@ fun BrowserScreen(
                                 text = "Nguồn: ${autoBackupVM.autoBackupSourcePath.substringBeforeLast("/", "").takeLast(15)}/${autoBackupVM.autoBackupCurrentFile}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
                             Spacer(Modifier.height(2.dp))
@@ -638,7 +581,7 @@ fun BrowserScreen(
                                 text = "Đích: ${autoBackupVM.autoBackupDestPath}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f)
                             )
@@ -694,7 +637,7 @@ fun BrowserScreen(
                                 )
                                 Text(
                                     stringResource(R.string.cd_restore),
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                                 )
                             }
@@ -717,7 +660,7 @@ fun BrowserScreen(
                                 )
                                 Text(
                                     stringResource(R.string.cd_copy),
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                                 )
                             }
@@ -740,7 +683,7 @@ fun BrowserScreen(
                                 )
                                 Text(
                                     stringResource(R.string.cd_move),
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     color = if (hasSelection) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
                                 )
                             }
@@ -763,7 +706,7 @@ fun BrowserScreen(
                             )
                             Text(
                                 if (isTrash) "Xóa vĩnh viễn" else "Xóa",
-                                fontSize = 11.sp,
+                                fontSize = 12.sp,
                                 color = if (hasSelection) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
                             )
                         }
@@ -817,7 +760,8 @@ fun BrowserScreen(
                             Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.cd_clear))
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface, scrolledContainerColor = DarkSurface)
             )
         } else if (selectionMode) {
             // TÍNH NĂNG 7.L: Giao diện Gộp nhóm (Multi-Selection Mode Bar)
@@ -866,15 +810,21 @@ fun BrowserScreen(
                 // Moi action (Copy/Move/Xoa/Khoi phuc) nam o bottom bar ngang
                 // tam ngon tay cai — khong trung lap 2 noi.
                 actions = {},
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkCard, scrolledContainerColor = DarkCard)
             )
         } else {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (!fileBrowserVM.goBack()) onBackToMenu()
-                    }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_back))
+                    val decodedUrl = try { java.net.URLDecoder.decode(fileBrowserVM.currentUrl, "UTF-8") } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { fileBrowserVM.currentUrl }
+                    val baseUrl = WebDavManager.currentBaseUrl
+                    val relativePath = if (decodedUrl.startsWith(baseUrl)) decodedUrl.removePrefix(baseUrl) else ""
+                    val hasSubfolder = relativePath.trim('/').isNotEmpty() || fileBrowserVM.urlStack.size > 1
+                    if (fileBrowserVM.isSpecialMode || hasSubfolder) {
+                        IconButton(onClick = {
+                            if (!fileBrowserVM.goBack()) onBackToMenu()
+                        }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = stringResource(R.string.cd_back))
+                        }
                     }
                 },
                 title = {
@@ -884,51 +834,12 @@ fun BrowserScreen(
                         val baseUrl = WebDavManager.currentBaseUrl
                         val relativePath = if (decodedUrl.startsWith(baseUrl)) decodedUrl.removePrefix(baseUrl) else ""
                         val segments = relativePath.trim('/').split("/").filter { it.isNotEmpty() }
-                        if (segments.isEmpty()) "Thư mục gốc" else segments.last()
+                        if (segments.isEmpty()) "Tệp" else segments.last()
                     }
-                    Column {
-                        Text(displayTitle, maxLines = 1, style = MaterialTheme.typography.titleSmall)
-                    // Thiết kế Chip trạng thái kết nối
-                    val rawStatus = authVM.connectionStatus
-                        val displayStatus = if (rawStatus.contains("Cache", ignoreCase = true)) "Cache" else rawStatus
-
-                        val chipIcon = when {
-                            displayStatus.contains("Chờ", ignoreCase = true) -> Icons.Default.Help
-                            displayStatus.contains("Lỗi", ignoreCase = true) || displayStatus.contains("Mất", ignoreCase = true) -> Icons.Default.Cancel
-                            else -> Icons.Default.CheckCircle
-                        }
-
-                        val chipColor = when {
-                            displayStatus.contains("Chờ", ignoreCase = true) -> MaterialTheme.colorScheme.primary // Xanh dương
-                            displayStatus.contains("Lỗi", ignoreCase = true) || displayStatus.contains("Mất", ignoreCase = true) -> MaterialTheme.colorScheme.error // Đỏ
-                            displayStatus.contains("Cache", ignoreCase = true) -> AccentOrange // Cam
-                            else -> MaterialTheme.colorScheme.tertiary // Xanh lá
-                        }
-
-                        Surface(
-                            color = chipColor.copy(alpha = 0.15f), // Nền mờ bao quanh tinh tế hơn
-                            shape = RoundedCornerShape(percent = 50),
-                            modifier = Modifier.padding(top = 4.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = chipIcon,
-                                    contentDescription = null,
-                                    tint = chipColor,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = displayStatus + if (sysMonitorVM.networkPingMs != null && sysMonitorVM.networkPingMs!! >= 0) " - ${sysMonitorVM.networkPingMs}ms" else "",
-                                    color = chipColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = AppTypography.TitleLarge, color = TextPrimary)
+                        BrowserConnectionLabel(sharedConnectionStatus)
                     }
             }, actions = {
                 // Giữ lại 2 nút quan trọng nhất hiển thị trực tiếp
@@ -983,7 +894,7 @@ fun BrowserScreen(
                         )
                     }
                 }
-            })
+            }, colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface, scrolledContainerColor = DarkSurface))
         }
     }) { padding ->
         // displayedFiles đã được khai báo trước Scaffold ở trên
@@ -1002,11 +913,10 @@ fun BrowserScreen(
                 val scrollState = androidx.compose.foundation.rememberScrollState()
                 LaunchedEffect(segments) { scrollState.animateScrollTo(scrollState.maxValue) }
                 
-                Row(
+                if (segments.isNotEmpty()) Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(DarkCardHover.copy(alpha = 0.5f))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = BrowserDensity.PageInset),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Trái: Đường dẫn dạng cuộn ngang
@@ -1018,7 +928,9 @@ fun BrowserScreen(
                     ) {
                         Text("NAS", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { fileBrowserVM.navigateToUrl("/") })
+                            modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                .clickable { fileBrowserVM.navigateToUrl(baseUrl.ifBlank { "/" }) }
+                                .wrapContentHeight())
                         
                         segments.forEachIndexed { index, segment ->
                             Text(" / ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
@@ -1029,35 +941,45 @@ fun BrowserScreen(
                                 fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isLast) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
                                 maxLines = 1,
-                                modifier = if (!isLast) Modifier.clickable {
-                                    val targetPath = segments.take(index + 1).joinToString("/") + "/"
-                                    val targetUrl = baseUrl + targetPath
+                                modifier = if (!isLast) Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).clickable {
+                                    // CC-004 P1-5: encode tung segment (tieng Viet/dau/#?&%)
+                                    // truoc khi ghep URL — ban cu ghep raw gay 404.
+                                    val enc = { s: String -> com.nas.naswebdav.encodeWebDavSegment(s) }
+                                    val targetPath = segments.take(index + 1).joinToString("/") { enc(it) } + "/"
+                                    val targetUrl = baseUrl.trimEnd('/') + "/" + targetPath
                                     fileBrowserVM.urlStack.clear()
                                     for (i in 0 until index + 1) {
                                         if (i == 0) fileBrowserVM.urlStack.push(baseUrl)
-                                        else fileBrowserVM.urlStack.push(baseUrl + segments.take(i).joinToString("/") + "/")
+                                        else fileBrowserVM.urlStack.push(baseUrl.trimEnd('/') + "/" + segments.take(i).joinToString("/") { enc(it) } + "/")
                                     }
                                     fileBrowserVM.navigateToUrl(targetUrl)
-                                } else Modifier
+                                }.wrapContentHeight() else Modifier
                             )
                         }
                     }
                     
-                    // Phải: Thống kê động theo danh sách đang hiển thị (cả tìm kiếm và duyệt thư mục)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = BrowserDensity.PageInset),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Counts and controls have their own row, keeping the path readable.
                     val targetList = displayedFiles
                     val folders = targetList.count { it.isDirectory }
                     val files = targetList.count { !it.isDirectory }
                     val statsText = buildList {
                         if (folders > 0) add("$folders thư mục")
                         if (files > 0) add("$files tệp")
-                    }.joinToString(", ").ifEmpty { "Trống" }
+                    }.joinToString(" • ").ifEmpty {
+                        if (fileBrowserVM.isLoading) "Đang tải…" else "0 mục"
+                    }
 
                     Text(
                         text = statsText,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.outline,
                         maxLines = 1,
-                        modifier = Modifier.padding(start = 8.dp)
+                        modifier = Modifier.weight(1f)
                     )
 
                     // Nút Gộp Chuyển đổi chế độ hiển thị file (ICON -> LIST -> DETAIL -> ICON)
@@ -1175,34 +1097,27 @@ fun BrowserScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = BrowserDensity.PageInset),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     listOf(
-                        "ALL" to "Tất cả",
-                        "IMAGE" to "Ảnh",
-                        "VIDEO" to "Video",
-                        "DOC" to "Tài liệu",
-                        "ARCHIVE" to "File nén"
-                    ).forEach { (catKey, catLabel) ->
+                        Triple("ALL", "Tất cả", Icons.Default.Apps to AccentCyan),
+                        Triple("IMAGE", "Ảnh", Icons.Default.Image to AccentGreen),
+                        Triple("VIDEO", "Video", Icons.Default.Movie to AccentPink),
+                        Triple("DOC", "Tài liệu", Icons.Default.Description to AccentBlue),
+                        Triple("ARCHIVE", "Nén", Icons.Default.FolderZip to AccentPurple)
+                    ).forEach { (catKey, catLabel, iconTint) ->
                         val isSelected = selectedCategory == catKey
-                        FilterChip(
+                        BrowserFilterTab(
+                            label = catLabel,
                             selected = isSelected,
+                            icon = iconTint.first,
+                            activeTint = iconTint.second,
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 selectedCategory = if (isSelected && catKey != "ALL") "ALL" else catKey
-                            },
-                            label = { Text(catLabel, fontSize = 11.sp) },
-                            leadingIcon = if (isSelected) {
-                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(13.dp)) }
-                            } else null,
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.height(30.dp)
+                            }
                         )
                     }
                 }
@@ -1218,6 +1133,12 @@ fun BrowserScreen(
                     // TÍNH NĂNG 3.F: Thiết lập Haptic Feedback phản hồi vật lý
                     view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                     fileBrowserVM.refresh()
+                    // CC-005 P1: pull-refresh browser cũng cập nhật trạng thái kết
+                    // nối + storage (như MainMenu) — tránh badge Online/dung lượng cũ.
+                    runCatching { authVM.checkSmartNetwork(context) }
+                    runCatching { sysMonitorVM.pingNas() }
+                    runCatching { sysMonitorVM.triggerStatusUpdate() }
+                    runCatching { sysMonitorVM.fetchStorageSummary(force = true) }
                 }
             }
 
@@ -1242,7 +1163,7 @@ fun BrowserScreen(
                             modifier = Modifier.fillMaxWidth().clickable { searchQuery = history.query; fileBrowserVM.searchFiles(history.query); focusManager.clearFocus() }.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(end = 16.dp))
+                            Icon(Icons.Default.History, contentDescription = "Lịch sử", tint = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(end = 16.dp))
                             Text(history.query, color = MaterialTheme.colorScheme.onBackground)
                         }
                     }
@@ -1276,7 +1197,11 @@ fun BrowserScreen(
                             }
                         }
                     } else {
-                        mapOf("" to displayedFiles)
+                        val folders = displayedFiles.filter { it.isDirectory }
+                        val files = displayedFiles.filter { !it.isDirectory }
+                        if (folders.isNotEmpty() && files.isNotEmpty()) {
+                            linkedMapOf("Thư mục" to folders, "Tệp" to files)
+                        } else mapOf("" to displayedFiles)
                     }
                 }
 
@@ -1325,32 +1250,35 @@ fun BrowserScreen(
                     }
                 }
 
-                // TÍNH NĂNG MỚI: Chuyển đổi layout theo chế độ hiển thị
+                val gridUnits = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600) 16 else 12
+                val fileSpan = if (gridUnits == 12) 6 else 4
                 when (viewMode) {
                     BrowserViewMode.ICON -> {
-                        // ICON MODE: Lưới icon thích ứng (3 cột điện thoại, 4 cột tablet, 5 cột máy tính)
+                        // 6 cột điện thoại, 8 cột màn hình rộng; giữ khoảng cách chạm 8dp.
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(adaptiveGridColumns()),
+                            columns = GridCells.Fixed(gridUnits),
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(AppSpacing.XS),
-                            horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS),
-                            verticalArrangement = Arrangement.spacedBy(AppSpacing.XS)
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             groupedFiles.forEach { (header, filesInGroup) ->
                                 if (header.isNotEmpty()) {
                                     item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                                         Text(
                                             text = header,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)
+                                            style = AppTypography.SectionTitle,
+                                            color = TextTertiary,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                         )
                                     }
                                 }
                                 items(
                                     items = filesInGroup,
                                     key = { it.path },
-                                    contentType = { if (it.isDirectory) "folder" else "file" }
+                                    contentType = { if (it.isDirectory) "folder" else "file" },
+                                    // 6 folders or 2 previews per row on phones; keep file previews larger.
+                                    span = { f -> androidx.compose.foundation.lazy.grid.GridItemSpan(if (f.isDirectory) 2 else fileSpan) }
                                 ) { file ->
                                     BrowserScreenFileItemGridCell(
                                         file = file,
@@ -1379,7 +1307,7 @@ fun BrowserScreen(
                         // LIST MODE: Danh sách compact — thumbnail 32x32, tên + dung lượng
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
                         ) {
                             groupedFiles.forEach { (header, filesInGroup) ->
                                 if (header.isNotEmpty()) {
@@ -1396,106 +1324,13 @@ fun BrowserScreen(
                                     items = filesInGroup,
                                     key = { it.path }
                                 ) { file ->
-                                    val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
-                                    val isImageFile = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
-                                    val isMedia = isVideo || isImageFile
-                                    val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
-                                    val auth = WebDavManager.currentAuthState().authHeader
-
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(48.dp)
-                                            .combinedClickable(
-                                                onClick = { onFileClick(file) },
-                                                onLongClick = { onFileLongClick(file) }
-                                            )
-                                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Box(
+                                        Modifier.fillMaxWidth().clip(AppShapes.Input).combinedClickable(
+                                            onClick = { onFileClick(file) },
+                                            onLongClick = { onFileLongClick(file) }
+                                        )
                                     ) {
-                                        // Selection checkbox
-                                        if (selectionMode) {
-                                            Icon(
-                                                imageVector = if (selectedFiles.contains(file)) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                                contentDescription = null,
-                                                tint = if (selectedFiles.contains(file)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(Modifier.width(6.dp))
-                                        }
-
-                                        // Small thumbnail / folder icon
-                                        if (isMedia) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(32.dp)
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(DarkCard),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                var listThumbState by remember { mutableStateOf<ThumbState?>(null) }
-                                                WebDavCachedThumbnail(
-                                                    url = file.path,
-                                                    auth = auth,
-                                                    isVideo = isVideo,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    onStateChange = { listThumbState = it }
-                                                )
-                                                if (isVideo && listThumbState == ThumbState.SUCCESS) {
-                                                    Icon(
-                                                        Icons.Default.PlayArrow,
-                                                        contentDescription = null,
-                                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                }
-                                            }
-                                        } else if (file.isDirectory) {
-                                            Icon(
-                                                imageVector = Icons.Default.Folder,
-                                                contentDescription = null,
-                                                tint = AccentOrange,
-                                                modifier = Modifier.size(32.dp)
-                                            )
-                                        } else {
-                                            val ext = file.name.substringAfterLast('.', "").uppercase()
-                                            val extColor = when {
-                                                isImageFile -> MaterialTheme.colorScheme.primary
-                                                isVideo -> AccentOrange
-                                                ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> MaterialTheme.colorScheme.error
-                                                ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> MaterialTheme.colorScheme.tertiary
-                                                ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> MaterialTheme.colorScheme.secondary
-                                                ext in listOf("MP3", "WAV", "FLAC", "M4A") -> MaterialTheme.colorScheme.primary
-                                                else -> TextTertiary
-                                            }
-                                            Icon(
-                                                imageVector = Icons.Default.InsertDriveFile,
-                                                contentDescription = null,
-                                                tint = extColor,
-                                                modifier = Modifier.size(32.dp)
-                                            )
-                                        }
-
-                                        Spacer(Modifier.width(10.dp))
-
-                                        // File name
-                                        Text(
-                                            text = file.name,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.weight(1f)
-                                        )
-
-                                        // Size
-                                        Text(
-                                            text = displaySize,
-                                            maxLines = 1,
-                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                            color = MaterialTheme.colorScheme.outline,
-                                            modifier = Modifier.padding(start = 8.dp)
-                                        )
+                                        BrowserEntryRow(file, selectionMode, selectedFiles.contains(file))
                                     }
                                 }
                             }
@@ -1503,39 +1338,40 @@ fun BrowserScreen(
                     }
 
                     BrowserViewMode.DETAIL -> {
-                        // DETAIL MODE: Danh sách có cột — icon, tên (trọng số), dung lượng, ngày sửa
+                        // DETAIL MODE: bảng dense phẳng — khác hẳn LIST (card) và ICON (lưới).
+                        // Header mảnh + hàng 52dp không card, divider mờ, icon nhỏ không badge.
                         Column(modifier = Modifier.fillMaxSize()) {
                             // Column headers
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(DarkCard)
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Spacer(Modifier.width(32.dp + 10.dp)) // Icon column
+                                Spacer(Modifier.width(22.dp + 12.dp)) // Icon column
                                 Text(
                                     "Tên",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                                    style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold),
                                     modifier = Modifier.weight(1f),
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = TextTertiary
                                 )
                                 Text(
                                     "Dung lượng",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                    modifier = Modifier.width(72.dp),
+                                    style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.width(80.dp),
                                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = TextTertiary
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     "Sửa đổi",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                                    modifier = Modifier.width(90.dp),
+                                    style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold),
+                                    modifier = Modifier.width(76.dp),
                                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = TextTertiary
                                 )
                             }
+                            HorizontalDivider(color = DarkDivider, thickness = 1.dp)
 
                             LazyColumn(modifier = Modifier.fillMaxSize()) {
                                 groupedFiles.forEach { (header, filesInGroup) ->
@@ -1562,42 +1398,47 @@ fun BrowserScreen(
                                         } else ""
                                         val auth = WebDavManager.currentAuthState().authHeader
 
+                                        Column {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(40.dp)
+                                                .heightIn(min = 52.dp)
+                                                .background(
+                                                    if (selectedFiles.contains(file)) AccentCyan.copy(alpha = 0.12f)
+                                                    else Color.Transparent
+                                                )
                                                 .combinedClickable(
                                                     onClick = { onFileClick(file) },
                                                     onLongClick = { onFileLongClick(file) }
                                                 )
-                                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                                                .padding(horizontal = 16.dp, vertical = 6.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             // Selection checkbox
                                             if (selectionMode) {
                                                 Icon(
                                                     imageVector = if (selectedFiles.contains(file)) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                                    contentDescription = null,
-                                                    tint = if (selectedFiles.contains(file)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                                    modifier = Modifier.size(18.dp)
+                                                    contentDescription = "Chọn file",
+                                                    tint = if (selectedFiles.contains(file)) AccentCyan else TextTertiary,
+                                                    modifier = Modifier.size(20.dp)
                                                 )
-                                                Spacer(Modifier.width(6.dp))
+                                                Spacer(Modifier.width(12.dp))
                                             }
 
-                                            // Small icon
+                                            // Small flat icon — không badge/card như LIST
                                             if (file.isDirectory) {
                                                 Icon(
                                                     imageVector = Icons.Default.Folder,
-                                                    contentDescription = null,
-                                                    tint = AccentOrange,
-                                                    modifier = Modifier.size(24.dp)
+                                                    contentDescription = "Thư mục",
+                                                    tint = FolderIconTint,
+                                                    modifier = Modifier.size(22.dp)
                                                 )
                                             } else if (isVideo || isImageFile) {
                                                 Box(
                                                     modifier = Modifier
-                                                        .size(24.dp)
-                                                        .clip(RoundedCornerShape(3.dp))
-                                                        .background(DarkCard),
+                                                        .size(22.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(DarkInput),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     var detailThumbState by remember { mutableStateOf<ThumbState?>(null) }
@@ -1611,30 +1452,34 @@ fun BrowserScreen(
                                                     if (isVideo && detailThumbState == ThumbState.SUCCESS) {
                                                         Icon(
                                                             Icons.Default.PlayArrow,
-                                                            contentDescription = null,
-                                                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                                            contentDescription = "Phát video",
+                                                            tint = TextPrimary.copy(alpha = 0.9f),
                                                             modifier = Modifier.size(12.dp)
                                                         )
                                                     }
                                                 }
                                             } else {
+                                                val (_, docTint) = fileBadgeColors(file.name)
                                                 Icon(
                                                     imageVector = Icons.Default.InsertDriveFile,
-                                                    contentDescription = null,
-                                                    tint = TextSecondary,
-                                                    modifier = Modifier.size(24.dp)
+                                                    contentDescription = "Tệp",
+                                                    tint = docTint,
+                                                    modifier = Modifier.size(22.dp)
                                                 )
                                             }
 
-                                            Spacer(Modifier.width(10.dp))
+                                            Spacer(Modifier.width(12.dp))
 
                                             // File name
                                             Text(
                                                 text = file.name,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
-                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                                                color = MaterialTheme.colorScheme.onSurface,
+                                                style = AppTypography.BodyMedium.copy(
+                                                    fontWeight = FontWeight.Medium,
+                                                    fontSize = 13.sp
+                                                ),
+                                                color = TextPrimary,
                                                 modifier = Modifier.weight(1f)
                                             )
 
@@ -1642,9 +1487,9 @@ fun BrowserScreen(
                                             Text(
                                                 text = displaySize,
                                                 maxLines = 1,
-                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                                color = MaterialTheme.colorScheme.outline,
-                                                modifier = Modifier.width(72.dp),
+                                                style = AppTypography.BodySmall.copy(fontSize = 12.sp),
+                                                color = TextSecondary,
+                                                modifier = Modifier.width(80.dp),
                                                 textAlign = androidx.compose.ui.text.style.TextAlign.End
                                             )
 
@@ -1654,11 +1499,17 @@ fun BrowserScreen(
                                             Text(
                                                 text = displayDate,
                                                 maxLines = 1,
-                                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                                color = MaterialTheme.colorScheme.outline,
-                                                modifier = Modifier.width(90.dp),
+                                                style = AppTypography.BodySmall.copy(fontSize = 12.sp),
+                                                color = TextSecondary,
+                                                modifier = Modifier.width(76.dp),
                                                 textAlign = androidx.compose.ui.text.style.TextAlign.End
                                             )
+                                        }
+                                        HorizontalDivider(
+                                            color = DarkDivider.copy(alpha = 0.6f),
+                                            thickness = 1.dp,
+                                            modifier = Modifier.padding(horizontal = 16.dp)
+                                        )
                                         }
                                     }
                                 }
@@ -1682,11 +1533,11 @@ fun BrowserScreen(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.CloudOff, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+                        Icon(Icons.Default.CloudOff, contentDescription = "Không thể kết nối NAS", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(12.dp))
                         Text(stringResource(R.string.error_cannot_connect_nas), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                         Spacer(Modifier.height(4.dp))
-                        Text(currentError, color = MaterialTheme.colorScheme.outline, fontSize = 11.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Text(currentError, color = MaterialTheme.colorScheme.outline, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
                         Button(onClick = { fileBrowserVM.refresh() }) { Text(stringResource(R.string.action_retry)) }
                     }
@@ -1712,40 +1563,111 @@ fun BrowserScreen(
                                     Text("Đang tìm \"$searchQuery\"...", color = MaterialTheme.colorScheme.outline, fontSize = 13.sp)
                                 }
                             } else {
-                            val showSearchEmpty = state == "noresult"
-                            NasEmptyState(
-                                icon = if (showSearchEmpty) Icons.Default.SearchOff else Icons.Default.FolderOpen,
-                                title = when (state) {
-                                    "noresult" -> "Không tìm thấy kết quả"
-                                    "nocategory" -> "Không có tệp phù hợp"
-                                    else -> stringResource(R.string.label_folder_empty)
-                                },
-                                description = when (state) {
-                                    "noresult" -> "Không có tệp nào phù hợp với \"$searchQuery\""
-                                    "nocategory" -> "Không tìm thấy tệp thuộc danh mục đã chọn trong thư mục này"
-                                    else -> "Thư mục hiện tại chưa có dữ liệu nào"
-                                },
-                                actionText = when (state) {
-                                    "noresult" -> "Xóa tìm kiếm"
-                                    "nocategory" -> "Hiện tất cả tệp"
-                                    else -> "Làm mới"
-                                },
-                                onAction = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    when (state) {
-                                        "noresult" -> {
+                                val showSearchEmpty = state == "noresult"
+                                if (showSearchEmpty) {
+                                    NasEmptyState(
+                                        icon = Icons.Default.SearchOff,
+                                        title = "Không tìm thấy kết quả",
+                                        description = "Không có tệp nào phù hợp với \"$searchQuery\"",
+                                        actionText = "Xóa tìm kiếm",
+                                        onAction = {
                                             searchQuery = ""
                                             fileBrowserVM.clearSearch()
                                         }
-                                        "nocategory" -> {
-                                            selectedCategory = "ALL"
-                                        }
-                                        else -> {
-                                            fileBrowserVM.refresh()
+                                    )
+                                } else {
+                                    // Empty folders need a useful landing panel, not a
+                                    // giant blank canvas. This follows modern file-manager
+                                    // patterns: clear context, one primary action, and one
+                                    // nearby recovery/action path.
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 24.dp),
+                                        shape = AppShapes.Card,
+                                        color = DarkCard,
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder),
+                                        tonalElevation = 2.dp,
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(20.dp),
+                                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(52.dp)
+                                                        .clip(AppShapes.Input)
+                                                        .background(AccentCyan.copy(alpha = 0.14f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.FolderOpen,
+                                                        contentDescription = "Mở thư mục",
+                                                        tint = AccentCyan,
+                                                        modifier = Modifier.size(28.dp)
+                                                    )
+                                                }
+                                                Spacer(Modifier.width(14.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(
+                                                        if (state == "nocategory") "Không có tệp phù hợp" else "Thư mục trống",
+                                                        style = AppTypography.TitleMedium,
+                                                        color = TextPrimary
+                                                    )
+                                                    Text(
+                                                        if (state == "nocategory")
+                                                            "Bỏ bộ lọc để xem toàn bộ nội dung thư mục."
+                                                        else
+                                                            "Chưa có nội dung được hiển thị ở vị trí này.",
+                                                        style = AppTypography.BodySmall,
+                                                        color = TextSecondary
+                                                    )
+                                                }
+                                            }
+                                            HorizontalDivider(color = DarkCardBorder)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        if (state == "nocategory") {
+                                                            selectedCategory = "ALL"
+                                                        } else {
+                                                            fileBrowserVM.refresh()
+                                                        }
+                                                    },
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = AppShapes.Pill,
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = AccentCyan,
+                                                        contentColor = DarkSurface
+                                                    )
+                                                ) {
+                                                    Icon(
+                                                        if (state == "nocategory") Icons.Default.FilterAltOff else Icons.Default.Refresh,
+                                                        contentDescription = "Lọc",
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text(if (state == "nocategory") "Bỏ lọc" else "Làm mới")
+                                                }
+                                                OutlinedButton(
+                                                    onClick = { showCreateFolderDialog = true },
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = AppShapes.Pill,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
+                                                ) {
+                                                    Icon(Icons.Default.CreateNewFolder, contentDescription = "Tạo thư mục mới", modifier = Modifier.size(18.dp))
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text("Tạo thư mục")
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                            )
                             }
                         }
                     }
@@ -1781,9 +1703,6 @@ fun BrowserScreenFileItemGridCell(
 ) {
     val isVideo = com.nas.naswebdav.utils.MediaUtils.isVideo(file.name)
     val smartToolsVM = com.nas.naswebdav.LocalSmartToolsVM.current
-    // Gọi thẳng từ Utils để ăn trọn mọi định dạng ảnh (HEIC, PNG, GIF, BMP...)
-    val isImage = com.nas.naswebdav.utils.MediaUtils.isImage(file.name)
-    val isMedia = isVideo || isImage
     val auth = WebDavManager.currentAuthState().authHeader
 
     var showMenu by remember { mutableStateOf(false) }
@@ -1881,7 +1800,7 @@ fun BrowserScreenFileItemGridCell(
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(AppShapes.Input)
             .combinedClickable(
                 onClick = {
                     // Mark file da xem -> red dot bien mat. Folder khong tracking.
@@ -1904,14 +1823,15 @@ fun BrowserScreenFileItemGridCell(
                         showMenu = true
                     }
                 }
-            )
-            .padding(horizontal = 2.dp, vertical = 2.dp),
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
             DropdownMenuItem(text = { Text(stringResource(R.string.action_download)) }, onClick = {
                 showMenu = false
-                val request = android.app.DownloadManager.Request(file.path.toUri())
+                // CC-004 P1-1: chuan hoa URL truoc khi dua cho DownloadManager — path raw
+                // co space/dau/#?&% se bi DownloadManager tu choi (IllegalArgumentException).
+                val request = android.app.DownloadManager.Request(com.nas.naswebdav.toValidUrl(file.path).toUri())
                     .setTitle(file.name)
                     .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                     .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, file.name)
@@ -1925,7 +1845,8 @@ fun BrowserScreenFileItemGridCell(
             DropdownMenuItem(text = { Text(stringResource(R.string.action_copy_link)) }, onClick = {
                 showMenu = false
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", file.path))
+                // CC-004 P1-1: copy URL da chuan hoa — path raw co space/dau/#?&% se hong khi dan noi khac.
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NAS Link", com.nas.naswebdav.toValidUrl(file.path)))
 
                 commonDialogType = DialogType.SUCCESS
                 commonDialogMessage = "Đã sao chép liên kết tệp!"
@@ -1978,185 +1899,13 @@ fun BrowserScreenFileItemGridCell(
             DropdownMenuItem(text = { Text(stringResource(R.string.action_delete_file), color = MaterialTheme.colorScheme.error) }, onClick = { showMenu = false; showDeleteDialog = true })
         }
 
-        // === KHUNG HIỂN THỊ CHÍNH — SAMSUNG MY FILES STYLE ===
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (file.isDirectory) Modifier.height(72.dp) else Modifier.aspectRatio(1f))
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    when {
-                        file.isDirectory -> Color.Transparent
-                        isMedia -> DarkCardHover
-                        else -> TextTertiary
-                    }
-                )
-        ) {
-            if (isMedia) {
-                // FIX 2026-07-13: thumbState sync — play icon chỉ hiện khi thumb load thành công
-                var thumbState by remember { mutableStateOf<ThumbState?>(value = null) }
-                WebDavCachedThumbnail(
-                    url = file.path, auth = auth, isVideo = isVideo,
-                    modifier = Modifier.fillMaxSize(),
-                    onStateChange = { thumbState = it }
-                )
-
-                // Badge video play icon — CHỈ hiện khi thumb load thành công
-                if (isVideo && thumbState == ThumbState.SUCCESS) {
-                    Icon(
-                        Icons.Default.PlayCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                        modifier = Modifier.size(28.dp).align(Alignment.Center)
-                    )
-                }
-            } else if (file.isDirectory) {
-                // THƯ MỤC: Icon folder lớn, canh giữa
-                Icon(
-                    imageVector = Icons.Default.Folder,
-                    contentDescription = null,
-                    tint = AccentOrange,
-                    modifier = Modifier.size(65.dp)
-                )
-            } else {
-                // FILE THƯỜNG: Icon cơ bản, canh giữa
-                Icon(
-                    imageVector = Icons.Default.InsertDriveFile,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(40.dp).align(Alignment.Center)
-                )
-            }
-
-            // GẮN BADGE THÔNG TIN (Cho mọi tệp không phải thư mục)
-            if (!file.isDirectory) {
-                val ext = file.name.substringAfterLast('.', "").uppercase().takeIf { it.isNotBlank() } ?: "FILE"
-                
-                // MÀU SẮC BADGE THEO LOẠI FILE
-                val extColor = when {
-                    isImage -> MaterialTheme.colorScheme.primary // Xanh dương
-                    isVideo -> AccentOrange // Cam
-                    ext in listOf("ZIP", "RAR", "7Z", "TAR", "GZ") -> MaterialTheme.colorScheme.error // Đỏ
-                    ext in listOf("TXT", "MD", "LOG", "JSON", "XML", "PY", "KT") -> MaterialTheme.colorScheme.tertiary // Xanh lá
-                    ext in listOf("PDF", "DOC", "DOCX", "XLS", "XLSX", "PPT", "PPTX") -> MaterialTheme.colorScheme.secondary // Tím
-                    ext in listOf("MP3", "WAV", "FLAC", "M4A") -> MaterialTheme.colorScheme.primary // Xanh Cyan
-                    else -> TextTertiary // Xám
-                }
-
-                // Extension góc dưới phải
-                Text(
-                    text = ext,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp)
-                        .background(extColor, RoundedCornerShape(4.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                )
-
-                // Dung lượng góc dưới trái
-                val displaySize = com.nas.naswebdav.utils.FormatUtils.formatBytes(file.contentLength)
-                Text(
-                    text = displaySize,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(4.dp)
-                        .background(DarkSurface.copy(alpha = 0.5f), RoundedCornerShape(3.dp))
-                        .padding(horizontal = 3.dp, vertical = 1.dp)
-                )
-            }
-
-            if (!selectionMode && !file.isDirectory) {
-                if (isTrash && file.lastModified > 0L) {
-                    val daysInTrash = java.util.concurrent.TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis() - file.lastModified)
-                    val daysLeft = (30 - daysInTrash).coerceAtLeast(0)
-                    val badgeColor = when {
-                        daysLeft <= 3 -> MaterialTheme.colorScheme.error
-                        daysLeft <= 7 -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(3.dp)
-                            .background(badgeColor.copy(alpha = 0.9f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 3.dp, vertical = 1.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(stringResource(R.string.label_days_left, daysLeft), color = MaterialTheme.colorScheme.onSurface, fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
-                    }
-                } else if (isNewFile) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(10.dp)
-                            .background(MaterialTheme.colorScheme.error, CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                    )
-                }
-            }
-
-            // OVERLAY MULTI-SELECT — chỉ khi đang chọn
-            if (selectionMode) {
-                // Lớp phủ mờ xanh khi được chọn
-                if (isSelected) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(AccentBlue.copy(alpha = 0.33f))
-                    )
-                }
-                // Checkbox góc trái trên — luôn hiển thị khi selectionMode
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(4.dp)
-                        .size(24.dp)
-                        .background(TextPrimary.copy(alpha = 0.85f), shape = androidx.compose.foundation.shape.CircleShape)
-                        .clip(androidx.compose.foundation.shape.CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Đã chọn",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.RadioButtonUnchecked,
-                            contentDescription = "Chưa chọn",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // TÊN THƯ MỤC — chỉ hiện cho thư mục
-        if (file.isDirectory) {
-            Text(
-                text = file.name,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                ),
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+        BrowserEntryTile(
+            file = file,
+            selectionMode = selectionMode,
+            isSelected = isSelected,
+            isNewFile = isNewFile,
+            isTrash = isTrash,
+        )
     }
 }
 // --- THUMBNAIL TỐI ƯU HOÁ CHO TẤT CẢ FILE MEDIA: LƯU VÀO DATABASE VĨNH VIỄN ---

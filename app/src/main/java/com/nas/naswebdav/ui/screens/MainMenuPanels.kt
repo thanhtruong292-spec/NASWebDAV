@@ -346,7 +346,7 @@ fun MainMenuSystemStatusCards(
     // Kept as Unit: screen-scoped polling loop for thumbnail / USB / livestream status.
     LaunchedEffect(Unit) {
         smartToolsVM.fetchThumbStatus()
-        livestreamVM.syncLivestreamStateWithServer()
+        livestreamVM.refreshLivestreamState(mContext)
         deviceVM.fetchUsbImportStatus(compact = true, minIntervalMs = 5_000L)
         while (isActive) {
             val interval = if (smartToolsVM.thumbRunning || smartToolsVM.thumbPaused) 2_000L else 10_000L
@@ -382,11 +382,11 @@ fun MainMenuSystemStatusCards(
     val activeStreams = livestreamVM.activeLivestreams
     // Kept as Unit: screen-scoped polling loop for livestream status.
     LaunchedEffect(Unit) {
-        livestreamVM.syncLivestreamStateWithServer()
+        livestreamVM.refreshLivestreamState(mContext)
         while (isActive) {
             livestreamVM.fetchLivestreamStatusOnly(mContext)
             livestreamVM.fetchTikTokLiveWatch(mContext)
-            val pollDelay = if (livestreamVM.activeLivestreams.isNotEmpty()) 3_000L else 10_000L
+            val pollDelay = if (livestreamVM.activeLivestreams.isNotEmpty()) com.nas.naswebdav.AppConfig.LIVESTREAM_POLL_INTERVAL_MS else 10_000L
             kotlinx.coroutines.delay(pollDelay)
         }
     }
@@ -456,12 +456,12 @@ fun MainMenuSystemStatusCards(
                         Box(
                             Modifier.background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(6.dp)).padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
-                            Text("$activeCount đang thực thi", fontSize = 9.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
+                            Text("$activeCount đang thực thi", fontSize = 12.sp, color = AccentGreen, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(4.dp))
                         Icon(
                             if (tasksExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp)
+                            contentDescription = "Mở rộng tác vụ", tint = TextSecondary, modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -502,7 +502,7 @@ fun MainMenuSystemStatusCards(
                                     IconButton(onClick = { smartToolsVM.toggleThumbPause() }, modifier = Modifier.minimumInteractiveComponentSize()) {
                                         Icon(
                                             if (smartToolsVM.thumbPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                            null,
+                                            if (smartToolsVM.thumbPaused) "Tiếp tục tạo thumbnail" else "Tạm dừng tạo thumbnail",
                                             tint = if (smartToolsVM.thumbPaused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -580,10 +580,10 @@ fun MainMenuSystemStatusCards(
                                 }
                                 if (dupIsRunning || dupIsPaused) {
                                     IconButton(onClick = { smartToolsVM.togglePauseDuplicateScan() }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, null, tint = if (dupIsPaused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                        Icon(if (dupIsPaused) Icons.Default.PlayArrow else Icons.Default.Pause, if (dupIsPaused) "Tiếp tục quét trùng" else "Tạm dừng quét trùng", tint = if (dupIsPaused) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                     }
                                     IconButton(onClick = { smartToolsVM.cancelDuplicateScan(mContext) }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                        Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.Stop, "Hủy quét trùng", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -626,21 +626,21 @@ fun MainMenuSystemStatusCards(
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("$dupScanned", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                        Text("Tổng tệp", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Tổng tệp", fontSize = 12.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("$dupFound", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
-                                        Text("Trùng lặp", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Trùng lặp", fontSize = 12.sp, color = TextSecondary)
                                     }
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(fmtMs(dupElapsed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.tertiary)
-                                        Text("Thời gian", fontSize = 9.sp, color = TextSecondary)
+                                        Text("Thời gian", fontSize = 12.sp, color = TextSecondary)
                                     }
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("%.1f%%".format(dupPercent * 100), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     if (dupEta >= 0) {
-                                        Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 9.sp, color = AccentBlue)
+                                        Text("Ước tính: ${fmtMs(dupEta)}", fontSize = 12.sp, color = AccentBlue)
                                     }
                                 }
                             }
@@ -769,7 +769,7 @@ fun MainMenuSystemStatusCards(
                                     }
                                 }
                                 IconButton(onClick = { deviceVM.cancelUsbImport() }, modifier = Modifier.minimumInteractiveComponentSize()) {
-                                    Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Stop, "Hủy nhập USB", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -838,9 +838,9 @@ fun MainMenuSystemStatusCards(
                                             val secondaryLabel = when {
                                                 job.outputFile.isNotEmpty() -> {
                                                     val fileName = job.outputFile.substringAfterLast('/')
-                                                    if (job.outputFile.startsWith("Livestream/")) job.outputFile else "Livestream/$fileName"
+                                                    if (job.outputFile.startsWith(AppConfig.LIVESTREAM_FOLDER)) job.outputFile else AppConfig.LIVESTREAM_FOLDER + fileName
                                                 }
-                                                else -> "Livestream/đang tạo file..."
+                                                else -> AppConfig.LIVESTREAM_FOLDER + "đang tạo file..."
                                             }
                                             Text(secondaryLabel, style = MaterialTheme.typography.labelMedium, color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                             Text(job.fileSize.ifEmpty { "0 B" }, style = MaterialTheme.typography.labelMedium, color = TextPrimary, modifier = Modifier.padding(start = 8.dp))

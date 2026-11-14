@@ -51,6 +51,8 @@ import androidx.compose.ui.window.Dialog
 
 // ============ Livestream watch / TikTok live section (tách cơ học từ Dialogs.kt — không đổi logic) ============
 
+private val WatchSummaryHighlightRegex = Regex("""\d+\s+user|\d+\s+đang ghi|\d+\s+vừa(?:\s+mới)?\s+bắt đầu""")
+
 object LivestreamPanelState {
     val current: androidx.compose.runtime.MutableState<String?> =
         androidx.compose.runtime.mutableStateOf(null)
@@ -162,7 +164,7 @@ internal fun TikTokLiveWatchSection(
                 ) { LivestreamPanelState.toggle("watchlist") } else Modifier
             )
     ) {
-        Text("♪", fontSize = 20.sp, color = AccentRed)
+        Icon(Icons.Default.MusicNote, contentDescription = "Nhạc", tint = AccentRed, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text("THEO DÕI TIKTOK LIVE", color = AccentRed, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         Spacer(Modifier.weight(1f))
@@ -188,7 +190,7 @@ internal fun TikTokLiveWatchSection(
                 if (newUsername.isNotBlank()) {
                     IconButton(
                         onClick = { onUsernameChange("") },
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.minimumInteractiveComponentSize().size(24.dp)
                     ) {
                         Icon(
                             Icons.Default.Clear,
@@ -224,7 +226,7 @@ internal fun TikTokLiveWatchSection(
             shape = RoundedCornerShape(10.dp),
             contentPadding = PaddingValues(horizontal = 10.dp)
         ) {
-            Icon(Icons.Default.Add, null, tint = TextPrimary, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.Add, "Thêm", tint = TextPrimary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
             Text("Thêm", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
@@ -244,7 +246,7 @@ internal fun TikTokLiveWatchSection(
         Text(
             checkLine,
             color = daemonColor,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -254,7 +256,7 @@ internal fun TikTokLiveWatchSection(
             Text(
                 buildAnnotatedString {
                     append(summaryText)
-                    Regex("""\d+\s+user|\d+\s+đang ghi|\d+\s+vừa(?:\s+mới)?\s+bắt đầu""").findAll(summaryText).forEach { match ->
+                    WatchSummaryHighlightRegex.findAll(summaryText).forEach { match ->
                         addStyle(
                             SpanStyle(fontWeight = FontWeight.Bold),
                             start = match.range.first,
@@ -263,7 +265,7 @@ internal fun TikTokLiveWatchSection(
                     }
                 },
                 color = daemonColor,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -297,7 +299,7 @@ internal fun TikTokLiveWatchSection(
     ) {
         Icon(
             if (cookiesStatus == "valid") Icons.Default.CheckCircle else Icons.Default.Info,
-            contentDescription = null, tint = cookiesLineColor, modifier = Modifier.size(16.dp)
+            contentDescription = "Trạng thái cookies", tint = cookiesLineColor, modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(6.dp))
         Text(cookiesLine, color = cookiesLineColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -318,18 +320,18 @@ internal fun TikTokLiveWatchSection(
             Modifier.fillMaxWidth().background(bannerBg, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Default.Warning, contentDescription = null, tint = bannerFg, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Warning, contentDescription = "Cảnh báo", tint = bannerFg, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(label, color = bannerFg, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 val detail = liveVM.tiktokCookiesMessage
                 if (detail.isNotEmpty()) {
-                    Text(detail, color = bannerFg.copy(alpha = 0.85f), fontSize = 11.sp)
+                    Text(detail, color = bannerFg.copy(alpha = 0.85f), fontSize = 12.sp)
                 }
                 Text(
                     "Hãy đăng nhập TikTok trên trình duyệt, export cookies.txt mới rồi đặt vào WebDAV root (cookies.txt) để watcher hoạt động trở lại.",
                     color = bannerFg.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                 )
             }
         }
@@ -433,7 +435,7 @@ internal fun TikTokLiveWatchSection(
                                 }
                             }
                             if (checkLiveLine.isNotEmpty()) {
-                                Text(checkLiveLine, color = TextSecondary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(checkLiveLine, color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             androidx.compose.animation.AnimatedVisibility(visible = isUserExpanded) {
                                 Column(
@@ -444,10 +446,10 @@ internal fun TikTokLiveWatchSection(
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text("THÔNG TIN THEO DÕI", color = AccentRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text("THÔNG TIN THEO DÕI", color = AccentRed, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     Text(statusLabel, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                     if (user.jobId.isNotEmpty()) {
-                                        Text("Tác vụ ghi hình: ${user.jobId}", color = TextTertiary, fontSize = 11.sp)
+                                        Text("Tác vụ ghi hình: ${user.jobId}", color = TextTertiary, fontSize = 12.sp)
                                     }
                                     if (user.lastCheck.isNotEmpty() || user.lastLive.isNotEmpty()) {
                                         Row(
@@ -459,7 +461,7 @@ internal fun TikTokLiveWatchSection(
                                                 Text(
                                                     "Kiểm tra lần cuối: ${user.lastCheck}",
                                                     color = TextTertiary,
-                                                    fontSize = 11.sp,
+                                                    fontSize = 12.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
                                                     modifier = Modifier.weight(1f)
@@ -471,7 +473,7 @@ internal fun TikTokLiveWatchSection(
                                                 Text(
                                                     "Phát hiện live cuối: ${user.lastLive}",
                                                     color = TextTertiary,
-                                                    fontSize = 11.sp,
+                                                    fontSize = 12.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
                                                     textAlign = TextAlign.End,
@@ -481,7 +483,7 @@ internal fun TikTokLiveWatchSection(
                                         }
                                     }
                                     if (displayLastError.isNotEmpty()) {
-                                        Text("CHI TIẾT LỖI", color = AccentOrange, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        Text("CHI TIẾT LỖI", color = AccentOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                         androidx.compose.foundation.layout.Box(
                                             Modifier
                                                 .fillMaxWidth()
@@ -494,7 +496,7 @@ internal fun TikTokLiveWatchSection(
                                                 Text(
                                                     displayLastError,
                                                     color = AccentOrange,
-                                                    fontSize = 11.sp,
+                                                    fontSize = 12.sp,
                                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                                 )
                                             }
@@ -509,7 +511,7 @@ internal fun TikTokLiveWatchSection(
         }
     }
     Spacer(Modifier.height(4.dp))
-    Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    Text("Thêm tài khoản TikTok để tự động dò và ghi khi live", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     Spacer(Modifier.height(4.dp))
     HorizontalDivider(color = TextTertiary.copy(alpha = 0.25f))
     Spacer(Modifier.height(4.dp))
@@ -528,7 +530,7 @@ internal fun TikTokLiveWatchSection(
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text("Thời gian loại trừ", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text("Không kiểm tra livestream trong khoảng giờ này", color = TextTertiary, fontSize = 11.sp)
+            Text("Không kiểm tra livestream trong khoảng giờ này", color = TextTertiary, fontSize = 12.sp)
         }
         Switch(
             checked = liveVM.tiktokExcludeEnabled,
@@ -617,7 +619,7 @@ internal fun TikTokWatchStatusChip(
         Text(
             label,
             color = textColor,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             lineHeight = 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,

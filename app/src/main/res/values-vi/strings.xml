@@ -160,7 +160,7 @@
     <string name="autodup_launch_cleanup">Khởi chạy tiến trình phân tích và dọn dẹp tập tin trùng lặp định kỳ.</string>
     <string name="autodup_auto_schedule_log">Hệ thống đã tự động chạy lịch dọn dẹp trùng lặp định kỳ</string>
     <string name="autodup_no_fastpath">Không thể kết nối FastPath API</string>
-    <string name="autodup_maintenance_complete">Hoàn tất bảo trì: Phát hiện %1$d tập tin trùng lặp, %2$d đã được xử lý, %3$s dung lượng được giải phóng, hoàn tất trong %4$d phút.</string>
+    <string name="autodup_maintenance_complete">Hoàn tất bảo trì: Phát hiện %1$d tập tin trùng lặp, %2$d đã được xử lý, %3$s dữ liệu bản sao đã xóa, hoàn tất trong %4$d phút.</string>
 
     <!-- Shared status dialog titles -->
     <string name="dialog_status_success">Thành công</string>

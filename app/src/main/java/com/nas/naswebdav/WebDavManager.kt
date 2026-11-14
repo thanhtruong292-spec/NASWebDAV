@@ -85,20 +85,48 @@ internal fun encodeWebDavSegment(segment: String): String {
 
 internal fun toValidUrl(rawUrl: String): String {
     if (rawUrl.isBlank()) return rawUrl
-    val safe = if (rawUrl.endsWith("/")) rawUrl else "$rawUrl/"
+    // CODEX P1: giu nguyen trailing slash goc — ban cu ep them "/" lam file
+    // "readme.txt" thanh "readme.txt/" gay sai GET truc tiep qua WebDAV.
+    // Caller truyen dir phai tu them "/" truoc (listFiles/search BFS da lam).
+    val safe = rawUrl
+    // CC-004 P1-2: fast-path cu bypass double-decode — URL chua %2520 (double
+    // encode tu CC-002) giu nguyen -> 404. Phat hien '%25' thi roi vao nham
+    // manual encode (decode-then-encode theo segment) de chuan hoa ve %20.
+    // CC-005 P0: dung URI parse thay vi substring "/webdav" — substringAfter
+    // match path co "/webdav" trung ten folder (vd /WebDavBackup/webdav...) sai host.
     return runCatching {
         val uri = java.net.URI(safe)
-        if (uri.isAbsolute && uri.host != null && !safe.contains(" ")) {
+        if (uri.isAbsolute && uri.host != null && !safe.contains(" ") && !safe.contains("%25")) {
             uri.toASCIIString()
         } else throw IllegalArgumentException("Need manual encode")
     }.getOrElse {
         try {
-            val schemeAndHost = if (safe.contains("/webdav")) safe.substringBefore("/webdav") else ""
-            val relativePath = if (schemeAndHost.isNotEmpty()) safe.substringAfter("/webdav") else safe
+            val uri = runCatching { java.net.URI(safe) }.getOrNull()
+            val schemeAndHost = if (uri != null && uri.isAbsolute && uri.host != null) {
+                val portPart = if (uri.port != -1) ":${uri.port}" else ""
+                "${uri.scheme}://${uri.host}$portPart"
+            } else if (safe.contains("://")) {
+                // Lay scheme://host tu phan dau cua URL, khong dung substring "/webdav" thô
+                // (tranh match nham folder ten chua "webdav").
+                val schemeEnd = safe.indexOf("://")
+                val afterScheme = safe.substring(schemeEnd + 3)
+                val slashIdx = afterScheme.indexOf('/')
+                val hostPart = if (slashIdx >= 0) afterScheme.substring(0, slashIdx) else afterScheme
+                "${safe.substring(0, schemeEnd)}://$hostPart"
+            } else ""
+            val rawPath = if (schemeAndHost.isNotEmpty() && safe.startsWith(schemeAndHost)) {
+                safe.substring(schemeAndHost.length)
+            } else if (schemeAndHost.isNotEmpty()) {
+                // CC-005 P0: host khong khop prefix (URL la gan dung webdav) ->
+                // giu nguyen de caller fail ro thay vi ghep sai host.
+                return@getOrElse safe.replace(" ", "%20")
+            } else safe
+            val webdavPrefix = if (rawPath.startsWith("/webdav")) "/webdav" else ""
+            val relativePath = if (webdavPrefix.isNotEmpty()) rawPath.substring(webdavPrefix.length) else rawPath
             val encodedPath = relativePath.split("/").joinToString("/") { segment ->
                 if (segment.isEmpty()) "" else encodeWebDavSegment(segment)
             }
-            if (schemeAndHost.isNotEmpty()) "$schemeAndHost/webdav$encodedPath" else encodedPath
+            if (schemeAndHost.isNotEmpty()) "$schemeAndHost$webdavPrefix$encodedPath" else encodedPath
         } catch (_: Exception) {
             safe.replace(" ", "%20")
         }
@@ -396,6 +424,16 @@ object WebDavManager {
 
     }
 
+    /** CC-004 P1-4: ngat phien — xoa auth RAM + threadLocal + cache, de logout
+     * khong ban request voi cred cu (polling tiep tuc sau navigate login). */
+    @Synchronized
+    fun disconnect() {
+        authState = AuthState("", "", "")
+        try { threadLocalAuth.remove() } catch (_: Exception) { }
+        try { QueryCache.clear() } catch (_: Exception) { }
+        try { pendingCacheClear.set(false) } catch (_: Exception) { }
+    }
+
     /**
      * Cancel calls thuộc [group] (CALL_GROUP_*). Không default param —
      * caller phải chỉ định explicit để tránh cancel nhầm scope.
@@ -514,7 +552,7 @@ object WebDavManager {
 
     // Trở lại Trình phân tích XML tuỳ chỉnh siêu cấp (Custom PullParser) gắn vào sardineClient.
 
-    suspend fun listFiles(url: String): List<NasFile> = withContext(Dispatchers.IO) {
+    suspend fun listFiles(url: String, callGroup: String = CALL_GROUP_BROWSER): List<NasFile> = withContext(Dispatchers.IO) {
 
         val safeUrl = toValidUrl(if (url.endsWith("/")) url else "$url/")
 
@@ -534,7 +572,7 @@ object WebDavManager {
             .url(safeUrl)
             .method("PROPFIND", propfindBody)
             .header("Depth", "1")
-            .withCallGroup(CALL_GROUP_BROWSER)
+            .withCallGroup(callGroup)
             .build()
 
             
@@ -1026,24 +1064,7 @@ object WebDavManager {
         try {
             val request = Request.Builder().withAuth(authState).url(url).build()
             optimizedClient.newCall(request).execute().use { response ->
-                // P1-2: tu choi 206 Partial — hash chi co nghia khi la toan bo noi dung.
-                if (response.code != 200) return@withContext null
-                val stream = response.body?.byteStream() ?: return@withContext null
-                val digest = java.security.MessageDigest.getInstance("SHA-256")
-                val buffer = ByteArray(65536)
-                var totalRead = 0L
-                stream.use {
-                    while (true) {
-                        val n = it.read(buffer)
-                        if (n == -1) break
-                        totalRead += n
-                        if (totalRead > totalSize) return@withContext null // thua byte
-                        digest.update(buffer, 0, n)
-                    }
-                }
-                if (totalRead != totalSize) return@withContext null // thieu byte
-                digest.digest().joinToString("") { "%02x".format(it) }
-                    .takeIf { it.isNotEmpty() }
+                hashCompleteResponse(response, totalSize)
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { null }
     }
@@ -1398,15 +1419,38 @@ object WebDavManager {
     }
 
     fun extractApiError(response: okhttp3.Response): String? {
+        return extractApiErrorStructured(response)?.message
+    }
+
+    data class StructuredApiError(
+        val message: String,
+        val code: String = "",
+        val reason: String = "",
+        val cap: Int = -1,
+        val active: Int = -1,
+        val retryAfterS: Long = 0L
+    )
+
+    fun extractApiErrorStructured(response: okhttp3.Response): StructuredApiError? {
         return runCatching {
             val bodyStr = readCappedBody(response, MAX_JSON_BODY_BYTES) ?: ""
-            if (bodyStr.isNotBlank()) {
-                val jsonErr = runCatching { org.json.JSONObject(bodyStr).optString("error", "").ifBlank { null } }.getOrNull()
-                if (!jsonErr.isNullOrBlank()) return@runCatching jsonErr
-
-                val match = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(bodyStr)
-                match?.groupValues?.get(1)?.ifBlank { null }
-            } else null
+            if (bodyStr.isBlank()) return@runCatching null
+            val json = runCatching { org.json.JSONObject(bodyStr) }.getOrNull()
+            if (json != null) {
+                val err = json.optString("error", "")
+                if (err.isBlank()) return@runCatching null
+                return@runCatching StructuredApiError(
+                    message = err,
+                    code = json.optString("code", ""),
+                    reason = json.optString("reason", ""),
+                    cap = json.optInt("cap", -1),
+                    active = json.optInt("active", -1),
+                    retryAfterS = json.optLong("retry_after_s", 0L)
+                )
+            }
+            val match = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(bodyStr)
+            val msg = match?.groupValues?.get(1)?.ifBlank { null } ?: return@runCatching null
+            StructuredApiError(message = msg)
         }.getOrNull()
     }
 
@@ -1498,7 +1542,7 @@ class WebDavRepository(
 
         QueryCache.cached("duplicates") {
 
-            database.fileDao().getDuplicateFiles(currentAccountKey()).map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.partialHash) }
+            database.fileDao().getVerifiedDuplicateFiles(currentAccountKey()).distinctBy { java.net.URI(it.path).rawPath }.groupBy { it.fullHash to it.contentLength }.values.filter { it.size > 1 }.flatten().map { NasFile(it.name, it.path, it.isDirectory, it.contentType, it.contentLength, it.lastModified, it.fullHash) }
 
         }
 
@@ -1566,6 +1610,7 @@ class WebDavRepository(
 
 
 object QueryCache {
+    fun invalidate(key: String) { cache.remove(key) }
 
     private val cache = ConcurrentHashMap<String, Pair<Long, Any>>()
 

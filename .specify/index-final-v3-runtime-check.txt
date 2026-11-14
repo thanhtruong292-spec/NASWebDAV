@@ -1,0 +1,35 @@
+Internal NAS metadata verification, 2026-11-14
+Owner: index_validation_review
+No backend daemon import/execution, deployment, AV changes or third-party upload.
+Fixture uses isolated temporary directories/SQLite; no production or validation DB touched.
+
+Candidate hash observed with sha256sum:
+a8bcf63a146709fb854a9fba8f416eee89496ad42c6e1fc2f9c05108e2c642d6  /opt/nas_api_server.py.index-final-candidate-20261114-v3
+
+RED command:
+ssh -o BatchMode=yes -o ConnectTimeout=5 root@100.90.135.102 "python3 /tmp/verify_incremental_index_runtime_review.py /opt/nas_api_server.py.index-final-candidate-20261114-v2 /srv/dev-disk-by-label-data"
+Exit code: 1
+AssertionError: In-place file growth returned stale size
+
+GREEN command:
+ssh -o BatchMode=yes -o ConnectTimeout=5 root@100.90.135.102 "sha256sum /opt/nas_api_server.py.index-final-candidate-20261114-v3; python3 /tmp/verify_incremental_index_runtime_review.py /opt/nas_api_server.py.index-final-candidate-20261114-v3 /srv/dev-disk-by-label-data"
+Exit code: 0
+Python: 3.5.3
+First scan: checked_dirs=3, enumerated_dirs=3, index_ready=true
+Unchanged scan: checked_dirs=3, enumerated_dirs=0, index_ready=true
+alias_add_delete_restart_cycle_boundary=passed
+unchanged_resolution_skipped=passed
+retargeted_private_alias_denied=passed
+same_inode_ancestor_retarget_denied=passed
+in_place_growth_metadata_refreshed=passed
+
+Growth fixture appends bytes and advances only the file mtime; it asserts the
+parent directory stamp is unchanged and an incremental pass enumerates zero
+directories. The actual search API function must still return the current file
+size and mtime. No network client or source daemon is executed.
+
+Added matching pytest regression in tests/test_incremental_file_index.py.
+Adjusted missing-file/read-failure assertions to preserve the database row but
+not return a now-missing file through the API. Legacy migration fixture now has
+an actual kept.txt file corresponding to its provisional row.
+Full pytest still blocked by missing local backend source/unsuitable NAS test runtime.

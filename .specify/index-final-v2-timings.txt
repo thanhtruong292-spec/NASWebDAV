@@ -1,0 +1,13 @@
+{"seconds": 2.1681745052337646, "max_rss_kib": 72480, "index_incomplete_reason": "", "enumerated_dirs": 1, "index_generation": 1, "index_ready": true, "checked_dirs": 828, "run": 1}
+{"seconds": 0.2384626865386963, "max_rss_kib": 72480, "index_incomplete_reason": "", "enumerated_dirs": 0, "index_generation": 1, "index_ready": true, "checked_dirs": 828, "run": 2}
+{"ready": true, "count": 300, "query": "mp4", "status": 200, "ms": 150.49099922180176, "scope": "Livestream", "run": 1}
+{"ready": true, "count": 300, "query": "mp4", "status": 200, "ms": 83.74428749084473, "scope": "Livestream", "run": 2}
+{"ready": true, "count": 300, "query": "mp4", "status": 200, "ms": 83.08982849121094, "scope": "Livestream", "run": 3}
+{"ready": true, "count": 0, "query": "mp4", "status": 200, "ms": 25.153160095214844, "scope": "Downloads", "run": 1}
+{"ready": true, "count": 0, "query": "mp4", "status": 200, "ms": 14.351129531860352, "scope": "Downloads", "run": 2}
+{"ready": true, "count": 0, "query": "mp4", "status": 200, "ms": 14.649629592895508, "scope": "Downloads", "run": 3}
+{"ready": true, "count": 0, "query": "unique-no-match-261114", "status": 200, "ms": 16.563892364501953, "scope": "Samsung Notes", "run": 1}
+{"ready": true, "count": 0, "query": "unique-no-match-261114", "status": 200, "ms": 14.086008071899414, "scope": "Samsung Notes", "run": 2}
+{"ready": true, "count": 0, "query": "unique-no-match-261114", "status": 200, "ms": 13.953685760498047, "scope": "Samsung Notes", "run": 3}
+{"post_freshness_window_ms": 236.06443405151367, "ready": true, "status": 200}
+{"downloads": 245, "total": 454965, "unready_directories": []}

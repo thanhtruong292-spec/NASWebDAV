@@ -110,6 +110,10 @@ fun isTailscaleUrl(url: String): Boolean {
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
 }
 
+/** Stable LAN-first order for connection probes; preserve order within each route type. */
+internal fun prioritizeConnectionUrls(urls: List<String>): List<String> =
+    urls.filter { it.isNotBlank() }.distinct().sortedBy { isTailscaleUrl(it) }
+
 private val knownLatencyMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
 internal fun adaptiveTimeoutMs(url: String): Long {
@@ -211,26 +215,65 @@ private fun executeThumbDownload(apiThumbUrl: String, auth: String, thumbFile: j
 
 suspend fun downloadThumbnailFromNas(url: String, thumbFile: java.io.File, auth: String, isVideo: Boolean): Boolean = withContext(Dispatchers.IO) {
     try {
-        val safeUrl = url.replace(" ", "%20")
-        val parsedUrl = try { java.net.URL(safeUrl) } catch (_: Exception) { null }
-        val webdavPath = parsedUrl?.path ?: url.substringAfter("8822", "").substringAfter("5050", "")
-        val decodedPath = java.net.URLDecoder.decode(webdavPath, "UTF-8")
-        val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=${java.net.URLEncoder.encode(decodedPath, "UTF-8")}"
+        // CC-004 P1-3: encode theo segment (giu '/') thay vi URLEncoder.encode
+        // ca path (-> %2F) + replace space tho (vo voi '#?&%'). Khop backend
+        // quote(rel, safe="/") va toValidUrl/encodeWebDavSegment.
+        val normalized = com.nas.naswebdav.toValidUrl(url)
+        val webdavPath = runCatching { java.net.URL(normalized).path }.getOrNull()
+            ?: runCatching { android.net.Uri.parse(normalized).path }.getOrNull()
+            ?: normalized.substringAfter("8822", "").substringAfter("5050", "")
+        val encodedPath = (webdavPath ?: "").split("/").joinToString("/") { segment ->
+            if (segment.isEmpty()) "" else runCatching {
+                java.net.URLEncoder.encode(
+                    runCatching { java.net.URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment),
+                    "UTF-8"
+                ).replace("+", "%20")
+            }.getOrDefault(segment)
+        }
+        val apiThumbUrl = "${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb?path=$encodedPath"
 
-        // FIX-THUMB-SPINNER: retry up to 3 times with exponential backoff.
-        // Server may return 503 (NAS busy) while ffmpeg generates the thumbnail;
-        // first request starts generation, subsequent ones find it cached.
-        val maxAttempts = 3
-        var retryDelayMs = 2000L
+        // CRITICAL FIX: giam toi da xuong 2 lan thu. Lan thu 1 bat dau tao anh thu nho,
+        // lan thu 2 kiem tra da co chua. Khong bao giu retry ngay lap tuc khi NAS tra
+        // 503/retry_later -> phai poll /api/thumb/status thay vi goi lai /api/thumb.
+        val maxAttempts = 2
+        var retryDelayMs = 4000L
         for (attempt in 1..maxAttempts) {
             if (executeThumbDownload(apiThumbUrl, auth, thumbFile, isVideo)) return@withContext true
             if (attempt < maxAttempts) {
-                kotlinx.coroutines.delay(retryDelayMs)
-                retryDelayMs = (retryDelayMs * 2).coerceAtMost(8000L)
+                // Neu server tra 503 co retry_later -> poll /api/thumb/status thay vi retry ngay.
+                val shouldPoll = runCatching {
+                    val body = org.json.JSONObject(responseBodyOf(apiThumbUrl, auth))
+                    body.optBoolean("retry_later", false)
+                }.getOrDefault(false)
+                if (shouldPoll) {
+                    // Poll trang thai den 2 lan, cach nhau 3s, neu xong moi goi lai /api/thumb.
+                    for (poll in 1..2) {
+                        kotlinx.coroutines.delay(3000L)
+                        val statusOk = runCatching {
+                            val body = org.json.JSONObject(responseBodyOf("${WebDavManager.currentBaseUrl.toApiBaseUrl()}/api/thumb/status", auth))
+                            body.optBoolean("running", false)
+                        }.getOrDefault(false)
+                        if (!statusOk) break // daemon da dung -> co the co anh thu nho moi
+                    }
+                } else {
+                    kotlinx.coroutines.delay(retryDelayMs)
+                    retryDelayMs = (retryDelayMs * 2).coerceAtMost(8000L)
+                }
             }
         }
         false
     } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { false }
+}
+
+/** GET no body tra ve chuoi response (dung cho /api/thumb/status trong retry flow). */
+private fun responseBodyOf(apiUrl: String, auth: String): String {
+    val request = okhttp3.Request.Builder()
+        .url(apiUrl)
+        .header("Authorization", auth)
+        .build()
+    return NasApplication.instance.thumbnailApiClient.newCall(request).execute().use { response ->
+        response.body?.string() ?: ""
+    }
 }
 
 // ─── Rate Limiter ────────────────────────────────────────────────────────

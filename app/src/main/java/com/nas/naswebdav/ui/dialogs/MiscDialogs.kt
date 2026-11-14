@@ -190,7 +190,7 @@ fun AppStatusDialog(type: DialogType, message: String, onConfirm: (() -> Unit)? 
         Box(modifier = Modifier.fillMaxWidth().background(dialogBg, shape = RoundedCornerShape(14.dp)).border(1.dp, TextPrimary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(18.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(modifier = Modifier.size(56.dp).background(color.copy(0.1f), CircleShape).border(2.dp, color.copy(0.2f), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(28.dp))
+                    Icon(imageVector = icon, contentDescription = title, tint = color, modifier = Modifier.size(28.dp))
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(text = title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
@@ -295,6 +295,22 @@ fun NotificationDialog(title: String, message: String, icon: ImageVector, iconCo
 fun IpApprovalDialog(onDismiss: () -> Unit) {
     val deviceVM = LocalDeviceManagementVM.current
     val ip = deviceVM.pendingIpAddress; val message = deviceVM.approvalMessage; val countryCode = deviceVM.pendingCountryCode
+    // CC-005 P1: tự đóng sau 60s nếu không duyệt (countdown hiển thị trong text).
+    val deadlineMs = deviceVM.approvalDeadlineMs
+    var secondsLeft by remember(deadlineMs) {
+        mutableStateOf(((deadlineMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L).toInt())
+    }
+    LaunchedEffect(deadlineMs) {
+        if (deadlineMs <= 0L) return@LaunchedEffect
+        while (System.currentTimeMillis() < deadlineMs) {
+            delay(1000L)
+            secondsLeft = ((deadlineMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L).toInt()
+        }
+        deviceVM.dismissIpApproval()
+        onDismiss()
+    }
+    // Pending list — hiển thị số IP đang chờ nếu >1.
+    val pendingCount = deviceVM.pendingApprovals.size
     val infiniteTransition = rememberInfiniteTransition(label = "shield_pulse")
     val pulseScale by infiniteTransition.animateFloat(1f, 1.15f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(0.7f, 1f, infiniteRepeatable(tween(800, easing = EaseInOut), RepeatMode.Reverse), label = "alpha")
@@ -311,26 +327,34 @@ fun IpApprovalDialog(onDismiss: () -> Unit) {
                 Text("⚠️ CẢNH BÁO BẢO MẬT", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = riskColor, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(4.dp))
                 Text("Phát hiện thiết bị lạ kết nối", fontSize = 13.sp, color = TextTertiary, textAlign = TextAlign.Center)
+                // CC-005 P1: countdown 60s + pending list.
+                if (deadlineMs > 0L) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Tự đóng sau ${secondsLeft}s" + if (pendingCount > 1) " • còn $pendingCount IP chờ" else "",
+                        fontSize = 12.sp, color = TextTertiary, textAlign = TextAlign.Center
+                    )
+                }
             }
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Card(colors = CardDefaults.cardColors(containerColor = DarkCard), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("ĐỊA CHỈ IP", fontSize = 10.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        Text("ĐỊA CHỈ IP", fontSize = 12.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                         Spacer(Modifier.height(4.dp))
                         Text(ip.ifEmpty { "Không xác định" }, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = TextPrimary, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(8.dp))
-                        Surface(color = riskColor.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) { Text(riskLabel, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = riskColor) }
+                        Surface(color = riskColor.copy(alpha = 0.15f), shape = RoundedCornerShape(50)) { Text(riskLabel, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = riskColor) }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
                 if (message.isNotBlank()) { Text(message, fontSize = 13.sp, color = TextSecondary, textAlign = TextAlign.Center, lineHeight = 18.sp); Spacer(Modifier.height(12.dp)) }
                 Card(colors = CardDefaults.cardColors(containerColor = DarkElevated.copy(alpha = 0.5f)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = AccentGreen, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 11.sp, color = TextSecondary) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.CheckCircle, null, tint = AccentGreen, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Cho phép: Thêm vào whitelist, cho truy cập NAS", fontSize = 12.sp, color = TextSecondary) }
                         Spacer(Modifier.height(6.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = AccentRed, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 11.sp, color = TextSecondary) }
+                        Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Block, null, tint = AccentRed, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("Chặn: Ban IP vĩnh viễn bằng iptables", fontSize = 12.sp, color = TextSecondary) }
                     }
                 }
             }
@@ -380,7 +404,7 @@ fun LanWhitelistDialog(
                 Spacer(Modifier.width(8.dp))
                 Column {
                     Text("LAN Whitelist", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("IP truy cập không cần Tailscale", color = TextTertiary, fontSize = 11.sp)
+                    Text("IP truy cập không cần Tailscale", color = TextTertiary, fontSize = 12.sp)
                 }
             }
 
@@ -403,7 +427,7 @@ fun LanWhitelistDialog(
                         }
                     },
                     modifier = Modifier.size(40.dp).background(AccentGreen.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                ) { Icon(Icons.Default.Add, null, tint = AccentGreen, modifier = Modifier.size(18.dp)) }
+                ) { Icon(Icons.Default.Add, "Thêm dải IP", tint = AccentGreen, modifier = Modifier.size(18.dp)) }
             }
 
             if (statusMessage.isNotBlank()) {
@@ -426,7 +450,7 @@ fun LanWhitelistDialog(
             } else {
                 Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                     if (subnetList.isNotEmpty()) {
-                        Text("SUBNET", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("SUBNET", fontSize = 12.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         subnetList.forEach { subnet ->
                             key("subnet-$subnet") {
@@ -448,7 +472,7 @@ fun LanWhitelistDialog(
                     }
                     if (ipList.isNotEmpty()) {
                         if (subnetList.isNotEmpty()) Spacer(Modifier.height(12.dp))
-                        Text("IP", fontSize = 11.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("IP", fontSize = 12.sp, color = TextTertiary, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Spacer(Modifier.height(4.dp))
                         ipList.forEach { ip ->
                             key("ip-$ip") {
@@ -617,7 +641,7 @@ fun RulesSettingsDialog(onDismiss: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Ổ đầy → tạm dừng ghi mới", fontSize = 14.sp, color = TextPrimary)
-                    Text("Bản đang ghi vẫn tiếp tục", fontSize = 10.sp, color = TextTertiary)
+                    Text("Bản đang ghi vẫn tiếp tục", fontSize = 12.sp, color = TextTertiary)
                 }
                 Switch(checked = pause, onCheckedChange = { pause = it }, enabled = !loading && !busy)
             }
@@ -698,7 +722,7 @@ fun CrashReportingSection() {
                     )
                     Text(
                         stringResource(R.string.crash_remote_desc),
-                        fontSize = 11.sp, color = MaterialTheme.colorScheme.outline
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
                     )
                 }
                 androidx.compose.material3.Switch(
@@ -716,19 +740,37 @@ fun CrashReportingSection() {
                 )
             }
             if (enabled || expanded) {
+                var dsnVisible by remember { mutableStateOf(false) }
                 Spacer(Modifier.height(6.dp))
                 androidx.compose.material3.OutlinedTextField(
                     value = dsn,
                     onValueChange = { dsn = it.trim() },
-                    label = { Text(stringResource(R.string.crash_dsn_label), fontSize = 11.sp) },
-                    placeholder = { Text(stringResource(R.string.crash_dsn_hint), fontSize = 11.sp) },
+                    label = { Text(stringResource(R.string.crash_dsn_label), fontSize = 12.sp) },
+                    placeholder = { Text(stringResource(R.string.crash_dsn_hint), fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = if (dsnVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                        autoCorrect = false
+                    ),
                     trailingIcon = {
-                        TextButton(onClick = {
-                            com.nas.naswebdav.utils.CrashReporter.setEnabled(context, enabled, dsn)
-                            Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
-                        }) { Text(stringResource(R.string.action_save), fontSize = 12.sp) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { dsnVisible = !dsnVisible },
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    if (dsnVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (dsnVisible) "Ẩn DSN" else "Hiện DSN",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            TextButton(onClick = {
+                                com.nas.naswebdav.utils.CrashReporter.setEnabled(context, enabled, dsn)
+                                Toast.makeText(context, dsnSavedMsg, Toast.LENGTH_SHORT).show()
+                            }) { Text(stringResource(R.string.action_save), fontSize = 12.sp) }
+                        }
                     }
                 )
             }

@@ -6,7 +6,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
+import com.nas.naswebdav.ui.screens.NasTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.nas.naswebdav.ui.screens.ExoPlayerScreen
@@ -57,7 +57,7 @@ class VideoPlayerActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
+            NasTheme {
                 // FIX A1b: Xóa LocalRippleTheme deprecated (Material 3 không còn hỗ trợ).
                 // NoRippleIndication vẫn giữ để tắt ripple effect toàn bộ VideoPlayer.
                 androidx.compose.runtime.CompositionLocalProvider(

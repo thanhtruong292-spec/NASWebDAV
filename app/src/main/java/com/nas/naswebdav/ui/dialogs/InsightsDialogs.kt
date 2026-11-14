@@ -102,9 +102,12 @@ fun FilePropertiesDialog(
             val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 // FingerprintDao chi co findByExactHash(hash) — query full table de tim filePath khong toi uu.
                 // Thay vao do dung FileDao.partialHash / fullHash (CachedFile co san).
-                db.fileDao().getFileByPath(file.path)
+                // AUDIT-20261104: scope theo accountKey hien tai (DAO da them key filter).
+                val account = currentAccountKey()
+                db.fileDao().getFileByPath(file.path, account) to db.verifiedHashDao().get(account, file.path)
             }
-            fingerprintHash = result?.fullHash ?: result?.partialHash ?: result?.imageFingerprint
+            fingerprintHash = result.second?.takeIf { it.contentLength == file.contentLength }?.sha256
+                ?: result.first?.fullHash ?: result.first?.partialHash ?: result.first?.imageFingerprint
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {
             fingerprintHash = null
         } finally {
@@ -126,7 +129,7 @@ fun FilePropertiesDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     if (file.isDirectory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
-                    contentDescription = null,
+                    contentDescription = if (file.isDirectory) "Thư mục" else "Tệp",
                     tint = if (file.isDirectory) AccentOrange else AccentGreen,
                     modifier = Modifier.size(22.dp)
                 )
@@ -142,7 +145,7 @@ fun FilePropertiesDialog(
 
             // Cac dong field — label trai, value phai, value selectable de copy
             PropertyRow("Tên", file.name, selectable = true)
-            PropertyRow("Đường dẫn", file.path, selectable = true, monospace = true)
+            PropertyRow("Đường dẫn", relativeWebDavPath(file.path), selectable = true, monospace = true)
             PropertyRow("Loại", mime)
             if (!file.isDirectory) {
                 PropertyRow("Phần mở rộng", if (ext.isEmpty()) "—" else ".$ext")
@@ -155,7 +158,7 @@ fun FilePropertiesDialog(
                 fingerprintHash.isNullOrEmpty() -> "— (chưa quét fingerprint)"
                 else -> fingerprintHash!!
             }
-            PropertyRow("Hash", hashDisplay, selectable = true, monospace = true)
+            PropertyRow("Hash đã lưu", hashDisplay, selectable = true, monospace = true)
 
             Spacer(Modifier.height(8.dp))
 
@@ -208,12 +211,12 @@ fun NasInsightsDialog(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(22.dp))
+                Icon(Icons.Default.AutoGraph, "Tổng quan hệ thống", tint = AccentCyan, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Tổng quan hệ thống NAS", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { sysVM.fetchNasInsights(minIntervalMs = 0L) }, modifier = Modifier.size(32.dp).minTouchTarget()) {
-                    Icon(Icons.Default.Refresh, null, tint = TextTertiary, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Refresh, "Làm mới", tint = TextTertiary, modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -239,7 +242,7 @@ fun NasInsightsDialog(
                 InsightRow("Áp lực tải", "${insight.workloadPressure}")
                 Text(insight.workloadRecommendation.ifBlank { "Chưa có khuyến nghị." }, color = TextPrimary, fontSize = 12.sp)
                 if (insight.workloadReasons.isNotEmpty()) {
-                    Text(insight.workloadReasons.joinToString(" • "), color = TextTertiary, fontSize = 11.sp)
+                    Text(insight.workloadReasons.joinToString(" • "), color = TextTertiary, fontSize = 12.sp)
                 }
             }
 
@@ -267,7 +270,7 @@ fun NasInsightsDialog(
                         ) {
                             Text("${task.label} • ${task.progress}%", color = AccentCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Text(task.file.ifBlank { "Đang xử lý" }, color = TextPrimary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(task.dest, color = TextTertiary, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(task.dest, color = TextTertiary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -287,7 +290,7 @@ fun NasInsightsDialog(
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(action.title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Text(action.detail, color = TextTertiary, fontSize = 11.sp)
+                            Text(action.detail, color = TextTertiary, fontSize = 12.sp)
                         }
                     }
                 }
@@ -296,8 +299,8 @@ fun NasInsightsDialog(
             Text(
                 "Dữ liệu lấy từ /api/system/insights: SMART trend, tải nền, USB import, eMMC guard, luồng I/O và lịch bảo trì.",
                 color = TextTertiary.copy(alpha = 0.75f),
-                fontSize = 10.sp,
-                lineHeight = 13.sp
+                fontSize = 12.sp,
+                lineHeight = 16.sp
             )
             Spacer(Modifier.height(10.dp))
         }
@@ -308,7 +311,7 @@ fun NasInsightsDialog(
 internal fun InsightSection(title: String, icon: ImageVector, color: Color, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().background(DarkCard, RoundedCornerShape(10.dp)).padding(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(17.dp))
+            Icon(icon, title, tint = color, modifier = Modifier.size(17.dp))
             Spacer(Modifier.width(7.dp))
             Text(title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
@@ -321,7 +324,13 @@ internal fun InsightSection(title: String, icon: ImageVector, color: Color, cont
 internal fun InsightRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(label, color = TextTertiary, fontSize = 12.sp)
-        Text(value, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            value,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+        )
     }
 }
 
@@ -338,7 +347,7 @@ internal fun PropertyRow(
     ) {
         Text(
             label,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = TextTertiary,
             fontWeight = FontWeight.Medium
         )
@@ -363,5 +372,23 @@ internal fun PropertyRow(
         } else {
             Text(value, style = style, softWrap = true)
         }
+    }
+}
+
+/**
+ * Trich xuat duong tap trung roi (/subdir/file.jpg) tu URL WebDAV day du
+ * (http://host:port/webdav/subdir/file.jpg) de hien thi ngan gon o panel
+ * Thuoc tinh. Tra lai goc neu khong phat hien to tien to /webdav/.
+ */
+internal fun relativeWebDavPath(fullUrl: String): String {
+    val url = fullUrl.trim()
+    val prefix = "/webdav/"
+    val idx = url.indexOf(prefix, ignoreCase = true)
+    return if (idx >= 0) {
+        val after = url.substring(idx + prefix.length)
+        "/" + after.substringBefore('?').substringBefore('#')
+    } else {
+        // Fallback: lay phan path cua URL neu co
+        runCatching { java.net.URI(url).path?.takeIf { it.isNotEmpty() } }.getOrNull() ?: fullUrl
     }
 }

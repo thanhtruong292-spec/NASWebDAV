@@ -48,6 +48,8 @@ import androidx.core.graphics.toColorInt
 
 // ============ Dashboard reusable widgets (tách cơ học từ MainMenuScreen.kt — không đổi logic) ============
 
+private val NonNumericRegex = Regex("[^0-9.]")
+
 // ============ COMPONENT: Inline stat row (emoji + label + value) ============
 @Composable
 fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color) {
@@ -56,7 +58,7 @@ fun InlineStatRow(emoji: String, label: String, value: String, valueColor: Color
         Spacer(Modifier.width(AppSpacing.SM))
         Column {
             Text(label, style = AppTypography.LabelSmall.copy(color = TextSecondary, letterSpacing = 0.8.sp))
-            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = valueColor), maxLines = 1)
+            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = valueColor, fontFeatureSettings = "tnum"), maxLines = 1)
         }
     }
 }
@@ -92,7 +94,7 @@ fun NasInsightsSummaryCard(
     ) {
         Column(Modifier.padding(AppSpacing.SM)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AutoGraph, null, tint = AccentCyan, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.AutoGraph, "Phân tích hệ thống", tint = AccentCyan, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(AppSpacing.SM))
                 Text("PHÂN TÍCH HỆ THỐNG", color = PanelTitleCyan, fontSize = PanelTitleSize, fontWeight = FontWeight.Black, letterSpacing = PanelTitleLetterSpacing)
                 Spacer(Modifier.weight(1f))
@@ -131,7 +133,7 @@ fun NasInsightsSummaryCard(
 private fun InsightMiniStat(title: String, value: String, sub: String, color: Color, modifier: Modifier = Modifier) {
     Column(modifier.background(DarkElevated, AppShapes.Input).padding(AppSpacing.SM)) {
         Text(title, style = AppTypography.BodySmall.copy(color = TextSecondary))
-        Text(value, style = AppTypography.TitleMedium.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = color), maxLines = 1)
+        Text(value, style = AppTypography.TitleMedium.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = color, fontFeatureSettings = "tnum"), maxLines = 1)
         Text(sub, style = AppTypography.LabelMedium.copy(color = TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -142,44 +144,37 @@ fun GaugeCard(
     value: String,
     subValue: String? = null,
     icon: ImageVector,
-    gradientColors: kotlinx.collections.immutable.ImmutableList<Color>,
+    gradientColors: List<Color>,
     modifier: Modifier = Modifier,
     overridePercent: Float? = null,
     label: String? = null,
     onClick: (() -> Unit)? = null
 ) {
-    val numericValue = overridePercent ?: (Regex("[^0-9.]").replace(value, "").toFloatOrNull() ?: 0f)
-    val progress = (numericValue / 100f).coerceIn(0f, 1f)
-    
-    // Status từ phần trăm (CPU%/RAM%/Disk%)
+    val percent = overridePercent ?: Regex("(\\d+(?:\\.\\d+)?)\\s*%")
+        .find(value)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+    val progress = ((percent ?: 0f) / 100f).coerceIn(0f, 1f)
     val pctRank = when {
         progress >= 0.90f -> 2
         progress >= 0.70f -> 1
         else -> 0
     }
-    // Status từ nhiệt độ (nếu subValue có °C) — dùng cùng ngưỡng như line chart và text subValue:
-    //   CPU temp: >=80 đỏ, >=60 vàng. HDD/SMART temp: >=55 đỏ, >=45 vàng.
-    val tempRank: Int = if (!subValue.isNullOrBlank() && (subValue.contains("°C") || subValue.contains("°C") || subValue.contains("°"))) {
-        val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
-        val isDisk = title == "S.M.A.R.T" || title == "HDD"
-        when {
-            isDisk && tempVal >= 55f -> 2
-            isDisk && tempVal >= 45f -> 1
-            !isDisk && tempVal >= 80f -> 2
-            !isDisk && tempVal >= 60f -> 1
-            else -> 0
-        }
-    } else -1
-    val accentColor = if (title == "S.M.A.R.T") {
-        gradientColors.first()
-    } else {
-        // Lay trang thai NANG HON giua phan tram va nhiet do de vong tron dong bo voi line chart.
-        when (maxOf(pctRank, tempRank)) {
-            2 -> AccentRed // Đỏ
-            1 -> AccentOrange // Vàng
-            else -> AccentGreen // Xanh
-        }
+    val tempValue = subValue?.takeIf { it.contains("°") }
+        ?.let { NonNumericRegex.replace(it, "").toFloatOrNull() }
+    val isDisk = title == "S.M.A.R.T" || title.contains("HDD")
+    val tempRank = when {
+        tempValue == null -> -1
+        isDisk && tempValue >= 55f || !isDisk && tempValue >= 80f -> 2
+        isDisk && tempValue >= 45f || !isDisk && tempValue >= 60f -> 1
+        else -> 0
     }
+    val accentColor = when {
+        title == "S.M.A.R.T" -> gradientColors.firstOrNull() ?: TextTertiary
+        percent == null && tempValue == null -> TextTertiary
+        maxOf(pctRank, tempRank) == 2 -> AccentRed
+        maxOf(pctRank, tempRank) == 1 -> AccentOrange
+        else -> AccentGreen
+    }
+    val secondaryValue = subValue?.takeIf { it.isNotBlank() && !it.startsWith("--") }
 
     Card(
         modifier = if (onClick != null) modifier.clickable(
@@ -190,58 +185,61 @@ fun GaugeCard(
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = AppShapes.Card
     ) {
-        Box(
-            Modifier.fillMaxWidth().padding(horizontal = AppSpacing.XS, vertical = AppSpacing.SM),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.size(64.dp),
-                        color = accentColor,
-                        trackColor = TextSecondary.copy(alpha = 0.15f),
-                        strokeWidth = 5.dp,
-                        strokeCap = StrokeCap.Round
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy((-3).dp)
-                    ) {
-                        Icon(icon, null, tint = accentColor, modifier = Modifier.size(16.dp).offset(y = 2.dp))
-                        Text(
-                            text = title,
-                            style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.Bold, color = accentColor.copy(alpha = 0.85f), letterSpacing = 0.5.sp),
-                            modifier = Modifier.offset(y = 1.dp)
-                        )
-                        if (!subValue.isNullOrBlank() && subValue != "--\u00b0C" && subValue != "--°C") {
-                            Text(
-                                text = subValue,
-                                style = AppTypography.LabelSmall.copy(fontWeight = FontWeight.Bold, color = if (subValue.contains("°C") || subValue.contains("\u00b0C") || subValue.contains("°")) {
-                                    val tempVal = Regex("[^0-9.]").replace(subValue, "").toFloatOrNull() ?: 0f
-                                    val isDisk = title == "S.M.A.R.T" || title == "HDD"
-                                    when {
-                                        isDisk && tempVal >= 55f -> AccentRed
-                                        isDisk && tempVal >= 45f -> AccentOrange
-                                        !isDisk && tempVal >= 80f -> AccentRed
-                                        !isDisk && tempVal >= 60f -> AccentOrange // CPU 60+ is Yellow
-                                        else -> AccentGreen
-                                    }
-                                } else accentColor.copy(alpha = 0.9f)),
-                                maxLines = 1,
-                                modifier = Modifier.offset(y = (-1).dp)
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(AppSpacing.XS))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    val textStyle = if (value.length > 7) AppTypography.LabelSmall.copy(fontSize = 8.5.sp, fontWeight = FontWeight.Bold, color = TextPrimary) else AppTypography.BodyMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
-                    Text(value, style = textStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+        Column(Modifier.fillMaxWidth().padding(AppSpacing.SM), verticalArrangement = Arrangement.spacedBy(AppSpacing.XS)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(AppSpacing.XS)) {
+                Icon(icon, contentDescription = title, tint = accentColor, modifier = Modifier.size(18.dp))
+                Text(title, style = AppTypography.LabelMedium.copy(fontWeight = FontWeight.SemiBold, color = TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(value, style = AppTypography.TitleMedium.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontFeatureSettings = "tnum"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (secondaryValue != null) {
+                Text(secondaryValue, style = AppTypography.LabelSmall.copy(color = TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (percent != null) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(AppShapes.Badge),
+                    color = accentColor,
+                    trackColor = TextSecondary.copy(alpha = 0.15f)
+                )
             }
         }
     }
+}
+
+internal data class DashboardDiskMetric(val capacity: String, val percent: Float?)
+
+private fun compactDiskCapacity(used: String, total: String): String {
+    val unit = total.substringAfterLast(" ", "")
+    val compactUsed = if (unit.isNotBlank() && used.endsWith(" $unit", ignoreCase = true)) {
+        used.dropLast(unit.length + 1)
+    } else used
+    return "$compactUsed / $total"
+}
+
+/** Use the selected data mount when available, and the legacy aggregate fields as a fallback. */
+internal fun NasSystemStatus.dashboardDiskMetric(): DashboardDiskMetric? {
+    val partition = diskParts.firstOrNull { it.mount.startsWith("/srv/dev-disk-by-label-data") }
+        ?: diskParts.firstOrNull { it.mount != "/" && !it.mount.startsWith("/mnt/usb-import") }
+    if (partition != null) {
+        val formattedTotal = partition.total.let { total ->
+            val amount = total.replace(Regex("[^0-9.]"), "").toFloatOrNull() ?: 0f
+            if (total.contains("GB", ignoreCase = true) && amount >= 1000f) {
+                "%.1f TB".format(java.util.Locale.US, amount / 1024f)
+            } else total
+        }
+        return DashboardDiskMetric(
+            capacity = compactDiskCapacity(partition.used, formattedTotal),
+            percent = partition.percent.takeIf { it.isFinite() }?.coerceIn(0f, 100f)
+        )
+    }
+
+    val legacyCapacity = diskCapacity.trim().takeIf { it.isNotEmpty() && !it.startsWith("--") } ?: return null
+    val legacyPercent = disk.removeSuffix("%").toFloatOrNull()
+        ?.takeIf { it.isFinite() }
+        ?.coerceIn(0f, 100f)
+    val legacyParts = legacyCapacity.split("/", limit = 2).map(String::trim)
+    val capacity = if (legacyParts.size == 2) compactDiskCapacity(legacyParts[0], legacyParts[1]) else legacyCapacity
+    return DashboardDiskMetric(capacity, legacyPercent)
 }
 
 // ============ COMPONENT: Thẻ thống kê nhỏ? ============
@@ -261,7 +259,7 @@ fun MiniStatCard(title: String, value: String, icon: ImageVector, color: Color, 
         ) {
             Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
             Spacer(Modifier.height(AppSpacing.XS))
-            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, style = AppTypography.BodyLarge.copy(fontWeight = FontWeight.Bold, color = TextPrimary, fontFeatureSettings = "tnum"), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(title, style = AppTypography.LabelMedium.copy(color = TextSecondary), maxLines = 1)
         }
     }
@@ -277,8 +275,8 @@ fun DiskPartitionBar(mount: String, percent: Float, total: String, used: String)
     }
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(mount, style = AppTypography.BodyLarge.copy(color = TextPrimary))
-            Text("$used / $total", style = AppTypography.BodyMedium.copy(color = TextSecondary))
+            Text(mount, style = AppTypography.BodyLarge.copy(color = TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$used / $total", style = AppTypography.BodyMedium.copy(color = TextSecondary, fontFeatureSettings = "tnum"), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(AppSpacing.XS))
         LinearProgressIndicator(
@@ -414,7 +412,7 @@ fun SettingsMenuCardTall(
 // ============ HÀM TIỆN ÍCH (Giữ lại tương thích) ============
 fun DashboardWidgetsGetStatusColor(title: String, value: String, rawPercent: String = ""): Color {
     try {
-        val extractNumber = { str: String -> Regex("[^0-9.]").replace(str, "").toFloatOrNull() ?: 0f }
+        val extractNumber = { str: String -> NonNumericRegex.replace(str, "").toFloatOrNull() ?: 0f }
         return when (title) {
             "Nhiệt độ" -> {
                 val t = extractNumber(value)

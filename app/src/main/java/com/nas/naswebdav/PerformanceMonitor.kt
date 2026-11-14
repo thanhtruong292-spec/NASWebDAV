@@ -33,6 +33,12 @@ object PerformanceMonitor {
     private var lastDiskCacheSizeMb = 0; private var diskCacheCheckCounter = 0
     private val isMonitoring = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** CC-005 P1: dừng monitoring — gọi từ DisposableEffect khi rời PerformanceScreen. */
+    fun stopMonitoring() {
+        isMonitoring.set(false)
+        previousRx = 0L; previousTx = 0L
+    }
+
     suspend fun startMonitoring(context: Context) = withContext(Dispatchers.IO) {
         if (!isMonitoring.compareAndSet(false, true)) return@withContext
         val appContext = context.applicationContext ?: context
@@ -42,7 +48,10 @@ object PerformanceMonitor {
         try {
             while (isActive && isMonitoring.get()) {
                 try {
-                    am.getMemoryInfo(memoryInfo)
+                    // CC-005 P1: bọc mỗi vòng đo trong withTimeout 30s — tránh treo
+                    // vô hạn khi getMemoryInfo/readText block (VD /proc kẹt I/O).
+                    kotlinx.coroutines.withTimeout(30_000L) {
+                        am.getMemoryInfo(memoryInfo)
                     val totalRam = (memoryInfo.totalMem / 1048576L).toInt()
                     val freeRam = (memoryInfo.availMem / 1048576L).toInt()
                     val usedRamPercent = ((totalRam - freeRam).toFloat() / totalRam * 100).roundToInt()
@@ -66,6 +75,7 @@ object PerformanceMonitor {
                         calculateCpuUsage(), rxSpeed, txSpeed,
                         lastDiskCacheSizeMb, maxJvm, usedJvm
                     )
+                    } // withTimeout 30s
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) {}
                 delay(if (AppConfig.IS_APP_FOREGROUND) 1000L else 5000L)
             }

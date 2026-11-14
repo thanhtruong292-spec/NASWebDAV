@@ -58,6 +58,18 @@ object NasRoutes {
 }
 
 /**
+ * CC-005 P1: reset phiên tập trung khi logout — dùng chung cho mọi onLogout.
+ * Giữ disconnect/reset hiện có + thêm clear ViewModel (cancel login, reset browser mode).
+ */
+private fun performLogout(domainProvider: DomainViewModelProvider) {
+    try { domainProvider.systemMonitor.stopDashboardMonitoring() } catch (_: Exception) { }
+    try { domainProvider.authSession.cancelLogin() } catch (_: Exception) { }
+    try { com.nas.naswebdav.WebDavManager.disconnect() } catch (_: Exception) { }
+    try { com.nas.naswebdav.shared.SharedStateHolder.reset() } catch (_: Exception) { }
+    try { domainProvider.fileBrowser.resetToDefaultMode() } catch (_: Exception) { }
+}
+
+/**
  * Main navigation host with bottom nav visibility logic.
  *
  * @param domainProvider  DI container for all 8 domain VMs
@@ -73,6 +85,8 @@ fun NasNavHost(
     mediaUrl: String,
     onSetMediaUrl: (String) -> Unit,
     onStartScreenRecord: () -> Unit = {},
+    // CC-005 P1: splash conditional start — đã login -> dashboard, chưa -> login.
+    startDestination: String = NasRoutes.LOGIN,
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -90,6 +104,18 @@ fun NasNavHost(
                 NasNavigationBar(
                     currentRoute = currentRoute,
                     onTabSelected = { tab ->
+                        // CC-005 P1: reset ExclusivePanelState khi chuyển màn +
+                        // dismiss dialog host (tránh dialog/sheet màn cũ đè màn mới).
+                        runCatching {
+                            com.nas.naswebdav.ui.screens.ExclusivePanelState.current.value = null
+                        }
+                        runCatching {
+                            domainProvider.globalUi.dismiss()
+                            domainProvider.deviceManagement.dismissIpApproval()
+                        }
+                        if (tab.route == NasRoutes.FILES && domainProvider.fileBrowser.currentUrl.isBlank()) {
+                            domainProvider.fileBrowser.resetToDefaultMode()
+                        }
                         navController.navigate(tab.route) {
                             popUpTo(navController.graph.findStartDestination().id) {
                                 saveState = true
@@ -106,7 +132,7 @@ fun NasNavHost(
 
         NavHost(
             navController = navController,
-            startDestination = NasRoutes.LOGIN,
+            startDestination = startDestination,
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             enterTransition = {
                 fadeIn(animationSpec = tween(300)) + slideInHorizontally(
@@ -138,7 +164,20 @@ fun NasNavHost(
 
             // ── DASHBOARD (Trang chủ) ──────────────────────────────────
             composable(NasRoutes.DASHBOARD) {
-                androidx.activity.compose.BackHandler { /* Block back on dashboard */ }
+                // CC-005 P1: double-tap back để thoát (lần 1 toast, lần 2 finish).
+                val dashContext = androidx.compose.ui.platform.LocalContext.current
+                var dashLastBack by remember { mutableLongStateOf(0L) }
+                androidx.activity.compose.BackHandler {
+                    val now = System.currentTimeMillis()
+                    if (now - dashLastBack < 2000L) {
+                        (dashContext as? android.app.Activity)?.finish()
+                    } else {
+                        dashLastBack = now
+                        android.widget.Toast.makeText(
+                            dashContext, "Nhấn Back lần nữa để thoát", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
                 MainMenuScreen(
                     onOpenFiles = {
                         domainProvider.fileBrowser.resetToDefaultMode()
@@ -176,6 +215,7 @@ fun NasNavHost(
                             domainProvider.repository.addSystemLog("INFO", "Network",
                                 "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
                         }
+                        performLogout(domainProvider)
                         navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
                     },
                     onOpenOrganizer = { navController.navigate(NasRoutes.SMART_ORGANIZER) },
@@ -220,6 +260,7 @@ fun NasNavHost(
                             domainProvider.repository.addSystemLog("INFO", "Network",
                                 "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
                         }
+                        performLogout(domainProvider)
                         navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
                     },
                     onBackToMenu = {
@@ -249,6 +290,7 @@ fun NasNavHost(
                             domainProvider.repository.addSystemLog("INFO", "Network",
                                 "Người dùng '${WebDavManager.currentUser}' đã chủ động Đăng xuất.")
                         }
+                        performLogout(domainProvider)
                         navController.navigate(NasRoutes.LOGIN) { popUpTo(0) }
                     },
                     // FIX-AUDIT-#6: het 2 TODO — Cai dat mo app settings he thong,
@@ -324,6 +366,31 @@ fun NasNavHost(
 
             composable(NasRoutes.SMART_ORGANIZER) {
                 SmartOrganizerScreen(onBack = { navController.popBackStack() })
+            }
+
+            // ── CC-005 P1: alias route cũ (migrate dần) ────────────────────
+            // main_menu -> DASHBOARD, browser -> FILES (launchSingleTop + save/restore + popUpTo start).
+            composable("main_menu") {
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    navController.navigate(NasRoutes.DASHBOARD) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+            }
+            composable("browser") {
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    navController.navigate(NasRoutes.FILES) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
             }
         }
     }

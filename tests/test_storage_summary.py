@@ -1,77 +1,64 @@
-# -*- coding: utf-8 -*-
-"""Tests cho _build_storage_summary (endpoint /api/storage/summary)."""
-
-import ast
 import os
+import runpy
+import sqlite3
 import tempfile
-import types
+import threading
 import unittest
+import types
 from pathlib import Path
 
 
-def _load_summary_fn():
-    source_path = Path(__file__).resolve().parents[1] / "backend" / "nas_api_server.py"
-    source = source_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    wanted = {"_build_storage_summary"}
-    mod = types.ModuleType("_storage_summary_logic")
-    mod.__dict__.update({"os": os, "time": __import__("time"),
-                         "threading": __import__("threading"),
-                         "log": __import__("logging").getLogger("test")})
-    # Can get_webdav_root mac dinh (se duoc patch trong test) + hang skip dirs.
-    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
-    assert fns, "_build_storage_summary khong ton tai"
-    assigns = [n for n in tree.body
-               if isinstance(n, ast.Assign)
-               and any(isinstance(t, ast.Name) and t.id == "_STORAGE_SKIP_DIRS"
-                       for t in n.targets)]
-    m = ast.Module(body=assigns + fns, type_ignores=[])
-    ast.fix_missing_locations(m)
-    exec(compile(m, str(source_path), "exec"), mod.__dict__)
-    return mod
+class SharedStorageSummaryTests(unittest.TestCase):
+    def test_persistent_snapshot_counts_refresh_and_partial_state(self):
+        ns = runpy.run_path(str(Path(__file__).resolve().parents[1] / '.specify/patches/shared-storage-summary.py'))
+        function = ns['_build_storage_summary']
+        scope = function.__globals__
+        with tempfile.TemporaryDirectory() as root:
+            database = os.path.join(root, 'index.sqlite')
+            scope.update(os=os, INDEX_DB_PATH=database,
+                         time=types.SimpleNamespace(time=lambda: 100),
+                         _refresh_file_index_for_search=lambda: None,
+                         _get_webdav_public_dir=lambda: root,
+                         _index_scan_lock=threading.Lock())
+            with sqlite3.connect(database) as conn:
+                conn.execute('CREATE TABLE index_state(id INTEGER,root TEXT,scanned_at REAL,ready INTEGER)')
+                conn.execute('INSERT INTO index_state VALUES(1,?,100,1)', (os.path.realpath(root),))
+                conn.execute('CREATE TABLE file_index(path TEXT,name TEXT,is_dir INTEGER,size INTEGER)')
+                conn.executemany('INSERT INTO file_index VALUES(?,?,?,?)',
+                                 [('a.JPG','a.JPG',0,10), ('sub/b.mp4','b.mp4',0,100), ('sub/','sub',1,0)])
+            conn.close()
+            first = function()
+            self.assertEqual((first['total_files'], first['total_dirs'], first['total_bytes']), (2,1,110))
+            self.assertEqual(first['by_type']['image']['files'], 1)
+            self.assertEqual(first['largest'][0]['path'], 'sub/b.mp4')
+            self.assertFalse(first['partial'])
+            self.assertEqual(function(), first)  # reopened connection reuses durable snapshot
+            with sqlite3.connect(database) as conn:
+                conn.execute("DELETE FROM file_index WHERE path='a.JPG'")
+                conn.execute('UPDATE index_state SET scanned_at=101,ready=0')
+            conn.close()
+            partial = function(refresh=True)
+            self.assertTrue(partial['partial'])
+            self.assertEqual(partial['total_files'], 1)
+            with sqlite3.connect(database) as conn:
+                conn.execute('UPDATE index_state SET ready=1')
+            conn.close()
+            self.assertFalse(function(refresh=True)['partial'])
+            jobs = []
+            class DeferredThread:
+                def __init__(self, target, daemon):
+                    self.target = target
+                def start(self):
+                    jobs.append(self.target)
+            scope['time'] = types.SimpleNamespace(time=lambda: 1000)
+            scope['threading'] = types.SimpleNamespace(Thread=DeferredThread)
+            self.assertEqual(function()['total_files'], 1)
+            self.assertEqual(function()['total_files'], 1)
+            self.assertEqual(len(jobs), 1)  # stale reads coalesce one background rebuild
+            jobs[0]()
+            self.assertEqual(function()['summary_updated_at'], 1000)
+            self.assertEqual(len(jobs), 1)
 
 
-class StorageSummaryTests(unittest.TestCase):
-    def _make_tree(self, root):
-        (root / "a.jpg").write_bytes(b"x" * 100)
-        (root / "b.mp4").write_bytes(b"y" * 1000)
-        (root / "c.pdf").write_bytes(b"z" * 50)
-        sub = root / "sub"
-        sub.mkdir()
-        (sub / "d.mp3").write_bytes(b"w" * 200)
-        (sub / "e.zip").write_bytes(b"v" * 300)
-        (sub / "f.xyz").write_bytes(b"u" * 10)
-        trash = root / ".trash"
-        trash.mkdir()
-        (trash / "old.mp4").write_bytes(b"t" * 5000)
-
-    def test_counts_and_largest(self):
-        mod = _load_summary_fn()
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            self._make_tree(root)
-            mod.__dict__["get_webdav_root"] = lambda: str(root)
-            out = mod._build_storage_summary(max_seconds=30)
-        self.assertEqual(out["total_files"], 6)  # .trash bi loai
-        self.assertEqual(out["total_bytes"], 100 + 1000 + 50 + 200 + 300 + 10)
-        self.assertEqual(out["by_type"]["image"]["files"], 1)
-        self.assertEqual(out["by_type"]["video"]["files"], 1)
-        self.assertEqual(out["by_type"]["video"]["bytes"], 1000)
-        self.assertEqual(out["by_type"]["doc"]["files"], 1)
-        self.assertEqual(out["by_type"]["audio"]["files"], 1)
-        self.assertEqual(out["by_type"]["archive"]["files"], 1)
-        self.assertEqual(out["by_type"]["other"]["files"], 1)
-        # File lon nhat la b.mp4 (1000B), khong phai old.mp4 trong trash.
-        self.assertEqual(out["largest"][0]["bytes"], 1000)
-        self.assertTrue(out["largest"][0]["path"].endswith("b.mp4"))
-        self.assertFalse(out["partial"])
-
-    def test_route_registered(self):
-        source_path = Path(__file__).resolve().parents[1] / "backend" / "nas_api_server.py"
-        source = source_path.read_text(encoding="utf-8")
-        self.assertIn("/api/storage/summary", source)
-        self.assertIn("def api_storage_summary", source)
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

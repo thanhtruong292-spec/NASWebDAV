@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.nas.naswebdav.utils.SystemLogger
 
 /**
  * LongRunningApiWorker — Foreground Worker cho các tác vụ API gọi NAS kéo dài (Unzip, Organize...).
@@ -47,10 +48,12 @@ class LongRunningApiWorker(
         const val NOTIFICATION_ID = 9011
         private const val TAG = "LongRunAPI"
 
+        // CC-005 P0: mo rong retry cho timeout/rate-limit (408/429/5xx via exception message) + bound attempt<3
         internal fun shouldRetry(error: Throwable, attempt: Int): Boolean =
             attempt < 3 && (error is java.net.SocketTimeoutException ||
                 error is java.net.ConnectException ||
                 error is java.net.UnknownHostException ||
+                error is java.net.ProtocolException ||
                 error is java.io.IOException)
 
         fun createChannel(context: Context) {
@@ -75,8 +78,16 @@ class LongRunningApiWorker(
         val taskType = inputData.getString("taskType") ?: return@withContext Result.failure()
         val apiUrl = inputData.getString("apiUrl") ?: return@withContext Result.failure()
         val jsonBody = inputData.getString("jsonBody") ?: ""
+        // CC-005 P0: chan SSRF via inputData apiUrl (caller co the ep POST kem creds toi host la)
+        val savedBaseForCheck = SmartNetworkManager.getActiveBaseUrl(applicationContext).ifEmpty { SecurePrefsHelper.getUrl(applicationContext) }
+        val reqHostLR = runCatching { java.net.URI(apiUrl).host.orEmpty().lowercase() }.getOrDefault("")
+        val savedHostLR = runCatching { java.net.URI(savedBaseForCheck).host.orEmpty().lowercase() }.getOrDefault("")
+        if (reqHostLR.isNotEmpty() && savedHostLR.isNotEmpty() && reqHostLR != savedHostLR) return@withContext Result.failure()
+        // CC-005 P0: cap jsonBody 64KB (inputData lon OOM + POST nang treo NAS)
+        if (jsonBody.length > 65536) return@withContext Result.failure()
         val taskLabel = inputData.getString("taskLabel")
             ?: applicationContext.getString(R.string.long_api_default_task_label)
+        SystemLogger.log("INFO", "LongRunningApi", "Bắt đầu tác vụ API dài hạn: $taskLabel")
 
         // Kết nối xác thực
         val user = SecurePrefsHelper.getUser(applicationContext)
@@ -225,6 +236,7 @@ class LongRunningApiWorker(
                         else android.R.drawable.stat_notify_error
                     )
                     .setContentTitle(resultMessage)
+                    .setOngoing(false)
                     .setAutoCancel(true)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 try {
@@ -232,11 +244,15 @@ class LongRunningApiWorker(
                         .notify(NOTIFICATION_ID, doneNotification.build())
                 } catch (_: SecurityException) {}
 
+                // CC-005 P0: retry transient HTTP (5xx/429/408), bound 3 lan
+                if (!isSuccess && (response.code in 500..599 || response.code == 429 || response.code == 408) && runAttemptCount < 3) { SystemLogger.log("WARNING", "LongRunningApi", "Tác vụ API $taskLabel gặp lỗi tạm thời — retry"); return@withContext Result.retry() }
+                SystemLogger.log("INFO", "LongRunningApi", "Hoàn tất tác vụ API $taskLabel (status=$isSuccess)")
                 return@withContext if (isSuccess) Result.success() else Result.failure()
             }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
             if (isStopped) {
-                return@withContext Result.failure()
+                SystemLogger.log("WARNING", "LongRunningApi", "Hệ thống dừng worker tác vụ API $taskLabel — sẽ retry theo backoff")
+                return@withContext Result.retry()
             }
             android.util.Log.e(TAG, "Lỗi API tác vụ dài: ${e.message}", e)
 
@@ -261,6 +277,7 @@ class LongRunningApiWorker(
                         e.message?.take(100).orEmpty()
                     )
                 )
+                .setOngoing(false)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             try {
@@ -282,8 +299,10 @@ class LongRunningApiWorker(
 
             if (shouldRetry(e, runAttemptCount)) {
                 android.util.Log.w(TAG, "Transient error in LongRunningApiWorker (attempt $runAttemptCount), retrying: ${e.message}")
+                SystemLogger.log("WARNING", "LongRunningApi", "Tác vụ API $taskLabel lỗi tạm thời — retry (attempt=$runAttemptCount)")
                 return@withContext Result.retry()
             }
+            SystemLogger.log("ERROR", "LongRunningApi", "Tác vụ API $taskLabel thất bại: ${e.message?.take(100)}")
             return@withContext Result.failure()
         }
     }

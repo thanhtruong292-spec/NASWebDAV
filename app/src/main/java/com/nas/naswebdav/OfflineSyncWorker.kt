@@ -35,9 +35,48 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
         const val UNIQUE_WORK_NAME = "OfflineSyncWorker"
         /** inputData key: action id của UPLOAD_FAILED row được yêu cầu retry ưu tiên. */
         const val KEY_RETRY_ACTION_ID = "retryActionId"
+        /** CC-005 P1: file >= ngưỡng này yêu cầu UNMETERED (tránh đốt 4G). */
+        const val LARGE_FILE_UNMETERED_THRESHOLD_BYTES = 50L * 1024L * 1024L
+
+        /**
+         * CC-005 P1: single schedule tập trung — mọi caller (retry/priority/
+         * continuation) đi qua đây để giữ đúng 1 unique work. hasLargeFile=true
+         * → yêu cầu UNMETERED.
+         */
+        fun schedule(
+            context: Context,
+            retryActionId: Int = 0,
+            hasLargeFile: Boolean = false,
+            policy: ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE,
+        ) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(
+                    if (hasLargeFile) NetworkType.UNMETERED else NetworkType.CONNECTED
+                )
+                .build()
+            val builder = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
+                .setConstraints(constraints)
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.SECONDS
+                )
+            if (retryActionId > 0) {
+                builder.setInputData(
+                    androidx.work.workDataOf(KEY_RETRY_ACTION_ID to retryActionId)
+                )
+            }
+            WorkManager.getInstance(context.applicationContext)
+                .enqueueUniqueWork(UNIQUE_WORK_NAME, policy, builder.build())
+        }
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "OfflineSync", "Bắt đầu xử lý thao tác offline đã xếp hàng")
+        // AUDIT-20261104: worker co the chay lau (>10s) phai setForeground truoc.
+        try {
+            setForeground(makeForegroundInfo("offlinesync_channel", "OfflineSync", 1004, "Đang đồng bộ offline..."))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            android.util.Log.w("OfflineSyncWorker", "setForeground non-fatal: ${e.javaClass.simpleName}", e)
+        }
         val db = (applicationContext as NasApplication).database
         val trashMetaDao = db.trashMetaDao()
 
@@ -181,7 +220,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                         // handled=true roi delete (ban cu park xong van xoa).
                         "UPLOAD_FAILED" -> {
                             val tempPath = action.sourcePath
-                            if (tempPath != null && action.destPath != null) {
+                            if (action.destPath != null) {
                                 val file = java.io.File(tempPath)
                                 if (file.exists()) {
                                     val ext = file.extension.lowercase()
@@ -224,9 +263,9 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    // P0-4: user cancel → failure, KHÔNG retry
+                    // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
                     if (isStopped) {
-                        return@withContext Result.failure()
+                        return@withContext Result.retry()
                     }
                     // FIX-REVIEW-24/09-#13: pushBack MOI loi thuong (khong chi khi
                     // metadata fail) de batch sau vet muc khac truoc. Park sau 5
@@ -276,18 +315,8 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
                 try {
                     SystemLogger.log("INFO", "OfflineSync",
                         "Queue còn $localRemaining action local ($skippedForeign foreign/legacy-park giữ lại) — enqueue continuation work")
-                    val constraints = Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build()
-                    val continuationRequest = OneTimeWorkRequestBuilder<OfflineSyncWorker>()
-                        .setConstraints(constraints)
-                        .setBackoffCriteria(
-                            androidx.work.BackoffPolicy.EXPONENTIAL, 15L, TimeUnit.SECONDS
-                        )
-                        .build()
-                    WorkManager.getInstance(applicationContext).enqueueUniqueWork(
-                        UNIQUE_WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, continuationRequest
-                    )
+                    // CC-005 P1: single schedule — giữ đúng 1 unique work.
+                    schedule(applicationContext)
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
                     SystemLogger.log("WARNING", "OfflineSync",
                         "Enqueue continuation work thất bại: ${e.message}")
@@ -304,6 +333,7 @@ class OfflineSyncWorker(appContext: Context, workerParams: WorkerParameters) : N
             } else {
                 Result.retry()
             }
+            SystemLogger.log("INFO", "OfflineSync", "Hoàn tất xử lý thao tác offline")
             // R4-P1: row khác NAS/user bị bỏ qua (giữ lại, không xóa) — log để user
             // biết khi về đúng NAS chúng sẽ được xử lý.
             if (skippedForeign > 0) {

@@ -187,8 +187,12 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
     // Always try the original WebDAV/nginx media URL first.
     // That keeps NAS work to simple sendfile/range reads; decoding stays on the phone.
     // NAS CHI LUU TRU — khong transcode tren NAS nua (moi dinh dang direct-play).
-    val effectiveUrl = remember(playbackUrl) {
-        playbackUrl.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM, AVI, WMV... → /api/media endpoint
+    // CC-004 P0-4: fallback WebDAV-direct — neu /api/media (:5050) chet/timeout
+    // ma WebDAV con song thi tu doi sang URL goc thay vi bao loi dung.
+    var useWebDavDirect by remember { mutableStateOf(false) }
+    val effectiveUrl = remember(playbackUrl, useWebDavDirect) {
+        if (useWebDavDirect) playbackUrl
+        else playbackUrl.toFastMediaUrl() // MP4, MKV, MOV, TS, WEBM, AVI, WMV... → /api/media endpoint
     }
 
     val isTranscoding = false
@@ -299,18 +303,64 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
                             .firstOrNull()
                             ?.responseCode
                         android.util.Log.e("VideoPlayer", "Lỗi: ${error.errorCodeName} - ${error.message}, HTTP=$invalidResponseCode")
-                        // Bắt lỗi khi phần cứng điện thoại (Hardware Decoder) KHÔNG HỖ TRỢ định dạng 
-                        // Ví dụ: Video 4K HDR HEVC trên máy tính bảng cũ, hoặc Âm thanh Dolby AC3 trong file MKV.
-                        // Tại đây, ta báo cho giao diện bật Dialog hỏi chuyển sang VLC
-                        (activity as? MainActivity)?.runOnUiThread {
-                            val msg = if (invalidResponseCode == 416) {
+                        // CC-004 P0-1/P0-2: phân loại 401/404/timeout/decoder riêng + hiện dialog
+                        // trên mọi host (MainActivity hay VideoPlayerActivity) qua main looper.
+                        val rootCauses = generateSequence(error.cause) { it.cause }.toList()
+                        val isTimeout = rootCauses.any { c ->
+                            c is java.net.SocketTimeoutException || c is java.net.ConnectException ||
+                                c is java.net.UnknownHostException || c is javax.net.ssl.SSLException ||
+                                (c is java.io.IOException && (c.message?.contains("timeout", true) == true ||
+                                    c.message?.contains("Unable to resolve host", true) == true))
+                        }
+                        // CC-004 P0-4: fallback WebDAV-direct — /api/media (:5050) chet/
+                        // timeout ma WebDAV con song thi tu doi sang URL goc 1 lan
+                        // thay vi bao loi dung. Chi ap dung cho loi ket noi (khong
+                        // ap dung 401/404/416 — doi URL cung van loi).
+                        if (!useWebDavDirect && isTimeout && invalidResponseCode == null &&
+                            effectiveUrl.contains("/api/media")
+                        ) {
+                            android.util.Log.w("VideoPlayer", "P0-4 fallback: /api/media unreachable, retry WebDAV-direct")
+                            try {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    useWebDavDirect = true
+                                    try {
+                                        globalUiVM.show(
+                                            DialogType.WARNING,
+                                            "Máy chủ phát nhanh (:5050) không phản hồi.\n\nĐang thử đường WebDAV trực tiếp..."
+                                        )
+                                    } catch (_: Exception) { }
+                                }
+                            } catch (_: Exception) {
+                                useWebDavDirect = true
+                            }
+                            return
+                        }
+                        val msg = when {
+                            invalidResponseCode == 401 -> {
+                                "NAS từ chối xác thực (HTTP 401, ${error.errorCodeName}).\n\nPhiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại rồi phát tiếp."
+                            }
+                            invalidResponseCode == 404 -> {
+                                "Không tìm thấy tệp trên NAS (HTTP 404, ${error.errorCodeName}).\n\nTệp có thể đã bị di chuyển/xóa, hoặc đường dẫn có ký tự đặc biệt chưa đồng bộ. Hãy kéo xuống làm mới rồi thử lại."
+                            }
+                            invalidResponseCode == 416 -> {
                                 "Tệp MP4 này bị hỏng hoặc chưa được hoàn tất metadata (HTTP 416, ${error.errorCodeName}).\n\nNAS sẽ tự ẩn các bản ghi livestream thiếu moov atom sau khi dọn nền. Vui lòng chọn một bản ghi khác hoặc ghi lại livestream."
-                            } else if (invalidResponseCode != null) {
+                            }
+                            invalidResponseCode != null -> {
                                 "Không thể tải luồng video từ NAS (HTTP $invalidResponseCode, ${error.errorCodeName}).\n\nVui lòng thử lại sau vài giây hoặc nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC/MX Player qua proxy cục bộ."
-                            } else {
+                            }
+                            isTimeout -> {
+                                "Mất kết nối tới NAS khi đang tải video (${error.errorCodeName}).\n\nKiểm tra WiFi/Tailscale rồi thử lại, hoặc mở bằng VLC/MX Player qua proxy cục bộ."
+                            }
+                            else -> {
                                 "Thiết bị của bạn không hỗ trợ giải mã định dạng phim này (Lỗi: ${error.errorCodeName}).\n\nVui lòng nhấn nút [Mở bằng ứng dụng ngoài] (biểu tượng mũi tên) để xem bằng VLC hoặc MX Player."
                             }
-                            globalUiVM.show(DialogType.ERROR, msg)
+                        }
+                        try {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                globalUiVM.show(DialogType.ERROR, msg)
+                            }
+                        } catch (_: Exception) {
+                            try { globalUiVM.show(DialogType.ERROR, msg) } catch (_: Exception) { }
                         }
                     }
                     
@@ -428,13 +478,13 @@ fun ExoPlayerScreen(url: String, user: String, pass: String, onBack: () -> Unit)
             addAction(PIP_ACTION_PLAY_PAUSE)
             addAction(PIP_ACTION_FAST_FORWARD)
         }
-        // QUAN TRỌNG: Phải dùng RECEIVER_EXPORTED để HĐH Android gửi được Broadcast vào App
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            context.registerReceiver(receiver, filter)
-        }
+        // Dùng RECEIVER_NOT_EXPORTED vì PendingIntent PiP đã gắn rõ packageName của ứng dụng
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            receiver,
+            filter,
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         onDispose {
             try { context.unregisterReceiver(receiver) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {

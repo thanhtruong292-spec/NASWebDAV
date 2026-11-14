@@ -59,6 +59,28 @@ import androidx.compose.ui.window.Dialog
 // LivestreamRecordDialog — Ghi hinh Livestream TikTok / Facebook / YouTube
 // ════════════════════════════════════════════════════════════════════════════
 
+private val AllowedTikTokHosts = setOf(
+    "vt.tiktok.com",
+    "vm.tiktok.com",
+    "www.tiktok.com",
+    "tiktok.com",
+    "m.tiktok.com"
+)
+
+private val InvisibleUrlCharsRegex = Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u200E\\u200F\\u2028\\u2029\\r\\n]")
+private val TikTokHandleRegex = Regex("@([\\w.]+)")
+private val TikTokShortPathRegex = Regex("""tiktok\.com/t/[\w-]+""")
+private val FacebookUserRegex = Regex("facebook\\.com/([^/\\?]+)")
+private val YouTubeHandleRegex = Regex("@([\\w.-]+)")
+private val TikTokProfileUrlRegex = Regex("tiktok\\.com/@([\\w.]+)")
+
+private fun isAllowedTikTokRedirectUrl(rawUrl: String): Boolean = runCatching {
+    val parsed = java.net.URI(rawUrl.trim())
+    val scheme = parsed.scheme?.lowercase(java.util.Locale.US) ?: return false
+    val host = parsed.host?.lowercase(java.util.Locale.US) ?: return false
+    scheme == "https" && host in AllowedTikTokHosts
+}.getOrDefault(false)
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun LivestreamRecordDialog(
@@ -69,11 +91,11 @@ fun LivestreamRecordDialog(
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     // Khôi phục trạng thái nếu Worker đang chạy ngầm
     // Kept as Unit: one-shot state sync when dialog opens.
-    LaunchedEffect(Unit) { liveVM.syncLivestreamStateWithServer() }
-    // Reset tat ca panel ve trang thai dong khi user mo dialog — moi lan vao se thay
-    // giao dien gon, user chu dong bam header de xem section can xem.
+    // SPEC_LIVESTREAM_LIMITS §4.3: refresh gom (status + cap + queue) thay sync le.
+    LaunchedEffect(Unit) { liveVM.refreshLivestreamState(context) }
+    // Reset panel khi mo dialog, nhung giu "active" neu dang co job ghi hinh
     androidx.compose.runtime.DisposableEffect(Unit) {
-        LivestreamPanelState.current.value = null
+        LivestreamPanelState.current.value = if (liveVM.activeLivestreams.isNotEmpty()) "active" else null
         onDispose { }
     }
     var liveUrl by remember { mutableStateOf("") }
@@ -91,7 +113,7 @@ fun LivestreamRecordDialog(
     // URL sanitizer: strip invisible Unicode (U+200B zero-width space, U+FEFF BOM,
     // newlines, carriage returns) that social apps inject when copying links.
     fun sanitizeUrl(raw: String): String {
-        return raw.replace(Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u200E\\u200F\\u2028\\u2029\\r\\n]"), "").trim()
+        return raw.replace(InvisibleUrlCharsRegex, "").trim()
     }
 
     // AUTO-PASTE: Đọc clipboard khi dialog mở, tự dán nếu chứa link livestream
@@ -119,17 +141,17 @@ fun LivestreamRecordDialog(
     val detectedTitle = remember(liveUrl) {
         when {
             liveUrl.contains("tiktok", true) -> {
-                val username = Regex("@([\\w.]+)").find(liveUrl)?.groupValues?.get(1)
+                val username = TikTokHandleRegex.find(liveUrl)?.groupValues?.get(1)
                 if (username != null) "Live của @$username" 
-                else if (isResolvingTikTokLink || liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com") || Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(liveUrl)) "TikTok Live (Đang lấy tên...)"
+                else if (isResolvingTikTokLink || liveUrl.contains("vt.tiktok.com") || liveUrl.contains("vm.tiktok.com") || TikTokShortPathRegex.containsMatchIn(liveUrl)) "TikTok Live (Đang lấy tên...)"
                 else "TikTok Live"
             }
             liveUrl.contains("facebook", true) || liveUrl.contains("fb.watch", true) -> {
-                val fbUser = Regex("facebook\\.com/([^/\\?]+)").find(liveUrl)?.groupValues?.get(1)
+                val fbUser = FacebookUserRegex.find(liveUrl)?.groupValues?.get(1)
                 if (!fbUser.isNullOrEmpty() && fbUser != "watch") "Live của $fbUser" else "Facebook Live"
             }
             liveUrl.contains("youtube", true) || liveUrl.contains("youtu.be", true) -> {
-                val channel = Regex("@([\\w.-]+)").find(liveUrl)?.groupValues?.get(1)
+                val channel = YouTubeHandleRegex.find(liveUrl)?.groupValues?.get(1)
                 if (channel != null) "Live của @$channel" else "YouTube Live"
             }
             liveUrl.contains("shopee", true) -> "Shopee Live"
@@ -143,14 +165,15 @@ fun LivestreamRecordDialog(
         val originalUrl = liveUrl.trim()
         val isShortLink = originalUrl.contains("vt.tiktok.com") ||
                           originalUrl.contains("vm.tiktok.com") ||
-                          Regex("""tiktok\.com/t/[\w-]+""").containsMatchIn(originalUrl)
-        if (isShortLink && !originalUrl.contains("@")) {
+                          TikTokShortPathRegex.containsMatchIn(originalUrl)
+        if (isShortLink && !originalUrl.contains("@") && isAllowedTikTokRedirectUrl(originalUrl)) {
             isResolvingTikTokLink = true
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try {
                     var current = originalUrl
                     // Theo redirect toi 5 hop de tranh loop, vi tiktok.com/t/ co the redirect 2-3 lan
                     for (hop in 0 until 5) {
+                        if (!isAllowedTikTokRedirectUrl(current)) break
                         val conn = java.net.URL(current).openConnection() as java.net.HttpURLConnection
                         conn.instanceFollowRedirects = false
                         conn.connectTimeout = 5000
@@ -162,7 +185,9 @@ fun LivestreamRecordDialog(
                         val location = conn.getHeaderField("Location")
                         conn.disconnect()
                         if (location.isNullOrBlank()) break
-                        current = if (location.startsWith("http")) location else java.net.URL(java.net.URL(current), location).toString()
+                        val nextUrl = if (location.startsWith("http")) location else java.net.URL(java.net.URL(current), location).toString()
+                        if (!isAllowedTikTokRedirectUrl(nextUrl)) break
+                        current = nextUrl
                         if (current.contains("@")) break
                     }
                     if (current.contains("@") && current != originalUrl) {
@@ -227,7 +252,7 @@ fun LivestreamRecordDialog(
                 .verticalScroll(dialogScrollState)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                Text(platformIcon, fontSize = 22.sp)
+                Icon(Icons.Default.Videocam, contentDescription = "Livestream camera", tint = accentColor, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Ghi hình Livestream", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -245,7 +270,7 @@ fun LivestreamRecordDialog(
                 com.nas.naswebdav.ui.components.PillTab(
                     selected = livePanelMode == "watch",
                     label = "Theo dõi người dùng",
-                    emoji = "👤",
+                    emoji = "",
                     accentColor = AccentRed,
                     onClick = { livePanelMode = "watch" },
                     modifier = Modifier.weight(1f),
@@ -253,7 +278,7 @@ fun LivestreamRecordDialog(
                 com.nas.naswebdav.ui.components.PillTab(
                     selected = livePanelMode == "record",
                     label = "Ghi link live",
-                    emoji = "🔗",
+                    emoji = "",
                     accentColor = accentColor,
                     onClick = { livePanelMode = "record" },
                     modifier = Modifier.weight(1f),
@@ -300,14 +325,14 @@ fun LivestreamRecordDialog(
                     Modifier.fillMaxWidth().background(accentColor.copy(alpha = 0.1f), RoundedCornerShape(8.dp)).padding(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(platformIcon, fontSize = 16.sp)
+                    Icon(Icons.Default.Videocam, contentDescription = "Livestream camera", tint = accentColor, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Đã nhận diện: $detectedTitle", color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
                 Spacer(Modifier.height(6.dp))
             }
             
-            Text("CHẤT LƯỢNG", color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Text("CHẤT LƯỢNG", color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("best" to "Tốt nhất", "720p" to "720p", "audio" to "Chỉ âm thanh").forEach { (value, label) ->
@@ -341,33 +366,115 @@ fun LivestreamRecordDialog(
                     Text(liveVM.livestreamMessage.ifEmpty { "Đang kết nối luồng Live..." }, color = accentColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             } else if (message.isNotEmpty()) {
-                // FIX: Auto-clear lỗi sau 10 giây để user kịp đọc, rồi hiện lại nút "BẮT ĐẦU GHI"
-                LaunchedEffect(message) {
-                    kotlinx.coroutines.delay(10000L)
-                    liveVM.clearLivestreamMessage()
+                // SPEC_LIVESTREAM_LIMITS §4.2: loi persistent den khi user dismiss/doi link/thanh cong.
+                // Chi auto-clear success sau 10s; loi giu lai + CTA theo code. Thay prefix "Lỗi" gion
+                // bang isLivestreamError / livestreamErrorCode tu ViewModel.
+                val isErr = liveVM.isLivestreamError
+                if (!isErr) {
+                    LaunchedEffect(message) {
+                        kotlinx.coroutines.delay(10000L)
+                        liveVM.clearLivestreamMessage()
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
-                val msgColor = if (message.startsWith("Lỗi")) AccentRed else TextTertiary
+                val msgColor = if (isErr) AccentRed else TextTertiary
                 Text(
                     message, color = msgColor, fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth().clickable { liveVM.clearLivestreamMessage() },
                     textAlign = TextAlign.Center
                 )
+                // CTA theo code: MAX_STREAMS -> [Cho vao hang doi] [Theo doi user] [Thu 720p/audio]
+                if (isErr && liveVM.livestreamErrorCode == "MAX_STREAMS") {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "NAS đang bận (${liveVM.serverLivestreamActive}/${liveVM.serverLivestreamCap})" +
+                            if (liveVM.livestreamErrorRetryAfterS > 0) " — thử lại sau ${liveVM.livestreamErrorRetryAfterS}s" else "",
+                        color = TextTertiary, fontSize = 12.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val tiktokUserForQueue: String = if (liveUrl.contains("tiktok", true)) {
+                            TikTokProfileUrlRegex.find(liveUrl)?.groupValues?.get(1) ?: ""
+                        } else ""
+                        OutlinedButton(
+                            onClick = { liveVM.enqueueLivestreamQueue(liveUrl.trim(), selectedQuality, tiktokUserForQueue) },
+                            modifier = Modifier.weight(1f).height(38.dp)
+                        ) { Text("Cho vào hàng đợi", fontSize = 12.sp) }
+                        if (tiktokUserForQueue.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = { liveVM.addTikTokLiveWatchUser(tiktokUserForQueue) },
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) { Text("Theo dõi @$tiktokUserForQueue", fontSize = 12.sp) }
+                        } else {
+                            OutlinedButton(
+                                onClick = {
+                                    selectedQuality = "720p"
+                                    liveVM.clearLivestreamMessage()
+                                    liveVM.startLivestreamRecord(liveUrl.trim(), "720p")
+                                },
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) { Text("Thử 720p nhẹ hơn", fontSize = 12.sp) }
+                        }
+                    }
+                    // Hang doi server-side: hien thi so thu tu + nut huy (client khong giu local).
+                    if (liveVM.livestreamQueue.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Hàng đợi server (${liveVM.livestreamQueueCount}/${liveVM.livestreamQueueCap})",
+                            color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        liveVM.livestreamQueue.take(5).forEachIndexed { idx, e ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "#${e.position.takeIf { it > 0 } ?: (idx + 1)} ${e.url.take(30)}",
+                                    color = TextSecondary, fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                if (e.queueId.isNotBlank()) {
+                                    TextButton(
+                                        onClick = { liveVM.cancelLivestreamQueue(e.queueId) },
+                                        modifier = Modifier.height(28.dp)
+                                    ) { Text("Hủy", fontSize = 12.sp, color = AccentRed) }
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 Spacer(Modifier.height(8.dp))
                 NasGradientButton(
                     onClick = {
                         if (liveUrl.isNotBlank() && !liveVM.isStartingLivestream) {
-                            val isVOD = liveUrl.contains("/video/") || liveUrl.contains("/watch") || liveUrl.contains("youtu.be") || liveUrl.contains("/t/") || liveUrl.contains("/v/") || liveUrl.contains("/reel")
+                            // SPEC_LIVESTREAM_LIMITS §4.3: chi coi VOD khi chac
+                            // (/video/, watch?v=, youtu.be non-live, /reel/, /shorts/).
+                            // tiktok.com/t/, vt/vm.tiktok.com phai resolve ra @user truoc
+                            // roi moi phan loai — tranh mat kha nang record short link.
+                            val lower = liveUrl.lowercase()
+                            val isTikTokShortUnresolved = (lower.contains("tiktok.com/t/") ||
+                                lower.contains("vt.tiktok.com") || lower.contains("vm.tiktok.com")) &&
+                                !liveUrl.contains("@")
+                            val isVOD = if (isTikTokShortUnresolved || isResolvingTikTokLink) false else (
+                                liveUrl.contains("/video/") ||
+                                    liveUrl.contains("watch?v=") ||
+                                    (liveUrl.contains("youtu.be") && !lower.contains("/live")) ||
+                                    lower.contains("/reel") || lower.contains("/shorts/")
+                                )
                             // Bóc tách username TikTok tu URL (sau khi resolver da chay xong)
                             // de tu dong them vao danh sach theo doi — lan sau watchdog tu phat hien live.
                             val tiktokUsername: String? = if (liveUrl.contains("tiktok", true)) {
-                                Regex("tiktok\\.com/@([\\w.]+)").find(liveUrl)?.groupValues?.get(1)
+                                TikTokProfileUrlRegex.find(liveUrl)?.groupValues?.get(1)
                             } else null
                             if (isVOD) {
                                 // Tự động phát hiện Video On Demand (VOD) thay vì Livestream
                                 // Chuyển hướng sang yt-dlp nhưng lưu vào Livestream/ để user dễ tìm
-                                liveVM.requestSocialDownload(liveUrl.trim(), "Livestream/")
+                                liveVM.requestSocialDownload(liveUrl.trim(), AppConfig.LIVESTREAM_FOLDER)
                                 onDismiss()
                             } else {
                                 liveVM.startLivestreamRecord(liveUrl.trim(), selectedQuality)
@@ -407,7 +514,7 @@ fun LivestreamRecordDialog(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "ĐANG GHI HÌNH (${activeLivestreams.size})",
-                        color = TextTertiary, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                        color = TextTertiary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
@@ -454,7 +561,7 @@ fun LivestreamRecordDialog(
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 // Cot 1: Thoi gian chay
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Thời gian chạy", color = TextTertiary, fontSize = 10.sp)
+                                    Text("Thời gian chạy", color = TextTertiary, fontSize = 12.sp)
                                     var localSeconds by remember(job.jobId) { mutableStateOf(job.durationSeconds) }
                                     LaunchedEffect(job.jobId, job.durationSeconds) {
                                         localSeconds = job.durationSeconds
@@ -470,16 +577,16 @@ fun LivestreamRecordDialog(
                                 }
                                 // Cot 2: Toc do (giua, ngang voi 2 cot kia)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Tốc độ", color = TextTertiary, fontSize = 10.sp)
+                                    Text("Tốc độ", color = TextTertiary, fontSize = 12.sp)
                                     Text(job.speed.ifEmpty { "—" }, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                                 // Cot 3: Dung luong (align phai)
                                 Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                                    Text("Dung lượng", color = TextTertiary, fontSize = 10.sp)
+                                    Text("Dung lượng", color = TextTertiary, fontSize = 12.sp)
                                     Text(job.fileSize.ifEmpty { "0 B" }, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = TextTertiary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            if (job.outputFile.isNotEmpty()) { Spacer(Modifier.height(4.dp)); Text(job.outputFile, color = TextTertiary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             Spacer(Modifier.height(6.dp))
                             Button(
                                 onClick = { liveVM.stopLivestreamRecord(job.jobId) },

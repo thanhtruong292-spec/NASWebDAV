@@ -39,14 +39,14 @@ object FormatUtils {
     fun formatBytes(bytes: Long): String {
         if (bytes < 1024) return "$bytes B"
         val kb = bytes / 1024.0
-        if (kb < 1024) return "%.1f KB".format(kb)
+        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb)
         val mb = kb / 1024.0
-        if (mb < 1024) return "%.1f MB".format(mb)
+        if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb)
         val gb = mb / 1024.0
-        if (gb < 1024) return "%.2f GB".format(gb)
+        if (gb < 1024) return String.format(Locale.US, "%.2f GB", gb)
         val tb = gb / 1024.0
-        if (tb < 1024) return "%.2f TB".format(tb)
-        return "%.2f PB".format(tb / 1024.0)
+        if (tb < 1024) return String.format(Locale.US, "%.2f TB", tb)
+        return String.format(Locale.US, "%.2f PB", tb / 1024.0)
     }
 
     fun ensureTrailingSlash(url: String): String = if (url.endsWith("/")) url else "$url/"
@@ -175,11 +175,34 @@ object HashUtils {
 // MediaUtils — nhận diện loại file media
 // ─────────────────────────────────────────────────────────────────────────────
 object MediaUtils {
-    private val VIDEO_EXTENSIONS = setOf(".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v")
+    private val VIDEO_EXTENSIONS = setOf(".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv", ".ts", ".m4v", ".webm")
     private val IMAGE_EXTENSIONS = setOf(".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif", ".bmp")
 
     fun isVideo(fileName: String): Boolean = VIDEO_EXTENSIONS.any { fileName.lowercase().endsWith(it) }
     fun isImage(fileName: String): Boolean = IMAGE_EXTENSIONS.any { fileName.lowercase().endsWith(it) }
+
+    // CC-004 P1-6: mime rieng tung duoi cho Intent ngoai — "video/*" khien mot so
+    // player (MX, BSPlayer) khong hien trong chooser / mo sai decoder.
+    fun mimeForFile(name: String): String {
+        val lower = name.lowercase()
+        return when {
+            lower.endsWith(".mp4") || lower.endsWith(".m4v") -> "video/mp4"
+            lower.endsWith(".mkv") -> "video/x-matroska"
+            lower.endsWith(".avi") -> "video/x-msvideo"
+            lower.endsWith(".mov") -> "video/quicktime"
+            lower.endsWith(".mpg") || lower.endsWith(".mpeg") -> "video/mpeg"
+            lower.endsWith(".wmv") -> "video/x-ms-wmv"
+            lower.endsWith(".flv") -> "video/x-flv"
+            lower.endsWith(".ts") -> "video/mp2ts"
+            lower.endsWith(".webm") -> "video/webm"
+            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+            lower.endsWith(".png") -> "image/png"
+            lower.endsWith(".webp") -> "image/webp"
+            lower.endsWith(".gif") -> "image/gif"
+            lower.endsWith(".heic") -> "image/heic"
+            else -> "video/*"
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

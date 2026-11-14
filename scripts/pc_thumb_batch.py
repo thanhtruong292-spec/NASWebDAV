@@ -112,20 +112,20 @@ def propfind(session, base, path, depth=1, debug=False):
                                          "Content-Type": "application/xml; charset=utf-8"},
                                 timeout=30)
         except Exception as e:
-            _log(f"[WARN] PROPFIND loi {url}: {e}")
+            _log("[WARN] PROPFIND loi %s: %s" % (url, e))
             return []
         if r.status_code in (200, 207):
             break
         last_status = r.status_code
     else:
-        _log(f"[WARN] PROPFIND {base + _quote_variants(path)[0]} -> HTTP {last_status} "
-             f"(thu {len(_quote_variants(path))} bien the encode, can Basic auth + quyen doc)")
+        _log("[WARN] PROPFIND %s -> HTTP %s (thu %s bien the encode, can Basic auth + quyen doc)" % (
+            base + _quote_variants(path)[0], last_status, len(_quote_variants(path))))
         return []
     out = []
     try:
         root = ET.fromstring(r.content)
     except Exception as e:
-        _log(f"[WARN] PROPFIND {url} XML loi: {e}")
+        _log("[WARN] PROPFIND %s XML loi: %s" % (url, e))
         return []
     for resp in root.iter():
         if not resp.tag.endswith("response"):
@@ -220,7 +220,7 @@ def render_image(data):
         img.save(buf, "JPEG", quality=75)
         return buf.getvalue()
     except Exception as e:
-        _log(f"[WARN] render anh loi: {e}")
+        _log("[WARN] render anh loi: %s" % (e,))
         return None
 
 
@@ -233,8 +233,8 @@ def _ffmpeg_hw_args():
     try:
         r = subprocess.run(["ffmpeg", "-hide_banner", "-hwaccels"],
                            timeout=10, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, text=True)
-        accels = (r.stdout or "").lower()
+                           stderr=subprocess.DEVNULL)
+        accels = (r.stdout or b"").decode("utf-8", errors="ignore").lower()
         if sys.platform == "win32":
             for a in ("d3d11va", "dxva2"):
                 if a in accels:
@@ -262,7 +262,7 @@ def render_video(tmp_path):
     # Luu y d3d11va: mot so file (screen-recorder, audio-only, moov hong)
     # bao "Invalid data"/"no packets" du CPU van mo duoc -> fallback CPU cuoi.
     hw = _ffmpeg_hw_args()
-    vf = f"scale={THUMB_SIZE}:-1"
+    vf = "scale=%s:-1" % (THUMB_SIZE,)
     attempts = [
         (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
          + hw + ["-ss", "5", "-i", tmp_path,
@@ -281,17 +281,18 @@ def render_video(tmp_path):
         try:
             r = subprocess.run(cmd, timeout=180, check=False,
                                stdout=subprocess.DEVNULL,
-                               stderr=subprocess.PIPE, text=True)
+                               stderr=subprocess.PIPE)
             if os.path.isfile(out) and os.path.getsize(out) > 1200:
                 with open(out, "rb") as f:
                     return f.read()
-            last_err = (r.stderr or "").strip().splitlines()[-1:] or [""]
+            err_txt = (r.stderr or b"").decode("utf-8", errors="ignore").strip()
+            last_err = err_txt.splitlines()[-1:] or [""]
             last_err = last_err[0][:160]
         except Exception as e:
             last_err = str(e)[:160]
             continue
     if last_err:
-        _log(f"[WARN] render video loi ({os.path.basename(tmp_path)}): {last_err}")
+        _log("[WARN] render video loi (%s): %s" % (os.path.basename(tmp_path), last_err))
     return None
 
 
@@ -304,11 +305,11 @@ def process_one(session, base, api, path, dry_run, max_bytes=0):
     is_video = ext in VIDEO_EXTS
     if is_video and not _have_ffmpeg():
         _bump("failed")
-        _log(f"[SKIP] {path} — can ffmpeg de render video")
+        _log("[SKIP] %s — can ffmpeg de render video" % (path,))
         return
     if not is_video and not HAVE_PIL:
         _bump("failed")
-        _log(f"[SKIP] {path} — can Pillow (pip install pillow)")
+        _log("[SKIP] %s — can Pillow (pip install pillow)" % (path,))
         return
     # Tai full file goc qua LAN (khong gioi han mac dinh). Chi gioi han khi
     # truyen --max-mb (mang yeu). base o day la webdav_base (da gom /webdav).
@@ -332,11 +333,11 @@ def process_one(session, base, api, path, dry_run, max_bytes=0):
         if max_bytes > 0 and total > max_bytes:
             os.unlink(tmp)
             _bump("failed")
-            _log(f"[SKIP] {path} — qua lon (>{max_bytes // 1048576}MB)")
+            _log("[SKIP] %s — qua lon (>%sMB)" % (path, max_bytes // 1048576))
             return
     except Exception as e:
         _bump("failed")
-        _log(f"[FAIL] tai {path}: {e}")
+        _log("[FAIL] tai %s: %s" % (path, e))
         return
     try:
         if is_video:
@@ -351,11 +352,11 @@ def process_one(session, base, api, path, dry_run, max_bytes=0):
             pass
     if not blob:
         _bump("failed")
-        _log(f"[FAIL] render {path}")
+        _log("[FAIL] render %s" % (path,))
         return
     if dry_run:
         _bump("done")
-        _log(f"[DRY] {path} ({len(blob)//1024}KB)")
+        _log("[DRY] %s (%sKB)" % (path, len(blob) // 1024))
         return
     try:
         r = session.post(api + "/api/thumb/upload",
@@ -366,13 +367,14 @@ def process_one(session, base, api, path, dry_run, max_bytes=0):
             _bump("done")
         else:
             _bump("failed")
-            _log(f"[FAIL] upload {path}: HTTP {r.status_code}")
+            _log("[FAIL] upload %s: HTTP %s" % (path, r.status_code))
     except Exception as e:
         _bump("failed")
-        _log(f"[FAIL] upload {path}: {e}")
+        _log("[FAIL] upload %s: %s" % (path, e))
     n = _stats["total"]
     if n % 25 == 0:
-        _log(f"... {n} file | xong={_stats['done']} bo-qua={_stats['skipped']} loi={_stats['failed']}")
+        _log("... %s file | xong=%s bo-qua=%s loi=%s" % (
+            n, _stats["done"], _stats["skipped"], _stats["failed"]))
 
 
 def _have_ffmpeg():
@@ -415,7 +417,7 @@ def main():
                    else base + "/webdav")
     api = args.api_url.rstrip("/") if args.api_url else base
 
-    _log(f"WebDAV: {webdav_base} | API: {api}")
+    _log("WebDAV: %s | API: %s" % (webdav_base, api))
     # Debug root ngay: thay vi nuot im roi bao 0 file.
     _tls = threading.local()
 
@@ -427,13 +429,13 @@ def main():
         return s
 
     _root = propfind(_session(), webdav_base, "", debug=True)
-    _log(f"PROPFIND root -> {len(_root)} muc "
-         f"(vd: {[h for h, _ in _root[:3]]})")
+    _log("PROPFIND root -> %s muc (vd: %s)" % (
+        len(_root), [h for h, _ in _root[:3]]))
     hw = _ffmpeg_hw_args()
-    _log(f"ffmpeg hwaccel: {hw if hw else 'CPU (khong thay GPU)'}")
-    _log(f"Liet ke file media tren {webdav_base} ...")
+    _log("ffmpeg hwaccel: %s" % (hw if hw else "CPU (khong thay GPU)",))
+    _log("Liet ke file media tren %s ..." % (webdav_base,))
     files = list(walk(_session(), webdav_base))
-    _log(f"Tim thay {len(files)} file media.")
+    _log("Tim thay %s file media." % (len(files),))
     if not files:
         return
     if not HAVE_PIL:
@@ -441,7 +443,7 @@ def main():
     if not _have_ffmpeg():
         _log("CANH BAO: khong thay ffmpeg — video se bi bo qua.")
     workers = args.workers or min(16, (os.cpu_count() or 4) * 2)
-    _log(f"Workers: {workers} (CPU x 2).")
+    _log("Workers: %s (CPU x 2)." % (workers,))
     t0 = time.time()
 
     def _run(p):
@@ -453,8 +455,8 @@ def main():
         for f in cf.as_completed(futs):
             f.result()
     dt = time.time() - t0
-    _log(f"XONG trong {dt:.0f}s: tong={_stats['total']} hoan-thanh={_stats['done']} "
-         f"bo-qua-da-co={_stats['skipped']} loi={_stats['failed']}")
+    _log("XONG trong %.0fs: tong=%s hoan-thanh=%s bo-qua-da-co=%s loi=%s" % (
+        dt, _stats["total"], _stats["done"], _stats["skipped"], _stats["failed"]))
 
 
 if __name__ == "__main__":

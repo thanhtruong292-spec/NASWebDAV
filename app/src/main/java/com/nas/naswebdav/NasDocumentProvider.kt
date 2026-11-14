@@ -236,7 +236,9 @@ class NasDocumentProvider : DocumentsProvider() {
             throw FileNotFoundException("Chế độ ghi không hỗ trợ: $mode")
         }
 
-        val fileExtension = targetId.trimEnd('/').substringAfterLast('.', "")
+        // CC-005 P0: sanitize ext (targetId co the chua ../ hoac ext dai gay path traversal via temp name)
+        val rawExt = targetId.trimEnd('/').substringAfterLast('.', "")
+        val fileExtension = rawExt.replace(Regex("[^A-Za-z0-9]"), "").take(10)
 
         if (isWrite) {
             // DocumentsProvider write path design constraint:
@@ -267,7 +269,18 @@ class NasDocumentProvider : DocumentsProvider() {
                         if (!resp.isSuccessful) throw java.io.FileNotFoundException("Không tải nội dung gốc: HTTP ${resp.code}")
                         val body = resp.body ?: throw java.io.FileNotFoundException("Nội dung gốc rỗng")
                         body.byteStream().use { input ->
-                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                            tempFile.outputStream().use { output ->
+                                // CC-005 P0: cap preload 20MB (copyTo uncapped OOM + temp khong cleanup)
+                                val buf = ByteArray(8192)
+                                var totPre = 0L
+                                while (true) {
+                                    val r = input.read(buf)
+                                    if (r <= 0) break
+                                    totPre += r
+                                    if (totPre > 20971520L) throw java.io.FileNotFoundException("File goc qua lon (>20MB)")
+                                    output.write(buf, 0, r)
+                                }
+                            }
                         }
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) { throw e }

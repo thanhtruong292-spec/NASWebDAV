@@ -67,10 +67,37 @@ object MediaPermissionHelper {
 
     /**
      * Check whether periodic auto-backup can run safely.
-     * Periodic backup must have FULL access — partial access causes mass "has no access"
-     * errors because MediaStore returns all items but openInputStream() rejects non-selected ones.
+     * AutoBackupWorker queries BOTH Images and Videos (see urisToQuery),
+     * so periodic backup needs FULL access to both types. Partial access causes
+     * mass "has no access" errors because MediaStore returns all items but
+     * openInputStream() rejects non-selected ones.
+     * CC-005 P2: OR -> AND (worker backs up both types).
      */
     fun canRunPeriodicBackup(context: Context): Boolean {
-        return hasFullImageAccess(context) || hasFullVideoAccess(context)
+        return hasFullImageAccess(context) && hasFullVideoAccess(context)
+    }
+
+    /** Full access for image-only backup. */
+    fun canBackupImages(context: Context): Boolean = hasFullImageAccess(context)
+
+    /** Full access for video-only backup. */
+    fun canBackupVideos(context: Context): Boolean = hasFullVideoAccess(context)
+
+    /** True when only partial (user-selected) access is available. */
+    fun isPartialOnly(context: Context): Boolean {
+        return hasPartialVisualAccess(context) && !canRunPeriodicBackup(context)
+    }
+
+    /** Open app Settings so user can upgrade partial -> "Allow all". Call once, not per file. */
+    fun openAppSettings(context: Context) {
+        runCatching {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            ).apply {
+                data = android.net.Uri.fromParts("package", context.packageName, null)
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }
     }
 }

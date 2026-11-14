@@ -47,6 +47,7 @@ object AutoBackupState {
 class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : NasWorker(appContext, workerParams) {
     @android.annotation.SuppressLint("MissingPermission")
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        SystemLogger.log("INFO", "AutoBackup", "Bắt đầu tiến trình đồng bộ nền (Worker khởi động).")
         // FIX: Kiểm tra quyền truy cập Media ngay đầu Worker.
         // Android 14+: partial access (READ_MEDIA_VISUAL_USER_SELECTED) khiến MediaStore
         // trả về tất cả ảnh nhưng openInputStream() fail → mass "has no access" errors.
@@ -719,6 +720,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                         }
                         // Nhường luồng cho CPU — thêm delay 100ms để tránh đập NAS liên tục
                         kotlinx.coroutines.delay(100)
+                        // CC-005 P1: checkpoint mỗi 25 file — worker bị kill thì lần
+                        // sau resume từ checkpoint (qua checkpointDao), không quét lại từ đầu.
+                        if (processedFilesCount % 25 == 0) {
+                            runCatching {
+                                db.checkpointDao().saveCheckpoint(
+                                    ScanCheckpoint(
+                                        workerName = "AutoBackup",
+                                        lastProcessedFolder = fileName,
+                                        scannedCount = processedFilesCount,
+                                        foundCount = backupCount
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -728,6 +743,7 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             } else {
                 SystemLogger.log("INFO", "AutoBackup", logMessage)
             }
+            SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (success=$backupCount skipped=$skippedCount failed=$failedCount)")
             
             if (totalFilesToProcess == 0) {
                 AutoBackupState.resultTotal.value = 0
@@ -743,15 +759,20 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
             AutoBackupState.resultSkipped.value = skippedCount
             AutoBackupState.resultFailed.value = failedCount
             AutoBackupState.showResultDialog.value = true
-            
+            // CC-005 P1: xong -> xóa checkpoint (lần sau quét mới từ đầu).
+            runCatching { db.checkpointDao().clearCheckpoint("AutoBackup") }
+
+            SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (trả Result.success)")
             return@withContext Result.success()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             if (isStopped) {
-                // P0-4: user cancel → thất bại, KHÔNG retry (user đã chủ động dừng)
-                SystemLogger.log("WARNING", "AutoBackup", "Worker bị dừng bởi user — kết thúc: ${e.message}")
-                return@withContext Result.failure()
+                // P0-4: hệ thống dừng worker → retry theo backoff, KHÔNG trả failure
+                // (system stop ≠ fatal error, WorkManager sẽ reschedule sau backoff)
+                SystemLogger.log("WARNING", "AutoBackup", "Hệ thống dừng worker — sẽ retry: ${e.message}")
+                SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (trả Result.retry do hệ thống dừng)")
+                return@withContext Result.retry()
             }
             val isTransient = e is java.net.SocketTimeoutException || e is java.net.ConnectException || e is java.net.UnknownHostException
             SystemLogger.log(
@@ -759,11 +780,23 @@ class AutoBackupWorker(appContext: Context, workerParams: WorkerParameters) : Na
                 "AutoBackup",
                 "Lỗi luồng xử lý Đồng bộ tự động (AutoBackup): ${e.message}"
             )
+            SystemLogger.log("INFO", "AutoBackup", "Hoàn tất đồng bộ nền (trả ${if (isTransient && runAttemptCount < 3) "Result.retry()" else "Result.failure()"} do lỗi: ${e.message})")
             return@withContext if (isTransient && runAttemptCount < 3) Result.retry() else Result.failure()
         } finally {
             setThumbnailActivity("autobackup", false)
             if (wakeLock.isHeld) wakeLock.release()
-            try { androidx.core.app.NotificationManagerCompat.from(applicationContext).cancel(9903) } catch (_: Exception) {}
+            // Thay NotificationManagerCompat.cancel(9903) bằng notification hoàn tất
+            // (ongoing=false, autoCancel=true) để user biết kết quả.
+            try {
+                val doneBuilder = androidx.core.app.NotificationCompat.Builder(applicationContext, "auto_backup_channel")
+                    .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                    .setContentTitle("Sao lưu hoàn tất")
+                    .setContentText("Đồng bộ đã kết thúc.")
+                    .setOngoing(false)
+                    .setAutoCancel(true)
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
+                androidx.core.app.NotificationManagerCompat.from(applicationContext).notify(9903, doneBuilder.build())
+            } catch (_: Exception) {}
         }
     }
 }
