@@ -24,12 +24,13 @@ internal fun relativeDuplicatePath(base: String, url: String): String? = runCatc
     }
 }.getOrNull()
 
-private suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject): JSONObject? {
+private suspend fun WebDavManager.duplicateRpc(route: String, body: JSONObject, auth: WebDavManager.AuthState): JSONObject? {
     currentCoroutineContext().ensureActive()
-    val base = currentAuthState().baseUrl.toApiBaseUrl()
+    val base = auth.baseUrl.toApiBaseUrl()
     if (base.isBlank()) return null
     val request = okhttp3.Request.Builder().url(base.trimEnd('/') + "/api/duplicates/" + route)
-        .header("Authorization", currentAuthHeader())
+        .tag(WebDavManager.AuthState::class.java, auth)
+        .header("Authorization", auth.authHeader)
         .post(body.toString().toRequestBody("application/json".toMediaType())).build()
     val client = NasApplication.instance.fastApiClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
     client.newCall(request).execute().use { response ->
@@ -58,10 +59,11 @@ internal suspend fun hashCompleteResponse(response: okhttp3.Response, size: Long
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
 
-private suspend fun WebDavManager.coordinatedSha256(path: String, size: Long, version: String, fileId: String): String? {
+private suspend fun WebDavManager.coordinatedSha256(path: String, size: Long, version: String, fileId: String, auth: WebDavManager.AuthState): String? {
     val request = okhttp3.Request.Builder()
-        .url(currentAuthState().baseUrl.toApiBaseUrl().trimEnd('/') + "/api/duplicates/content")
-        .header("Authorization", currentAuthHeader())
+        .url(auth.baseUrl.toApiBaseUrl().trimEnd('/') + "/api/duplicates/content")
+        .tag(WebDavManager.AuthState::class.java, auth)
+        .header("Authorization", auth.authHeader)
         .post(JSONObject().put("path",path).put("version",version).toString().toRequestBody("application/json".toMediaType()))
         .build()
     val client = NasApplication.instance.sharedHttpClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
@@ -72,15 +74,17 @@ private suspend fun WebDavManager.coordinatedSha256(path: String, size: Long, ve
 }
 
 internal suspend fun WebDavManager.getCachedVerifiedSha256(url: String, size: Long): Pair<String, String>? {
+    val auth = currentAuthState()
     val account = currentAccountKey()
-    val path = relativeDuplicatePath(currentAuthState().baseUrl, url) ?: return null
+    if (auth != currentAuthState()) return null
+    val path = relativeDuplicatePath(auth.baseUrl, url) ?: return null
     if (account.isBlank()) return null
     val db = NasApplication.instance.database
     fun invalidate() {
         db.fileDao().invalidateVerifiedHash(url, account)
         QueryCache.invalidate("duplicates")
     }
-    val before = duplicateRpc("file", JSONObject().put("path", path)) ?: run { invalidate(); return null }
+    val before = duplicateRpc("file", JSONObject().put("path", path), auth) ?: run { invalidate(); return null }
     val version = before.optString("version")
     val fileId = before.optString("file_id")
     if (before.optLong("size", -1) != size || !fullDigestPattern.matches(version) || fileId.isBlank()) { invalidate(); return null }
@@ -89,12 +93,12 @@ internal suspend fun WebDavManager.getCachedVerifiedSha256(url: String, size: Lo
     if (hash == null && reusableVerifiedHash(cached, account, url, size, version, fileId)) hash = cached!!.sha256
     if (hash == null) {
         invalidate()
-        hash = coordinatedSha256(path, size, version, fileId) ?: return null
-        val after = duplicateRpc("file", JSONObject().put("path", path)) ?: return null
+        hash = coordinatedSha256(path, size, version, fileId, auth) ?: return null
+        val after = duplicateRpc("file", JSONObject().put("path", path), auth) ?: return null
         if (after.optString("version") != version || after.optString("file_id") != fileId || after.optLong("size",-1) != size) return null
     }
     if (before.optString("sha256") != hash) {
-        val saved = duplicateRpc("hash", JSONObject().put("path",path).put("version",version).put("sha256",hash))
+        val saved = duplicateRpc("hash", JSONObject().put("path",path).put("version",version).put("sha256",hash), auth)
         if (saved?.optBoolean("saved") != true) { invalidate(); return null }
     }
     if (currentAccountKey() != account) return null
@@ -123,7 +127,8 @@ internal fun planVerifiedDuplicateCleanup(files: List<CachedFile>, selected: Set
 internal suspend fun WebDavManager.deleteVerifiedDuplicate(victim: CachedFile, keeper: CachedFile, expectedHash: String): Boolean {
     if (!fullDigestPattern.matches(expectedHash) || victim.contentLength != keeper.contentLength ||
         canonicalDuplicatePath(victim.path) == canonicalDuplicatePath(keeper.path)) return false
-    val base = currentAuthState().baseUrl
+    val auth = currentAuthState()
+    val base = auth.baseUrl
     val victimPath = relativeDuplicatePath(base,victim.path) ?: return false
     val keeperPath = relativeDuplicatePath(base,keeper.path) ?: return false
     val account = currentAccountKey()
@@ -131,7 +136,7 @@ internal suspend fun WebDavManager.deleteVerifiedDuplicate(victim: CachedFile, k
     val victimVersion = getCachedVerifiedSha256(victim.path,victim.contentLength) ?: return false
     if (keeperVersion.first != expectedHash || victimVersion.first != expectedHash || currentAccountKey() != account) return false
     val result = duplicateRpc("cleanup", JSONObject().put("victim",victimPath).put("keeper",keeperPath)
-        .put("victim_version",victimVersion.second).put("keeper_version",keeperVersion.second).put("sha256",expectedHash)) ?: return false
+        .put("victim_version",victimVersion.second).put("keeper_version",keeperVersion.second).put("sha256",expectedHash), auth) ?: return false
     if (!result.optBoolean("deleted") || result.optString("path") != victimPath || result.optString("keeper") != keeperPath) return false
     NasApplication.instance.database.fileDao().deleteFileForAccount(victim.path,account)
     NasApplication.instance.database.verifiedHashDao().remove(account,victim.path)

@@ -9,7 +9,8 @@ import threading
 import signal
 
 # Leases are polled; SIGIO must never terminate the API during a lease break.
-signal.signal(signal.SIGIO, signal.SIG_IGN)
+if hasattr(signal, 'SIGIO') and threading.current_thread() is threading.main_thread():
+    signal.signal(signal.SIGIO, signal.SIG_IGN)
 
 
 def _duplicate_file_info(relative):
@@ -158,6 +159,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                     raise ValueError('Survivor changed during cleanup')
                 if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
                     raise ValueError('File was requested for writing; cleanup cancelled')
+                # shortcut: external namespace deletes need shared WebDAV locking before production acceptance.
                 os.unlink(quarantine)
             except Exception:
                 if os.path.lexists(quarantine) and not os.path.lexists(victim['physical']):

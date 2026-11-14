@@ -20,9 +20,10 @@ def validate_server_source(path):
         source = handle.read()
     tree = ast.parse(source)
     functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    required = {"api_fast_search", "api_storage_summary", "requires_auth"}
+    required = {"api_fast_search", "api_storage_summary", "requires_auth",
+                "_index_resolve_directory", "_duplicate_cleanup", "api_duplicate_content"}
     if not required.issubset(functions):
-        raise ValueError("Backend is incomplete or a placeholder; refusing to upload/restart")
+        raise ValueError("Backend is incomplete, outdated or a placeholder; refusing to upload/restart")
 
 NAS_HOST = os.environ.get("NAS_HOST", "192.168.100.254")
 NAS_USER = os.environ.get("NAS_USER", "root")

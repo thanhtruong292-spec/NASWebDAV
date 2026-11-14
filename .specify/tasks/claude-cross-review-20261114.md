@@ -21,3 +21,9 @@ Added deployment preflight rejecting incomplete/placeholder source before
 any SCP or restart; regression asserts no remote command occurs.
 Backend restoration requires the reviewed NAS source; SSH is currently timing
 out. No service restart, real duplicate cleanup or deployment performed.
+
+Recheck during this turn: local backend later became 756590 bytes and exactly
+matches Git HEAD, SHA256 79bae173468751b5b66e56f71df7169a6911f238bc23bfc13cef9c6b7a9cd9f2.
+It is no longer a placeholder, but lacks the reviewed native duplicate/content
+protocol and incremental resolver. The deployment guard now rejects this stale
+contract too. Full pytest was rerun after noticing the restored source.
