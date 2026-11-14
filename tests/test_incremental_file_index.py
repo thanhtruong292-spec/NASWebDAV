@@ -179,6 +179,10 @@ def test_in_place_file_growth_returns_fresh_metadata_without_reenumerating_direc
     result = response["results"][0]
     assert result["contentLength"] == growing.stat().st_size
     assert result["lastModified"] == int(growing.stat().st_mtime * 1000)
+    with sqlite3.connect(ns["INDEX_DB_PATH"]) as conn:
+        stored = conn.execute("SELECT size,mtime FROM file_index WHERE path=?", ("nested/recording.ts",)).fetchone()
+    conn.close()
+    assert stored == (result["contentLength"],result["lastModified"])
 
 
 def test_file_added_in_existing_nested_directory_with_unchanged_parent(engine):

@@ -25,6 +25,7 @@ import uuid
 import subprocess
 import threading
 import logging
+import re
 import re as _re_module
 import shutil
 import hashlib
@@ -223,6 +224,7 @@ except Exception:
 
 log = logging.getLogger("NasAPI")
 log.setLevel(logging.INFO)
+log.propagate = False
 log.addHandler(_log_handler_console)
 if _log_handler_file:
     log.addHandler(_log_handler_file)
@@ -231,6 +233,233 @@ try:
     faulthandler.register(signal.SIGUSR1, file=_thread_dump_file, all_threads=True)
 except Exception:
     pass
+
+# SPEC_LIVESTREAM_LIMITS §3.1: config loader (Python 3.5-compatible).
+# Thu tu uu tien: env NAS_* > /etc/nas/nas_api.conf (JSON) > default.
+# Khong dung f-string/walrus. Doc 1 lan luc start, PATCH cap nhat runtime.
+_NAS_LIMITS_CONF_PATH = os.environ.get("NAS_CONFIG", "/etc/nas/nas_api.conf")
+_NAS_LIMITS_CFG = {}
+_NAS_LIMITS_LOCK = threading.Lock()
+try:
+    if os.path.exists(_NAS_LIMITS_CONF_PATH):
+        with open(_NAS_LIMITS_CONF_PATH, "r") as _f:
+            _loaded = json.load(_f)
+            if isinstance(_loaded, dict):
+                _NAS_LIMITS_CFG = _loaded
+except Exception:
+    _NAS_LIMITS_CFG = {}
+_NAS_LIMITS_RUNTIME = {}
+
+
+def _cfg_limit(name_lower, default):
+    try:
+        env_key = "NAS_" + str(name_lower).upper()
+        if env_key in os.environ and str(os.environ.get(env_key, "")) != "":
+            return os.environ.get(env_key)
+        _lck = globals().get("_NAS_LIMITS_LOCK")
+        if _lck is not None:
+            with _lck:
+                if name_lower in _NAS_LIMITS_RUNTIME:
+                    return _NAS_LIMITS_RUNTIME.get(name_lower)
+                if name_lower in _NAS_LIMITS_CFG:
+                    return _NAS_LIMITS_CFG.get(name_lower)
+        else:
+            if name_lower in _NAS_LIMITS_RUNTIME:
+                return _NAS_LIMITS_RUNTIME.get(name_lower)
+            if name_lower in _NAS_LIMITS_CFG:
+                return _NAS_LIMITS_CFG.get(name_lower)
+    except Exception:
+        pass
+    return default
+
+
+def _cfg_int(name_lower, default, low, high):
+    try:
+        raw = _cfg_limit(name_lower, default)
+        val = int(str(raw).strip())
+    except Exception:
+        return default
+    try:
+        if val < low:
+            return low
+        if val > high:
+            return high
+        return val
+    except Exception:
+        return default
+
+
+def _get_social_max_concurrent():
+    return _cfg_int("social_max_concurrent", 2, 1, 16)
+
+
+def _get_ytdlp_max_concurrent():
+    # CC-004 P2-5: cap rieng yt-dlp (mac dinh 2, toi da 4) — yt-dlp vua tai vua
+    # remux/merge an RAM/CPU khac voi social-download nhe. Dung chung cap social
+    # (toi da 16) se giet RK3328 1GB khi user bam tai hang loat.
+    return _cfg_int("ytdlp_max_concurrent", 2, 1, 4)
+
+
+def _get_livestream_max_concurrent():
+    return _cfg_int("livestream_max_concurrent", 2, 1, 8)
+
+
+def _get_livestream_max_hours():
+    return _cfg_int("livestream_max_hours", 12, 1, 72)
+
+
+def _get_live_err_cooldown_s():
+    return _cfg_int("live_err_cooldown_s", 300, 10, 86400)
+
+
+def _get_live_stall_cooldown_s():
+    return _cfg_int("live_stall_cooldown_s", 7200, 60, 86400 * 7)
+
+
+def _get_ytdlp_timeout_s():
+    return _cfg_int("ytdlp_timeout_s", 300, 60, 1800)
+
+
+def _get_user_idle_s():
+    return _cfg_int("user_idle_s", 90, 10, 600)
+
+
+def _get_ram_block_pct():
+    return _cfg_int("ram_block_pct", 78, 50, 95)
+
+
+def _get_load_block():
+    try:
+        raw = _cfg_limit("load_block", 2.5)
+        val = float(str(raw).strip())
+    except Exception:
+        return 2.5
+    if val < 1.0:
+        return 1.0
+    if val > 8.0:
+        return 8.0
+    return val
+
+
+def _get_cpu_block_pct():
+    return _cfg_int("cpu_block_pct", 75, 50, 100)
+
+
+def _get_heavy_gate_cache_s():
+    try:
+        raw = _cfg_limit("heavy_gate_cache_s", 5.0)
+        val = float(str(raw).strip())
+    except Exception:
+        return 5.0
+    if val < 1.0:
+        return 1.0
+    if val > 60.0:
+        return 60.0
+    return val
+
+
+def _get_social_cleanup_interval_s():
+    return _cfg_int("social_cleanup_interval_s", 300, 30, 86400)
+
+
+def _get_social_job_ttl_s():
+    return _cfg_int("social_job_ttl_s", 3600, 300, 86400 * 7)
+
+
+def _get_tiktok_watch_s():
+    return _cfg_int("tiktok_watch_s", 60, 15, 300)
+
+
+def _get_tiktok_html_cap():
+    return _cfg_int("tiktok_html_cap", 786432, 65536, 8388608)
+
+
+def _get_tiktok_html_timeout():
+    return _cfg_int("tiktok_html_timeout", 25, 5, 120)
+
+
+def _get_social_max_filesize():
+    try:
+        raw = _cfg_limit("social_max_filesize", "2G")
+        val = str(raw).strip()
+        if not val:
+            return "2G"
+        return val
+    except Exception:
+        return "2G"
+
+
+# CC-005 P1/P2: gom port/path/timeout hard-code ve ENV (giữ default khi ENV trống).
+# Quy ước: NAS_<TEN_UPPER> > runtime > conf > default. Không đổi hành vi khi ENV trống.
+def _cfg_str(name_lower, default):
+    try:
+        raw = _cfg_limit(name_lower, default)
+        val = str(raw).strip() if raw is not None else ""
+        return val if val else default
+    except Exception:
+        return default
+
+
+def _cfg_float(name_lower, default, low, high):
+    try:
+        raw = _cfg_limit(name_lower, default)
+        val = float(str(raw).strip())
+    except Exception:
+        return default
+    try:
+        if val < low:
+            return low
+        if val > high:
+            return high
+        return val
+    except Exception:
+        return default
+
+
+def _cfg_sqlite_timeout(name_lower, default):
+    # CC-005 P1/P2: timeout sqlite (10/20/30/5) unify qua ENV NAS_SQLITE_*_TIMEOUT.
+    # Clamp 1..120s để tránh busy-loop (0) hay treo worker (quá lớn).
+    try:
+        return _cfg_float(name_lower, float(default), 1.0, 120.0)
+    except Exception:
+        return float(default)
+
+
+def _get_webdav_port():
+    # CC-005 P1: port WebDAV 8822 hard-code -> ENV NAS_WEBDAV_PORT (default 8822).
+    return _cfg_int("webdav_port", 8822, 1, 65535)
+
+
+def _get_webdav_host_default():
+    # CC-005 P1: IP default trong Host header fallback -> ENV NAS_WEBDAV_HOST_DEFAULT.
+    return _cfg_str("webdav_host_default", "192.168.100.254")
+
+
+def _get_guest_ftp_root():
+    # CC-005 P2: GUEST_FTP_ROOT hard-code -> ENV NAS_GUEST_FTP_ROOT.
+    return _cfg_str("guest_ftp_root", "/srv/dev-disk-by-label-data")
+
+
+def _get_vsftpd_user_dir():
+    # CC-005 P2: VSFTPD_USER_DIR hard-code -> ENV NAS_VSFTPD_USER_DIR.
+    return _cfg_str("vsftpd_user_dir", "/etc/vsftpd/userconf")
+
+
+def _recommended_caps_by_ram():
+    try:
+        if psutil is not None:
+            total_mb = int(psutil.virtual_memory().total / (1024 * 1024))
+        else:
+            total_mb = 1024
+    except Exception:
+        total_mb = 1024
+    if total_mb <= 1500:
+        rec_live, rec_social = 2, 2
+    elif total_mb <= 3000:
+        rec_live, rec_social = 3, 4
+    else:
+        rec_live, rec_social = 4, 8
+    return total_mb, rec_live, rec_social
 
 import tornado.ioloop
 import tornado.web
@@ -253,17 +482,38 @@ app = Flask(__name__)
 # CLIENT-FIRST: user dang duyet (API hit gan day) -> daemon nang (thumb,
 # cleanup) nhuong CPU de serve bytes. May tu render, NAS chi doc file.
 _LAST_USER_HIT = {"time": 0.0}
+# SPEC_LIVESTREAM_LIMITS §3.1: giu ten bien de khong vo code cu; runtime doc qua
+# _get_user_idle_s() (env NAS_USER_IDLE_S > conf > 90). _background_heavy_work_allowed
+# da dung getter, bien nay chi la default.
 _USER_IDLE_S = 90  # khong co request nao 90s moi cho daemon chay
+
+_NON_INTERACTIVE_HIT_PREFIXES = (
+    "/api/ping", "/api/v1/ping",
+    "/api/alerts/poll", "/api/v1/alerts/poll",
+    "/api/status", "/api/v1/status",
+    "/api/tools/smart_organize/", "/api/v1/tools/smart_organize/",
+    "/api/screen_record/", "/api/v1/screen_record/",
+    "/api/thumb/status", "/api/v1/thumb/status",
+    "/api/admin/limits", "/api/v1/admin/limits",
+    "/api/livestream/status", "/api/v1/livestream/status",
+    "/api/ytdlp/status", "/api/v1/ytdlp/status",
+    "/api/cron/status", "/api/v1/cron/status",
+    "/api/disk/health", "/api/v1/disk/health",
+)
 
 @app.before_request
 def _stamp_user_hit():
     try:
+        req_path = request.path or ""
+        if any(req_path.startswith(p) for p in _NON_INTERACTIVE_HIT_PREFIXES):
+            return
         _LAST_USER_HIT["time"] = time.time()
     except Exception:
         pass
 
 INDEX_DB_PATH = "/var/lib/nas_fast_index.db"
 _index_lock = threading.Lock()
+_index_scan_lock = threading.Lock()
 
 def _remove_diacritics_py(s):
     import unicodedata
@@ -274,7 +524,7 @@ def _remove_diacritics_py(s):
 
 def _init_index_db():
     try:
-        conn = sqlite3.connect(INDEX_DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("""
@@ -289,88 +539,281 @@ def _init_index_db():
             );
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_norm_name ON file_index(norm_name);")
+            if "parent" not in [row[1] for row in conn.execute("PRAGMA table_info(file_index)")]:
+                conn.execute("ALTER TABLE file_index ADD COLUMN parent TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_parent ON file_index(parent)")
+            conn.execute("CREATE TABLE IF NOT EXISTS index_directories (path TEXT PRIMARY KEY, stamp TEXT, complete INTEGER NOT NULL DEFAULT 0)")
+            conn.execute("CREATE TABLE IF NOT EXISTS index_state (id INTEGER PRIMARY KEY, root TEXT, generation INTEGER NOT NULL, ready INTEGER NOT NULL, incomplete_reason TEXT)")
+            state_columns = [row[1] for row in conn.execute("PRAGMA table_info(index_state)")]
+            if "scanned_at" not in state_columns:
+                conn.execute("ALTER TABLE index_state ADD COLUMN scanned_at REAL NOT NULL DEFAULT 0")
+            if "built" not in state_columns:
+                conn.execute("ALTER TABLE index_state ADD COLUMN built INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE index_state SET ready=0, incomplete_reason='scan_pending'")
             conn.commit()
         finally:
             conn.close()
     except Exception as e:
         log.warning("[FileIndex] DB init error: %s" % str(e))
 
+
+def _index_directory_stamp(path):
+    st = os.stat(path)
+    return "%s:%s:%s:%s" % (st.st_dev, st.st_ino, repr(st.st_mtime), repr(st.st_ctime))
+
+
+def _index_storage_boundary(path):
+    candidate = os.path.realpath(path)
+    while True:
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            return ""  # never expand a public directory to the filesystem root
+        if os.path.ismount(candidate):
+            return candidate
+        candidate = parent
+
+
+def _index_resolve_directory(path, root, storage_boundary):
+    resolved = os.path.realpath(path)
+    allowed = [root] + ([storage_boundary] if storage_boundary else [])
+    if not any(os.path.normcase(resolved) == os.path.normcase(base) or
+               os.path.normcase(resolved).startswith(os.path.normcase(base + os.sep)) for base in allowed):
+        return None
+    scope = root if (os.path.normcase(resolved) == os.path.normcase(root) or
+                     os.path.normcase(resolved).startswith(os.path.normcase(root + os.sep))) else storage_boundary
+    parts = os.path.relpath(resolved, scope).split(os.sep)
+    if any(part != "." and (part.startswith(".") or part in ("@eaDir", "#recycle")) for part in parts):
+        return None
+    if _index_storage_boundary(resolved) != storage_boundary:
+        return None
+    if os.path.normcase(resolved) == os.path.normcase(os.path.abspath(path)):
+        return resolved
+    # Keep logical public aliases, but do not return to any resolved ancestor.
+    parent = os.path.dirname(os.path.abspath(path))
+    root_key = os.path.normcase(os.path.abspath(root))
+    while os.path.normcase(parent) == root_key or os.path.normcase(parent).startswith(root_key + os.sep):
+        if os.path.normcase(os.path.realpath(parent)) == os.path.normcase(resolved):
+            return None
+        if os.path.normcase(parent) == root_key:
+            break
+        parent = os.path.dirname(parent)
+    return resolved
+
+
+def _index_readiness(conn):
+    row = conn.execute("SELECT root, generation, ready, incomplete_reason FROM index_state WHERE id=1").fetchone()
+    if not row:
+        return {"index_ready": False, "index_generation": 0, "index_incomplete_reason": "scan_pending"}
+    return {"index_ready": bool(row[2]), "index_generation": row[1], "index_incomplete_reason": row[3] or ""}
+
+
+def _scan_file_index(search_root):
+    if not _index_scan_lock.acquire(False):
+        return {"index_ready": False, "index_incomplete_reason": "scan_in_progress", "checked_dirs": 0, "enumerated_dirs": 0}
+    try:
+        return _scan_file_index_pass(search_root)
+    finally:
+        _index_scan_lock.release()
+
+
+def _background_file_index_refresh(search_root):
+    try:
+        _scan_file_index(search_root)
+    except Exception as e:
+        log.warning("[FileIndex] Background refresh incomplete: %s", e)
+
+
+def _refresh_file_index_for_search():
+    """Warm indexes validate directory changes at most once every five seconds."""
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
+    try:
+        row = conn.execute("SELECT root, scanned_at, built FROM index_state WHERE id=1").fetchone()
+    finally:
+        conn.close()
+    # A first build/root migration belongs to the background watchdog, not an
+    # API worker: the existing NAS tree can take minutes to enumerate initially.
+    current_root = _get_webdav_public_dir()
+    if not current_root or _index_scan_lock.locked():
+        return
+    same_root = bool(row and row[0] == os.path.realpath(current_root))
+    if same_root and time.time() - float(row[1]) < 5.0:
+        return
+    if same_root and row[2]:
+        _scan_file_index(current_root)
+    else:
+        threading.Thread(target=_background_file_index_refresh, args=(current_root,), daemon=True).start()
+
+
+def _scan_file_index_pass(search_root):
+    """Stat known directories; reconcile only stable successful directory reads."""
+    import stat
+    root = os.path.realpath(search_root) if search_root else ""
+    if not root or root == os.path.abspath(os.sep) or not os.path.isdir(root):
+        raise ValueError("Invalid WebDAV index root")
+    storage_boundary = _index_storage_boundary(root)
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_30", 30.0))
+    enumerated = 0
+    checked = 0
+    try:
+        with _index_lock:
+            state = conn.execute("SELECT root, generation, built FROM index_state WHERE id=1").fetchone()
+            generation = state[1] if state else 1
+            built = bool(state and state[2])
+            if state and state[0] != root:
+                generation += 1
+                built = False
+                conn.execute("DELETE FROM file_index")
+                conn.execute("DELETE FROM index_directories")
+            conn.execute("INSERT OR REPLACE INTO index_state (id,root,generation,ready,incomplete_reason,built) VALUES (1, ?, ?, 0, 'scan_pending', ?)", (root, generation, int(built)))
+            conn.execute("INSERT OR IGNORE INTO index_directories (path) VALUES ('')")
+            conn.commit()
+        # One-time legacy migration preserves provisional search results and uses
+        # bounded commits; no file stat is needed to recover each row's parent.
+        while True:
+            rows = conn.execute("SELECT path FROM file_index WHERE parent IS NULL LIMIT 1000").fetchall()
+            if not rows:
+                break
+            parents = []
+            for row in rows:
+                bare = row[0].rstrip("/")
+                parent = bare.rsplit("/", 1)[0] + "/" if "/" in bare else ""
+                parents.append((parent, row[0]))
+            with _index_lock:
+                conn.executemany("UPDATE file_index SET parent=? WHERE path=?", parents)
+                conn.commit()
+        if not state:
+            with _index_lock:
+                conn.execute("INSERT OR IGNORE INTO index_directories (path) SELECT path FROM file_index WHERE is_dir=1")
+                conn.commit()
+        pending = [row[0] for row in conn.execute("SELECT path FROM index_directories ORDER BY path")]
+        visited = set()
+        for rel in pending:
+            if rel in visited:
+                continue
+            visited.add(rel)
+            saved = conn.execute("SELECT stamp, complete FROM index_directories WHERE path=?", (rel,)).fetchone()
+            if saved is None:  # an earlier successful parent read pruned this subtree
+                continue
+            path = os.path.join(root, *rel.rstrip("/").split("/")) if rel else root
+            checked += 1
+            try:
+                if ".." in rel.split("/") or rel.startswith(("/", "\\")):
+                    raise ValueError("Unsafe directory path")
+                before = _index_directory_stamp(path)
+                if saved[0] == before and not os.path.islink(path):
+                    continue
+                if _index_resolve_directory(path, root, storage_boundary) is None:
+                    raise ValueError("Excluded directory boundary or ancestor cycle")
+                if saved[0] == before:
+                    continue
+                names = os.listdir(path)
+                entries = []
+                children = []
+                complete = True
+                for name in names:
+                    if name.startswith(".") or name in ("@eaDir", "#recycle"):
+                        continue
+                    full = os.path.join(path, name)
+                    st = os.lstat(full)
+                    if stat.S_ISLNK(st.st_mode):
+                        if (not os.path.isdir(full) or
+                                _index_resolve_directory(full, root, storage_boundary) is None):
+                            complete = False
+                            continue
+                        st = os.stat(full)
+                    is_dir = stat.S_ISDIR(st.st_mode)
+                    if is_dir and _index_resolve_directory(full, root, storage_boundary) is None:
+                        complete = False
+                        continue
+                    child = rel + name + ("/" if is_dir else "")
+                    entries.append((child, name, _remove_diacritics_py(name.lower()), int(is_dir),
+                                    0 if is_dir else st.st_size, int(st.st_mtime * 1000),
+                                    "folder" if is_dir else (mimetypes.guess_type(name)[0] or "application/octet-stream"), rel))
+                    if is_dir:
+                        children.append(child)
+                if before != _index_directory_stamp(path):
+                    raise OSError("Directory changed during enumeration")
+                enumerated += 1
+                present = set(entry[0] for entry in entries)
+                with _index_lock:
+                    old = conn.execute("SELECT path,name,norm_name,is_dir,size,mtime,mime,parent FROM file_index WHERE parent=?", (rel,)).fetchall()
+                    previous = dict((row[0], row) for row in old)
+                    for old_row in old:
+                        old_path, old_dir = old_row[0], old_row[3]
+                        if old_path in present:
+                            continue
+                        if old_dir:
+                            conn.execute("DELETE FROM file_index WHERE path>=? AND path<?", (old_path, old_path.rstrip("/") + "0"))
+                            conn.execute("DELETE FROM index_directories WHERE path>=? AND path<?", (old_path, old_path.rstrip("/") + "0"))
+                        else:
+                            conn.execute("DELETE FROM file_index WHERE path=?", (old_path,))
+                    changed = [entry for entry in entries if previous.get(entry[0]) != entry]
+                    conn.executemany("INSERT OR REPLACE INTO file_index (path,name,norm_name,is_dir,size,mtime,mime,parent) VALUES (?,?,?,?,?,?,?,?)", changed)
+                    conn.executemany("INSERT OR IGNORE INTO index_directories (path) VALUES (?)", [(child,) for child in children])
+                    conn.execute("UPDATE index_directories SET stamp=?, complete=? WHERE path=?", (before, int(complete), rel))
+                    conn.commit()
+                pending.extend(child for child in children if child not in visited)
+            except (OSError, ValueError) as e:
+                # Keep the previous listing, but retry this directory next pass.
+                with _index_lock:
+                    conn.execute("UPDATE index_directories SET stamp=NULL, complete=0 WHERE path=?", (rel,))
+                    conn.commit()
+                log.warning("[FileIndex] Directory read incomplete: %s (%s)", rel, e)
+            time.sleep(0.01)
+        incomplete = conn.execute("SELECT COUNT(*) FROM index_directories WHERE complete=0 OR stamp IS NULL").fetchone()[0]
+        unread = conn.execute("SELECT COUNT(*) FROM index_directories WHERE stamp IS NULL").fetchone()[0]
+        with _index_lock:
+            conn.execute("UPDATE index_state SET ready=?, incomplete_reason=?, scanned_at=?, built=? WHERE id=1",
+                         (int(incomplete == 0), "unreadable_or_symlink_scope" if incomplete else "", time.time(), int(built or unread == 0)))
+            conn.commit()
+        result = _index_readiness(conn)
+        result.update({"checked_dirs": checked, "enumerated_dirs": enumerated})
+        return result
+    finally:
+        conn.close()
+
 def _get_webdav_public_dir():
+    import errno
     conf = "/var/www/webdav/config/config.php"
-    if os.path.exists(conf):
+    try:
+        os.lstat(conf)
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            log.error("[FileIndex] Cannot inspect WebDAV config: %s", e)
+            return ""
+    else:
         try:
             with open(conf, "r", encoding="utf-8") as f:
                 content = f.read()
                 m = _re_module.search(r'\$publicDir\s*=\s*[\'"]([^\'"]+)[\'"]', content)
-                if m and os.path.exists(m.group(1)):
+                if (m and os.path.isdir(m.group(1)) and
+                        os.path.realpath(m.group(1)) != os.path.abspath(os.sep)):
                     return m.group(1)
-        except Exception: pass
+            log.error("[FileIndex] Configured WebDAV publicDir is unavailable or invalid")
+        except Exception as e:
+            log.error("[FileIndex] Cannot read WebDAV config: %s", e)
+        return ""  # a configured scope must never expand to a broader fallback
 
     base_dirs = ["/srv/dev-disk-by-label-data/New folder", "/srv/dev-disk-by-label-data", "/sharedfolders/Data", "/var/www/webdav/public"]
     for bd in base_dirs:
-        if os.path.exists(bd):
+        if os.path.isdir(bd):
             return bd
-    return "/"
+    # CC-004 P0-1: KHONG bao gio fallback "/" — indexer os.walk("/") se quet
+    # toan filesystem, batch REPLACE SQLite vo han, CPU/RAM/timeout. Tra ""
+    # de watchdog return som + log ERROR.
+    log.error("[FileIndex] Khong tim thay WebDAV root hop le (config.php + 4 base_dir deu miss)")
+    return ""
 
 def _file_indexer_watchdog():
-    """Trình đánh chỉ mục ngầm cực nhẹ (CPU < 0.5%, pause 10ms giữa các folder)"""
-    log.info("[FileIndex] Trình đánh chỉ mục File/Thư mục ngầm 0%% CPU đã khởi động.")
+    """Reuse directory listings across passes and daemon restarts."""
     _init_index_db()
-    
-    search_root = _get_webdav_public_dir()
-    log.info("[FileIndex] WebDAV Root Path: %s" % search_root)
-
     while True:
         try:
-            conn = sqlite3.connect(INDEX_DB_PATH, timeout=30.0)
-            batch = []
-            try:
-                for root, dirs, files in os.walk(search_root):
-                    time.sleep(0.01) # Tạm ngưng 10ms giữ CPU NAS < 0.5%
-                    dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('@eaDir', '#recycle', '.trash')]
-
-                    for d in dirs:
-                        full_p = os.path.join(root, d)
-                        rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
-                        if rel_p == "." or rel_p.startswith(".."): continue
-                        mtime = 0
-                        try: mtime = int(os.path.getmtime(full_p) * 1000)
-                        except Exception: pass
-                        norm_name = _remove_diacritics_py(d.lower())
-                        batch.append((rel_p + '/', d, norm_name, 1, 0, mtime, 'folder'))
-
-                    for f in files:
-                        if f.startswith('.'): continue
-                        full_p = os.path.join(root, f)
-                        rel_p = os.path.relpath(full_p, search_root).replace('\\', '/')
-                        if rel_p == "." or rel_p.startswith(".."): continue
-                        size = 0
-                        mtime = 0
-                        try:
-                            st = os.stat(full_p)
-                            size = st.st_size
-                            mtime = int(st.st_mtime * 1000)
-                        except Exception: pass
-                        norm_name = _remove_diacritics_py(f.lower())
-                        mime = mimetypes.guess_type(f)[0] or "application/octet-stream"
-                        batch.append((rel_p, f, norm_name, 0, size, mtime, mime))
-
-                    if len(batch) >= 1000:
-                        with _index_lock:
-                            conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                            conn.commit()
-                        batch = []
-
-                if batch:
-                    with _index_lock:
-                        conn.executemany("REPLACE INTO file_index (path, name, norm_name, is_dir, size, mtime, mime) VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                        conn.commit()
-            finally:
-                conn.close()
-            log.info("[FileIndex] Đã hoàn tất lập bản đồ chỉ mục siêu tốc.")
+            result = _scan_file_index(_get_webdav_public_dir())
+            log.info("[FileIndex] Checked %s directories, enumerated %s, ready=%s",
+                     result["checked_dirs"], result["enumerated_dirs"], result["index_ready"])
         except Exception as e:
-            log.warning("[FileIndex] Lỗi indexer: %s" % str(e))
-
+            log.warning("[FileIndex] Index pass incomplete: %s", e)
         time.sleep(1800)
 
 @app.route('/api/search', methods=['GET'])
@@ -378,37 +821,100 @@ def api_fast_search():
     query = request.args.get('q', '').strip()
     root_param = request.args.get('root', '').strip('/')
     if not query:
-        return jsonify({"success": True, "results": []})
+        return jsonify({"success": True, "results": [], "index_ready": False})
     
     norm_query = _remove_diacritics_py(query.lower())
 
-    host_header = request.headers.get("Host", "192.168.100.254:8822")
-    host_ip = host_header.split(":")[0]
-    webdav_base = "http://%s:8822/webdav/" % host_ip
+    # CC-004 P0-3: chan Host-header injection + LIKE-wildcard + '..'.
+    # host_header do client gui, khong duoc dap tho vao URL tra ve.
+    # CC-005 P1/P2: WebDAV port/host hard-code -> ENV NAS_WEBDAV_PORT /
+    # NAS_WEBDAV_HOST_DEFAULT (default 8822 / 192.168.100.254).
+    _cc005_wd_port = _get_webdav_port()
+    _cc005_wd_host_dflt = _get_webdav_host_default()
+    host_header = request.headers.get("Host", "%s:%s" % (_cc005_wd_host_dflt, _cc005_wd_port))
+    host_ip = host_header.split(":")[0].strip()
+    import re as _re_host
+    if not _re_host.match(r'^[A-Za-z0-9.\-]+$', host_ip or ""):
+        host_ip = "127.0.0.1"
+    scheme = getattr(request, "scheme", "http")
+    if scheme not in ("http", "https"):
+        scheme = "http"
+    webdav_base = "%s://%s:%s/webdav/" % (scheme, host_ip, _cc005_wd_port)
+    # root_param chi la scope, nhung '..', '\', '/' dan toi lo ten file
+    # ngoai scope -> tra rong thay vi mo rong pham vi.
+    if ".." in root_param.split("/") or "\\" in root_param:
+        return jsonify({"success": False, "results": [], "index_ready": False}), 400
+
+    def _escape_like(s):
+        return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     results = []
     try:
-        conn = sqlite3.connect(INDEX_DB_PATH, timeout=5.0)
+        _refresh_file_index_for_search()
+        conn = sqlite3.connect(INDEX_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
         try:
+            conn.execute("BEGIN")
+            readiness = _index_readiness(conn)
+            if _index_scan_lock.locked():
+                readiness["index_ready"] = False
+                readiness["index_incomplete_reason"] = "scan_in_progress"
+            state = conn.execute("SELECT root FROM index_state WHERE id=1").fetchone()
+            actual_root = _get_webdav_public_dir()
+            if not actual_root or (state and state[0] != os.path.realpath(actual_root)):
+                return jsonify({"success": False, "results": [], "index_ready": False,
+                                "index_incomplete_reason": "root_changed_or_unavailable"}), 503
             cur = conn.cursor()
-            like_pattern = "%%%s%%" % norm_query
+            like_pattern = "%%%s%%" % _escape_like(norm_query)
             if root_param:
-                path_pattern = "%s/%%" % root_param
-                exact_root = "%s/" % root_param
                 cur.execute("""
-                    SELECT path, name, is_dir, size, mtime, mime FROM file_index 
-                    WHERE (path LIKE ? OR path = ?) AND norm_name LIKE ? 
+                    SELECT path, name, is_dir, size, mtime, mime FROM file_index
+                    WHERE path >= ? AND path < ? AND norm_name LIKE ? ESCAPE '\\'
                     ORDER BY is_dir DESC, name ASC LIMIT 300
-                """, (path_pattern, exact_root, like_pattern))
+                """, (root_param + "/", root_param + "0", like_pattern))
             else:
-                cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
+                cur.execute("SELECT path, name, is_dir, size, mtime, mime FROM file_index WHERE norm_name LIKE ? ESCAPE '\\' ORDER BY is_dir DESC, name ASC LIMIT 300", (like_pattern,))
 
             rows = cur.fetchall()
         finally:
             conn.close()
 
+        import stat as _search_stat
+        public_root = os.path.realpath(actual_root)
+        storage_boundary = _index_storage_boundary(public_root)
+        checked_parents = {}
+        metadata_updates = []
         for rel_p, name, is_dir, size, mtime, mime in rows:
-            webdav_url = webdav_base.rstrip('/') + '/' + rel_p.lstrip('/')
+            if not is_dir:
+                try:
+                    if os.path.isabs(rel_p) or ".." in rel_p.split("/"):
+                        raise ValueError("Unsafe indexed file path")
+                    full_path = os.path.join(public_root, rel_p)
+                    parent = os.path.dirname(full_path)
+                    if parent not in checked_parents:
+                        checked_parents[parent] = _index_resolve_directory(parent, public_root, storage_boundary)
+                    if checked_parents[parent] is None:
+                        raise ValueError("Indexed file parent is outside the public boundary")
+                    current = os.lstat(full_path)
+                    if not _search_stat.S_ISREG(current.st_mode):
+                        raise ValueError("Indexed file is no longer a regular file")
+                    previous_size, previous_mtime = size, mtime
+                    size = current.st_size
+                    mtime = int(current.st_mtime * 1000)
+                    if (size, mtime) != (previous_size, previous_mtime):
+                        metadata_updates.append((size, mtime, rel_p, previous_size, previous_mtime, public_root))
+                except (OSError, ValueError):
+                    readiness["index_ready"] = False
+                    readiness["index_incomplete_reason"] = "file_metadata_unavailable"
+                    continue
+            # FIX-SEARCH-ENCODE: rel_p trong DB la raw (space/dau tieng Viet/#?&
+            # giu nguyen). Ghep tho vao URL gay cut cuon o '#'/'?' va hong VLC/
+            # ExoPlayer (space raw). Encode theo segment, giu '/' de client dung
+            # truc tiep lam playback URL, khop toValidUrl/encodeWebDavSegment.
+            try:
+                quoted_rel = urllib.parse.quote(rel_p, safe="/")
+            except Exception:
+                quoted_rel = rel_p
+            webdav_url = webdav_base.rstrip('/') + '/' + quoted_rel.lstrip('/')
             results.append({
                 "name": name,
                 "path": webdav_url,
@@ -417,10 +923,25 @@ def api_fast_search():
                 "contentLength": size,
                 "lastModified": mtime
             })
+        if metadata_updates:
+            cache_conn = None
+            try:
+                cache_conn = sqlite3.connect(INDEX_DB_PATH, timeout=0.1)
+                cache_conn.executemany("UPDATE file_index SET size=?,mtime=? WHERE path=? AND size=? AND mtime=? AND EXISTS (SELECT 1 FROM index_state WHERE id=1 AND root=?)", metadata_updates)
+                cache_conn.commit()
+            except sqlite3.Error as error:
+                log.debug('[SearchAPI] Metadata persistence deferred: %s', error)
+            finally:
+                if cache_conn is not None:
+                    cache_conn.close()
     except Exception as e:
         log.warning("[SearchAPI] Lỗi truy vấn SQLite index: %s" % str(e))
+        return jsonify({"success": False, "results": [], "index_ready": False,
+                        "index_incomplete_reason": "index_unavailable"}), 503
 
-    return jsonify({"success": True, "results": results})
+    payload = {"success": True, "results": results}
+    payload.update(readiness)
+    return jsonify(payload)
 
 # -- Social Extractor Logic BEGIN ----------------------------------------------
 # Keep this pure-stdlib block in the single production artifact. Tests load this
@@ -436,7 +957,103 @@ except ImportError:
 SOCIAL_MAX_CONCURRENT = 2
 # HW-BUDGET (rk3328 4xA53/1GB): mỗi livestream = 1 ffmpeg + 1 yt-dlp.
 # Không cap tổng thì 10 user live cùng lúc giết NAS — cap 2 job recording.
+# SPEC_LIVESTREAM_LIMITS §3.1: default giu 2, runtime doc qua _get_social_max_concurrent()
+# (env NAS_SOCIAL_MAX_CONCURRENT > conf > default, clamp 1-16). Khoi social block duoc
+# load co lap trong tests (social_logic_loader) nen phai fallback khi ham loader chung
+# chua ton tai.
 LIVESTREAM_MAX_CONCURRENT = 2
+
+
+def _social_effective_max_concurrent():
+    try:
+        _fn = globals().get("_get_social_max_concurrent")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    try:
+        import os as _os_cap
+        _raw = _os_cap.environ.get("NAS_SOCIAL_MAX_CONCURRENT", "")
+        if str(_raw).strip() != "":
+            _v = int(str(_raw).strip())
+            if _v < 1:
+                return 1
+            if _v > 16:
+                return 16
+            return _v
+    except Exception:
+        pass
+    try:
+        return int(SOCIAL_MAX_CONCURRENT)
+    except Exception:
+        return 2
+
+
+def _social_effective_job_ttl_s():
+    try:
+        _fn = globals().get("_get_social_job_ttl_s")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    return 3600
+
+
+def _social_effective_cleanup_interval_s():
+    try:
+        _fn = globals().get("_get_social_cleanup_interval_s")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    return 300
+
+
+def _social_effective_max_filesize():
+    try:
+        _fn = globals().get("_get_social_max_filesize")
+        if callable(_fn):
+            _v = str(_fn()).strip()
+            if _v:
+                return _v
+    except Exception:
+        pass
+    try:
+        import os as _os_fs
+        _raw = _os_fs.environ.get("NAS_SOCIAL_MAX_FILESIZE", "")
+        if str(_raw).strip() != "":
+            return str(_raw).strip()
+    except Exception:
+        pass
+    try:
+        return str(SOCIAL_MAX_FILESIZE)
+    except Exception:
+        return "2G"
+
+
+def _social_effective_ytdlp_timeout_s():
+    try:
+        _fn = globals().get("_get_ytdlp_timeout_s")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    try:
+        import os as _os_to
+        _raw = _os_to.environ.get("NAS_YTDLP_TIMEOUT_S", "")
+        if str(_raw).strip() != "":
+            _v = int(str(_raw).strip())
+            if _v < 60:
+                return 60
+            if _v > 1800:
+                return 1800
+            return _v
+    except Exception:
+        pass
+    try:
+        return int(SOCIAL_YTDLP_TIMEOUT)
+    except Exception:
+        return 300
 SOCIAL_MAX_FILESIZE = "2G"
 SOCIAL_YTDLP_TIMEOUT = 300
 SOCIAL_DEFAULT_FOLDER = "Downloads/social/"
@@ -449,8 +1066,8 @@ def _social_jobs_cleanup_daemon():
     """P1-7: Background daemon to periodically evict expired social download jobs."""
     while True:
         try:
-            time.sleep(300)  # run every 5 minutes
-            _social_remove_expired_jobs(max_age_sec=3600)
+            time.sleep(_social_effective_cleanup_interval_s())
+            _social_remove_expired_jobs(max_age_sec=_social_effective_job_ttl_s())
         except Exception:
             pass
 
@@ -484,13 +1101,24 @@ def _social_is_supported_content_url(parsed, host):
         return bool(path.strip("/")) and "/" not in path.strip("/")
     if _social_host_matches(host, "youtube.com"):
         return (
-            path_lower == "/watch" and "v=" in query_lower
-        ) or path_lower.startswith(("/shorts/", "/live/", "/embed/"))
+            (path_lower == "/watch" and "v=" in query_lower)
+            or path_lower.startswith(("/shorts/", "/live/", "/embed/"))
+            or (path_lower.startswith("/@") and path_lower.rstrip("/").endswith("/live"))
+        )
 
     if _social_host_matches(host, "tiktok.com"):
         if host in ("vm.tiktok.com", "vt.tiktok.com"):
             return bool(path.strip("/"))
-        return path_lower.startswith("/@") and "/video/" in path_lower
+        if path_lower.startswith("/t/"):
+            return bool(path_lower[3:].strip("/"))
+        return path_lower.startswith("/@") and (
+            "/video/" in path_lower
+            or "/photo/" in path_lower
+            or path_lower.rstrip("/").endswith("/live")
+        )
+
+    if _social_host_matches(host, "douyin.com"):
+        return bool(path.strip("/"))
 
     if _social_host_matches(host, "instagram.com"):
         return path_lower.startswith(("/reel/", "/p/", "/tv/", "/stories/"))
@@ -599,14 +1227,15 @@ def _social_create_job(url, folder):
     if not _social_validate_url(url):
         return None, "URL khong hop le hoac la private/internal."
     safe_folder = _social_sanitize_folder(folder)
-    _social_remove_expired_jobs(max_age_sec=3600)
+    _social_remove_expired_jobs(max_age_sec=_social_effective_job_ttl_s())
     with _social_download_lock:
         active_count = sum(
             1 for job in _social_download_jobs.values()
             if job.get("status") in ("queued", "downloading")
         )
-        if active_count >= SOCIAL_MAX_CONCURRENT:
-            return None, "Max concurrent downloads reached (%d). Vui long thu lai sau." % SOCIAL_MAX_CONCURRENT
+        _cap = _social_effective_max_concurrent()
+        if active_count >= _cap:
+            return None, "Max concurrent downloads reached (%d). Vui long thu lai sau." % _cap
         job_id = str(uuid.uuid4())
         _social_download_jobs[job_id] = {
             "job_id": job_id,
@@ -648,7 +1277,10 @@ def _social_mkdirp(path):
 # -- Social Extractor Logic END ------------------------------------------------
 
 def _get_webdav_root():
-    """Đọc WebDAV root từ config OMV (/var/www/webdav/config/config.php)"""
+    """Đọc WebDAV root từ biến môi trường hoặc config OMV (/var/www/webdav/config/config.php)"""
+    env_root = (os.environ.get("WEBDAV_ROOT") or "").strip()
+    if env_root:
+        return env_root.rstrip("/")
     config_file = "/var/www/webdav/config/config.php"
     try:
         if os.path.exists(config_file):
@@ -660,6 +1292,18 @@ def _get_webdav_root():
                         return path.rstrip("/")
     except Exception:
         pass
+    for candidate in (
+        "/srv/dev-disk-by-label-data/New folder",
+        "/sharedfolders/Data/New folder",
+        "/var/www/webdav/public",
+        "/srv/dev-disk-by-label-data",
+    ):
+        try:
+            if os.path.isdir(candidate):
+                return candidate
+        except Exception:
+            continue
+    return "/srv/dev-disk-by-label-data/New folder"
 WEBDAV_FILE_ROOT = _get_webdav_root()
 
 SYSTEM_DB_DIR = "/var/lib/nas_api"
@@ -903,7 +1547,7 @@ def init_db():
         except OSError as e:
             log.warning("[init_db] Không tạo được thư mục (HDD có thể lỗi): %s", e)
             # Không return — th? ti?p connect xem co the DB file van con OK
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         try:
             cur.execute("PRAGMA journal_mode=WAL")
@@ -994,11 +1638,29 @@ _RE_SAFE_CIDR = _re_module.compile(r'^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$')
 
 def _validate_ip(ip):
     """Validate IP address format. Return True if valid."""
-    return bool(ip and _RE_SAFE_IP.match(ip))
+    if not (ip and _RE_SAFE_IP.match(str(ip))):
+        return False
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(str(ip))
+        if addr.is_unspecified or addr.is_multicast or str(addr) == "255.255.255.255":
+            return False
+        return True
+    except Exception:
+        return False
 
 def _validate_cidr(cidr):
     """Validate CIDR subnet format. Return True if valid."""
-    return bool(cidr and _RE_SAFE_CIDR.match(cidr))
+    if not (cidr and _RE_SAFE_CIDR.match(str(cidr))):
+        return False
+    try:
+        import ipaddress
+        net = ipaddress.ip_network(str(cidr), strict=False)
+        if net.prefixlen < 8 or net.is_unspecified or net.is_multicast:
+            return False
+        return True
+    except Exception:
+        return False
 
 _lan_whitelist = set()
 _lan_subnets = []
@@ -1107,7 +1769,8 @@ def _apply_iptables_for_whitelist():
     if _lan_whitelist or _lan_subnets:
         log.info("[Firewall] Đã áp dụng iptables ACCEPT cho %d IP, %d subnet trong whitelist", len(_lan_whitelist), len(_lan_subnets))
 
-_apply_iptables_for_whitelist()
+if __name__ == "__main__":
+    _apply_iptables_for_whitelist()
 
 clients = set()
 clients_lock = threading.Lock()
@@ -1207,7 +1870,7 @@ def ban_ip_permanently(ip):
     # Chi ghi log de admin biet co request ban (visibility) nhung khong thuc thi.
     try:
         now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         try:
             cur = conn.cursor()
             safe_msg = sanitize_log_input("[{}] [DISABLED] Đã bỏ qua yêu cầu chặn IP {} vì fail2ban đang tắt.".format(now, ip))
@@ -1225,7 +1888,7 @@ def handle_auth_failure(ip):
     # KHONG con tu dong th?m banned_ips/iptables DROP nua.
     conn = None
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute('INSERT OR IGNORE INTO auth_attempts VALUES (?, 0)', (ip,))
         cur.execute('UPDATE auth_attempts SET count = count + 1 WHERE ip=?', (ip,))
@@ -1320,7 +1983,7 @@ def monitor_scanners():
                         def _commit_access_log(m_msg):
                             # (1) Lưu vào SQL Server cục bộ trên NAS
                             try:
-                                conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                                conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
                                 try:
                                     cur = conn.cursor()
                                     cur.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("INFO", "AccessLog", m_msg))
@@ -1359,7 +2022,7 @@ def monitor_journalctl():
                 log_json = json.dumps({"event": "SSH_FAIL", "ip": ip, "user": user}, ensure_ascii=False)
                 def _commit_ssh_fail(m_msg):
                     try:
-                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
                         try:
                             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("ERROR", "Security", m_msg))
                             conn.commit()
@@ -1379,7 +2042,7 @@ def monitor_journalctl():
                 log_json = json.dumps({"event": "SSH_SUCCESS", "ip": ip, "user": user, "method": method}, ensure_ascii=False)
                 def _commit_ssh_acc(m_msg):
                     try:
-                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
                         try:
                             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("INFO", "AccessLog", m_msg))
                             conn.commit()
@@ -1395,7 +2058,7 @@ def monitor_journalctl():
                 log_json = json.dumps({"event": "CPU_TEMP_WARN"}, ensure_ascii=False)
                 def _commit_cpu_warn(m_msg):
                     try:
-                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
                         try:
                             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("WARNING", "Hardware", m_msg))
                             conn.commit()
@@ -1414,7 +2077,7 @@ def monitor_journalctl():
                 log_json = json.dumps({"event": "SMART_WARN", "device": dev, "error": msg}, ensure_ascii=False)
                 def _commit_smart_warn(m_msg):
                     try:
-                        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+                        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
                         try:
                             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)", ("WARNING", "Hardware", m_msg))
                             conn.commit()
@@ -1528,7 +2191,9 @@ def _select_target_omv_smart_device(devices):
     return None
 
 # File tam de do toc do ổ cứng
-SPEED_TEST_FILE = os.path.join(WEBDAV_FILE_ROOT, ".naswebdav", "tmp", "nas_speed_test.bin")
+# CC-005 P1/P2: SPEED_TEST path hard-code -> ENV NAS_SPEED_TEST_FILE
+# (default giữ nguyên <WEBDAV_ROOT>/.naswebdav/tmp/nas_speed_test.bin).
+SPEED_TEST_FILE = _cfg_str("speed_test_file", os.path.join(WEBDAV_FILE_ROOT, ".naswebdav", "tmp", "nas_speed_test.bin"))
 
 
 def _load_credentials():
@@ -1581,7 +2246,7 @@ def _refresh_authorized_ips_cache(force=False):
     except Exception:
         pass
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
         try:
             cur = conn.cursor()
             cutoff = (datetime.datetime.now() - datetime.timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
@@ -1699,7 +2364,10 @@ def _request_client_ip():
             continue
         return candidate_ip
 
-    return ""
+    # CC-004 P0-2: khong tim duoc candidate hop le thi tra ve remote (proxy IP)
+    # thay vi "". Tra "" khien whitelist/cache sai: LAN khong-auth bi 401 oan,
+    # dong thoi khong phan biet duoc client that sau proxy.
+    return remote
 
 # ============ XAC THUC ============
 def check_auth(username, password):
@@ -1711,7 +2379,7 @@ def check_auth(username, password):
 def _async_persist_trusted_ip(ip):
     def _worker():
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=5.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
             try:
                 cur = conn.cursor()
                 cur.execute('INSERT OR REPLACE INTO authorized_ips VALUES (?, ?)', (ip, datetime.datetime.now()))
@@ -1750,18 +2418,525 @@ def requires_auth(f):
 
     return decorated
 
+def requires_admin(f):
+    """SPEC_LIVESTREAM_LIMITS §3.2 (Q3 admin-only): PATCH limits bat buoc Basic
+    auth dung tai khoan WEBDAV_USER (daica). Chan LAN-whitelist bypass va
+    authorized_ips cache — IP tung login khong tu nang quyen. Sai -> 401."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        try:
+            auth = request.authorization
+        except Exception:
+            auth = None
+        if auth is None:
+            return jsonify({"detail": "Chua xac thuc"}), 401
+        try:
+            ok = check_auth(auth.username, auth.password)
+        except Exception:
+            ok = False
+        if not ok:
+            return jsonify({"detail": "Sai mat khau"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# ============ SPEC_LIVESTREAM_LIMITS §3.2 + §3.4: admin limits (GET/PATCH) ============
+# Dinh nghia: (key, default, low, high, kieu). social_max_filesize la str dac biet.
+_ADMIN_LIMIT_DEFS = (
+    ("social_max_concurrent", 2, 1, 16, "int"),
+    ("ytdlp_max_concurrent", 2, 1, 4, "int"),
+    ("livestream_max_concurrent", 2, 1, 8, "int"),
+    ("social_max_filesize", "2G", None, None, "str"),
+    ("ytdlp_timeout_s", 300, 60, 1800, "int"),
+    ("livestream_max_hours", 12, 1, 72, "int"),
+    ("live_err_cooldown_s", 300, 10, 86400, "int"),
+    ("live_stall_cooldown_s", 7200, 60, 604800, "int"),
+    ("user_idle_s", 90, 10, 600, "int"),
+    ("ram_block_pct", 78, 50, 95, "int"),
+    ("load_block", 2.5, 1.0, 8.0, "float"),
+    ("cpu_block_pct", 75, 50, 100, "int"),
+    ("heavy_gate_cache_s", 5.0, 1.0, 60.0, "float"),
+    ("social_cleanup_interval_s", 300, 30, 86400, "int"),
+    ("social_job_ttl_s", 3600, 300, 604800, "int"),
+    ("tiktok_watch_s", 60, 15, 300, "int"),
+    ("tiktok_html_cap", 786432, 65536, 8388608, "int"),
+    ("tiktok_html_timeout", 25, 5, 120, "int"),
+)
+
+
+def _admin_current_limits():
+    """Doc toan bo key dot 1 qua loader chung (env > runtime > conf > default)."""
+    vals = {}
+    for key, default, low, high, kind in _ADMIN_LIMIT_DEFS:
+        try:
+            if kind == "int":
+                vals[key] = _cfg_int(key, default, low, high)
+            elif kind == "float":
+                try:
+                    v = float(str(_cfg_limit(key, default)).strip())
+                except Exception:
+                    v = default
+                if v < low:
+                    v = low
+                if v > high:
+                    v = high
+                vals[key] = v
+            elif key == "social_max_filesize":
+                vals[key] = _get_social_max_filesize()
+            else:
+                vals[key] = _cfg_limit(key, default)
+        except Exception:
+            vals[key] = default
+    return vals
+
+
+def _admin_save_limits_file(cfg):
+    """Ghi conf atomically (tmp + rename), chmod 600. Best-effort, tra bool."""
+    try:
+        d = os.path.dirname(_NAS_LIMITS_CONF_PATH)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+        tmp = _NAS_LIMITS_CONF_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2, sort_keys=True)
+        os.rename(tmp, _NAS_LIMITS_CONF_PATH)
+        try:
+            os.chmod(_NAS_LIMITS_CONF_PATH, 0o600)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        try:
+            log.warning("[AdminLimits] Ghi %s that bai: %s", _NAS_LIMITS_CONF_PATH, e)
+        except Exception:
+            pass
+        return False
+
+
+@app.route("/api/admin/limits", methods=["GET"])
+@requires_auth
+def api_admin_limits_get():
+    """Xem gioi han dong + RAM/khuyen nghi + heavy-gate (moi client auth LAN)."""
+    vals = _admin_current_limits()
+    try:
+        ram_mb, rec_live, rec_social = _recommended_caps_by_ram()
+    except Exception:
+        ram_mb, rec_live, rec_social = 1024, 2, 2
+    try:
+        _gate_fn = globals().get("_background_heavy_work_allowed")
+        gate_allowed = bool(_gate_fn()) if callable(_gate_fn) else True
+    except Exception:
+        gate_allowed = True
+    vals["ram_mb"] = ram_mb
+    vals["recommended_live_max"] = rec_live
+    vals["recommended_social_max"] = rec_social
+    vals["heavy_gate_allowed"] = gate_allowed
+    return jsonify(vals)
+
+
+@app.route("/api/admin/limits", methods=["PATCH"])
+@requires_admin
+def api_admin_limits_patch():
+    """Doi gioi han luc runtime (khong restart). Chi admin daica (Basic auth).
+    Validate range/clamp, ghi conf atomically. Vuot khuyen nghi RAM -> warning."""
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"error": "Body JSON khong hop le."}), 400
+    if not isinstance(body, dict) or not body:
+        return jsonify({"error": "Body JSON rong."}), 400
+    try:
+        ram_mb, rec_live, rec_social = _recommended_caps_by_ram()
+    except Exception:
+        ram_mb, rec_live, rec_social = 1024, 2, 2
+    updated = {}
+    for key, default, low, high, kind in _ADMIN_LIMIT_DEFS:
+        if key not in body:
+            continue
+        raw = body.get(key)
+        try:
+            if kind == "int":
+                v = int(str(raw).strip())
+                if v < low:
+                    v = low
+                if v > high:
+                    v = high
+            elif kind == "float":
+                v = float(str(raw).strip())
+                if v < low:
+                    v = low
+                if v > high:
+                    v = high
+            else:
+                v = str(raw).strip() or default
+                if key == "social_max_filesize":
+                    if not _re_module.match(r"^\d+(\.\d+)?[KMGTPkmgtp]?[Bb]?$", v):
+                        return jsonify({"error": "Gia tri khong hop le cho %s." % key}), 400
+        except Exception:
+            return jsonify({"error": "Gia tri khong hop le cho %s." % key}), 400
+        with _NAS_LIMITS_LOCK:
+            _NAS_LIMITS_RUNTIME[key] = v
+            _NAS_LIMITS_CFG[key] = v
+        updated[key] = v
+    if not updated:
+        return jsonify({"error": "Khong co key hop le (xem GET /api/admin/limits)."}), 400
+    with _NAS_LIMITS_LOCK:
+        _cfg_snapshot = dict(_NAS_LIMITS_CFG)
+    persisted = _admin_save_limits_file(_cfg_snapshot)
+    over = False
+    try:
+        if "livestream_max_concurrent" in updated and int(updated["livestream_max_concurrent"]) > int(rec_live):
+            over = True
+        if "social_max_concurrent" in updated and int(updated["social_max_concurrent"]) > int(rec_social):
+            over = True
+    except Exception:
+        pass
+    if over:
+        try:
+            log.warning("[AdminLimits] Cap vuot khuyen nghi RAM %sMB (live %s/%s, social %s/%s).",
+                        ram_mb, updated.get("livestream_max_concurrent", "-"), rec_live,
+                        updated.get("social_max_concurrent", "-"), rec_social)
+        except Exception:
+            pass
+    resp = {"updated": updated, "limits": _admin_current_limits(),
+            "requires_restart": False, "persisted": bool(persisted),
+            "ram_mb": ram_mb, "recommended_live_max": rec_live,
+            "recommended_social_max": rec_social}
+    if over:
+        resp["warning"] = "over_recommended"
+    return jsonify(resp)
+
+
+# ============ SPEC_LIVESTREAM_LIMITS §4.1 (Q2 server-side queue, HDD persist) ============
+_LIVESTREAM_QUEUE_MAX = 20
+_LIVESTREAM_QUEUE_TTL_S = 86400
+_livestream_queue = []
+_livestream_queue_lock = threading.Lock()
+_livestream_queue_loaded = {"done": False}
+
+
+def _livestream_queue_file():
+    """File queue tren HDD (.naswebdav), song qua restart. Fallback /tmp."""
+    try:
+        _hdd_fn = globals().get("_get_hdd_config_dir")
+        if callable(_hdd_fn):
+            d = _hdd_fn()
+            if d:
+                return os.path.join(d, "livestream_queue.json")
+    except Exception:
+        pass
+    try:
+        base = globals().get("WEBDAV_FILE_ROOT") or ""
+        if base:
+            return os.path.join(base, ".naswebdav", "livestream_queue.json")
+    except Exception:
+        pass
+    return "/tmp/nas_api_livestream_queue.json"
+
+
+def _livestream_queue_ensure_loaded():
+    if _livestream_queue_loaded.get("done"):
+        return
+    with _livestream_queue_lock:
+        if _livestream_queue_loaded.get("done"):
+            return
+        try:
+            p = _livestream_queue_file()
+            if p and os.path.exists(p):
+                with open(p, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    for e in data:
+                        if isinstance(e, dict) and e.get("queue_id") and e.get("url"):
+                            e.setdefault("status", "queued")
+                            _livestream_queue.append(e)
+        except Exception as e:
+            try:
+                log.warning("[LiveQueue] Load that bai: %s", e)
+            except Exception:
+                pass
+        _livestream_queue_loaded["done"] = True
+
+
+def _livestream_queue_save_locked():
+    try:
+        p = _livestream_queue_file()
+        d = os.path.dirname(p)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(list(_livestream_queue), f)
+        os.rename(tmp, p)
+        try:
+            os.chmod(p, 0o600)
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            log.warning("[LiveQueue] Save that bai: %s", e)
+        except Exception:
+            pass
+
+
+def _livestream_queue_prune_locked(now=None):
+    now = now or time.time()
+    kept = []
+    removed = 0
+    for e in list(_livestream_queue):
+        try:
+            ts = float(e.get("ts", 0) or 0)
+        except Exception:
+            ts = 0
+        if now - ts > _LIVESTREAM_QUEUE_TTL_S:
+            removed += 1
+            continue
+        kept.append(e)
+    if removed:
+        del _livestream_queue[:]
+        _livestream_queue.extend(kept)
+        _livestream_queue_save_locked()
+    return removed
+
+
+def _livestream_queue_active_count():
+    n = 0
+    try:
+        for j in _livestream_jobs.values():
+            if j.get("status") in ("recording", "starting", "stopping", "timeout", "finalizing"):
+                n += 1
+        for c in _livestream_starting_claims.values():
+            try:
+                if time.time() - float(c.get("ts", 0) or 0) < 180:
+                    n += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return n
+
+
+def _livestream_queue_try_promote():
+    """Thu nhac entry dau khi co slot trong. Di qua flow record noi bo de giu
+    moi guard (cap/HW/dedup). 429 full-slot -> giu queue cho vong sau."""
+    _livestream_queue_ensure_loaded()
+    try:
+        _cap_fn = globals().get("_get_livestream_max_concurrent")
+        cap = int(_cap_fn()) if callable(_cap_fn) else 2
+    except Exception:
+        cap = 2
+    if cap < 1:
+        cap = 1
+    if cap > 8:
+        cap = 8
+    with _livestream_queue_lock:
+        _livestream_queue_prune_locked()
+        if not _livestream_queue:
+            return ""
+        with _livestream_lock:
+            active = _livestream_queue_active_count()
+        if active >= cap:
+            return ""
+        entry = dict(_livestream_queue[0])
+    url = str(entry.get("url", "") or "")
+    if not url:
+        with _livestream_queue_lock:
+            if _livestream_queue and _livestream_queue[0].get("queue_id") == entry.get("queue_id"):
+                _livestream_queue.pop(0)
+            _livestream_queue_save_locked()
+        return ""
+    try:
+        payload = {"url": url, "quality": str(entry.get("quality", "") or "best")}
+        if entry.get("watch_username"):
+            payload["watch_username"] = str(entry.get("watch_username"))
+        if entry.get("max_hours"):
+            try:
+                payload["max_hours"] = int(entry.get("max_hours"))
+            except Exception:
+                pass
+        view_func = getattr(api_livestream_record, "__wrapped__", api_livestream_record)
+        with app.test_request_context("/api/livestream/record", method="POST",
+                                      data=json.dumps(payload),
+                                      content_type="application/json"):
+            result = view_func()
+        code = 200
+        obj = result
+        if isinstance(result, tuple):
+            obj = result[0]
+            if len(result) > 1 and isinstance(result[1], int):
+                code = result[1]
+        data = {}
+        if hasattr(obj, "get_json"):
+            try:
+                data = obj.get_json(silent=True) or {}
+            except Exception:
+                data = {}
+        if 200 <= code < 300 and data.get("job_id"):
+            with _livestream_queue_lock:
+                for i, e in enumerate(list(_livestream_queue)):
+                    if e.get("queue_id") == entry.get("queue_id"):
+                        _livestream_queue.pop(i)
+                        break
+                _livestream_queue_save_locked()
+            try:
+                log.info("[LiveQueue] Da nhac %s -> job %s.", entry.get("queue_id"), data.get("job_id"))
+            except Exception:
+                pass
+            return str(data.get("job_id"))
+        err = str(data.get("reason", "") or data.get("code", "") or data.get("error", ""))
+        if code == 429 or "max_concurrent" in err or "MAX_STREAMS" in err:
+            return ""
+        with _livestream_queue_lock:
+            for idx_q, e in enumerate(list(_livestream_queue)):
+                if e.get("queue_id") == entry.get("queue_id"):
+                    e["last_error"] = err[:200]
+                    attempts = int(e.get("attempts", 0) or 0) + 1
+                    e["attempts"] = attempts
+                    _livestream_queue.pop(idx_q)
+                    if attempts < 3:
+                        _livestream_queue.append(e)
+                    break
+            _livestream_queue_save_locked()
+        return ""
+    except Exception as e:
+        try:
+            log.warning("[LiveQueue] Promote loi: %s", e)
+        except Exception:
+            pass
+        return ""
+
+
+def _livestream_queue_promoter():
+    """Daemon 60s/vong: tu nhac queue khi co slot (cung nhip watchdog)."""
+    try:
+        time.sleep(60)
+        _livestream_queue_ensure_loaded()
+    except Exception:
+        pass
+    while True:
+        try:
+            time.sleep(60)
+            _livestream_queue_try_promote()
+        except Exception:
+            pass
+
+
+@app.route("/api/livestream/queue", methods=["POST"])
+@requires_auth
+def api_livestream_queue_add():
+    """Cho URL vao hang doi server-side (persist HDD, TTL 24h, cap 20)."""
+    _livestream_queue_ensure_loaded()
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"error": "Body JSON khong hop le."}), 400
+    url = str(body.get("url", "") or "").strip()
+    quality = str(body.get("quality", "") or "best").strip() or "best"
+    watch_username = str(body.get("watch_username", "") or "").strip()
+    try:
+        max_hours = int(body.get("max_hours", 0) or 0)
+    except Exception:
+        max_hours = 0
+    if not url:
+        return jsonify({"error": "Thieu URL livestream."}), 400
+    try:
+        if callable(globals().get("_social_validate_url")) and not _social_validate_url(url):
+            return jsonify({"error": "URL livestream khong duoc ho tro hoac khong an toan."}), 400
+    except Exception:
+        return jsonify({"error": "URL livestream khong duoc ho tro hoac khong an toan."}), 400
+    if max_hours and (max_hours < 1 or max_hours > 72):
+        return jsonify({"error": "max_hours phai 1-72."}), 400
+    with _livestream_queue_lock:
+        _livestream_queue_prune_locked()
+        for i, e in enumerate(list(_livestream_queue)):
+            if str(e.get("url", "")).strip().lower() == url.lower():
+                return jsonify({"queue_id": e.get("queue_id"), "position": i + 1,
+                                "status": "queued", "duplicate": True,
+                                "message": "URL da co trong hang doi."})
+        if len(_livestream_queue) >= _LIVESTREAM_QUEUE_MAX:
+            return jsonify({"error": "Hang doi da day (%d)." % _LIVESTREAM_QUEUE_MAX,
+                            "reason": "queue_full", "code": "QUEUE_FULL",
+                            "cap": _LIVESTREAM_QUEUE_MAX,
+                            "active": len(_livestream_queue)}), 429
+        qid = "q_%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
+        entry = {"queue_id": qid, "ts": time.time(), "url": url, "quality": quality,
+                 "status": "queued", "last_error": ""}
+        if watch_username:
+            entry["watch_username"] = watch_username
+        if max_hours:
+            entry["max_hours"] = max_hours
+        _livestream_queue.append(entry)
+        _livestream_queue_save_locked()
+        pos = len(_livestream_queue)
+    return jsonify({"queue_id": qid, "position": pos, "status": "queued"}), 202
+
+
+@app.route("/api/livestream/queue", methods=["GET"])
+@requires_auth
+def api_livestream_queue_list():
+    """Xem hang doi (so thu tu + nut huy o client)."""
+    _livestream_queue_ensure_loaded()
+    with _livestream_queue_lock:
+        _livestream_queue_prune_locked()
+        items = []
+        for i, e in enumerate(list(_livestream_queue)):
+            d = dict(e)
+            d["position"] = i + 1
+            items.append(d)
+    return jsonify({"queue": items, "count": len(items), "cap": _LIVESTREAM_QUEUE_MAX})
+
+
+@app.route("/api/livestream/queue", methods=["DELETE"])
+@requires_auth
+def api_livestream_queue_del():
+    """Huy 1 entry (body {queue_id} hoac ?queue_id=)."""
+    _livestream_queue_ensure_loaded()
+    try:
+        body = request.get_json(force=True) or {}
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    qid = str(body.get("queue_id", "") or "").strip()
+    if not qid:
+        try:
+            qid = str(request.args.get("queue_id", "") or "").strip()
+        except Exception:
+            qid = ""
+    if not qid:
+        return jsonify({"error": "Thieu queue_id."}), 400
+    with _livestream_queue_lock:
+        for i, e in enumerate(list(_livestream_queue)):
+            if e.get("queue_id") == qid:
+                _livestream_queue.pop(i)
+                _livestream_queue_save_locked()
+                return jsonify({"queue_id": qid, "status": "cancelled"})
+    return jsonify({"error": "Khong tim thay queue_id: %s" % qid}), 404
+
+
+try:
+    threading.Thread(target=_livestream_queue_promoter, daemon=True).start()
+except Exception:
+    pass
+
 # FIX-SECURITY-SEARCH-AUTH: api_fast_search (dang ky route o tren, dong 364)
 # duoc dinh nghia TRUOC requires_auth nen khong gan decorator truc tiep duoc
 # (NameError -> crash-loop NAS ngay khi restart). Boc decorator TAI DAY, sau
 # khi requires_auth da ton tai. Android app da gui Authorization header
 # (FileBrowserViewModel:236) nen khong break. Attacker LAN khong auth -> 401.
+# CC-004 P0-6: patch bang endpoint literal 'api_fast_search' (Flask endpoint
+# mac dinh = ten ham luc @app.route), khong phu thuoc __name__ (vo neu ai
+# them decorator khong @wraps hoac doi ten ham). Patch ca 2 key de chac chan.
 _wrapped_search = requires_auth(api_fast_search)
 api_fast_search = _wrapped_search
 # Flask da dang ky ham GOC vao app.view_functions tai dong 364 (@app.route
 # chay truoc khi requires_auth ton tai). Patch view da dang ky sang ban boc
 # auth, neu khong endpoint van chay khong xac thuc du bien module da duoc boc.
 try:
-    app.view_functions[api_fast_search.__name__] = _wrapped_search
+    app.view_functions["api_fast_search"] = _wrapped_search
+    try:
+        app.view_functions[_wrapped_search.__name__] = _wrapped_search
+    except Exception:
+        pass
 except Exception as _e:
     log.warning("[Auth] Khong patch duoc view auth cho /api/search: %s", _e)
 
@@ -1819,11 +2994,29 @@ _RE_SAFE_DISK = _re_module.compile(r'^/dev/[a-z]{2,4}[0-9]?$')
 
 def _validate_ip(ip):
     """Validate IP address format. Return True if valid."""
-    return bool(ip and _RE_SAFE_IP.match(ip))
+    if not (ip and _RE_SAFE_IP.match(str(ip))):
+        return False
+    try:
+        import ipaddress
+        addr = ipaddress.ip_address(str(ip))
+        if addr.is_unspecified or addr.is_multicast or str(addr) == "255.255.255.255":
+            return False
+        return True
+    except Exception:
+        return False
 
 def _validate_cidr(cidr):
     """Validate CIDR subnet format. Return True if valid."""
-    return bool(cidr and _RE_SAFE_CIDR.match(cidr))
+    if not (cidr and _RE_SAFE_CIDR.match(str(cidr))):
+        return False
+    try:
+        import ipaddress
+        net = ipaddress.ip_network(str(cidr), strict=False)
+        if net.prefixlen < 8 or net.is_unspecified or net.is_multicast:
+            return False
+        return True
+    except Exception:
+        return False
 
 def _validate_container_name(name):
     """Validate Docker container name/ID. Return True if safe."""
@@ -2431,8 +3624,11 @@ def get_disk_partitions():
     return parts
 
 
-def _safe_dir_usage(path, max_files=4000, max_seconds=2.0):
-    """Tính nhanh dung lượng thư mục, giới hạn để không làm NAS bị nặng."""
+def _safe_dir_usage(path, max_files=8000, max_seconds=1.5):
+    """Tính nhanh dung lượng thư mục, giới hạn để không làm NAS bị nặng.
+    CC-003: cap cũ (4000 file/2s) khiến thư mục Facebook/Backup lớn luôn
+    trả partial=True (số thiếu); cap mới 8000/1.5s mỗi thư mục + deadline
+    tổng ở get_storage_usage_summary để ~30 thư mục không treo request."""
     start = time.time()
     total = 0
     count = 0
@@ -2486,18 +3682,58 @@ def _trash_dir_for_relative_path(webdav_root, rel_path):
 
 
 def get_storage_usage_summary():
-    """Tóm tắt dung lượng các thư mục lớn để app hiển thị khuyến nghị dọn dẹp."""
-    folders = [
-        ("Livestream", "Livestream"),
-        ("Tải xuống", "Downloads"),
-        ("Sao lưu", "Backup"),
-    ]
+    """Tóm tắt dung lượng các thư mục lớn để app hiển thị khuyến nghị dọn dẹp.
+    CC-003: liệt kê ĐỘNG thư mục cấp 1 của WebDAV root thay vì cứng
+    Livestream/Downloads/Backup (root thật là 'New folder' chứa
+    'Thư mục 1', Facebook, ... nên số cũ luôn 0/thiếu)."""
+    try:
+        root = WEBDAV_FILE_ROOT or get_webdav_root()
+    except Exception:
+        root = WEBDAV_FILE_ROOT
+    label_map = {
+        "Livestream": "Livestream",
+        "Downloads": "Tải xuống",
+        "Backup": "Sao lưu",
+        "Facebook": "Facebook",
+    }
+    skip = {".trash", ".thumbs", ".thumbnails", ".nas_meta", ".git",
+            ".recycle", "@eaDir", "#recycle", ".cache", ".naswebdav"}
+    rels = []
+    try:
+        for name in os.listdir(root):
+            if not name or name.startswith("."):
+                continue
+            if name in skip:
+                continue
+            full = os.path.join(root, name)
+            try:
+                if not os.path.isdir(full):
+                    continue
+            except Exception:
+                continue
+            rels.append(name)
+    except Exception:
+        rels = ["Livestream", "Downloads", "Backup"]
     result = []
-    for label, rel in folders:
-        path = os.path.join(WEBDAV_FILE_ROOT, rel)
+    # CC-003: deadline tổng 12s cho cả vòng — root thật có ~30 thư mục cấp 1,
+    # mỗi thư mục tối đa 1.5s thì vòng lặp vẫn có thể kéo dài quá timeout HTTP.
+    # Hết giờ thì dừng, đánh dấu partial ở các mục chưa quét.
+    usage_deadline = time.time() + 12.0
+    for rel in sorted(rels):
+        if time.time() >= usage_deadline:
+            result.append({
+                "name": label_map.get(rel, rel),
+                "path": rel,
+                "size_bytes": 0,
+                "size": format_bytes(0),
+                "files": 0,
+                "partial": True,
+            })
+            continue
+        path = os.path.join(root, rel)
         size, files, partial = _safe_dir_usage(path)
         result.append({
-            "name": label,
+            "name": label_map.get(rel, rel),
             "path": rel,
             "size_bytes": size,
             "size": format_bytes(size),
@@ -2507,14 +3743,14 @@ def get_storage_usage_summary():
     trash_size = 0
     trash_files = 0
     trash_partial = False
-    for _drive, trash_path in _iter_hdd_trash_dirs(WEBDAV_FILE_ROOT):
+    for _drive, trash_path in _iter_hdd_trash_dirs(root):
         size, files, partial = _safe_dir_usage(trash_path)
         trash_size += size
         trash_files += files
         trash_partial = trash_partial or partial
     result.append({
         "name": "Thùng rác",
-        "path": "*/.trash",
+        "path": ".trash",
         "size_bytes": trash_size,
         "size": format_bytes(trash_size),
         "files": trash_files,
@@ -2530,10 +3766,17 @@ _STORAGE_USAGE_CACHE_TTL = 300
 
 
 def _build_storage_usage_payload():
-    usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
+    try:
+        _root = WEBDAV_FILE_ROOT or get_webdav_root()
+    except Exception:
+        _root = WEBDAV_FILE_ROOT
+    try:
+        usage = psutil.disk_usage(_root)
+    except Exception:
+        usage = psutil.disk_usage(WEBDAV_FILE_ROOT)
     return {
         "ok": True,
-        "root": WEBDAV_FILE_ROOT,
+        "root": _root,
         "total": format_bytes(usage.total),
         "used": format_bytes(usage.used),
         "free": format_bytes(usage.free),
@@ -2723,6 +3966,11 @@ def _ensure_trash_directories():
 _status_cache = {"status": "Đang khởi động..."}
 _cache_lock = threading.Lock()
 
+def _status_cache_after_error(previous, error):
+    data = dict(previous)
+    data["status"] = "Lỗi: %s" % error
+    return data
+
 def _update_status_cache():
     """Background thread: cập nhật dữ liệu hệ thống mỗi 2 giây."""
     global _status_cache
@@ -2826,7 +4074,7 @@ def _update_status_cache():
             loop_count = (loop_count + 1) % 600
         except Exception as e:
             with _cache_lock:
-                _status_cache = {"status": "Lỗi: %s" % str(e)}
+                _status_cache = _status_cache_after_error(_status_cache, str(e))
         time.sleep(4)
 
 
@@ -2863,7 +4111,7 @@ def _push_alert(alert_type, message, severity="INFO"):
             _alert_states["last_alerts"] = _alert_states["last_alerts"][-50:]
     # Ghi vao DB log
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                     (severity, "Alert", message))
@@ -3046,18 +4294,26 @@ def _heavy_background_processes():
         pass
     return heavy
 
-def _background_heavy_work_allowed():
+def _background_heavy_work_allowed(ignore_user_idle=False):
     try:
         now = time.time()
-        if now - _background_heavy_gate_cache.get("time", 0.0) < 5.0:
+        try:
+            _gate_cache_s = float(globals().get("_get_heavy_gate_cache_s", lambda: 5.0)())
+        except Exception:
+            _gate_cache_s = 5.0
+        if not ignore_user_idle and (now - _background_heavy_gate_cache.get("time", 0.0) < _gate_cache_s):
             return bool(_background_heavy_gate_cache.get("allowed", True))
         allowed = True
         if bool(globals().get("_usb_import_running", False)):
             allowed = False
         # CLIENT-FIRST: user dang duyet -> daemon nghi, nhuong CPU cho serve.
-        if allowed:
+        if allowed and not ignore_user_idle:
             try:
-                if now - float(_LAST_USER_HIT.get("time", 0.0)) < float(globals().get("_USER_IDLE_S", 90)):
+                try:
+                    _idle_s = float(globals().get("_get_user_idle_s", lambda: 90)())
+                except Exception:
+                    _idle_s = 90.0
+                if now - float(_LAST_USER_HIT.get("time", 0.0)) < _idle_s:
                     allowed = False
             except Exception:
                 pass
@@ -3069,20 +4325,33 @@ def _background_heavy_work_allowed():
                     allowed = False
         if allowed and _heavy_background_processes():
             allowed = False
-        if allowed and psutil.virtual_memory().percent > 78:
+        try:
+            _ram_block = float(globals().get("_get_ram_block_pct", lambda: 78)())
+        except Exception:
+            _ram_block = 78.0
+        if allowed and psutil.virtual_memory().percent > _ram_block:
             allowed = False
         if allowed:
             try:
+                try:
+                    _load_block = float(globals().get("_get_load_block", lambda: 2.5)())
+                except Exception:
+                    _load_block = 2.5
                 # Sử dụng Load Average (1 phút) của Linux. RK3328 có 4 nhân.
                 # Nếu tải trung bình 1 phút vượt quá 2.5, tức là máy đang thực sự bận rộn lâu dài.
-                if os.getloadavg()[0] > 2.5:
+                if os.getloadavg()[0] > _load_block:
                     allowed = False
             except AttributeError:
                 # Fallback nếu chạy trên Windows (không có getloadavg)
-                if psutil.cpu_percent(interval=1.0) > 75:
+                try:
+                    _cpu_block = float(globals().get("_get_cpu_block_pct", lambda: 75)())
+                except Exception:
+                    _cpu_block = 75.0
+                if psutil.cpu_percent(interval=1.0) > _cpu_block:
                     allowed = False
-        
-        _background_heavy_gate_cache.update({"time": now, "allowed": allowed})
+
+        if not ignore_user_idle:
+            _background_heavy_gate_cache.update({"time": now, "allowed": allowed})
         return allowed
     except Exception:
         return False
@@ -3347,7 +4616,7 @@ def _cron_worker():
                     except Exception: return 0.0
                 rx_kbps = _parse_speed_kbps(rx_str)
                 tx_kbps = _parse_speed_kbps(tx_str)
-                conn = sqlite3.connect(DB_PATH, timeout=10.0)
+                conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
                 cur = conn.cursor()
                 cur.execute("INSERT INTO system_metrics_history (cpu_percent, ram_percent, cpu_temp, hdd_temp, net_rx_kbps, net_tx_kbps) VALUES (?,?,?,?,?,?)",
                             (cpu_pct, ram_pct, cpu_t, hdd_t, rx_kbps, tx_kbps))
@@ -3433,7 +4702,7 @@ def _cron_worker():
             if is_6am:
                 yesterday = (now_dt - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
                 try:
-                    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+                    conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
                     cur = conn.cursor()
                     cur.execute("SELECT COUNT(*) FROM daily_reports WHERE report_date = ?", (yesterday,))
                     already_done = cur.fetchone()[0] > 0
@@ -3453,7 +4722,7 @@ def _generate_daily_report(report_date):
     report_date: chuỗi 'YYYY-MM-DD' của ngày cần tổng hợp.
     """
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         # Lấy dữ liệu metrics trong ngày
         cur.execute("""
@@ -3509,7 +4778,7 @@ def _generate_daily_report(report_date):
             )
         }
 
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute(
             "INSERT OR REPLACE INTO daily_reports (report_date, report_json) VALUES (?, ?)",
@@ -3573,7 +4842,7 @@ def api_metrics_history():
     except (ValueError, TypeError):
         hours = 1
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         cur = conn.cursor()
         # QUAN TR?NG: Khong dung % operator vi conflict voi %Y, %m... trong strftime SQLite
         # Tinh san WHERE time filter bang Python roi truyen vao query
@@ -3621,14 +4890,14 @@ def api_report_daily():
         yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
         date_str = yesterday.strftime("%Y-%m-%d")
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         cur = conn.cursor()
         cur.execute("SELECT report_json, generated_at FROM daily_reports WHERE report_date = ?", (date_str,))
         row = cur.fetchone()
         conn.close()
         if not row or not row[0]:
             _generate_daily_report(date_str)
-            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
             cur = conn.cursor()
             cur.execute("SELECT report_json, generated_at FROM daily_reports WHERE report_date = ?", (date_str,))
             row = cur.fetchone()
@@ -3793,7 +5062,10 @@ def api_system_idle():
       - Khong co backup/restore/torrent dang chay n?ng
     """
     try:
-        cpu_pct = psutil.cpu_percent(interval=0.4)
+        # CC-004 P2-3: interval=None (non-blocking) thay vi interval=0.4 (block
+        # request 400ms). Monitor nen da goi cpu_percent truoc do nen gia tri
+        # co y nghia; lan dau sau boot co the 0.0 — chap nhan duoc cho idle-gate.
+        cpu_pct = psutil.cpu_percent(interval=None)
     except Exception:
         cpu_pct = 0.0
     try:
@@ -3848,6 +5120,13 @@ def api_system_idle():
     })
 
 
+# CC-005 P1/P2: unify TTL cache tránh spin-up HDD.
+#   _smart_cache           TTL 86400s (1 ngày — smartctl/OMV RPC đánh thức HDD)
+#   _omv_overview_cache    TTL 900s   (15 phút — OMV RPC nặng)
+#   _STORAGE_SUMMARY_CACHE TTL 300s   (5 phút — quét full disk, xem dưới)
+# Quy tắc chung: cache HIT -> trả ngay, KHÔNG gọi smartctl/omv-rpc/quét disk;
+# fetching flag chống stampede (request 2 khi đang fetch trả dữ liệu cũ).
+_SMART_TTL = 86400.0  # CC-005 P1/P2: TTL smart (tránh spin-up HDD mỗi lần mở app)
 _smart_cache = {"data": None, "time": 0.0, "fetching": False}
 _smart_lock = threading.Lock()
 
@@ -3858,8 +5137,8 @@ def api_smart():
     global _smart_cache
     with _smart_lock:
         now = time.time()
-        # 1 lan 1 ngay (86400.0) de khong dảnh thuc HDD
-        if now - _smart_cache["time"] < 86400.0 and _smart_cache["data"]:
+        # CC-005 P1/P2: cache HIT -> trả ngay, KHÔNG gọi smartctl (tránh spin-up HDD)
+        if now - _smart_cache["time"] < _SMART_TTL and _smart_cache["data"]:
             return jsonify(_smart_cache["data"])
         if _smart_cache["fetching"]:
             return jsonify(_smart_cache["data"] or {"status": "Đang tải...", "temperature": "--°C", "raw_log": ""})
@@ -3997,6 +5276,7 @@ def api_smart():
     return jsonify(res_data)
 
 
+_OMV_OVERVIEW_TTL = 900.0  # CC-005 P1/P2: TTL OMV overview (tránh RPC nặng mỗi lần mở app)
 _omv_overview_cache = {"data": None, "time": 0.0, "fetching": False}
 _omv_overview_lock = threading.Lock()
 
@@ -4027,8 +5307,8 @@ def api_omv_overview():
     global _omv_overview_cache
     with _omv_overview_lock:
         now = time.time()
-        # Cache 15 minutes (900.0) de giam tai RPC cho OMV
-        if now - _omv_overview_cache["time"] < 900.0 and _omv_overview_cache["data"]:
+        # CC-005 P1/P2: cache HIT -> tra ngay, KHONG goi omv-rpc (tranh spin-up/HDD tai)
+        if now - _omv_overview_cache["time"] < _OMV_OVERVIEW_TTL and _omv_overview_cache["data"]:
             return jsonify(_omv_overview_cache["data"])
         if _omv_overview_cache["fetching"]:
             return jsonify(_omv_overview_cache["data"] or {})
@@ -4384,7 +5664,7 @@ def api_processes():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/processes/kill", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_process_kill():
     """Kill process by PID"""
     try:
@@ -4402,7 +5682,14 @@ def api_process_kill():
             return jsonify({"error": "Tiến trình hệ thống không thể kill"}), 403
 
         pname = _get_process_name(pid_int)
-        if pname in ("nginx", "sshd", "systemd", "init", "bash", "sh") or "nas_api" in pname:
+        # CC-005 P1: mo rong blocklist (ffmpeg/yt-dlp/transcode worker bi kill
+        # -> DoS livestream/ytdlp/thumb, mat du lieu dang ghi) + doi sang
+        # requires_admin o decorator.
+        _kill_blocked = ("nginx", "sshd", "systemd", "init", "bash", "sh",
+                         "ffmpeg", "ffprobe", "yt-dlp", "yt_dlp", "postgres",
+                         "mysqld", "dockerd", "qbittorrent", "omv-engined")
+        if pname in _kill_blocked or "nas_api" in (pname or "") or \
+                "transcode" in (pname or ""):
             return jsonify({"error": "Tiến trình hệ thống được bảo vệ: %s" % (pname or str(pid_int))}), 403
 
         import signal
@@ -4453,16 +5740,30 @@ def api_scan_broken_mp4():
         auto_backup_root = "/srv/dev-disk-by-label-data/New folder/AutoBackup"
         scan_dirs = []
 
+        # CC-005 P0: custom_dir phai nam trong AutoBackup (realpath
+        # containment) — truoc day chi check isdir nen attacker quet /etc//root
+        # gay CPU/ffprobe DoS + rename (mat) moi .mp4 ngoai pham vi.
         custom_dir = (data.get("scan_dir") or "").strip()
-        if custom_dir and os.path.isdir(custom_dir):
-            scan_dirs.append(custom_dir)
-        else:
-            # Auto-discover all DCIM subdirs
+        if custom_dir:
+            try:
+                _ab_root = os.path.realpath(auto_backup_root)
+                _cd_real = os.path.realpath(custom_dir)
+                if os.path.isdir(_cd_real) and (
+                        _cd_real == _ab_root or
+                        _cd_real.startswith(_ab_root + os.sep)):
+                    scan_dirs.append(_cd_real)
+            except Exception:
+                pass
+        if not scan_dirs:
+            # Auto-discover all DCIM subdirs (Python 3.5.3 safe: os.listdir instead of os.scandir)
             dcim_dir = os.path.join(auto_backup_root, "DCIM")
             if os.path.isdir(dcim_dir):
-                for entry in os.scandir(dcim_dir):
-                    if entry.is_dir() and not entry.name.startswith("."):
-                        scan_dirs.append(entry.path)
+                for _entry_name in os.listdir(dcim_dir):
+                    if _entry_name.startswith("."):
+                        continue
+                    _entry_path = os.path.join(dcim_dir, _entry_name)
+                    if os.path.isdir(_entry_path):
+                        scan_dirs.append(_entry_path)
 
         quarantined = []
         total_scanned = 0
@@ -4485,21 +5786,22 @@ def api_scan_broken_mp4():
                     total_scanned += 1
                     fpath = os.path.join(root, fname)
 
-                    # ffprobe: check for moov atom
+                    # ffprobe: check for moov atom (Python 3.5 compatible: no capture_output)
                     try:
                         result = _sp.run(
                             ["ffprobe", "-v", "error",
                              "-show_entries", "format=format_name",
                              "-of", "csv=p=0", fpath],
-                            capture_output=True, timeout=30, check=False
+                            stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=30, check=False
                         )
                         format_name = (result.stdout or b"").decode("utf-8", errors="ignore").strip()
-                        if format_name:
+                        if result.returncode == 0 and format_name:
                             # moov atom present — file OK
                             continue
-                    except Exception:
-                        # ffprobe failed/crashed — treat as broken
-                        pass
+                    except Exception as _probe_err:
+                        # ffprobe could not execute or timed out — do NOT quarantine healthy files!
+                        log.warning("[BrokenScan] Skip %s (ffprobe error: %s)", fpath, _probe_err)
+                        continue
 
                     # File is broken — quarantine
                     rel_path = os.path.relpath(fpath, scan_dir)
@@ -4636,7 +5938,7 @@ def api_telegram_test():
 
 
 @app.route("/api/smb/toggle", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_smb_toggle():
     try:
         data = request.get_json() or {}
@@ -4687,7 +5989,7 @@ def api_smb_toggle():
 
 
 @app.route("/api/service/toggle", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_service_toggle():
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -4719,11 +6021,13 @@ def api_service_toggle():
         actual_enabled = False
         actual_running = False
         try:
-            actual_enabled = subprocess.run(["systemctl", "is-enabled", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip() == "enabled"
+            _res_en = subprocess.run(["systemctl", "is-enabled", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            actual_enabled = (_res_en.stdout or b"").decode("utf-8", errors="ignore").strip() == "enabled"
         except Exception:
             pass
         try:
-            actual_running = subprocess.run(["systemctl", "is-active", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip() == "active"
+            _res_act = subprocess.run(["systemctl", "is-active", unit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            actual_running = (_res_act.stdout or b"").decode("utf-8", errors="ignore").strip() == "active"
         except Exception:
             pass
         with _omv_overview_lock:
@@ -4740,12 +6044,28 @@ def api_service_toggle():
         return jsonify({"error": str(e)}), 500
 
 
+# CC-005 P1: rate-limit speedtest (module-level)
+_SPEEDTEST_LAST = {}
+_SPEEDTEST_LOCK = threading.Lock()
+_SPEEDTEST_MIN_INTERVAL = 300.0
+
 @app.route("/api/disk/speedtest", methods=["POST"])
 @requires_auth
 def api_speedtest():
     """Do toc do doc/ghi bang pure Python, an toan va Đọc lap voi he dieu hảnh."""
     try:
         import time, os
+        # CC-005 P1: rate-limit 5 phut/IP (ghi 50MB moi POST day HDD + spin-up)
+        try:
+            _cli = _request_client_ip() or 'unknown'
+        except Exception:
+            _cli = 'unknown'
+        with _SPEEDTEST_LOCK:
+            _last = float(_SPEEDTEST_LAST.get(_cli, 0.0) or 0.0)
+            if time.time() - _last < _SPEEDTEST_MIN_INTERVAL:
+                return jsonify({'write_speed': 'Rate-limited', 'read_speed': 'Rate-limited',
+                                'retry_after': int(_SPEEDTEST_MIN_INTERVAL - (time.time() - _last))}), 429
+            _SPEEDTEST_LAST[_cli] = time.time()
         # Tim duong dan ổ cứng that de do (Uu tien /srv/dev-disk vi /sharedfolders hay bi lỗi IO Errno 5 tren OMV)
         test_file = SPEED_TEST_FILE
         best_total = 0
@@ -4765,7 +6085,7 @@ def api_speedtest():
             elif os.path.exists("/sharedfolders/Data"):
                 test_file = "/sharedfolders/Data/nas_speed_test.bin"
             
-        test_size_mb = 50
+        test_size_mb = 20  # CC-005 P1: 50->20MB (do day HDD yeu)
         chunk = b'\x00' * (1024 * 1024) # 1MB chunk
         
         # 1. Do toc do GHI (Pure Python)
@@ -4880,18 +6200,18 @@ def _schedule_suspend_response(legacy_endpoint=None):
     return jsonify(payload)
 
 @app.route("/api/power/reboot", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_reboot():
     threading.Timer(2.0, lambda: subprocess.run(["reboot"])).start()
     return jsonify({"result": "ok"})
 
 @app.route("/api/power/suspend", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_suspend():
     return _schedule_suspend_response()
 
 @app.route("/api/power/shutdown", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_shutdown():
     return _schedule_suspend_response(legacy_endpoint="shutdown")
 
@@ -4902,7 +6222,7 @@ def api_shutdown():
 def api_auth_authorize():
     """Xac thuc va cap phep IP ket noi (Android handshake)."""
     ip = _request_client_ip()
-    if not ip:
+    if not ip or not _validate_ip(ip):
         return api_fail("Khong xac dinh duoc client IP sau trusted proxy",
                         code="no_client_ip", status=400)
 
@@ -4924,7 +6244,7 @@ def api_auth_authorize():
             log.warning("Reload Nginx that bai: %s", e)
 
     # 3. Ghi log vao Database
-    conn = sqlite3.connect(DB_PATH, timeout=20.0)
+    conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
     try:
         cur = conn.cursor()
         _remember_authorized_ip(ip)
@@ -4963,7 +6283,7 @@ def api_docker_list():
 
 
 @app.route("/api/docker/control", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_docker_control():
     try:
         data = request.get_json(force=True)
@@ -5192,7 +6512,7 @@ def _load_photos_timeline_cache_file():
     try:
         if not os.path.exists(_PHOTOS_TIMELINE_DB_FILE):
             return
-        conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=20.0)
+        conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         try:
             cur = conn.cursor()
             cur.execute("SELECT value FROM meta WHERE key='ts'")
@@ -5254,7 +6574,7 @@ def _photos_timeline_query(offset, limit, target_year=None, target_month=None):
         end_ts = int(time.mktime(end_dt.timetuple()))
         where = "WHERE mtime >= ? AND mtime < ?"
         params.extend([start_ts, end_ts])
-    conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=20.0)
+    conn = sqlite3.connect(_PHOTOS_TIMELINE_DB_FILE, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM photos %s" % where, params)
@@ -5324,7 +6644,7 @@ def _photos_timeline_rebuild_worker():
             error = "scan rc=%d %s" % (proc.returncode, (proc.stderr or b"")[-160:].decode("utf-8", "ignore"))
             log.warning("[PhotoTimeline] Rebuild subprocess lỗi: %s", error)
         else:
-            conn = sqlite3.connect(tmp_db, timeout=60.0)
+            conn = sqlite3.connect(tmp_db, timeout=_cfg_sqlite_timeout("sqlite_timeout_60", 60.0))
             count = 0
             with open(tmp_jsonl, "r", encoding="utf-8") as f:
                 cur = conn.cursor()
@@ -5508,7 +6828,7 @@ def _db_set_json(table, key, payload):
     conn = None
     try:
         now = int(time.time())
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
         cur = conn.cursor()
         cur.execute(
             "INSERT OR REPLACE INTO %s (key, payload_json, updated_at) VALUES (?, ?, ?)" % table,
@@ -5533,7 +6853,7 @@ def _db_get_json(table, key, default=None):
         return default
     conn = None
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=5.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_5", 5.0))
         cur = conn.cursor()
         cur.execute("SELECT payload_json FROM %s WHERE key=?" % table, (key,))
         row = cur.fetchone()
@@ -5787,7 +7107,7 @@ def _disk_health_sample_once():
 
         # Ghi vao SQLite chung. JSONL cu chi giu fallback doc lich su cu.
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=10.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
             cur = conn.cursor()
             cur.execute(
                 "INSERT INTO disk_health_history (ts, device, score, smart_status, temp_c, payload_json) VALUES (?, ?, ?, ?, ?, ?)",
@@ -5829,7 +7149,7 @@ def _disk_health_prune_old_records():
     """Xoa cac mau disk health cu hon retention trong SQLite."""
     try:
         cutoff = int(time.time()) - (_DISK_HEALTH_RETENTION_DAYS * 86400)
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         cur = conn.cursor()
         cur.execute("DELETE FROM disk_health_history WHERE ts <= ?", (cutoff,))
         conn.commit()
@@ -5870,7 +7190,7 @@ def _add_system_log(level, module, message, timestamp=None):
     """Helper: th?m log vao bang system_logs neu DB available."""
     try:
         message = normalize_vietnamese_message(sanitize_log_input(message))
-        conn = sqlite3.connect(DB_PATH, timeout=3.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_3", 3.0))
         cur = conn.cursor()
         if timestamp is None:
             cur.execute(
@@ -6137,7 +7457,7 @@ def api_disk_health_history():
     items = []
     conn = None
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         cur = conn.cursor()
         cur.execute(
             "SELECT payload_json FROM disk_health_history WHERE ts >= ? AND device = ? ORDER BY ts ASC",
@@ -6183,7 +7503,7 @@ def _read_disk_health_history(days=7):
     target_device = _target_hdd_device_path()
     items = []
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         cur = conn.cursor()
         cur.execute(
             "SELECT payload_json FROM disk_health_history WHERE ts >= ? AND device = ? ORDER BY ts ASC",
@@ -6512,88 +7832,428 @@ def api_system_data_flow():
 
 _STORAGE_SUMMARY_CACHE = {"ts": 0.0, "data": None}
 _STORAGE_SUMMARY_LOCK = threading.Lock()
+# CC-005 P1/P2: unify TTL cache tranh spin-up HDD (xem _SMART_TTL/_OMV_OVERVIEW_TTL):
+# smart 86400s / omv 900s / storage 300s — cache HIT thi KHONG quet disk/goi RPC.
 _STORAGE_SUMMARY_TTL = 300  # 5 phut — quet disk nang, khong the moi lan mo app
+# CC-004 P1-7: chong spam ?force=1 (quet full disk 45s/HDD spin-up).
+# Moi IP chi duoc force 1 lan/phut — force lien tiep tra cache + retry_after.
+_STORAGE_SUMMARY_FORCE_TS = {}
+_STORAGE_SUMMARY_FORCE_LOCK = threading.Lock()
+_STORAGE_SUMMARY_FORCE_MIN_INTERVAL = 60.0
 
 _STORAGE_SKIP_DIRS = {".thumbs", ".thumbnails", ".trash", ".nas_meta", ".git",
                       ".recycle", "@eaDir", "#recycle", ".cache"}
 
 
-def _build_storage_summary(max_seconds=45):
-    """Quet 1 lan WebDAV root: tong file/thu muc/dung luong, breakdown theo
-    loai (anh/video/tai lieu/nhac/nen/khac), top-10 file lon nhat.
-    Gioi han thoi gian de khong treo HDD yeu; het gio thi tra partial=True."""
-    import heapq
-    root = get_webdav_root()
-    deadline = time.time() + max_seconds
-    by_type = {"image": [0, 0], "video": [0, 0], "doc": [0, 0],
-               "audio": [0, 0], "archive": [0, 0], "other": [0, 0]}
-    top = []  # heap (size, path)
-    total_files = 0
-    total_dirs = 0
-    total_bytes = 0
-    partial = False
-    IMG = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif"}
-    VID = {".mp4", ".mkv", ".avi", ".mov", ".mpg", ".mpeg", ".wmv", ".flv",
-           ".ts", ".m4v", ".webm"}
-    DOC = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt",
-           ".md", ".csv"}
-    AUD = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
-    ARC = {".zip", ".rar", ".7z", ".tar", ".gz"}
+_STORAGE_SUMMARY_BUILD_LOCK = threading.Lock()
+
+def _build_storage_summary(max_seconds=45, refresh=False):
+    """Summarize the persistent index; never walk the disk for a dashboard read."""
+    _refresh_file_index_for_search()
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
     try:
-        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
-            if time.time() >= deadline:
-                partial = True
-                break
-            dirnames[:] = [d for d in dirnames
-                           if d not in _STORAGE_SKIP_DIRS
-                           and not d.startswith(".")]
-            total_dirs += len(dirnames)
-            for name in filenames:
-                if name.startswith("."):
-                    continue
-                fp = os.path.join(dirpath, name)
-                try:
-                    st = os.stat(fp)
-                    if not os.path.isfile(fp):
-                        continue
-                    sz = st.st_size
-                except Exception:
-                    continue
-                ext = os.path.splitext(name)[1].lower()
-                if ext in IMG:
-                    cat = "image"
-                elif ext in VID:
-                    cat = "video"
-                elif ext in DOC:
-                    cat = "doc"
-                elif ext in AUD:
-                    cat = "audio"
-                elif ext in ARC:
-                    cat = "archive"
-                else:
-                    cat = "other"
-                by_type[cat][0] += 1
-                by_type[cat][1] += sz
-                total_files += 1
-                total_bytes += sz
-                rel = os.path.relpath(fp, root)
-                if len(top) < 10:
-                    heapq.heappush(top, (sz, rel))
-                elif sz > top[0][0]:
-                    heapq.heapreplace(top, (sz, rel))
-    except Exception as e:
-        log.warning("[Storage] Scan loi: %s", e)
-        partial = True
-    largest = sorted(top, reverse=True)
-    return {
-        "total_files": total_files,
-        "total_dirs": total_dirs,
-        "total_bytes": total_bytes,
-        "by_type": {k: {"files": v[0], "bytes": v[1]} for k, v in by_type.items()},
-        "largest": [{"path": p, "bytes": s} for s, p in largest],
-        "partial": partial,
-        "scanned_at": int(time.time()),
-    }
+        conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_snapshot (id INTEGER PRIMARY KEY, root TEXT, scanned_at REAL, payload TEXT)')
+        conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_revision (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
+        conn.execute('INSERT OR IGNORE INTO storage_summary_revision VALUES(1,0)')
+        conn.execute('DROP TRIGGER IF EXISTS storage_summary_insert')
+        for event, suffix, condition in (
+                ('BEFORE INSERT', 'insert_v2', ' WHEN NOT EXISTS (SELECT 1 FROM file_index WHERE path=NEW.path AND name IS NEW.name AND is_dir IS NEW.is_dir AND size IS NEW.size)'),
+                ('AFTER DELETE', 'delete', ''),
+                ('AFTER UPDATE', 'update', ' WHEN OLD.path IS NOT NEW.path OR OLD.name IS NOT NEW.name OR OLD.is_dir IS NOT NEW.is_dir OR OLD.size IS NOT NEW.size')):
+            conn.execute('CREATE TRIGGER IF NOT EXISTS storage_summary_' + suffix +
+                         ' ' + event + ' ON file_index' + condition +
+                         ' BEGIN UPDATE storage_summary_revision SET revision=revision+1 WHERE id=1; END')
+        conn.commit()
+        conn.execute('BEGIN')
+        revision = conn.execute('SELECT revision FROM storage_summary_revision WHERE id=1').fetchone()[0]
+        state = conn.execute('SELECT root, scanned_at, ready FROM index_state WHERE id=1').fetchone()
+        root = _get_webdav_public_dir()
+        if not state or not root or state[0] != os.path.realpath(root):
+            raise ValueError('File index unavailable for the configured root')
+        cached = conn.execute('SELECT payload FROM storage_summary_snapshot WHERE id=1 AND root=?', (state[0],)).fetchone()
+        if cached and not refresh:
+            result = json.loads(cached[0])
+            result['partial'] = not bool(state[2]) or _index_scan_lock.locked()
+            if result.get('index_revision') != revision and time.time() - result.get('summary_updated_at', result['scanned_at']) >= 300 and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
+                def rebuild():
+                    try:
+                        _build_storage_summary(refresh=True)
+                    except Exception as error:
+                        log.warning("[Storage] Background statistics refresh failed: %s", error)
+                    finally:
+                        _STORAGE_SUMMARY_BUILD_LOCK.release()
+                threading.Thread(target=rebuild, daemon=True).start()
+            return result
+        groups = {
+            'image': ('jpg','jpeg','png','webp','bmp','gif','heic','heif'),
+            'video': ('mp4','mkv','avi','mov','mpg','mpeg','wmv','flv','ts','m4v','webm'),
+            'doc': ('pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','csv'),
+            'audio': ('mp3','wav','flac','m4a','ogg'),
+            'archive': ('zip','rar','7z','tar','gz'),
+        }
+        extensions = dict(('.' + ext, category) for category, values in groups.items() for ext in values)
+        conn.create_function('storage_category', 1, lambda name: extensions.get(os.path.splitext(name or '')[1].lower(), 'other'))
+        category_sql = 'storage_category(name)'
+        by_type = dict((category, {'files': 0, 'bytes': 0}) for category in list(groups) + ['other'])
+        for category, count, size in conn.execute('SELECT ' + category_sql + ', COUNT(*), COALESCE(SUM(size),0) FROM file_index WHERE is_dir=0 GROUP BY 1'):
+            by_type[category] = {'files': count, 'bytes': size}
+        largest = [{'path': row[0], 'bytes': row[1]} for row in conn.execute('SELECT path,size FROM file_index WHERE is_dir=0 ORDER BY size DESC,path LIMIT 10')]
+        result = {
+            'total_files': sum(value['files'] for value in by_type.values()),
+            'total_bytes': sum(value['bytes'] for value in by_type.values()),
+            'total_dirs': conn.execute('SELECT COUNT(*) FROM file_index WHERE is_dir=1').fetchone()[0],
+            'by_type': by_type, 'largest': largest,
+            'partial': not bool(state[2]) or _index_scan_lock.locked(),
+            'scanned_at': int(state[1]), 'source': 'file_index',
+            'summary_updated_at': int(time.time()), 'index_revision': revision,
+            'metadata_scope': 'indexed_snapshot',
+        }
+        conn.commit()
+        if not result['partial']:
+            conn.execute('INSERT OR REPLACE INTO storage_summary_snapshot(id,root,scanned_at,payload) VALUES(1,?,?,?)', (state[0], state[1], json.dumps(result)))
+            conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+
+
+"""Internal NAS duplicate coordinator. Hash bytes on clients, validate metadata here."""
+import os
+import stat
+import json
+import time
+import hashlib
+import sqlite3
+import threading
+import signal
+
+# Leases are polled; SIGIO must never terminate the API during a lease break.
+if hasattr(signal, 'SIGIO') and threading.current_thread() is threading.main_thread():
+    signal.signal(signal.SIGIO, signal.SIG_IGN)
+
+
+_DUPLICATE_NAMESPACE_LOCK = '/run/naswebdav/namespace.lock'
+_DUPLICATE_NAMESPACE_MANIFEST = '/var/lib/naswebdav-namespace-guard.json'
+_DUPLICATE_NAMESPACE_FILES = ('/var/www/webdav/public/index.php',
+                              '/var/www/webdav/bootstrap/nas_namespace_guard.php',
+                              '/etc/tmpfiles.d/naswebdav-namespace.conf')
+
+
+def _duplicate_validate_namespace():
+    current = os.lstat(_DUPLICATE_NAMESPACE_MANIFEST)
+    if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022:
+        raise ValueError('Untrusted namespace guard manifest')
+    with open(_DUPLICATE_NAMESPACE_MANIFEST, 'r') as handle:
+        manifest = json.load(handle)
+    expected = set(_DUPLICATE_NAMESPACE_FILES)
+    files = manifest.get('files', {})
+    if manifest.get('lock_path') != _DUPLICATE_NAMESPACE_LOCK or set(files) != expected:
+        raise ValueError('WebDAV namespace guard is not installed')
+    for path, digest in files.items():
+        current = os.lstat(path)
+        if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022:
+            raise ValueError('Untrusted namespace guard source')
+        with open(path, 'rb') as handle:
+            actual = hashlib.sha256(handle.read()).hexdigest()
+        if actual != digest:
+            raise ValueError('WebDAV namespace guard source changed')
+
+
+def _duplicate_open_namespace_lock(exclusive):
+    import fcntl
+    parent = os.lstat(os.path.dirname(_DUPLICATE_NAMESPACE_LOCK))
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022:
+        raise ValueError('Unsafe namespace lock directory')
+    fd = os.open(_DUPLICATE_NAMESPACE_LOCK, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+    try:
+        current = os.fstat(fd)
+        if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022 or current.st_nlink != 1:
+            raise ValueError('Unsafe namespace lock file')
+        operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(fd, operation | fcntl.LOCK_NB)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+@app.before_request
+def _duplicate_namespace_before_request():
+    if request.endpoint == 'api_disk_trash_batch' and request.method == 'POST':
+        try:
+            request.environ['nas.namespace.fd'] = _duplicate_open_namespace_lock(False)
+        except (OSError, ValueError):
+            response = jsonify({'error': 'NAS cleanup in progress'})
+            response.status_code = 503
+            response.headers['Retry-After'] = '1'
+            return response
+
+
+@app.teardown_request
+def _duplicate_namespace_teardown_request(error):
+    fd = request.environ.pop('nas.namespace.fd', None)
+    if fd is not None:
+        os.close(fd)
+
+
+def _duplicate_file_info(relative):
+    if not isinstance(relative, str) or not relative or relative.startswith('/') or '\\' in relative:
+        raise ValueError('Invalid public file path')
+    if any(not part or part in ('.', '..') or part.startswith('.') for part in relative.split('/')):
+        raise ValueError('Hidden or unsafe file path')
+    configured = _get_webdav_public_dir()
+    if not configured:
+        raise ValueError('Public root unavailable')
+    root = os.path.realpath(configured)
+    if not root or root == os.path.abspath(os.sep):
+        raise ValueError('Public root unavailable')
+    logical = os.path.join(root, relative)
+    parent = _index_resolve_directory(os.path.dirname(logical), root, _index_storage_boundary(root))
+    if parent is None:
+        raise ValueError('File is outside the public boundary')
+    physical = os.path.join(parent, os.path.basename(logical))
+    current = os.lstat(physical)
+    if not stat.S_ISREG(current.st_mode):
+        raise ValueError('Only regular files can be verified')
+    return {'path': relative, 'physical': physical, 'size': current.st_size,
+            'mtime_ns': current.st_mtime_ns,
+            'file_id': '%s:%s' % (current.st_dev, current.st_ino),
+            'version': _duplicate_stat_version(current)}
+
+
+def _duplicate_stat_version(current):
+    value = '%s:%s:%s:%s:%s' % (current.st_dev, current.st_ino, current.st_size,
+                                current.st_mtime_ns, current.st_ctime_ns)
+    return hashlib.sha256(value.encode('ascii')).hexdigest()
+
+
+def _duplicate_open_lease(info):
+    import fcntl
+    import signal
+    if signal.getsignal(signal.SIGIO) != signal.SIG_IGN:
+        raise ValueError('Safe lease notification is unavailable')
+    fd = os.open(info['physical'], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        # No async signal recipient: inspect F_GETLEASE and fail closed on a break.
+        fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
+        fcntl.fcntl(fd, fcntl.F_SETLEASE, fcntl.F_RDLCK)
+        fcntl.fcntl(fd, fcntl.F_SETOWN, 0)
+        if fcntl.fcntl(fd, fcntl.F_GETOWN) != 0:
+            raise ValueError('Unexpected lease signal owner')
+        if _duplicate_stat_version(os.fstat(fd)) != info['version']:
+            raise ValueError('File changed before writer exclusion')
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _duplicate_sync_directory(directory):
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _duplicate_db():
+    conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
+    conn.execute('CREATE TABLE IF NOT EXISTS verified_file_hashes (file_id TEXT PRIMARY KEY, version TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, verified_at REAL NOT NULL)')
+    conn.commit()
+    return conn
+
+
+def _duplicate_lookup(info):
+    conn = _duplicate_db()
+    try:
+        row = conn.execute('SELECT sha256 FROM verified_file_hashes WHERE file_id=? AND version=? AND size=?',
+                           (info['file_id'], info['version'], info['size'])).fetchone()
+        return row[0] if row else ''
+    finally:
+        conn.close()
+
+
+def _duplicate_save_hash(relative, version, sha256):
+    if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in '0123456789abcdef' for c in sha256):
+        raise ValueError('A complete SHA256 is required')
+    info = _duplicate_file_info(relative)
+    if info['version'] != version:
+        raise ValueError('File changed during verification')
+    conn = _duplicate_db()
+    try:
+        conn.execute('INSERT OR REPLACE INTO verified_file_hashes VALUES(?,?,?,?,?)',
+                     (info['file_id'], info['version'], info['size'], sha256, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+    return info
+
+
+def _duplicate_work_dir():
+    configured = _get_webdav_public_dir()
+    if not configured:
+        raise ValueError('Public root unavailable')
+    root = os.path.realpath(configured)
+    directory = os.path.join(_index_storage_boundary(root) or root, '.naswebdav', 'verified_duplicates')
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    if os.path.realpath(directory) != os.path.abspath(directory) or os.lstat(directory).st_uid != os.geteuid():
+        raise ValueError('Unsafe duplicate work directory')
+    os.chmod(directory, 0o700)
+    return directory
+
+
+def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256):
+    import fcntl
+    import uuid
+    _duplicate_validate_namespace()
+    directory = _duplicate_work_dir()
+    with os.fdopen(_duplicate_open_namespace_lock(True), 'r') as lock:
+        keeper = _duplicate_file_info(keeper_path)
+        victim = _duplicate_file_info(victim_path)
+        if keeper['file_id'] == victim['file_id']:
+            raise ValueError('Both URLs address the same physical file')
+        if keeper['version'] != keeper_version or victim['version'] != victim_version:
+            raise ValueError('File version changed')
+        if keeper['size'] != victim['size'] or not sha256 or _duplicate_lookup(keeper) != sha256 or _duplicate_lookup(victim) != sha256:
+            raise ValueError('Full-content verification is missing')
+        keeper_fd = _duplicate_open_lease(keeper)
+        victim_fd = None
+        try:
+            victim_fd = _duplicate_open_lease(victim)
+            quarantine = os.path.join(directory, uuid.uuid4().hex)
+            journal = quarantine + '.json'
+            with open(journal, 'x') as recovery:
+                json.dump({'original_path': victim_path, 'physical': victim['physical'],
+                           'quarantine': quarantine, 'file_id': victim['file_id'],
+                           'version': victim_version, 'created_at': time.time()}, recovery)
+                recovery.flush()
+                os.fsync(recovery.fileno())
+            _duplicate_sync_directory(directory)
+            try:
+                os.rename(victim['physical'], quarantine)
+                _duplicate_sync_directory(os.path.dirname(victim['physical']))
+                _duplicate_sync_directory(directory)
+                moved = os.lstat(quarantine)
+                if ('%s:%s' % (moved.st_dev, moved.st_ino) != victim['file_id'] or
+                        moved.st_size != victim['size'] or moved.st_mtime_ns != victim['mtime_ns']):
+                    raise ValueError('Candidate was replaced during cleanup')
+                survivor = _duplicate_file_info(keeper_path)
+                if survivor['version'] != keeper_version:
+                    raise ValueError('Survivor changed during cleanup')
+                if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
+                    raise ValueError('File was requested for writing; cleanup cancelled')
+                # shortcut: external root/SSH mutations are outside the managed namespace lock.
+                os.unlink(quarantine)
+            except Exception:
+                if os.path.lexists(quarantine) and not os.path.lexists(victim['physical']):
+                    os.rename(quarantine, victim['physical'])
+                    _duplicate_sync_directory(os.path.dirname(victim['physical']))
+                raise
+            finally:
+                if not os.path.lexists(quarantine):
+                    os.unlink(journal)
+                _duplicate_sync_directory(directory)
+        finally:
+            if victim_fd is not None:
+                os.close(victim_fd)
+            os.close(keeper_fd)
+        conn = None
+        try:
+            conn = _duplicate_db()
+            conn.execute('DELETE FROM verified_file_hashes WHERE file_id=?', (victim['file_id'],))
+            conn.execute('DELETE FROM file_index WHERE path=?', (victim_path,))
+            conn.commit()
+        except sqlite3.Error as error:
+            log.warning('[Duplicates] Deleted file metadata refresh deferred: %s', error)
+        finally:
+            if conn is not None:
+                conn.close()
+        return {'deleted': True, 'path': victim_path, 'keeper': keeper_path,
+                'logical_bytes_removed': victim['size']}
+
+
+@app.route('/api/duplicates/file', methods=['POST'])
+@requires_admin
+def api_duplicate_file():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        info = _duplicate_file_info(body.get('path'))
+        info.pop('physical')
+        info['sha256'] = _duplicate_lookup(info)
+        return jsonify(info)
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+@app.route('/api/duplicates/hash', methods=['POST'])
+@requires_admin
+def api_duplicate_hash():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        _duplicate_save_hash(body.get('path'), body.get('version'), body.get('sha256'))
+        return jsonify({'saved': True})
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+@app.route('/api/duplicates/cleanup', methods=['POST'])
+@requires_admin
+def api_duplicate_cleanup():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        result = _duplicate_cleanup(body.get('victim'), body.get('keeper'), body.get('victim_version'),
+                                    body.get('keeper_version'), body.get('sha256'))
+        return jsonify(result)
+    except (OSError, ValueError) as error:
+        return jsonify({'deleted': False, 'error': str(error)}), 409
+
+
+@app.route('/api/duplicates/content', methods=['POST'])
+@requires_admin
+def api_duplicate_content():
+    try:
+        body = request.get_json() or {}
+        if not isinstance(body, dict):
+            raise ValueError('JSON object required')
+        info = _duplicate_file_info(body.get('path'))
+        if info['version'] != body.get('version'):
+            raise ValueError('File version changed')
+        fd = _duplicate_open_lease(info)
+    except (OSError, ValueError) as error:
+        return jsonify({'error': str(error)}), 409
+
+    handle = os.fdopen(fd, 'rb')
+
+    def generate():
+        import fcntl
+        try:
+            remaining = info['size']
+            while remaining:
+                if fcntl.fcntl(handle.fileno(), fcntl.F_GETLEASE) != fcntl.F_RDLCK:
+                    raise ValueError('File requested for writing during verification')
+                chunk = handle.read(min(65536, remaining))
+                if not chunk:
+                    raise ValueError('Incomplete verification stream')
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            handle.close()
+
+    response = Response(generate(), mimetype='application/octet-stream')
+    response.call_on_close(handle.close)
+    response.content_length = info['size']
+    response.headers['X-NAS-Version'] = info['version']
+    response.headers['X-NAS-File-ID'] = info['file_id']
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/api/storage/summary', methods=['GET'])
@@ -6603,6 +8263,27 @@ def api_storage_summary():
     try:
         force = (request.args.get("force", "") or "").strip() == "1"
         now = time.time()
+        # CC-004 P1-7: rate-limit ?force=1 theo IP (quet full disk 45s + spin-up HDD).
+        if force:
+            try:
+                cli_ip = _request_client_ip() or "unknown"
+            except Exception:
+                cli_ip = "unknown"
+            try:
+                with _STORAGE_SUMMARY_FORCE_LOCK:
+                    last = float(_STORAGE_SUMMARY_FORCE_TS.get(cli_ip, 0.0) or 0.0)
+                    if now - last < _STORAGE_SUMMARY_FORCE_MIN_INTERVAL:
+                        with _STORAGE_SUMMARY_LOCK:
+                            cached = _STORAGE_SUMMARY_CACHE["data"]
+                        if cached:
+                            out = dict(cached)
+                            out["cached"] = True
+                            out["rate_limited"] = True
+                            out["retry_after"] = int(_STORAGE_SUMMARY_FORCE_MIN_INTERVAL - (now - last))
+                            return jsonify(out), 429
+                    _STORAGE_SUMMARY_FORCE_TS[cli_ip] = now
+            except Exception:
+                pass
         with _STORAGE_SUMMARY_LOCK:
             cached = _STORAGE_SUMMARY_CACHE["data"]
             if not force and cached and now - _STORAGE_SUMMARY_CACHE["ts"] < _STORAGE_SUMMARY_TTL:
@@ -6980,13 +8661,19 @@ def _rclone_upload_backup(local_path, remote, remote_path):
     """Upload 1 backup file len rclone remote. Tra (ok, msg)."""
     if not remote:
         return True, "skip — chưa cấu hình rclone remote"
+    remote_clean = str(remote or "").strip().rstrip(":")
+    path_clean = str(remote_path or "").strip().lstrip("/")
+    if not _re_module.match(r"^[A-Za-z0-9_\-]{1,64}$", remote_clean):
+        return False, "rclone remote không hợp lệ"
+    if path_clean.startswith("-") or ".." in path_clean.split("/"):
+        return False, "rclone path không hợp lệ"
     rclone_bin = "/usr/bin/rclone"
     if not os.path.exists(rclone_bin):
         return False, "rclone không được cai"
     try:
-        full_remote = remote.rstrip(":") + ":" + remote_path.lstrip("/")
+        full_remote = remote_clean + ":" + path_clean
         r = subprocess.run(
-            [rclone_bin, "copy", local_path, full_remote, "--quiet", "--timeout=300s"],
+            [rclone_bin, "copy", "--quiet", "--timeout=300s", "--", local_path, full_remote],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600
         )
         if r.returncode == 0:
@@ -8556,7 +10243,9 @@ def api_backup_schedule_get():
 
 
 @app.route('/api/backup/schedule', methods=['POST'])
-@requires_auth
+# CC-005 P1/P2: dieu khien lich backup (dan toi tao backup chua credential)
+# -> requires_admin. GET lich (chi doc) giu requires_auth.
+@requires_admin
 def api_backup_schedule_set():
     body = request.get_json(force=True) or {}
     sched = _load_backup_schedule()
@@ -8572,6 +10261,14 @@ def api_backup_schedule_set():
     except Exception: sched["retention_count"] = 7
     if sched.get("frequency") not in ("daily", "weekly", "monthly"):
         sched["frequency"] = "weekly"
+    _rc_rem = str(sched.get("rclone_remote", "") or "").strip().rstrip(":")
+    _rc_path = str(sched.get("rclone_path", "") or "").strip()
+    if _rc_rem and not _re_module.match(r"^[A-Za-z0-9_\-]{1,64}$", _rc_rem):
+        return jsonify({"error": "rclone_remote khong hop le."}), 400
+    if _rc_path.startswith("-") or ".." in _rc_path.replace("\\", "/").split("/"):
+        return jsonify({"error": "rclone_path khong hop le."}), 400
+    sched["rclone_remote"] = _rc_rem
+    sched["rclone_path"] = _rc_path
     ok = _save_backup_schedule(sched)
     return jsonify({"saved": ok, "schedule": sched})
 
@@ -8657,7 +10354,7 @@ def _backup_file_path(filename):
 
 
 @app.route('/api/backup/create', methods=['POST'])
-@requires_auth
+@requires_admin
 def api_backup_create():
     """Tao 1 backup .tar.gz ch?a moi config/state hien tai."""
     if not _ensure_backup_dir():
@@ -8706,6 +10403,16 @@ def api_backup_create():
             except Exception as e:
                 log.warning("[Backup] Không add được manifest: %s", e)
         size = os.path.getsize(full_path)
+        # CC-005 P1/P2: _BACKUP_FILES gom auth.conf (chua credential) — backup
+        # download da requires_admin; chi log canh bao ten file, KHONG ghi noi
+        # dung credential ra log.
+        try:
+            _cred_hit = [a for _s, a, _c in all_files if "auth.conf" in str(a)]
+            if _cred_hit:
+                log.warning("[Backup] Backup %s chua file credential (%s) — bao ve file, khong share",
+                            sanitize_log_input(filename), ",".join(_cred_hit))
+        except Exception:
+            pass
         log.info("[Backup] Tao xong %s (%d files, %d bytes)", filename, included, size)
         return jsonify({
             "filename": filename,
@@ -8722,7 +10429,7 @@ def api_backup_create():
 
 
 @app.route('/api/backup/list', methods=['GET'])
-@requires_auth
+@requires_admin
 def api_backup_list():
     """List mới backup co san trong /etc/nas/backups."""
     if not _ensure_backup_dir():
@@ -8752,7 +10459,7 @@ def api_backup_list():
 
 
 @app.route('/api/backup/download', methods=['GET'])
-@requires_auth
+@requires_admin
 def api_backup_download():
     """Stream 1 file backup ve client."""
     filename = request.args.get("filename", "").strip()
@@ -8770,7 +10477,7 @@ def api_backup_download():
         return send_file(full, mimetype="application/gzip", as_attachment=True)
 
 @app.route('/api/backup/delete', methods=['POST'])
-@requires_auth
+@requires_admin
 def api_backup_delete():
     body = request.get_json(force=True) or {}
     filename = (body.get("filename") or "").strip()
@@ -8787,7 +10494,7 @@ def api_backup_delete():
         return jsonify({"error": "Khong xoa duoc: %s" % str(e)[:200]}), 500
 
 @app.route('/api/backup/restore', methods=['POST'])
-@requires_auth
+@requires_admin
 def api_backup_restore():
     """Khoi phuc tu mot backup file co san hoac uploaded.
     Body:
@@ -8800,11 +10507,31 @@ def api_backup_restore():
     try:
         if request.files and "file" in request.files:
             up = request.files["file"]
+            # CC-005 P1: cap upload 200MB + verify gzip magic (decompression bomb)
+            try:
+                up.stream.seek(0, 2)
+                _rsz = up.stream.tell()
+                up.stream.seek(0)
+            except Exception:
+                _rsz = 0
+            if _rsz > 200 * 1024 * 1024:
+                return jsonify({"error": "File backup vuot gioi han 200MB"}), 413
             tmp_dir = _get_hdd_tmp_root()
             tmp_file = tempfile.NamedTemporaryFile(prefix="nas_restore_", suffix=".tar.gz", dir=tmp_dir, delete=False)
             tmp = tmp_file.name
             tmp_file.close()
             up.save(tmp)
+            try:
+                if os.path.getsize(tmp) > 200 * 1024 * 1024:
+                    raise ValueError("too large")
+                with open(tmp, "rb") as _rf:
+                    _rm = _rf.read(2)
+                if _rm != b"\x1f\x8b":
+                    raise ValueError("khong phai gzip hop le")
+            except Exception as _re:
+                try: os.remove(tmp)
+                except Exception: pass
+                return jsonify({"error": "File backup khong hop le: %s" % _re}), 400
             src_tar = tmp
             cleanup_after = True
         else:
@@ -8818,6 +10545,9 @@ def api_backup_restore():
 
         restored = []
         errors = []
+        # CC-005 P1: cap tong uncompressed 500MB (decompression bomb: moi member
+        # <=64MB nhung 10000 member x 64MB van tran HDD 1TB rk3328)
+        _total_uncomp = [0]
         # FIX-REVIEW-193369e-#2: backup RIENG moi transaction + ghi ro dest nao
         # da thay trong transaction nay. Ban cu dung ten .pre-restore co dinh:
         # restore lan1 thanh cong de lai backup, lan2 staging loi van thay file
@@ -8857,9 +10587,21 @@ def api_backup_restore():
                 if not dest:
                     errors.append({"file": member.name, "reason": "không xác định được đường dẫn đích"})
                     continue
+                if cleanup_after and dest in (
+                    "/opt/nas_api_server.py",
+                    "/etc/systemd/system/nas_api.service",
+                    "/etc/systemd/system/fan.service",
+                    "/etc/nas/install-pending-cookies.sh",
+                ):
+                    errors.append({"file": member.name, "reason": "không cho phép ghi đè file thực thi từ bản backup tải lên"})
+                    continue
                 if member.size > _BACKUP_RESTORE_MAX_MEMBER_BYTES:
                     errors.append({"file": member.name, "reason": "file backup vuot gioi han restore"})
                     continue
+                _total_uncomp[0] += (member.size or 0)
+                if _total_uncomp[0] > 500 * 1024 * 1024:
+                    errors.append({"file": member.name, "reason": "tong backup vuot 500MB"})
+                    break
                 try:
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                 except Exception as e:
@@ -8924,7 +10666,7 @@ def api_backup_restore():
         services_restarted = []
         if _critical:
             _rolled_back = []
-            for dest in reversed(replaced_in_tx):
+            for dest in list(replaced_in_tx)[::-1]:
                 _pre = dest + "." + _tx_tag
                 try:
                     if os.path.exists(_pre):
@@ -9175,6 +10917,17 @@ def api_download():
         link = data.get("url", "")
         if not link:
             return jsonify({"error": "Thiếu URL"}), 400
+        # CC-005 P1: validate URL (magnet/http(s) + social allowlist cho http)
+        # — truoc day url bat ky forward sang qBT: SSRF qua qBT fetch URL
+        # noi bo + 500 lo str(e) stack/path noi bo.
+        try:
+            _dl = (link or "").strip()
+            if _dl.startswith("magnet:"):
+                pass
+            elif not _social_validate_url(_dl):
+                return jsonify({"error": "URL khong duoc ho tro hoac khong an toan"}), 400
+        except Exception:
+            return jsonify({"error": "URL khong duoc ho tro hoac khong an toan"}), 400
 
         qbt_url = "http://127.0.0.1:8080/api/v2/torrents/add"
         post_data = urllib.parse.urlencode({"urls": link}).encode()
@@ -9182,7 +10935,8 @@ def api_download():
         urllib.request.urlopen(req, timeout=10)
         return jsonify({"result": "ok"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.warning("[Download] qBT forward loi: %s", e)
+        return jsonify({"error": "Khong gui duoc xuong qBittorrent"}), 502
 
 
 
@@ -9292,24 +11046,35 @@ def _social_worker(job_id, url, folder):
                         if response.status == 200:
                             resp_data = json.loads(response.read().decode('utf-8'))
                             # Lấy URL trực tiếp tùy theo cấu trúc JSON trả về của từng API
+                            _rapid_url = None
                             if 'url' in resp_data:
-                                url = resp_data['url']
+                                _rapid_url = resp_data['url']
                             elif 'hd' in resp_data:
-                                url = resp_data['hd']
+                                _rapid_url = resp_data['hd']
                             elif 'sd' in resp_data:
-                                url = resp_data['sd']
+                                _rapid_url = resp_data['sd']
+                            # CC-005 P1: re-validate URL tu RapidAPI (third-party JSON
+                            # co the tra file:// hoac internal IP -> SSRF/HDD fill)
+                            if _rapid_url and _social_validate_url(str(_rapid_url)):
+                                url = _rapid_url
+                            elif _rapid_url:
+                                log.warning('[Social] RapidAPI tra URL khong an toan, giu URL goc')
                 except Exception as e:
                     log.error('[Social] RapidAPI fallback failed: %s', e)
 
         output_template = os.path.join(tmp_dir, '%(title)s.%(ext)s')
+        try:
+            _social_filesize_cap = _social_effective_max_filesize()
+        except Exception:
+            _social_filesize_cap = "2G"
         cmd = [
-            ytdlp_bin, url,
+            ytdlp_bin,
             '-o', output_template,
             '--no-playlist',
             '--newline',
             '--socket-timeout', '60',
             '--retries', '3',
-            '--max-filesize', SOCIAL_MAX_FILESIZE,
+            '--max-filesize', _social_filesize_cap,
             # Prefer pre-merged single-file formats so we do not require ffmpeg.
             # `b` = best single file with audio+video already muxed; we steer
             # toward mp4/webm containers that ship as one file. If only split
@@ -9337,6 +11102,7 @@ def _social_worker(job_id, url, folder):
                 "--user-agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ])
+        cmd.extend(["--", url])
 
         _social_update_job(job_id, status='downloading')
 
@@ -9374,13 +11140,17 @@ def _social_worker(job_id, url, folder):
 
         started_at = _time.monotonic()
         timed_out = False
+        try:
+            _social_timeout_cap = _social_effective_ytdlp_timeout_s()
+        except Exception:
+            _social_timeout_cap = 300
         while proc.poll() is None:
             while True:
                 try:
                     _record_output(output_queue.get_nowait())
                 except _queue.Empty:
                     break
-            if _time.monotonic() - started_at >= SOCIAL_YTDLP_TIMEOUT:
+            if _time.monotonic() - started_at >= _social_timeout_cap:
                 timed_out = True
                 _terminate_and_reap(proc)
                 break
@@ -9394,7 +11164,7 @@ def _social_worker(job_id, url, folder):
                 break
 
         if timed_out:
-            _set_error('yt-dlp timeout sau %d giay.' % SOCIAL_YTDLP_TIMEOUT)
+            _set_error('yt-dlp timeout sau %d giay.' % _social_timeout_cap)
             return
 
         proc.wait()
@@ -9490,7 +11260,19 @@ def api_social_download():
         job_id, err = _social_create_job(url, folder)
         if err:
             if 'Max concurrent' in err:
-                return jsonify({'error': err}), 429
+                # SPEC_LIVESTREAM_LIMITS §3.3: 429 co cau truc (client cu van doc error).
+                try:
+                    _soc_cap = _social_effective_max_concurrent()
+                except Exception:
+                    _soc_cap = 2
+                try:
+                    _soc_active = sum(1 for _j in _social_download_jobs.values()
+                                      if _j.get("status") in ("queued", "downloading"))
+                except Exception:
+                    _soc_active = _soc_cap
+                return jsonify({'error': err, 'reason': 'max_concurrent',
+                                'code': 'MAX_DOWNLOADS', 'cap': _soc_cap,
+                                'active': _soc_active, 'retry_after_s': 60}), 429
             return jsonify({'error': err}), 400
 
         safe_folder = _social_get_job(job_id)['folder']
@@ -9557,6 +11339,13 @@ def api_torrent_add_file():
             return jsonify({"error": "File không có tên"}), 400
         if not fname.lower().endswith(".torrent"):
             return jsonify({"error": "File phai co duoi .torrent"}), 400
+        # CC-005 P1: sanitize filename (header injection CRLF/quote sang qBT)
+        # — truoc day ghep tho fname vao multipart header. Chi giu ten base.
+        import re as _re_tfn
+        fname = os.path.basename(fname)
+        fname = _re_tfn.sub(r"[^A-Za-z0-9_.\-]", "_", fname)[:128]
+        if not fname.lower().endswith(".torrent") or not fname:
+            return jsonify({"error": "Ten file khong hop le"}), 400
         content = f.read(50 * 1024 * 1024 + 1)
         if len(content) > 50 * 1024 * 1024:
             return jsonify({"error": "File torrent vượt quá giới hạn 50MB"}), 413
@@ -9651,14 +11440,16 @@ def api_unzip():
 # ============ BAO MAT ============
 
 @app.route("/api/auth/approve_ip", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_approve_ip():
     try:
-        data = request.get_json(force=True)
-        ip = data.get("ip", "")
+        data = request.get_json(force=True) or {}
+        ip = str(data.get("ip", "") or "").strip()
         approved = data.get("approved", True)
+        if not ip or not _validate_ip(ip):
+            return jsonify({"error": "IP không hợp lệ"}), 400
         if ip:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
             cur = conn.cursor()
             if approved:
                 _remember_authorized_ip(ip)
@@ -9695,7 +11486,7 @@ def api_approve_ip():
 @requires_auth
 def api_weekly_report():
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM banned_ips WHERE banned_at >= date('now', '-7 days')")
         row = cur.fetchone()
@@ -9786,7 +11577,7 @@ def api_cron_status():
 def api_temperature_history():
     """L?y lich su nhi?t để (120 diem gần nh?t tuong duong khoang 2 tieng)."""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute("SELECT strftime('%H:%M', timestamp), cpu_temp, hdd_temp FROM system_temperature_history ORDER BY id DESC LIMIT 120")
         rows = cur.fetchall()
@@ -9800,7 +11591,7 @@ def api_temperature_history():
         return jsonify({"history": [], "error": "Không tải được lịch sử nhiệt độ: %s" % normalize_vietnamese_message(str(e))})
 
 @app.route("/api/cron/trash/clean", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_cron_trash_clean():
     """Kich hoat thu cong don dep Thung rac ngay lap tuc (không cần doi cron)."""
     try:
@@ -9818,7 +11609,7 @@ def api_cron_trash_clean():
 def api_system_logs():
     """Tr? v? danh sách nhat ky h? thỏng (AccessLog, DuplicateScan...) tu NAS."""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         try:
             cur = conn.cursor()
             cur.execute("SELECT id, type, module, message, timestamp FROM system_logs ORDER BY id DESC LIMIT 50")
@@ -9834,7 +11625,7 @@ def api_system_logs():
 def api_system_logs_clear():
     """Xoa toan bo nhat ky he thong tren NAS."""
     try:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
         try:
             cur = conn.cursor()
             cur.execute("DELETE FROM system_logs")
@@ -9953,13 +11744,27 @@ def _resolve_webdav_request_path(webdav_path):
 
 def _media_cache_headers(real_path, file_size, mime_type):
     try:
-        mtime = int(os.path.getmtime(real_path))
+        st = os.stat(real_path)
+        mtime = int(st.st_mtime)
+        ino = int(getattr(st, "st_ino", 0))
     except Exception:
         mtime = int(time.time())
-    etag = '"%x-%x"' % (file_size, mtime)
+        ino = 0
+    # CC-004 P1-4: ETag them inode (size-mtime trung khi copy/replace cung
+    # kich thuoc trong cung giay) + bo 'immutable' cho file <24h (livestream
+    # dang ghi/moov dang hoan thien) de ExoPlayer/VLC khong cache ban hong.
+    etag = '"%x-%x-%x"' % (file_size, mtime, ino & 0xFFFFFFFF)
+    try:
+        age_s = time.time() - mtime
+    except Exception:
+        age_s = 0
+    if age_s < 86400:
+        cache_ctl = "public, max-age=60"
+    else:
+        cache_ctl = "public, max-age=604800, immutable"
     return {
         "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=604800, immutable",
+        "Cache-Control": cache_ctl,
         "ETag": etag,
         "Last-Modified": datetime.datetime.utcfromtimestamp(mtime).strftime("%a, %d %b %Y %H:%M:%S GMT"),
         "Content-Type": mime_type,
@@ -9999,8 +11804,17 @@ def api_media_fast():
 
     mime_type = mimetypes.guess_type(real_path)[0] or "application/octet-stream"
     headers = _media_cache_headers(real_path, file_size, mime_type)
-    if request.headers.get("If-None-Match") == headers["ETag"]:
-        return Response(status=304, headers=headers)
+    # CC-004 P1-4b: ho tro If-Modified-Since (ExoPlayer/VLC gui kem) + If-None-Match
+    # yeu (so sanh sau khi strip W/). Thieu: client cu phai tai lai full du lieu.
+    try:
+        inm = _re_module.sub(r'^W/\s*', '', (request.headers.get("If-None-Match") or "").strip()).strip()
+        if inm and inm == headers["ETag"]:
+            return Response(status=304, headers=headers)
+        ims = (request.headers.get("If-Modified-Since") or "").strip()
+        if ims and not inm and ims == headers.get("Last-Modified"):
+            return Response(status=304, headers=headers)
+    except Exception:
+        pass
 
     range_header = request.headers.get("Range", "")
     start = 0
@@ -10231,7 +12045,7 @@ def _screen_record_remux_worker(session_dir, sid, final_ts):
         # Chờ hệ thống rảnh bớt nếu đang có livestream hoặc tác vụ nặng khác
         retry_count = 0
         while retry_count < 12:  # Thử trong 3 phút (12 * 15 giây)
-            if _background_heavy_work_allowed():
+            if _background_heavy_work_allowed(ignore_user_idle=True):
                 break
             log.info("[ScreenRecord] Hệ thống đang bận/RAM cao, tạm hoãn remux phiên %s, thử lại sau 15 giây", sid)
             time.sleep(15)
@@ -10427,9 +12241,17 @@ def api_screen_record_cancel():
 
 _transcode_sessions = {}  # session_id -> { "file_path": ..., "duration": ..., "process": Popen, "lock": Lock }
 _transcode_sessions_lock = threading.Lock()
+_transcode_sessions_ip = {}  # CC-005 P1: dem session theo IP de cap per-client
+_transcode_sessions_ip_lock = threading.Lock()
 _TRANSCODE_SESSION_TTL_SEC = 2 * 3600
-# HW-BUDGET (rk3328 4xA53/1GB): mỗi session giữ 1 ffmpeg HLS — cap 4.
-_TRANSCODE_SESSION_MAX = 4
+# HW-BUDGET (rk3328 4xA53/1GB): mỗi session giữ 1 ffmpeg HLS — cap 2.
+_TRANSCODE_SESSION_MAX = 2
+_TRANSCODE_SESSION_PER_IP = 1
+try:
+    _TRANSCODE_SALT = open("/etc/nas/transcode_salt", "rb").read(16).hex()
+except Exception:
+    import uuid as _uuid_salt
+    _TRANSCODE_SALT = _uuid_salt.uuid4().hex
 
 
 def _cleanup_transcode_sessions(force_limit=False):
@@ -10466,17 +12288,15 @@ def _cleanup_transcode_sessions(force_limit=False):
 
 def _find_source_file(relative_path):
     """Tim file goc tren NAS tu duong dan WebDAV tuong doi.
-    FIX SECURITY: Validate path traversal truoc khi tr? v?."""
-    from urllib.parse import unquote
-    relative_path = unquote(relative_path)
-    candidates = [
-        os.path.join(WEBDAV_FILE_ROOT, relative_path.lstrip("/")),
-        relative_path,
-        os.path.join("/srv/dev-disk-by-label-data", relative_path.lstrip("/")),
-    ]
-    for c in candidates:
-        if os.path.exists(c) and _validate_file_path(c):
-            return c
+    CC-004 P0-4: dung chung _resolve_webdav_request_path (containment realpath
+    + SMB fallback co kiem soat). Bo candidate 'relative_path' tho (traversal
+    ngoai root) va hard-code '/srv/dev-disk-by-label-data' rieng le."""
+    try:
+        resolved = _resolve_webdav_request_path(relative_path)
+    except Exception:
+        resolved = None
+    if resolved and os.path.isfile(resolved) and _validate_file_path(resolved):
+        return resolved
     return None
 
 def _get_video_duration(file_path):
@@ -10503,7 +12323,29 @@ def api_stream_transcode():
     if not file_path:
         return jsonify({"error": "Không tìm thấy tệp"}), 404
 
-    session_id = hashlib.md5(file_path.encode()).hexdigest()[:12]
+    # CC-005 P1: session_id = md5(salt + path + mtime + size) — het predict;
+    # cap 2 global + 1/IP (ffmpeg HLS tren rk3328 1GB).
+    try:
+        _stx = os.stat(file_path)
+        _sid_src = "%s|%s|%d|%d" % (_TRANSCODE_SALT, file_path, _stx.st_size, int(_stx.st_mtime))
+    except Exception:
+        _sid_src = "%s|%s" % (_TRANSCODE_SALT, file_path)
+    session_id = hashlib.md5(_sid_src.encode()).hexdigest()[:12]
+    _cip = _request_client_ip()
+    with _transcode_sessions_lock:
+        if session_id not in _transcode_sessions and len(_transcode_sessions) >= _TRANSCODE_SESSION_MAX:
+            return jsonify({"error": "NAS dang transcode toi da, thu lai sau",
+                            "reason": "MAX_TRANSCODE", "cap": _TRANSCODE_SESSION_MAX,
+                            "retry_after_s": 30}), 429
+    if _cip:
+        with _transcode_sessions_ip_lock:
+            _now_ip = time.time()
+            _lst = [t for t in _transcode_sessions_ip.get(_cip, []) if _now_ip - t < 7200]
+            if session_id not in _transcode_sessions and len(_lst) >= _TRANSCODE_SESSION_PER_IP:
+                return jsonify({"error": "Moi IP 1 session transcode/lan",
+                                "reason": "MAX_TRANSCODE_IP", "retry_after_s": 30}), 429
+            _lst.append(_now_ip)
+            _transcode_sessions_ip[_cip] = _lst[-4:]
     hls_dir = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "nas_transcode", session_id)
 
     # Tu dong don dep rac HLS cu (>2h)
@@ -10548,6 +12390,12 @@ def api_stream_transcode():
 @app.route("/api/stream/hls/<session_id>/<filename>")
 @requires_auth
 def api_stream_hls_file(session_id, filename):
+    # CC-005 P0: validate session_id dung dinh dang md5[:12] cua
+    # api_stream_transcode — truoc day session_id tu URL khong sanitize,
+    # '../' join ra ngoai nas_transcode dir -> doc file .ts tuy y.
+    import re as _re_hls
+    if not _re_hls.match(r"^[a-f0-9]{12}$", session_id or ""):
+        return "", 404
     with _transcode_sessions_lock:
         session = _transcode_sessions.get(session_id)
         if not session:
@@ -10588,12 +12436,22 @@ def api_stream_hls_file(session_id, filename):
         return "", 404
 
     import re
-    match = re.search(r"seg(\d+)\.ts", filename)
+    # CC-005 P0: fullmatch + bound + realpath containment. Ban cu dung re.search
+    # nen "../seg00001.ts" van match -> join thoat nas_transcode dir (traversal).
+    match = re.match(r"^seg(\d{5})\.ts$", filename or "")
     if not match:
         return "", 404
 
     seg_idx = int(match.group(1))
-    file_path = os.path.join(hls_dir, filename)
+    try:
+        _total_segs = int(float(duration or 0) / 4.0) + 1
+    except Exception:
+        _total_segs = 10 ** 6
+    if seg_idx < 0 or seg_idx > _total_segs + 2:
+        return "", 404
+    file_path = os.path.realpath(os.path.join(hls_dir, filename))
+    if not file_path.startswith(os.path.realpath(hls_dir) + os.sep):
+        return "", 404
 
     with session_lock:
         if not os.path.exists(file_path):
@@ -10668,14 +12526,29 @@ def api_organize_legacy_videos():
     
     moved_count = 0
     errors = []
+    # CC-005 P1: cap 20000 file + deadline 120s (walk full disk treo HDD)
+    _ORG_MAX_FILES = 20000
+    _ORG_DEADLINE = time.time() + 120
+    _org_scanned = [0]
+    _org_truncated = [False]
     
     # Quet tất c? thư mục trong WEBDAV_FILE_ROOT
     for root, dirs, files in os.walk(WEBDAV_FILE_ROOT):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
+        if time.time() > _ORG_DEADLINE or _org_scanned[0] > _ORG_MAX_FILES:
+            _org_truncated[0] = True
+            break
         # B? qua thư mục Other Video de không di chuy?n vong lap
         if os.path.abspath(root).startswith(os.path.abspath(other_video_dir)):
             continue
             
         for file in files:
+            _org_scanned[0] += 1
+            if _org_scanned[0] > _ORG_MAX_FILES or time.time() > _ORG_DEADLINE:
+                _org_truncated[0] = True
+                break
+            if len(errors) > 100:
+                break
             ext = os.path.splitext(file)[1].lower()
             if ext in target_exts:
                 old_path = os.path.join(root, file)
@@ -10711,7 +12584,9 @@ def api_organize_legacy_videos():
     return jsonify({
         "success": True,
         "moved_count": moved_count,
-        "errors": errors
+        "errors": errors[:100],
+        "truncated": _org_truncated[0],
+        "scanned": _org_scanned[0]
     })
 
 
@@ -10744,13 +12619,21 @@ def api_smart_organize_scan():
     # Thu thap file, nhom theo YYYY/MM
     groups_map = {}  # key = "2024/03", value = { "count": N, "size": S, "files": [...] }
     total = 0
+    # CC-005 P1: cap 50000 entries + deadline 120s (truoc day walk full disk vo han)
+    _scanned = [0]
+    _scan_deadline = time.time() + 120
 
     for root, dirs, files in os.walk(base_dir):
         # B? qua thư mục an va hệ thong
         dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
+        if time.time() > _scan_deadline or _scanned[0] > 50000:
+            break
         for name in files:
             if name.startswith('.'):
                 continue
+            _scanned[0] += 1
+            if _scanned[0] > 50000 or time.time() > _scan_deadline:
+                break
             ext = os.path.splitext(name)[1].lower()
             if ext not in allowed_exts:
                 continue
@@ -10835,7 +12718,9 @@ def _smart_organize_job_update(job_id, **fields):
         return dict(job)
 
 
-def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
+def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter, dry_run=False):
+    # CC-005 P1/P2: dry_run (chỉ scan không move), manifest JSON old->new để undo,
+    # skip file mtime<24h (tránh move file đang ghi), journal giữ 7 ngày trong .nas_meta.
 
     moved_count = 0
     errors = []
@@ -10843,6 +12728,8 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
     scanned_entries = 0
     max_entries = 50000
     deadline = time.time() + 1800
+    _moves = []  # manifest entries {"old": rel_old, "new": rel_new}
+    _skip_fresh = 0
 
     try:
         _smart_organize_job_update(
@@ -10852,6 +12739,7 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
             base_dir=base_dir,
             filter=scan_filter,
             allowed_exts=sorted(allowed_exts),
+            dry_run=bool(dry_run),
             moved_count=0,
             scanned=0,
             error_count=0,
@@ -10861,7 +12749,7 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
         for root, dirs, files in os.walk(base_dir):
             if time.time() >= deadline:
                 raise TimeoutError("Smart organize timed out")
-            if not _background_heavy_work_allowed():
+            if not _background_heavy_work_allowed(ignore_user_idle=True):
                 raise RuntimeError("Background heavy work is not allowed right now")
 
             dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
@@ -10871,7 +12759,7 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
                     continue
                 if scanned_entries >= max_entries or time.time() >= deadline:
                     raise TimeoutError("Smart organize limit reached")
-                if scanned_entries % 120 == 0 and not _background_heavy_work_allowed():
+                if scanned_entries % 120 == 0 and not _background_heavy_work_allowed(ignore_user_idle=True):
                     raise RuntimeError("Background heavy work is not allowed right now")
 
                 scanned_entries += 1
@@ -10883,6 +12771,10 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
                 try:
                     st = os.stat(full_path)
                     mtime = st.st_mtime
+                    # CC-005 P2: skip file mtime<24h (tránh move file đang ghi/upload dở).
+                    if time.time() - mtime < 86400:
+                        _skip_fresh += 1
+                        continue
                     dt = datetime.datetime.fromtimestamp(mtime)
                     label = "%04d/%02d" % (dt.year, dt.month)
 
@@ -10895,15 +12787,35 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
                         continue
 
                     target_dir = os.path.join(base_dir, label)
-                    os.makedirs(target_dir, exist_ok=True)
-                    affected_dirs.add(target_dir)
 
                     new_path = os.path.join(target_dir, name)
                     if os.path.exists(new_path):
                         base_name, ex = os.path.splitext(name)
-                        new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, int(time.time()), ex))
+                        _ts_suffix = int(time.time())
+                        _collision_idx = 0
+                        while os.path.exists(new_path):
+                            if _collision_idx == 0:
+                                new_path = os.path.join(target_dir, "%s_%d%s" % (base_name, _ts_suffix, ex))
+                            else:
+                                new_path = os.path.join(target_dir, "%s_%d_%d%s" % (base_name, _ts_suffix, _collision_idx, ex))
+                            _collision_idx += 1
 
+                    # CC-005 P2: dry_run chi scan khong move (API cu default dry_run=0).
+                    _rel_old = full_path[len(base_dir):]
+                    if not _rel_old.startswith("/"):
+                        _rel_old = "/" + _rel_old
+                    _rel_new = new_path[len(base_dir):]
+                    if not _rel_new.startswith("/"):
+                        _rel_new = "/" + _rel_new
+                    if dry_run:
+                        _moves.append({"old": _rel_old, "new": _rel_new, "dry_run": True})
+                        moved_count += 1
+                        continue
+                    if not dry_run:
+                        os.makedirs(target_dir, exist_ok=True)
+                        affected_dirs.add(target_dir)
                     shutil.move(full_path, new_path)
+                    _moves.append({"old": _rel_old, "new": _rel_new})
                     moved_count += 1
                     if moved_count % 100 == 0:
                         log.info("[SmartOrganize] moved %d files...", moved_count)
@@ -10940,18 +12852,74 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
                 "SUCCESS"
             )
 
+        _manifest_path = ""
+        if _moves:
+            try:
+                # CC-005 P2: journal/undo — manifest JSON old->new trong .nas_meta,
+                # giữ 7 ngày (86400*7) để undo; prune manifest quá hạn mỗi job.
+                _meta_dir = os.path.join(base_dir, ".nas_meta")
+                try:
+                    os.makedirs(_meta_dir, exist_ok=True)
+                except Exception:
+                    pass
+                _manifest_path = os.path.join(
+                    _meta_dir, "smart_organize_%s.json" % job_id)
+                with open(_manifest_path, "w", encoding="utf-8") as _mf:
+                    json.dump({
+                        "job_id": job_id,
+                        "created_at": int(time.time()),
+                        "dry_run": bool(dry_run),
+                        "filter": scan_filter,
+                        "moves": _moves,
+                    }, _mf, ensure_ascii=False)
+                try:
+                    _now_m = time.time()
+                    for _fn in os.listdir(_meta_dir):
+                        if _fn.startswith("smart_organize_") and _fn.endswith(".json"):
+                            _fp = os.path.join(_meta_dir, _fn)
+                            try:
+                                if _now_m - os.path.getmtime(_fp) > 7 * 86400:
+                                    os.remove(_fp)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            except Exception as _me:
+                log.warning("[SmartOrganize] Khong ghi duoc manifest: %s", _me)
+                _manifest_path = ""
+
         final_status = "finished_with_errors" if errors else "finished"
         _smart_organize_job_update(
             job_id,
             status=final_status,
             moved_count=moved_count,
             scanned=scanned_entries,
+            skipped_fresh=_skip_fresh,
+            manifest_path=_manifest_path,
+            dry_run=bool(dry_run),
             error_count=len(errors),
             errors=errors[:20],
             finished_at=time.time(),
         )
         log.info("[SmartOrganize] Done: %d files moved, %d errors.", moved_count, len(errors))
     except Exception as e:
+        _manifest_path = ""
+        if _moves:
+            try:
+                _meta_dir = os.path.join(base_dir, ".nas_meta")
+                os.makedirs(_meta_dir, exist_ok=True)
+                _manifest_path = os.path.join(_meta_dir, "smart_organize_%s.json" % job_id)
+                with open(_manifest_path, "w", encoding="utf-8") as _mf:
+                    json.dump({
+                        "job_id": job_id,
+                        "created_at": int(time.time()),
+                        "dry_run": bool(dry_run),
+                        "filter": scan_filter,
+                        "moves": _moves,
+                    }, _mf, ensure_ascii=False)
+            except Exception as _me:
+                log.warning("[SmartOrganize] Khong ghi duoc manifest khi abort: %s", _me)
+                _manifest_path = ""
         failed_status = "aborted" if isinstance(e, RuntimeError) else "failed"
         _smart_organize_job_update(
             job_id,
@@ -10959,6 +12927,7 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
             error=str(e),
             moved_count=moved_count,
             scanned=scanned_entries,
+            manifest_path=_manifest_path,
             error_count=len(errors) + 1,
             errors=(errors[:20] + [str(e)])[:20],
             finished_at=time.time(),
@@ -10971,10 +12940,15 @@ def _smart_organize_worker(job_id, base_dir, allowed_exts, scan_filter):
 def api_smart_organize_execute():
     """
     Queue smart organize as a background job.
-    Input JSON: { "filter": "all|image|video" }
+    Input JSON: { "filter": "all|image|video", "dry_run": 0|1 }
+    CC-005 P2: dry_run=1 chỉ scan không move (mặc định 0 giữ API cũ).
     """
     data = request.get_json(force=True) or {}
     scan_filter = data.get("filter", "all")
+    try:
+        dry_run = bool(int(data.get("dry_run", 0)))
+    except Exception:
+        dry_run = bool(data.get("dry_run", False))
 
     base_dir = get_webdav_root()
     if scan_filter == "image":
@@ -10984,7 +12958,7 @@ def api_smart_organize_execute():
     else:
         allowed_exts = _ALL_MEDIA_EXTS
 
-    if not _background_heavy_work_allowed():
+    if not _background_heavy_work_allowed(ignore_user_idle=True):
         return jsonify({
             "success": False,
             "queued": False,
@@ -10998,6 +12972,7 @@ def api_smart_organize_execute():
         base_dir=base_dir,
         filter=scan_filter,
         allowed_exts=sorted(allowed_exts),
+        dry_run=dry_run,
         moved_count=0,
         scanned=0,
         error_count=0,
@@ -11006,7 +12981,7 @@ def api_smart_organize_execute():
     )
     threading.Thread(
         target=_smart_organize_worker,
-        args=(job_id, base_dir, allowed_exts, scan_filter),
+        args=(job_id, base_dir, allowed_exts, scan_filter, dry_run),
         daemon=True,
         name="SmartOrganizeWorker",
     ).start()
@@ -11016,6 +12991,7 @@ def api_smart_organize_execute():
         "queued": True,
         "job_id": job_id,
         "status": "running",
+        "dry_run": dry_run,
     }), 202
 
 
@@ -11033,8 +13009,11 @@ def api_smart_organize_status(job_id):
         "job_id": job_id,
         "status": status,
         "filter": job.get("filter", "all"),
+        "dry_run": bool(job.get("dry_run", False)),
         "moved_count": int(job.get("moved_count", 0) or 0),
         "scanned": int(job.get("scanned", 0) or 0),
+        "skipped_fresh": int(job.get("skipped_fresh", 0) or 0),
+        "manifest_path": job.get("manifest_path", ""),
         "error_count": int(job.get("error_count", 0) or 0),
         "errors": job.get("errors", [])[:20],
         "error": job.get("error", ""),
@@ -11044,15 +13023,90 @@ def api_smart_organize_status(job_id):
     })
 
 
+@app.route("/api/tools/smart_organize/undo", methods=["POST"])
+@requires_auth
+def api_smart_organize_undo():
+    """CC-005 P2: undo don gian tu manifest journal (.nas_meta/smart_organize_<job>.json).
+    Input: { "job_id": "smartorg_..." }. Move nguoc new->old, bo qua entry dry_run.
+    """
+    data = request.get_json(force=True) or {}
+    job_id = str(data.get("job_id", "") or "").strip()
+    if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
+        return jsonify({"success": False, "error": "job_id khong hop le"}), 400
+    base_dir = get_webdav_root()
+    manifest_path = os.path.join(base_dir, ".nas_meta", "smart_organize_%s.json" % job_id)
+    base_real = os.path.realpath(base_dir)
+    mani_real = os.path.realpath(manifest_path)
+    if mani_real != os.path.join(base_real, ".nas_meta", "smart_organize_%s.json" % job_id):
+        return jsonify({"success": False, "error": "manifest ngoai pham vi"}), 400
+    if not os.path.isfile(mani_real):
+        return jsonify({"success": False, "error": "khong tim thay manifest"}), 404
+    try:
+        with open(mani_real, "r", encoding="utf-8") as _f:
+            mani = json.load(_f)
+    except Exception as e:
+        return jsonify({"success": False, "error": "manifest loi: %s" % str(e)[:100]}), 500
+    moves = (mani or {}).get("moves", []) if isinstance(mani, dict) else []
+    restored = 0
+    skipped = 0
+    errs = []
+    for m in moves:
+        try:
+            if not isinstance(m, dict) or m.get("dry_run"):
+                skipped += 1
+                continue
+            old_rel = str(m.get("old", "") or "").lstrip("/")
+            new_rel = str(m.get("new", "") or "").lstrip("/")
+            if not old_rel or not new_rel:
+                skipped += 1
+                continue
+            old_abs = os.path.realpath(os.path.join(base_real, old_rel))
+            new_abs = os.path.realpath(os.path.join(base_real, new_rel))
+            if not (new_abs == base_real or new_abs.startswith(base_real + os.sep)):
+                skipped += 1
+                continue
+            if not (old_abs == base_real or old_abs.startswith(base_real + os.sep)):
+                skipped += 1
+                continue
+            if not os.path.exists(new_abs):
+                skipped += 1
+                continue
+            try:
+                os.makedirs(os.path.dirname(old_abs), exist_ok=True)
+            except Exception:
+                pass
+            if os.path.exists(old_abs):
+                skipped += 1
+                continue
+            shutil.move(new_abs, old_abs)
+            restored += 1
+        except Exception as e:
+            errs.append(str(e)[:120])
+            if len(errs) >= 20:
+                break
+    return jsonify({"success": True, "job_id": job_id, "restored": restored,
+                    "skipped": skipped, "errors": errs[:20]})
+
+
 # ============ INDEX ENGINE & HASH DELEGATION ============
 
 _cached_webdav_root = None
 
 def get_webdav_root():
-    """Tu dong do tim duong dan thư mục goc cua WebDAV tren NAS (Có bộ đệm RAM giảm tải HDD)."""
+    """Tu dong do tim duong dan thư mục goc cua WebDAV tren NAS (Có bộ đệm RAM giảm tải HDD).
+    CC-004 P1-1: uu tien _get_webdav_public_dir() (doc config.php $publicDir +
+    validate exists) de 3 helper root (public_dir/_get_webdav_root/get_webdav_root)
+    khong lech nhau gay /api/media 404 trong khi WebDAV PROPFIND van thay file."""
     global _cached_webdav_root
     if _cached_webdav_root is not None:
         return _cached_webdav_root
+    try:
+        pub = _get_webdav_public_dir()
+        if pub:
+            _cached_webdav_root = pub.rstrip('/')
+            return _cached_webdav_root
+    except Exception:
+        pass
 
     import glob, re
     best_total = 0
@@ -11102,10 +13156,21 @@ def generate_fast_index(force=False):
 
     total = 0
     first = True
+    # CC-005 P1: cap 100000 entries + deadline 120s (walk full disk treo HDD/gay timeout)
+    _fi_scanned = [0]
+    _fi_deadline = time.time() + 120
+    _fi_truncated = [False]
     for root, dirs, files in os.walk(base_dir):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d != '#recycle']
+        if time.time() > _fi_deadline or _fi_scanned[0] > 100000:
+            _fi_truncated[0] = True
+            break
         for name in files:
             if name.startswith('.'): continue
+            _fi_scanned[0] += 1
+            if _fi_scanned[0] > 100000 or time.time() > _fi_deadline:
+                _fi_truncated[0] = True
+                break
             ext = os.path.splitext(name)[1].lower()
             if ext not in media_exts: continue
             full_path = os.path.join(root, name)
@@ -11142,6 +13207,10 @@ def api_disk_trash_batch():
     files = data.get("files", [])
     if not isinstance(files, list):
         return jsonify({"error": "files must be a list"}), 400
+    # CC-005 P1: cap 500 file/lan — truoc day khong cap, JSON lon OOM +
+    # rename dong bo giu worker hang phut, HDD spin-up.
+    if len(files) > 500:
+        return jsonify({"error": "Batch qua lon (toi da 500 file/lan)"}), 400
     
     webdav_root = get_webdav_root()
         
@@ -11191,11 +13260,13 @@ def api_disk_trash_batch():
         except Exception as e:
             errors.append({"path": webdav_path, "error": str(e)})
             
-    CACHE_FILE = "/tmp/nas_fast_index_cache.json"
-    if os.path.exists(CACHE_FILE):
-        try: os.remove(CACHE_FILE)
+    # CC-005 P1/P2: unify ve CACHE_FILE global, xoa ca path cu /tmp neu sot.
+    for _cc005_cf in (CACHE_FILE, "/tmp/nas_fast_index_cache.json"):
+        try:
+            if os.path.exists(_cc005_cf):
+                os.remove(_cc005_cf)
         except Exception as e:
-            log.debug("[FastIndex] Could not remove cache file %s: %s", CACHE_FILE, e)
+            log.debug("[FastIndex] Could not remove cache file %s: %s", _cc005_cf, e)
             
     return jsonify({
         "success_count": success,
@@ -11215,22 +13286,32 @@ def api_hash_batch():
     data = request.json
     if not data or "files" not in data:
         return jsonify({"error": "Yêu cầu không hợp lệ"}), 400
-    
+
     result = {}
-    base_dir = get_webdav_root()
     items = data.get("files", [])
-    
+    # CC-005 P0: cap batch (DoS/CPU) + resolve containment thay vi noi chuoi
+    # base_dir + local_path (traversal doc file tuy y truoc day).
+    if not isinstance(items, list):
+        return jsonify({"error": "Yêu cầu không hợp lệ"}), 400
+    if len(items) > 200:
+        return jsonify({"error": "Batch qua lon (toi da 200 file/lan)"}), 400
+
     def _hash_one(item):
-        url_path = item.get("path")
-        local_path = item.get("local_path")
-        if not url_path or not local_path: return None
-        real_path = base_dir + local_path
-        if not os.path.exists(real_path): return None
         try:
+            url_path = item.get("path")
+            local_path = item.get("local_path")
+            if not url_path or not local_path:
+                return None
+            # CC-005 P0: resolve qua containment (realpath) — chan '..',
+            # absolute path, symlink thoat root. Tra None thay vi throw.
+            real_path = _resolve_webdav_request_path(local_path)
+            if not real_path or not os.path.isfile(real_path):
+                return None
             with open(real_path, "rb") as f:
                 chunk = f.read(1048576)
-                return (url_path, hashlib.md5(chunk).hexdigest()) 
-        except Exception: return None
+                return (url_path, hashlib.md5(chunk).hexdigest())
+        except Exception:
+            return None
     
     # Adaptive workers: Đọc dia IO-bound, 2-4 luồng tuy tai nguyen
     try:
@@ -11266,7 +13347,7 @@ def _hash_db():
             _HASH_DB_PATH = os.path.join(meta, "file_hashes.db")
         except Exception:
             _HASH_DB_PATH = "/tmp/nas_file_hashes.db"
-    conn = sqlite3.connect(_HASH_DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(_HASH_DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_10", 10.0))
     try:
         conn.execute("""CREATE TABLE IF NOT EXISTS file_hashes (
             path TEXT PRIMARY KEY, size INTEGER NOT NULL DEFAULT 0,
@@ -11295,18 +13376,34 @@ def api_hash_save():
         saved = 0
         conn = _hash_db()
         try:
+            import re as _re_hash
             for it in items:
                 try:
                     p = str(it.get("path", "") or "")
                     s = str(it.get("sha256", "") or "").lower()
-                    if not p or len(s) != 64:
+                    # CC-005 P1: validate hex + normalize path (chong path spoof/DB pollute)
+                    if not p or not _re_hash.match(r"^[a-f0-9]{64}$", s or ""):
+                        continue
+                    if ".." in p or "\\" in p:
+                        continue
+                    real = _resolve_webdav_request_path(p)
+                    if not real:
+                        continue
+                    part = str(it.get("partial", "") or "")
+                    if part and not _re_hash.match(r"^[a-f0-9]{1,64}$", part.lower()):
+                        part = ""
+                    try:
+                        sz = int(it.get("size", 0) or 0)
+                        mt = int(it.get("mtime", 0) or 0)
+                    except Exception:
+                        continue
+                    if sz < 0 or sz > 10995116277760 or mt < 0:
                         continue
                     conn.execute(
                         "INSERT OR REPLACE INTO file_hashes "
                         "(path, size, mtime, sha256, partial, scanned_at) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
-                        (p, int(it.get("size", 0) or 0), int(it.get("mtime", 0) or 0),
-                         s, str(it.get("partial", "") or ""), now))
+                        (p, sz, mt, s, part, now))
                     saved += 1
                 except Exception:
                     continue
@@ -11399,7 +13496,8 @@ def _verify_hash_row(webdav_path, expected_sha):
         return None
     if int(row[0] or 0) != size or int(row[1] or 0) != mtime:
         return {"stale": True, "path": webdav_path}
-    etag = '"%x-%x"' % (size, mtime)
+    # CC-005 P1: ETag them inode (copy/replace trung size-mtime khong sai cache)
+    etag = '"%x-%x-%x"' % (getattr(st, "st_ino", 0), size, mtime)
     return {"path": webdav_path, "size": size, "mtime": mtime,
             "etag": etag, "sha256": expected_sha}
 
@@ -11899,7 +13997,7 @@ _THUMB_NEG_CACHE_LOADED = False
 def _thumb_neg_db():
     try:
         import sqlite3
-        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
         cur = conn.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS thumb_neg_cache (path TEXT PRIMARY KEY, ts REAL)")
         conn.commit()
@@ -12113,6 +14211,7 @@ def _thumbnail_generator():
     # The old code set last_full_scan = 0, then checked now - 0 < 300 (True)
     # which caused5 minutes of dead sleep before the first scan could run.
     last_full_scan = 0.0
+    _last_gate_closed_log_sig = None
     while True:
         try:
             now = time.time()
@@ -12120,22 +14219,27 @@ def _thumbnail_generator():
             # stale activity block would never expire because the worker only slept.
             with _thumb_gate_lock:
                 _apply_thumbnail_gate_locked()
-            # Gate check FIRST (so pause takes effect immediately, not5 min later).
-            if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
+                manual_scan = bool(globals().get("_thumb_scan_requested", False))
+            due_daily = (now - last_full_scan) >= _RESCAN_INTERVAL_S
+            # Gate check FIRST (so pause takes effect immediately, not 5 min later).
+            _heavy_ok = _background_heavy_work_allowed()
+            if not _thumb_paused.is_set() or not _heavy_ok:
                 with _thumb_stats_lock:
                     _thumb_stats["running"] = False
                     _thumb_stats["paused"] = True
-                log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — sleeping 5s.",
-                         _thumb_paused.is_set(), _background_heavy_work_allowed(), sorted(_thumb_auto_block_reasons))
+                if manual_scan or due_daily:
+                    _gate_sig = (_thumb_paused.is_set(), _heavy_ok, tuple(sorted(_thumb_auto_block_reasons)))
+                    if _gate_sig != _last_gate_closed_log_sig:
+                        _last_gate_closed_log_sig = _gate_sig
+                        log.info("[Thumbnail] Gate closed — paused_event=%s heavy_ok=%s block_reasons=%s — sleeping 5s.",
+                                 _thumb_paused.is_set(), _heavy_ok, sorted(_thumb_auto_block_reasons))
                 time.sleep(5)
                 continue
+            _last_gate_closed_log_sig = None
 
             # CLIENT-FIRST: khong quet dinh ky nua. Chi quet khi app yeu cau tay
             # (dat _thumb_scan_requested) hoac du 24h ke tu lan truoc.
             # May tu render + upload thumb, daemon chi lap cho trong luc idle.
-            with _thumb_gate_lock:
-                manual_scan = bool(globals().get("_thumb_scan_requested", False))
-            due_daily = (now - last_full_scan) >= _RESCAN_INTERVAL_S
             if not manual_scan and not due_daily:
                 time.sleep(5)
                 continue
@@ -12308,7 +14412,7 @@ def api_thumb():
     thumb_path = _get_thumb_path(base_dir, real_path)
     
     if not os.path.exists(thumb_path) or os.path.getsize(thumb_path) == 0:
-        if not _thumb_paused.is_set() or not _background_heavy_work_allowed():
+        if not _thumb_paused.is_set() or not _background_heavy_work_allowed(ignore_user_idle=True):
             with _thumb_stats_lock:
                 _thumb_stats["paused"] = True
                 if not _thumb_stats.get("last_file"):
@@ -12332,14 +14436,26 @@ def api_thumb():
             return jsonify({"error": "Không hỗ trợ"}), 415
     
     if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-        # P1-8: Use context manager to prevent FD leak
-        with open(thumb_path, 'rb') as _tf:
-            data = _tf.read()
-        return Response(
-            data,
-            mimetype='image/jpeg',
-            headers={'Cache-Control': 'public, max-age=86400'}
-        )
+        # CC-005 P1: send_file + ETag/304 + cap 5MB (truoc day .read() full -> OOM)
+        try:
+            _tst = os.stat(thumb_path)
+            if _tst.st_size > 5 * 1024 * 1024:
+                return jsonify({"error": "Thumbnail loi (>5MB)"}), 500
+            _tetag = '"%x-%x-%x"' % (getattr(_tst, "st_ino", 0), _tst.st_size, int(_tst.st_mtime))
+            _inm = request.headers.get("If-None-Match", "")
+            if _inm and _re_module.sub(r'^W/\s*', '', _inm.strip()).strip() == _tetag:
+                return Response(status=304)
+            from flask import send_file as _send_thumb
+            try:
+                _resp = _send_thumb(thumb_path, mimetype="image/jpeg", cache_timeout=86400)
+            except TypeError:
+                _resp = _send_thumb(thumb_path, mimetype="image/jpeg")
+            _resp.headers["ETag"] = _tetag
+            _resp.headers["Cache-Control"] = "public, max-age=86400"
+            return _resp
+        except Exception as e:
+            log.warning("[Thumbnail] Serve loi: %s", e)
+            return jsonify({"error": "Khong doc duoc thumbnail"}), 500
     return jsonify({"error": "Không tạo được"}), 500
 
 @app.route("/api/thumb/upload", methods=["POST"])
@@ -12361,6 +14477,23 @@ def api_thumb_upload():
     content_type = thumb_file.content_type or ""
     if not content_type.startswith("image/"):
         return jsonify({"error": "Chỉ chấp nhận file image"}), 415
+    # CC-005 P1: cap 5MB + verify magic JPEG (SOI) — truoc day chi check
+    # content_type (spoof duoc), khong cap size -> lap HDD/eMMC + OOM khi GET.
+    try:
+        thumb_file.stream.seek(0, 2)
+        _tu_size = thumb_file.stream.tell()
+        thumb_file.stream.seek(0)
+    except Exception:
+        _tu_size = 0
+    if _tu_size <= 0 or _tu_size > 5 * 1024 * 1024:
+        return jsonify({"error": "Thumbnail vuot gioi han 5MB"}), 413
+    try:
+        _tu_magic = thumb_file.stream.read(3)
+        thumb_file.stream.seek(0)
+        if _tu_magic[:2] != b"\xff\xd8":
+            return jsonify({"error": "Thumbnail khong phai JPEG hop le"}), 415
+    except Exception:
+        return jsonify({"error": "Khong doc duoc thumbnail"}), 400
     # Reuse the same path resolution as /api/thumb GET.
     real_path = _resolve_webdav_request_path(webdav_path)
     if not real_path:
@@ -12465,7 +14598,11 @@ def api_thumb_activity():
     active = bool(body.get("active", False))
     if len(source) > 48:
         source = source[:48]
-    _set_thumbnail_auto_block(source, active, ttl_seconds=_THUMB_ACTIVITY_BLOCK_MAX_AGE_S)
+    # CC-005 P1: whitelist source + TTL 180s (truoc day bat ky string nao cung
+    # block + TTL 600s — app chet giua chung giu NAS pause thumb lau)
+    if source not in ("sync", "backup", "upload", "social", "livestream", "scan"):
+        source = "sync"
+    _set_thumbnail_auto_block(source, active, ttl_seconds=180)
     return jsonify({
         "result": "ok",
         "paused": not _thumb_paused.is_set(),
@@ -12486,7 +14623,7 @@ def api_docker_power_get():
         return jsonify({"running": False, "error": str(e)})
 
 @app.route("/api/docker/power", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_docker_power_post():
     """Bat/tat Docker service. Body: {"action": "start"} hoac {"action": "stop"}"""
     data = request.json or {}
@@ -12501,7 +14638,7 @@ def api_docker_power_post():
         if _all_ids:
             subprocess.run(["docker", "start"] + _all_ids.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
                 ("INFO", "Docker", "Đã bật Docker + qBittorrent"))
             conn.commit()
@@ -12517,7 +14654,7 @@ def api_docker_power_post():
         subprocess.run(["systemctl", "stop", "docker"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         subprocess.run(["systemctl", "stop", "containerd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
             conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
                 ("INFO", "Docker", "Đã tắt Docker để tiết kiệm RAM"))
             conn.commit()
@@ -12542,7 +14679,7 @@ def api_lan_whitelist_get():
     })
 
 @app.route("/api/lan/whitelist", methods=["POST"])
-@requires_auth
+@requires_admin
 def api_lan_whitelist_add():
     """Th?m IP hoac subnet vao LAN whitelist + tu dong mo iptables.
     Body: {"ip": "192.168.1.100"} hoac {"subnet": "192.168.1.0/24"}"""
@@ -12582,7 +14719,7 @@ def api_lan_whitelist_add():
         return jsonify({"error": "Thiếu IP hoặc subnet"}), 400
 
 @app.route("/api/lan/whitelist", methods=["DELETE"])
-@requires_auth
+@requires_admin
 def api_lan_whitelist_remove():
     """Xo? IP hoac subnet khoi LAN whitelist + go iptables rule tuong ung.
     Body: {"ip": "..."} hoac {"subnet": "..."}"""
@@ -12633,7 +14770,7 @@ def _system_health_watchdog():
             log.critical("[Watchdog] Thực thi reboot NAS: %s", reason)
             # Ghi log DB truoc khi ngat
             try:
-                conn = sqlite3.connect(DB_PATH, timeout=20.0)
+                conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
                 conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
                     ("CRITICAL", "Hardware", "Tự động reboot NAS do: %s" % reason))
                 conn.commit()
@@ -12670,7 +14807,7 @@ def _system_health_watchdog():
                     time.sleep(3)
                     subprocess.run(["tailscale", "up"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
                     try:
-                        conn = sqlite3.connect(DB_PATH, timeout=20.0)
+                        conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
                         conn.execute("INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)",
                             ("WARNING", "Network", "Tailscale bị ngắt, hệ thống RK3328 đã tự động khởi động lại lần %d" % _tailscale_restart_count))
                         conn.commit()
@@ -12784,26 +14921,28 @@ import string
 _guest_passes = {}  # {username: {"password": ..., "expires_at": epoch}}
 _guest_lock = threading.Lock()
 
-VSFTPD_USER_DIR = "/etc/vsftpd/userconf"   # Thư mục cau hinh per-user vsftpd
-GUEST_FTP_ROOT  = "/srv/dev-disk-by-label-data"  # Thư mục FTP se thay the qua chrootdir
+VSFTPD_USER_DIR = _cfg_str("vsftpd_user_dir", "/etc/vsftpd/userconf")  # CC-005 P1/P2: ENV NAS_VSFTPD_USER_DIR (default giữ nguyên)
+GUEST_FTP_ROOT  = _cfg_str("guest_ftp_root", "/srv/dev-disk-by-label-data")  # CC-005 P1/P2: ENV NAS_GUEST_FTP_ROOT (default giữ nguyên)
 
 def _generate_guest_name():
     suffix = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
     return "nasguest_%s" % suffix
 
 def _generate_guest_password(length=10):
+    # CC-005 P1: random.SystemRandom().choice (os.urandom CSPRNG, Python 3.5.3 native) + length 12
+    _choice_fn = random.SystemRandom().choice
     chars = string.ascii_letters + string.digits
-    rand_bytes = os.urandom(length * 2)
-    result = []
-    idx = 0
-    while len(result) < length and idx < len(rand_bytes):
-        val = rand_bytes[idx] % len(chars)
-        result.append(chars[val])
-        idx += 1
-    return ''.join(result)
+    length = 12
+    return "".join(_choice_fn(chars) for _ in range(length))
 
 def _create_linux_user(username, password):
     """Tao user Linux khoa SSH, pha shell /sbin/nologin."""
+    # CC-005 P2: username whitelist ^nasguest_[a-z0-9]{6}$ — chan command injection
+    # qua useradd/chpasswd (username do _generate_guest_name sinh ra).
+    import re as _re_guest
+    if not _re_guest.match(r'^nasguest_[a-z0-9]{6}$', username or ""):
+        log.warning("[GuestPass] Tu choi username khong hop le: %s", sanitize_log_input(username))
+        return False
     try:
         # Tao user h? thỏng (khong home, khong login)
         subprocess.check_call([
@@ -12823,11 +14962,25 @@ def _create_linux_user(username, password):
 
 def _create_vsftpd_user_config(username):
     """Tao file per-user vsftpd config cho read-only access."""
+    # CC-005 P2: whitelist username + realpath verify (GUEST_FTP_ROOT /
+    # VSFTPD_USER_DIR resolve realpath, config_path containment).
+    import re as _re_guest2
+    if not _re_guest2.match(r'^nasguest_[a-z0-9]{6}$', username or ""):
+        log.warning("[GuestPass] Tu choi username khong hop le")
+        return False
     try:
-        os.makedirs(VSFTPD_USER_DIR, exist_ok=True)
-        config_path = os.path.join(VSFTPD_USER_DIR, username)
+        _user_dir_real = os.path.realpath(_cfg_str("vsftpd_user_dir", VSFTPD_USER_DIR))
+        _ftp_root_real = os.path.realpath(_cfg_str("guest_ftp_root", GUEST_FTP_ROOT))
+        if not os.path.isdir(_ftp_root_real):
+            log.warning("[GuestPass] GUEST_FTP_ROOT khong ton tai")
+            return False
+        os.makedirs(_user_dir_real, exist_ok=True)
+        config_path = os.path.realpath(os.path.join(_user_dir_real, username))
+        if config_path != os.path.join(_user_dir_real, username):
+            log.warning("[GuestPass] config_path thoat VSFTPD_USER_DIR")
+            return False
         with open(config_path, 'w') as f:
-            f.write("local_root=%s\n" % GUEST_FTP_ROOT)
+            f.write("local_root=%s\n" % _ftp_root_real)
             f.write("write_enable=NO\n")
             f.write("anon_world_readable_only=YES\n")
             # FIX SANDBOX: Nhot user vao GUEST_FTP_ROOT, ngan Đọc thư mục cha (VD: /etc, /root)
@@ -12840,9 +14993,18 @@ def _create_vsftpd_user_config(username):
 
 def _delete_linux_user(username):
     """Xo? user Linux va file cau hinh vsftpd."""
+    # CC-005 P2: whitelist + containment nhu _create_vsftpd_user_config.
+    import re as _re_guest3
+    if not _re_guest3.match(r'^nasguest_[a-z0-9]{6}$', username or ""):
+        log.warning("[GuestPass] Tu choi xoa username khong hop le")
+        return
     try:
         subprocess.run(["userdel", username], stderr=subprocess.DEVNULL)
-        config_path = os.path.join(VSFTPD_USER_DIR, username)
+        _user_dir_real = os.path.realpath(_cfg_str("vsftpd_user_dir", VSFTPD_USER_DIR))
+        config_path = os.path.realpath(os.path.join(_user_dir_real, username))
+        if config_path != os.path.join(_user_dir_real, username):
+            log.warning("[GuestPass] config_path thoat VSFTPD_USER_DIR")
+            return
         if os.path.exists(config_path):
             os.remove(config_path)
     except Exception as e:
@@ -12930,13 +15092,22 @@ def _guest_expiry_watcher():
 threading.Thread(target=_guest_expiry_watcher, daemon=True).start()
 
 @app.route("/api/guest/create", methods=["POST"])
-@requires_auth
+# CC-005 P1/P2: endpoint nhay cam (tao user Linux + vsftpd config) bat buoc
+# requires_admin — chan LAN-whitelist bypass cua requires_auth. Endpoint chi doc
+# (status, storage, smart, omv overview) giu requires_auth.
+@requires_admin
 def api_guest_create():
     """Tao FTP user tam thoi (Read-Only) voi thoi gian ton tai gioi han."""
     try:
         body = request.get_json(force=True) or {}
         duration_minutes = int(body.get("duration_minutes", 60))
         duration_minutes = max(5, min(duration_minutes, 1440))  # 5ph - 24h
+        # CC-005 P1: cap 10 guest dong thoi (chong useradd spam day /etc/passwd)
+        with _guest_lock:
+            _now_g = time.time()
+            _active_g = sum(1 for v in _guest_passes.values() if v.get("expires_at", 0) > _now_g)
+            if _active_g >= 10:
+                return jsonify({"error": "Da dat toi da 10 guest, thu hoi bot truoc"}), 429
 
         username = _generate_guest_name()
         password = _generate_guest_password()
@@ -12974,13 +15145,15 @@ def api_guest_create():
 
 
 @app.route("/api/guest/revoke", methods=["POST"])
-@requires_auth
+# CC-005 P1/P2: nhay cam (userdel + xoa file config) -> requires_admin.
+@requires_admin
 def api_guest_revoke():
     """Thu hoi (xoa) FTP user tam thoi ngay lap tuc."""
     try:
         body = request.get_json(force=True) or {}
         username = body.get("username", "")
-        if not username or not username.startswith("nasguest_"):
+        import re as _re_revoke
+        if not _re_revoke.match(r'^nasguest_[a-z0-9]{6}$', username or ""):
             return jsonify({"error": "Username không hợp lệ"}), 400
 
         _delete_linux_user(username)
@@ -13069,6 +15242,67 @@ _livestream_recent_error_cooldown_sec = 300
 _LIVESTREAM_STALL_COOLDOWN_SEC = 2 * 3600
 _LIVESTREAM_DIR = os.path.join(WEBDAV_FILE_ROOT, "Livestream")
 _LIVESTREAM_MAX_HOURS = 12  # Timeout tu dong sau 12 gio
+# SPEC_LIVESTREAM_LIMITS §3.1: runtime doc qua _get_* (env > conf > default).
+# Giu ten bien de khong vo test/AST; code chay phai qua helper effective_*.
+
+
+def _livestream_effective_max_hours():
+    try:
+        _fn = globals().get("_get_livestream_max_hours")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    try:
+        return int(_LIVESTREAM_MAX_HOURS)
+    except Exception:
+        return 12
+
+
+def _livestream_effective_err_cooldown_s():
+    try:
+        _fn = globals().get("_get_live_err_cooldown_s")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    try:
+        return int(_livestream_recent_error_cooldown_sec)
+    except Exception:
+        return 300
+
+
+def _livestream_effective_stall_cooldown_s():
+    try:
+        _fn = globals().get("_get_live_stall_cooldown_s")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    try:
+        return int(_LIVESTREAM_STALL_COOLDOWN_SEC)
+    except Exception:
+        return 7200
+
+
+def _tiktok_effective_html_cap():
+    try:
+        _fn = globals().get("_get_tiktok_html_cap")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    return 786432
+
+
+def _tiktok_effective_html_timeout():
+    try:
+        _fn = globals().get("_get_tiktok_html_timeout")
+        if callable(_fn):
+            return int(_fn())
+    except Exception:
+        pass
+    return 25
 
 
 def _livestream_kill_pid(pid, jid=""):
@@ -13361,7 +15595,11 @@ def _livestream_active_job_for_key_locked(recording_key):
 def _livestream_recent_job_for_key_locked(recording_key, max_age_sec=None):
     if not recording_key:
         return "", None
-    max_age_sec = max_age_sec or _livestream_recent_error_cooldown_sec
+    if not max_age_sec:
+        try:
+            max_age_sec = _livestream_effective_err_cooldown_s()
+        except Exception:
+            max_age_sec = _livestream_recent_error_cooldown_sec
     now = time.time()
     best_job_id = ""
     best_info = None
@@ -13404,7 +15642,6 @@ def _find_ytdlp_bin():
 
 def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
     """Kiểm tra nhanh ffmpeg tren NAS co nhan được codec video cua FLV CDN khong."""
-    flv_url_lower = (flv_url or "").lower()
     cmd = [
         "ffprobe", "-v", "error",
         "-analyzeduration", "3000000",
@@ -13415,30 +15652,8 @@ def _direct_flv_has_remuxable_video(flv_url, cookies_path="", user_agent=""):
     ]
     if user_agent:
         cmd.extend(["-user_agent", user_agent])
-    # TikTok CDN URLs da co token xac thuc trong query string. Gui lai cookie
-    # web TikTok vao CDN co the lam probe tra ket qua sai, roi fallback ve
-    # yt-dlp va bao nham "not currently live".
-    if "tiktokcdn" in flv_url_lower:
-        cmd.extend(["-headers", "Referer: https://www.tiktok.com/\r\n"])
-    elif cookies_path and os.path.exists(cookies_path):
-        try:
-            cookie_header = ""
-            with open(cookies_path, "r") as f:
-                pairs = []
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    cols = line.split("\t")
-                    if len(cols) >= 7:
-                        pairs.append("%s=%s" % (cols[5], cols[6]))
-                cookie_header = "; ".join(pairs)
-            if cookie_header:
-                cmd.extend(["-headers", "Cookie: %s\r\nReferer: https://www.tiktok.com/\r\n" % cookie_header])
-        except Exception:
-            pass
-    else:
-        cmd.extend(["-headers", "Referer: https://www.tiktok.com/\r\n"])
+    # Signed media URLs must not receive browser cookies.
+    cmd.extend(["-headers", "Referer: https://www.tiktok.com/\r\n"])
     cmd.append(flv_url)
     try:
         proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12)
@@ -13667,6 +15882,38 @@ def _livestream_watchdog():
                             log.info("[Livestream] Job %s: reaped Popen rc=%s.", _rjid, _rc)
             except Exception as _re:
                 log.warning("[Livestream] Reap Popen lỗi: %s", _re)
+            # Reap ytdlp_jobs zombies in background so /api/ytdlp/download jobs
+            # do not stay 'running' forever if client never polls /api/ytdlp/status.
+            try:
+                with _ytdlp_lock:
+                    _ydl_changed = False
+                    for _yjid, _yinfo in list(_ytdlp_jobs.items()):
+                        _yproc = _yinfo.get("_proc")
+                        _ypid = _yinfo.get("pid")
+                        _ydead = False
+                        if _yproc is not None:
+                            try:
+                                if _yproc.poll() is not None:
+                                    try:
+                                        _yproc.wait(timeout=0)
+                                    except Exception:
+                                        pass
+                                    _ydead = True
+                            except Exception:
+                                pass
+                        elif _ypid:
+                            try:
+                                os.kill(int(_ypid), 0)
+                            except Exception:
+                                _ydead = True
+                        if _ydead:
+                            _cleanup_job_tmp(_yinfo.get("tmp_dir", ""))
+                            _ytdlp_jobs.pop(_yjid, None)
+                            _ydl_changed = True
+                    if _ydl_changed:
+                        _set_thumbnail_auto_block("ytdlp", len(_ytdlp_jobs) > 0)
+            except Exception as _ye:
+                log.warning("[Livestream] Reap ytdlp jobs lỗi: %s", _ye)
             # FIX-AUDIT-L5: danh sach remux thu thap trong vong lock, xu ly NGOAI
             # lock o duoi (ffmpeg 600s khong giu lock).
             pending_remux = []
@@ -13715,8 +15962,8 @@ def _livestream_watchdog():
                             if os.path.isdir(out_pattern):
                                 files = sorted(
                                     [os.path.join(out_pattern, f) for f in os.listdir(out_pattern)
-                                     if os.path.isfile(os.path.join(out_pattern, f))
-                                     and (not file_stem or f.startswith(file_stem))],
+                                     if (not file_stem or f.startswith(file_stem))
+                                     and os.path.isfile(os.path.join(out_pattern, f))],
                                     key=os.path.getmtime, reverse=True
                                 )
                                 if files:
@@ -13812,7 +16059,7 @@ def _livestream_watchdog():
 
                         # Ghi log
                         try:
-                            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+                            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
                             cur = conn.cursor()
                             file_size_str = format_bytes(info.get("file_size", 0))
                             msg = "Livestream %s đã ghi xong: %s (%s)" % (
@@ -13854,13 +16101,22 @@ def _livestream_watchdog():
                         # Kiểm tra timeout (12 gio) — chi SIGTERM + dat _kill_ts,
                         # KHONG reset _kill_ts cua nhanh escalation o tren.
                         # FIX-HANG: started_ts thieu -> dung thoi diem watchdog.
+                        # SPEC_LIVESTREAM_LIMITS §3.1: max_hours doc dong (default 12).
                         started = info.get("started_ts", 0) or info.get("_watch_first_seen", 0)
                         if not info.get("_watch_first_seen"):
                             info["_watch_first_seen"] = time.time()
                             started = started or time.time()
-                        if started > 0 and (time.time() - started) > _LIVESTREAM_MAX_HOURS * 3600:
-                            log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _LIVESTREAM_MAX_HOURS)
-                            _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _LIVESTREAM_MAX_HOURS, "timeout")
+                        try:
+                            _job_mh = int(info.get("max_hours", 0) or 0)
+                            _live_max_h = _job_mh if (1 <= _job_mh <= 72) else _livestream_effective_max_hours()
+                        except Exception:
+                            _live_max_h = 12
+                        # SPEC dynamic + COMPAT AST: giu literal goc trong bieu thuc
+                        # (khi default 12 thi dung nhanh _LIVESTREAM_MAX_HOURS * 3600).
+                        _live_max_s = (_live_max_h * 3600 if _live_max_h != 12 else _LIVESTREAM_MAX_HOURS * 3600)
+                        if started > 0 and (time.time() - started) > _live_max_s:
+                            log.warning("[Livestream] Job %s vượt quá %d giờ, tự động dừng.", jid, _live_max_h)
+                            _log_livestream_event("WARNING", jid, info, "Tu dong dung vi vuot qua %d gio." % _live_max_h, "timeout")
                             _livestream_kill_pid(pid, jid)
                             if not info.get("_kill_ts"):
                                 info["_kill_ts"] = time.time()
@@ -13902,7 +16158,11 @@ def _livestream_watchdog():
                                     info["stall_suspected"] = False
                                     info["stall_since"] = 0
                                     # Backoff dai: watcher khong ghi lai user nay trong 2h.
-                                    info["_stall_cooldown_until"] = now + _LIVESTREAM_STALL_COOLDOWN_SEC
+                                    try:
+                                        _stall_cd = _livestream_effective_stall_cooldown_s()
+                                    except Exception:
+                                        _stall_cd = 7200
+                                    info["_stall_cooldown_until"] = now + _stall_cd
                             except Exception:
                                 pass
 
@@ -14203,13 +16463,13 @@ def _restore_fan_state_on_boot():
             log.info("[Fan] Kh?i ph?c tr?ng th?i T? ??NG ? watchdog s? quy?t ??nh theo HDD")
     except Exception as e:
         log.warning("[Fan] Kh?ng kh?i ph?c ???c tr?ng th?i: %s", e)
-_restore_fan_state_on_boot()
-
-# Khoi dong watchdog thread
-threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
-# FIX-AUDIT-L5: reconcile registry cu truoc khi watchdog nhan tac vu moi.
-_livestream_reconcile_after_restart()
-threading.Thread(target=_livestream_watchdog, daemon=True).start()
+if __name__ == "__main__":
+    _restore_fan_state_on_boot()
+    # Khoi dong watchdog thread
+    threading.Thread(target=_fan_controller_watchdog, daemon=True).start()
+    # FIX-AUDIT-L5: reconcile registry cu truoc khi watchdog nhan tac vu moi.
+    _livestream_reconcile_after_restart()
+    threading.Thread(target=_livestream_watchdog, daemon=True).start()
 
 _TIKTOK_WATCH_FILE = os.path.join(WEBDAV_FILE_ROOT, ".nas_meta", "tiktok_live_watch.json")
 _tiktok_watch_lock = threading.Lock()
@@ -14231,8 +16491,16 @@ _tiktok_watch_runtime = {
 }
 
 def _tiktok_watch_interval():
+    # SPEC_LIVESTREAM_LIMITS §3.1: base default doc dong qua _get_tiktok_watch_s()
+    # (env NAS_TIKTOK_WATCH_S > conf > 60), state poll_interval (user setting)
+    # override neu co. Clamp 15-300 nhu cu.
     try:
-        return max(15, min(300, int(_tiktok_watch_state.get("poll_interval", 60))))
+        try:
+            _dyn_default = int(globals().get("_get_tiktok_watch_s", lambda: 60)())
+        except Exception:
+            _dyn_default = 60
+        _raw = _tiktok_watch_state.get("poll_interval", _dyn_default)
+        return max(15, min(300, int(_raw)))
     except Exception:
         return 60
 
@@ -14757,10 +17025,17 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
             state = json.loads(sigi_json)
             lr = _dig_tiktok_room(state)
             if lr and isinstance(lr, dict):
+                try:
+                    _lr_st = int(lr.get("liveRoomStatus", lr.get("status", -1)))
+                except Exception:
+                    _lr_st = -1
+                if _lr_st in (3, 4):
+                    return []
                 target_rid = str(lr.get("roomId", lr.get("id", "")) or "")
                 sdata = lr.get("streamData", {})
                 pdata = sdata.get("pull_data", {}) if isinstance(sdata, dict) else {}
                 inner_sd = pdata.get("stream_data", "") if isinstance(pdata, dict) else ""
+                urls_found = []
                 if inner_sd and isinstance(inner_sd, str):
                     sd_obj = json.loads(inner_sd)
                     sd_rid = str(sd_obj.get("common", {}).get("room_id", "") or "")
@@ -14768,7 +17043,6 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
                         target_rid = sd_rid
                     if not room_id or room_id in (target_rid, sd_rid):
                         d = sd_obj.get("data", {})
-                        urls_found = []
                         for qual in ("hd", "sd", "ld", "origin"):
                             if qual in d and isinstance(d[qual], dict):
                                 flv = d[qual].get("main", {}).get("flv")
@@ -14782,18 +17056,35 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
                                 hls = qv.get("main", {}).get("hls")
                                 if hls and hls not in urls_found:
                                     urls_found.append(hls)
-                        if urls_found:
-                            def _flv_rank(u):
-                                if "_hd.flv" in u:
-                                    return 0
-                                if "_ld.flv" in u:
-                                    return 1
-                                if ".m3u8" in u:
-                                    return 2
-                                if "_sd.flv" in u:
-                                    return 3
-                                return 9
-                            return sorted(set(urls_found), key=_flv_rank)
+                if not urls_found and (not room_id or room_id == target_rid):
+                    _skip_keys = ("liveRoomList", "recommend", "recommendLive", "relatedLive", "otherRooms", "extra")
+                    def _walk_lr(node):
+                        if isinstance(node, dict):
+                            for _k, _v in node.items():
+                                if _k in _skip_keys:
+                                    continue
+                                if isinstance(_v, str) and _v.startswith("https://") and (".flv" in _v or ".m3u8" in _v):
+                                    _u = _v.replace("\\u0026", "&").replace("\\/", "/")
+                                    if "only_audio=1" not in _u and _u not in urls_found:
+                                        urls_found.append(_u)
+                                elif isinstance(_v, (dict, list)):
+                                    _walk_lr(_v)
+                        elif isinstance(node, list):
+                            for _item in node:
+                                _walk_lr(_item)
+                    _walk_lr(lr)
+                if urls_found:
+                    def _flv_rank(u):
+                        if "_hd.flv" in u:
+                            return 0
+                        if "_ld.flv" in u:
+                            return 1
+                        if ".m3u8" in u:
+                            return 2
+                        if "_sd.flv" in u:
+                            return 3
+                        return 9
+                    return sorted(set(urls_found), key=_flv_rank)
         except Exception as e:
             log.warning("[Livestream] Lỗi trích xuất stream_data từ SIGI: %s", e)
 
@@ -14912,7 +17203,7 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
             return 3
         return 9
 
-    texts = [(html or "")[:786432]]
+    texts = [(html or "")[:_tiktok_effective_html_cap()]]
     if room_id:
         try:
             # FIX-REVIEW-P1-#12: chuan hoa whitespace truoc tim kiem roomId.
@@ -14921,7 +17212,12 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
             # se KHONG khop -> bo sot phong dich. Strip whitespace trong phan
             # tim kiem de ca 2 trinh bay deu khop, va object capture/parse
             # tren van ban da strip hoat dong dung.
-            _full = re.sub(r"\s+", "", (html or "")[:786432])
+            # SPEC_LIVESTREAM_LIMITS §3.1: cap HTML doc dong.
+            try:
+                _html_cap = _tiktok_effective_html_cap()
+            except Exception:
+                _html_cap = 786432
+            _full = _re_module.sub(r"\s+", "", (html or "")[:_html_cap])
             _slices = []
             _start = 0
             # FIX-REVIEW-P1-#12: match room_id nhu mot GIA TRI roomId JSON, khong
@@ -14954,9 +17250,15 @@ def _extract_tiktok_live_media_urls_scoped(html, room_id):
                 if len(_slices) >= 8:
                     break
             if _slices:
-                # Object gan nhat voi roomId cua phong dich (idx nho nhat).
+                # Object gan nhat voi roomId cua phong dich (idx nho nhat),
+                # duyet tat ca slice khop roomId (bo qua slice da bao status 3/4).
                 _slices.sort(key=lambda kv: kv[0])
-                texts = [_direct_values(_slices[0][1])]
+                texts = [
+                    _direct_values(_s[1]) for _s in _slices
+                    if '"liveRoomStatus":4' not in _s[1]
+                    and '"liveRoomStatus":3' not in _s[1]
+                    and '"liveroomstatus":4' not in _s[1].lower()
+                ]
             else:
                 return []
         except Exception:
@@ -15091,8 +17393,12 @@ def _check_tiktok_user_live(username):
         else:
             html = raw
             http_code = "?"
-        if len(html) > 786432:
-            html = html[:786432]
+        try:
+            _html_cap_chk = _tiktok_effective_html_cap()
+        except Exception:
+            _html_cap_chk = 786432
+        if len(html) > _html_cap_chk:
+            html = html[:_html_cap_chk]
         if not html.strip():
             # Trang trong thuong la TikTok bot-block tam thoi — không ph?i lỗi that su.
             # Coi la offline de watcher tiep tuc kiểm tra lan sau (không l?u last_error).
@@ -15284,7 +17590,17 @@ def _tiktok_live_watchdog():
                 checked_count += 1
                 user["last_check"] = now_str
                 if is_live:
-                    if started_count >= 2:
+                    # SPEC_LIVESTREAM_LIMITS §3.1: watcher ton trong cap dong
+                    # (env > conf > default 2, clamp 1-8) thay vi cung 2.
+                    try:
+                        _watch_cap = int(globals().get("_get_livestream_max_concurrent", lambda: 2)())
+                    except Exception:
+                        _watch_cap = 2
+                    if _watch_cap < 1:
+                        _watch_cap = 1
+                    if _watch_cap > 8:
+                        _watch_cap = 8
+                    if started_count >= _watch_cap:
                         user["status"] = "queued"
                         user["last_error"] = "Dang xep hang, watcher se bat o vong ke tiep."
                         changed = True
@@ -15640,6 +17956,19 @@ def api_livestream_record():
 
         if not live_url:
             return jsonify({"error": "Thiếu URL livestream"}), 400
+        try:
+            if not _social_validate_url(live_url):
+                return jsonify({"error": "URL livestream không hợp lệ hoặc không an toàn"}), 400
+        except Exception:
+            return jsonify({"error": "URL livestream không hợp lệ hoặc không an toàn"}), 400
+        req_max_hours = 0
+        if "max_hours" in body and body.get("max_hours") is not None:
+            try:
+                _mh = int(body.get("max_hours"))
+                if 1 <= _mh <= 72:
+                    req_max_hours = _mh
+            except Exception:
+                pass
 
         # Kiểm tra yt-dlp
         ytdlp_bin = _find_ytdlp_bin()
@@ -15681,7 +18010,19 @@ def api_livestream_record():
             cores = 1
             load1 = 0.0
         hw_reason = ""
-        if cpu_pct > 85:
+        # CC-004 P0-5: ap cap config (admin, clamp 1-8) TRUOC HW-gate. Ban cu
+        # khong goi _get_livestream_max_concurrent() nen admin dat 2 van chay
+        # toi 16 ffmpeg+yt-dlp giet rk3328 1GB. 16 giu lam hard-ceiling.
+        try:
+            _cap_fn = globals().get("_get_livestream_max_concurrent")
+            cfg_cap = int(_cap_fn()) if callable(_cap_fn) else 2
+        except Exception:
+            cfg_cap = 2
+        _is_cap_limit = False
+        if active_count >= cfg_cap:
+            hw_reason = "Da dat gioi han %d luong ghi dong thoi (admin config)" % cfg_cap
+            _is_cap_limit = True
+        elif cpu_pct > 85:
             hw_reason = "CPU %.0f%% quá cao" % cpu_pct
         elif mem_free_mb < 200:
             hw_reason = "RAM trống chỉ còn %.0f MB" % mem_free_mb
@@ -15693,14 +18034,22 @@ def api_livestream_record():
         # so do sai khien NAS bi tham lam vo han.
         if active_count >= 16:
             hw_reason = "Đã có %d luồng ghi đồng thời (ngưỡng an toàn)" % active_count
+            _is_cap_limit = True
         if hw_reason:
-            return jsonify({
+            _err_payload = {
                 "error": "Không thể bắt đầu luồng mới: %s" % hw_reason,
                 "active_count": active_count,
                 "cpu_pct": round(cpu_pct, 1),
                 "mem_free_mb": int(mem_free_mb),
                 "load_avg_1min": round(load1, 2),
-            }), 429
+            }
+            if _is_cap_limit:
+                _err_payload["code"] = "MAX_STREAMS"
+                _err_payload["reason"] = "max_concurrent"
+                _err_payload["cap"] = cfg_cap
+                _err_payload["active"] = active_count
+                _err_payload["retry_after_s"] = 60
+            return jsonify(_err_payload), 429
 
         # Kiểm tra dung lượng HDD con lai
         try:
@@ -15884,9 +18233,12 @@ def api_livestream_record():
             # OFFLINE (status=4) thi KHONG fallback lay media (URL do co the
             # cua phong duoc goi y khac con live) -> ve yt-dlp path binh thuong.
             curl_cmd.append(live_url)
-            
             try:
-                html = subprocess.check_output(curl_cmd, timeout=25).decode("utf-8", errors="ignore")
+                _html_timeout = _tiktok_effective_html_timeout()
+            except Exception:
+                _html_timeout = 25
+            try:
+                html = subprocess.check_output(curl_cmd, timeout=_html_timeout).decode("utf-8", errors="ignore")
                 log.info("[Livestream] TikTok HTML fallback: nhận %d bytes HTML", len(html))
                 # FIX-AUDIT-L6: kiem tra phong dich truoc khi lay media toan trang.
                 try:
@@ -15899,23 +18251,22 @@ def api_livestream_record():
                 else:
                     # FIX-REVIEW-24/09-#9: room-bound — chi lay media cua phong dich.
                     media_urls = _extract_tiktok_live_media_urls_scoped(html, _rid)
-                if not media_urls:
+                if not media_urls and _rs != 4:
                     log.warning("[Livestream] TikTok HTML fallback: HTML %d bytes nhưng không extract được URL media nào", len(html))
-                    # Retry 1 lần với UA khác nếu cần
+                    # Retry 1 lần với mobile UA
                     try:
                         import time as _time_mod
                         _time_mod.sleep(2)
-                        if len(html) <= 500:
-                            # HTML quá ngắn — thử mobile UA
-                            retry_cmd = list(curl_cmd)
-                            mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-                            for _i, _v in enumerate(retry_cmd):
-                                if _v == "-H" and _i + 1 < len(retry_cmd) and retry_cmd[_i + 1].startswith("User-Agent:"):
-                                    retry_cmd[_i + 1] = "User-Agent: " + mobile_ua
-                                    break
-                            html2 = subprocess.check_output(retry_cmd, timeout=25).decode("utf-8", errors="ignore")
-                        else:
-                            html2 = subprocess.check_output(curl_cmd, timeout=25).decode("utf-8", errors="ignore")
+                        retry_cmd = list(curl_cmd)
+                        mobile_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+                        for _i, _v in enumerate(retry_cmd):
+                            if _v == "-A" and _i + 1 < len(retry_cmd):
+                                retry_cmd[_i + 1] = mobile_ua
+                                break
+                            if _v == "-H" and _i + 1 < len(retry_cmd) and retry_cmd[_i + 1].startswith("User-Agent:"):
+                                retry_cmd[_i + 1] = "User-Agent: " + mobile_ua
+                                break
+                        html2 = subprocess.check_output(retry_cmd, timeout=_html_timeout).decode("utf-8", errors="ignore")
                         log.info("[Livestream] TikTok HTML retry: nhận %d bytes HTML", len(html2))
                         # FIX-REVIEW-24/09-#9: retry cung room-bound + kiem tra
                         # phong dich (khong extract toan trang mu).
@@ -16130,7 +18481,7 @@ def _room_object_text(html, uname):
         _u = (uname or "").lower()
         if not _u:
             return ""
-        _flat = re.sub(r"\s+", "", (html or "").lower())
+        _flat = re.sub(r"\\s+", "", (html or "").lower())
         _best = -1
         _best_len = 0
         for _t in ('"uniqueid":"%s"' % _u, '"uniqueid":%s' % _u, '"@%s"' % _u):
@@ -16239,7 +18590,7 @@ def get_media_url():
             if url not in tried_urls:
                 return url
     except Exception as e:
-        log.debug("[TikTok] get_media_url failed: %s", e)
+        sys.stderr.write("[TikTok] get_media_url failed: %s\\n" % (e,))
     return ""
 
 MAX_WAIT_NO_DATA = 45
@@ -16264,19 +18615,8 @@ while True:
     tried_urls.add(media_url)
     fail_count = 0
     cmd = ["/usr/bin/ffmpeg", "-y", "-loglevel", "warning", "-rw_timeout", "20000000", "-user_agent", ua]
-    cookie_header = ""
-    if os.path.exists(cookies):
-        try:
-            with open(cookies, "r") as cf:
-                for line in cf:
-                    if not line.startswith("#") and line.strip():
-                        parts = line.strip().split("\t")
-                        if len(parts) >= 7 and parts[5] == "ttwid":
-                            cookie_header = "Cookie: ttwid=%s" % parts[6] + chr(13) + chr(10)
-                            break
-        except Exception as e: log.debug("[M4] Ignored exception: %s", e)
     crlf = chr(13) + chr(10)
-    cmd.extend(["-headers", "Referer: https://www.tiktok.com/" + crlf + cookie_header])
+    cmd.extend(["-headers", "Referer: https://www.tiktok.com/" + crlf])
     cmd.extend(["-i", media_url, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mpegts", "pipe:1"])
     try:
         before_size = os.path.getsize(out_file) if os.path.exists(out_file) else 0
@@ -16370,8 +18710,10 @@ while True:
         # nhau, 2 writer tron noi dung) — doc loi co the nhan loi job khac.
         log_file = os.path.join(log_dir, "live_%s.log" % job_id)
         tmp_dir = _make_hdd_tmp_dir("livestream_%s" % job_id)
-        if tmp_dir and cmd and cmd[0] == ytdlp_bin:
-            cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
+        if cmd and cmd[0] == ytdlp_bin:
+            if tmp_dir:
+                cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
+            cmd[-1:-1] = ["--"]
 
         recording_key = _livestream_recording_key(platform, original_record_url, stable_id or watch_username)
         with _livestream_lock:
@@ -16439,18 +18781,34 @@ while True:
             # cùng user). Vượt cap → 429, watcher retry sau.
             # FIX-REVIEW-24/09-#11: tinh ca stopping/timeout/finalizing (con
             # writer) vao capacity — khong giai phong som khi nhom cu flush.
+            # SPEC_LIVESTREAM_LIMITS §3.1+3.3: cap doc dong (env > conf > default 2).
             _live_active = sum(
                 1 for _j in _livestream_jobs.values()
                 if _j.get("status") in ("recording", "starting", "stopping", "timeout", "finalizing"))
             _live_starting = sum(
                 1 for _c in _livestream_starting_claims.values()
                 if time.time() - float(_c.get("ts", 0) or 0) < 180)
-            if _live_active + _live_starting >= LIVESTREAM_MAX_CONCURRENT:
+            try:
+                _live_cap = int(globals().get("_get_livestream_max_concurrent", lambda: 2)())
+            except Exception:
+                _live_cap = 2
+            try:
+                if _live_cap < 1:
+                    _live_cap = 1
+                if _live_cap > 8:
+                    _live_cap = 8
+            except Exception:
+                _live_cap = 2
+            if _live_active + _live_starting >= _live_cap:
                 log.warning("[Livestream] Từ chối phiên mới (%s): đã %d recording (cap %d)",
-                            recording_key, _live_active, LIVESTREAM_MAX_CONCURRENT)
+                            recording_key, _live_active, _live_cap)
                 return jsonify({
-                    "error": "NAS đang ghi tối đa %d luồng, thử lại sau." % LIVESTREAM_MAX_CONCURRENT,
+                    "error": "NAS đang ghi tối đa %d luồng, thử lại sau." % _live_cap,
                     "reason": "max_concurrent",
+                    "code": "MAX_STREAMS",
+                    "cap": _live_cap,
+                    "active": _live_active + _live_starting,
+                    "retry_after_s": 60,
                 }), 429
             _livestream_starting_claims[recording_key] = {"ts": time.time(), "url": original_record_url}
             claimed_recording_key = recording_key
@@ -16502,6 +18860,7 @@ while True:
                 "direct_tiktok_flv": direct_tiktok_flv,
                 "direct_output_path": direct_output_file,
                 "watch_username": watch_username,
+                "max_hours": req_max_hours,
                 "tmp_dir": tmp_dir,
                 "wrapper_dir": _wrapper_dir,
             }
@@ -16518,7 +18877,7 @@ while True:
 
         # Ghi log h? thỏng
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
             cur = conn.cursor()
             display_source = "@%s" % watch_username if watch_username else (stable_id or platform)
             if watch_username:
@@ -16569,30 +18928,38 @@ def api_livestream_status():
 
     result_jobs = []
     updates = {}
+    directory_entries = {}
     
     for jid, info in jobs_snapshot:
         pid = info.get("pid")
         status = info.get("status", "unknown")
 
         # 1. Tim file output va l?y size truoc khi dảnh gia status
-        file_size = 0
+        file_size = int(info.get("file_size", 0) or 0)
         output_file = info.get("output_file", "")
         out_dir = info.get("output_dir", _LIVESTREAM_DIR)
         try:
-            if os.path.isdir(out_dir):
-                # FIX-P2-1: match bang file_stem (prefix duy nhat) thay vi
-                # substring timestamp_str, tranh lay nham file cua job khac
-                # cung giay. Chi tim file thuoc luong nay.
+            # Completed jobs already have metadata from the watchdog; polling
+            # history must not occupy every API worker with disk scans.
+            if status in ("recording", "stopping", "timeout", "finalizing"):
+                file_size = 0
+                known_paths = [info.get("direct_output_path", "")]
+                if output_file:
+                    known_paths.append(os.path.join(out_dir, output_file))
+                latest = next((p for p in known_paths if p and os.path.isfile(p)), "")
                 file_stem = info.get("file_stem", "")
-                all_files = []
-                for f in os.listdir(out_dir):
-                    fp = os.path.join(out_dir, f)
-                    if os.path.isfile(fp) and not f.endswith(".log"):
-                        if file_stem and not f.startswith(file_stem):
-                            continue
-                        all_files.append(fp)
-                if all_files:
-                    latest = max(all_files, key=os.path.getmtime)
+                if not latest and file_stem:
+                    if out_dir not in directory_entries:
+                        directory_entries[out_dir] = []
+                        if os.path.isdir(out_dir):
+                            directory_entries[out_dir] = os.listdir(out_dir)
+                    candidates = [os.path.join(out_dir, name)
+                                  for name in directory_entries[out_dir]
+                                  if name.startswith(file_stem) and not name.endswith(".log")]
+                    candidates = [p for p in candidates if os.path.isfile(p)]
+                    if candidates:
+                        latest = max(candidates, key=os.path.getmtime)
+                if latest:
                     output_file = os.path.basename(latest)
                     file_size = os.path.getsize(latest)
         except Exception:
@@ -16823,7 +19190,7 @@ def api_livestream_stop():
 
             # Ghi log
             try:
-                conn = sqlite3.connect(DB_PATH, timeout=20.0)
+                conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
                 cur = conn.cursor()
                 cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                             ("INFO", "Livestream",
@@ -16870,6 +19237,15 @@ def api_ytdlp_download():
     try:
         body = request.get_json(force=True) or {}
         video_url = body.get("url", "").strip()
+        # CC-005 P0: validate URL qua _social_validate_url (allowlist
+        # youtube/tiktok/fb/instagram + DNS public IP) — truoc day url tho
+        # append thang vao cmd yt-dlp: SSRF file://, IP noi bo, metadata
+        # 169.254.x, quet LAN, lap HDD.
+        try:
+            if not video_url or not _social_validate_url(video_url):
+                return jsonify({"error": "URL video khong duoc ho tro hoac khong an toan"}), 400
+        except Exception:
+            return jsonify({"error": "URL video khong duoc ho tro hoac khong an toan"}), 400
         save_folder_input = body.get("save_folder", "Downloads/social/")
         save_folder = _social_sanitize_folder(save_folder_input)
         dest_dir = _resolve_webdav_request_path(save_folder)
@@ -16888,6 +19264,28 @@ def api_ytdlp_download():
 
         # Output template: ten file goc cua video, trong dest_dir
         output_template = os.path.join(dest_dir, "%(title).100s.%(ext)s")
+
+        # CC-004 P2-5: gioi han yt-dlp chay dong thoi (mac dinh 2, toi da 4) —
+        # truoc day khong cap, bam tai hang loat -> N tien trinh yt-dlp + ffmpeg
+        # merge giet RK3328 1GB (giong loi livestream cap 16 cu).
+        try:
+            _ydl_cap = int(_get_ytdlp_max_concurrent())
+        except Exception:
+            _ydl_cap = 2
+        try:
+            with _ytdlp_lock:
+                _ydl_running = sum(
+                    1 for _ji in _ytdlp_jobs.values()
+                    if str(_ji.get("status", "running")) in ("running", "downloading", "queued")
+                )
+            if _ydl_running >= _ydl_cap:
+                return jsonify({
+                    "error": "NAS dang tai toi da %d video cung luc, vui long doi xong roi tai tiep." % _ydl_cap,
+                    "running": _ydl_running,
+                    "cap": _ydl_cap,
+                }), 429
+        except Exception:
+            pass
 
         # P1-8: ytdlp_bin CHUA duoc dinh nghia trong scope nay (NameError khi
         # dung lenh). Cac endpoint khac (social/livestream) goi _find_ytdlp_bin()
@@ -16935,6 +19333,8 @@ def api_ytdlp_download():
         tmp_dir = _make_hdd_tmp_dir("ytdlp_%s" % int(time.time()))
         if tmp_dir and cmd:
             cmd[-1:-1] = ["--paths", "temp:%s" % tmp_dir]
+        if cmd:
+            cmd[-1:-1] = ["--"]
 
         with open(log_file, "w") as lf:
             if tmp_dir:
@@ -16952,6 +19352,7 @@ def api_ytdlp_download():
                 "url": video_url,
                 "folder": dest_dir,
                 "pid": proc.pid,
+                "_proc": proc,
                 "started_at": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "log_file": log_file,
                 "tmp_dir": tmp_dir
@@ -16960,7 +19361,7 @@ def api_ytdlp_download():
 
         # Ghi log h? thỏng
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=_cfg_sqlite_timeout("sqlite_timeout_20", 20.0))
             cur = conn.cursor()
             cur.execute('INSERT INTO system_logs (type, module, message) VALUES (?, ?, ?)',
                         ("INFO", "SocialExtract",
@@ -16989,12 +19390,25 @@ def api_ytdlp_status():
         active = {}
         for jid, info in list(_ytdlp_jobs.items()):
             pid = info.get("pid")
+            _proc = info.get("_proc")
             is_running = False
-            try:
-                os.kill(pid, 0)  # Signal 0 = check ton tai
-                is_running = True
-            except Exception:
-                pass
+            if _proc is not None:
+                try:
+                    if _proc.poll() is None:
+                        is_running = True
+                    else:
+                        try:
+                            _proc.wait(timeout=0)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            else:
+                try:
+                    os.kill(pid, 0)  # Signal 0 = check ton tai
+                    is_running = True
+                except Exception:
+                    pass
             if not is_running:
                 reason = ""
                 log_file = info.get("log_file", "")
@@ -17020,7 +19434,7 @@ def api_ytdlp_status():
                 _cleanup_runtime_tmp_artifacts(max_age_minutes=30)
                 del _ytdlp_jobs[jid]
             else:
-                active[jid] = info
+                active[jid] = {k: v for k, v in info.items() if not str(k).startswith("_")}
         _set_thumbnail_auto_block("ytdlp", len(active) > 0)
     return jsonify({"active_jobs": len(active), "jobs": list(active.values())})
 

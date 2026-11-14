@@ -1,0 +1,17 @@
+{"checked_dirs": 828, "index_ready": true, "enumerated_dirs": 1, "index_incomplete_reason": "", "max_rss_kib": 73512, "index_generation": 1, "run": 1, "seconds": 2.2921814918518066}
+{"checked_dirs": 828, "index_ready": true, "enumerated_dirs": 0, "index_incomplete_reason": "", "max_rss_kib": 73512, "index_generation": 1, "run": 2, "seconds": 0.2570817470550537}
+{"ready": true, "ms": 172.194242477417, "count": 300, "query": "mp4", "run": 1, "status": 200, "scope": "Livestream"}
+{"ready": true, "ms": 104.86721992492676, "count": 300, "query": "mp4", "run": 2, "status": 200, "scope": "Livestream"}
+{"ready": true, "ms": 104.5839786529541, "count": 300, "query": "mp4", "run": 3, "status": 200, "scope": "Livestream"}
+{"ready": true, "ms": 26.308059692382812, "count": 0, "query": "mp4", "run": 1, "status": 200, "scope": "Downloads"}
+{"ready": true, "ms": 14.970779418945312, "count": 0, "query": "mp4", "run": 2, "status": 200, "scope": "Downloads"}
+{"ready": true, "ms": 14.750480651855469, "count": 0, "query": "mp4", "run": 3, "status": 200, "scope": "Downloads"}
+{"ready": true, "ms": 16.65472984313965, "count": 0, "query": "unique-no-match-261114", "run": 1, "status": 200, "scope": "Samsung Notes"}
+{"ready": true, "ms": 14.24407958984375, "count": 0, "query": "unique-no-match-261114", "run": 2, "status": 200, "scope": "Samsung Notes"}
+{"ready": true, "ms": 14.407157897949219, "count": 0, "query": "unique-no-match-261114", "run": 3, "status": 200, "scope": "Samsung Notes"}
+{"post_freshness_window_ms": 297.09434509277344, "status": 200, "ready": true}
+{"unready_directories": [], "total": 454970, "downloads": 245}
+{"total_files": 454143, "ms": 22481.50587081909, "source": "file_index", "summary_run": 1, "partial": false, "forced_sql_refresh": true}
+{"total_files": 454143, "ms": 207.1239948272705, "source": "file_index", "summary_run": 2, "partial": false, "forced_sql_refresh": false}
+{"total_files": 454143, "ms": 3.5355091094970703, "source": "file_index", "summary_run": 3, "partial": false, "forced_sql_refresh": false}
+{"total_files": 454143, "ms": 3.551483154296875, "source": "file_index", "summary_run": 4, "partial": false, "forced_sql_refresh": false}

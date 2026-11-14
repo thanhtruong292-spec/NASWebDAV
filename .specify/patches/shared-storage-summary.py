@@ -15,8 +15,19 @@ def _build_storage_summary(max_seconds=45, refresh=False):
     conn = sqlite3.connect(INDEX_DB_PATH, timeout=5)
     try:
         conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_snapshot (id INTEGER PRIMARY KEY, root TEXT, scanned_at REAL, payload TEXT)')
+        conn.execute('CREATE TABLE IF NOT EXISTS storage_summary_revision (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL)')
+        conn.execute('INSERT OR IGNORE INTO storage_summary_revision VALUES(1,0)')
+        conn.execute('DROP TRIGGER IF EXISTS storage_summary_insert')
+        for event, suffix, condition in (
+                ('BEFORE INSERT', 'insert_v2', ' WHEN NOT EXISTS (SELECT 1 FROM file_index WHERE path=NEW.path AND name IS NEW.name AND is_dir IS NEW.is_dir AND size IS NEW.size)'),
+                ('AFTER DELETE', 'delete', ''),
+                ('AFTER UPDATE', 'update', ' WHEN OLD.path IS NOT NEW.path OR OLD.name IS NOT NEW.name OR OLD.is_dir IS NOT NEW.is_dir OR OLD.size IS NOT NEW.size')):
+            conn.execute('CREATE TRIGGER IF NOT EXISTS storage_summary_' + suffix +
+                         ' ' + event + ' ON file_index' + condition +
+                         ' BEGIN UPDATE storage_summary_revision SET revision=revision+1 WHERE id=1; END')
         conn.commit()
         conn.execute('BEGIN')
+        revision = conn.execute('SELECT revision FROM storage_summary_revision WHERE id=1').fetchone()[0]
         state = conn.execute('SELECT root, scanned_at, ready FROM index_state WHERE id=1').fetchone()
         root = _get_webdav_public_dir()
         if not state or not root or state[0] != os.path.realpath(root):
@@ -25,7 +36,7 @@ def _build_storage_summary(max_seconds=45, refresh=False):
         if cached and not refresh:
             result = json.loads(cached[0])
             result['partial'] = not bool(state[2]) or _index_scan_lock.locked()
-            if time.time() - result.get('summary_updated_at', result['scanned_at']) >= 300 and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
+            if result.get('index_revision') != revision and time.time() - result.get('summary_updated_at', result['scanned_at']) >= 300 and _STORAGE_SUMMARY_BUILD_LOCK.acquire(False):
                 def rebuild():
                     try:
                         _build_storage_summary(refresh=True)
@@ -56,7 +67,7 @@ def _build_storage_summary(max_seconds=45, refresh=False):
             'by_type': by_type, 'largest': largest,
             'partial': not bool(state[2]) or _index_scan_lock.locked(),
             'scanned_at': int(state[1]), 'source': 'file_index',
-            'summary_updated_at': int(time.time()),
+            'summary_updated_at': int(time.time()), 'index_revision': revision,
             'metadata_scope': 'indexed_snapshot',
         }
         conn.commit()

@@ -1,0 +1,2 @@
+b59e2b93af8492ed52ce351433427cf2589d6941c5f3d2ae07dab1b26e47eb94
+{"physical_alias_rejected": true, "open_writer_rejected": true, "writer_break_rolled_back": true, "opposite_concurrent_cleanup_preserved_one": true, "one_survivor": true, "python": "3.5.3", "same_size_same_mtime_change_rejected": true, "manifest_fail_closed": true, "trash_hook_release_and_busy_503": true, "cache_reused": true, "php_namespace_interop": true, "crash_recovery_mapping_persisted": true}

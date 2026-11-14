@@ -1,0 +1,7 @@
+--------- beginning of main
+I/NasLanBench(10732): {"milliseconds":2326.334634,"phase":"connect","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(10732): {"milliseconds":2198.773541,"phase":"connect","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(10732): {"milliseconds":2269.57453,"phase":"connect","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":20.698431923149123,"download_mib_s":18.76001664707597,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":1,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":20.656316820844943,"download_mib_s":29.411928093468195,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":2,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}
+I/NasLanBench(10732): {"bytes":16777216,"upload_mib_s":23.44252398013431,"download_mib_s":30.937992221643476,"configured_upload_limit_bytes_s":0,"phase":"transfer","run":3,"app_version":"1.0.129 (aa259d8 · 261114.1837)"}

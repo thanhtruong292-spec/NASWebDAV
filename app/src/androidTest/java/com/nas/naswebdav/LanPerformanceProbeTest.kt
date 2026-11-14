@@ -26,6 +26,25 @@ class LanPerformanceProbeTest {
         val pass = SecurePrefsHelper.getPass(context)
         assertTrue("Log into the NAS app before running the LAN probe", user.isNotBlank() && pass.isNotBlank())
 
+        val arguments = InstrumentationRegistry.getArguments()
+        if (arguments.getString("diagnoseRoutes") == "true") {
+            val client = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                .followRedirects(false).build()
+            for ((index, url) in prioritizeConnectionUrls(SecurePrefsHelper.getUrlList(context)).withIndex()) {
+                val parsed = java.net.URL(url)
+                val start = SystemClock.elapsedRealtimeNanos()
+                val reachable = isApiOrWebDavReachable(client,
+                    "${parsed.protocol}://${parsed.host}:${AppConfig.API_PORT}/api/ping", url,
+                    WebDavManager.AuthState(user=user,pass=pass).authHeader)
+                emit("route_candidate", index, JSONObject().put("host",parsed.host)
+                    .put("port",parsed.port).put("reachable",reachable)
+                    .put("milliseconds",(SystemClock.elapsedRealtimeNanos()-start)/1_000_000.0))
+            }
+        }
+        val payloadMiB = arguments.getString("payloadMiB")?.toIntOrNull()?.coerceIn(16,128) ?: 16
+
         var baseUrl = ""
         repeat(3) { run ->
             SmartNetworkManager.invalidateCache()
@@ -42,7 +61,7 @@ class LanPerformanceProbeTest {
         val downloaded = File.createTempFile("nas-lan-download-", ".bin", context.cacheDir)
         try {
             val block = ByteArray(65_536).also { java.util.Random(20261114L).nextBytes(it) }
-            source.outputStream().use { output -> repeat(256) { output.write(block) } }
+            source.outputStream().use { output -> repeat(payloadMiB * 16) { output.write(block) } }
             val expectedHash = digest(source)
             repeat(3) { run ->
                 val remoteUrl = baseUrl.trimEnd('/') + "/NAS-LAN-Probe-" + UUID.randomUUID() + ".bin"

@@ -58,3 +58,8 @@ also trigger up to 400 WebDAV directory requests in Android.
 
 Changing substring search into prefix-only search; replacing SQLite; indexing
 private NAS system directories; claiming Wi-Fi throughput without a transfer test.
+
+When bounded search-result validation discovers changed size/mtime, persist the
+already-computed metadata back into the same index using old-version and root
+guards. Cache-write contention must not turn a valid fresh result into a false
+connection failure. Do not enumerate the directory again.

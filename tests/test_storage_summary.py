@@ -23,7 +23,7 @@ class SharedStorageSummaryTests(unittest.TestCase):
             with sqlite3.connect(database) as conn:
                 conn.execute('CREATE TABLE index_state(id INTEGER,root TEXT,scanned_at REAL,ready INTEGER)')
                 conn.execute('INSERT INTO index_state VALUES(1,?,100,1)', (os.path.realpath(root),))
-                conn.execute('CREATE TABLE file_index(path TEXT,name TEXT,is_dir INTEGER,size INTEGER)')
+                conn.execute('CREATE TABLE file_index(path TEXT PRIMARY KEY,name TEXT,is_dir INTEGER,size INTEGER)')
                 conn.executemany('INSERT INTO file_index VALUES(?,?,?,?)',
                                  [('a.JPG','a.JPG',0,10), ('sub/b.mp4','b.mp4',0,100), ('sub/','sub',1,0)])
             conn.close()
@@ -33,6 +33,12 @@ class SharedStorageSummaryTests(unittest.TestCase):
             self.assertEqual(first['largest'][0]['path'], 'sub/b.mp4')
             self.assertFalse(first['partial'])
             self.assertEqual(function(), first)  # reopened connection reuses durable snapshot
+            with sqlite3.connect(database) as conn:
+                conn.execute('ALTER TABLE file_index ADD COLUMN mtime INTEGER DEFAULT 0')
+                revision = conn.execute('SELECT revision FROM storage_summary_revision').fetchone()[0]
+                conn.execute("INSERT OR REPLACE INTO file_index(path,name,is_dir,size,mtime) VALUES('a.JPG','a.JPG',0,10,99)")
+                self.assertEqual(revision,conn.execute('SELECT revision FROM storage_summary_revision').fetchone()[0])
+            conn.close()
             with sqlite3.connect(database) as conn:
                 conn.execute("DELETE FROM file_index WHERE path='a.JPG'")
                 conn.execute('UPDATE index_state SET scanned_at=101,ready=0')
@@ -52,6 +58,11 @@ class SharedStorageSummaryTests(unittest.TestCase):
                     jobs.append(self.target)
             scope['time'] = types.SimpleNamespace(time=lambda: 1000)
             scope['threading'] = types.SimpleNamespace(Thread=DeferredThread)
+            self.assertEqual(function()['total_files'], 1)
+            self.assertEqual(len(jobs), 0)  # unchanged index never repeats aggregates merely due to age
+            with sqlite3.connect(database) as conn:
+                conn.execute("INSERT INTO file_index(path,name,is_dir,size) VALUES('new.txt','new.txt',0,7)")
+            conn.close()
             self.assertEqual(function()['total_files'], 1)
             self.assertEqual(function()['total_files'], 1)
             self.assertEqual(len(jobs), 1)  # stale reads coalesce one background rebuild

@@ -1,0 +1,4 @@
+{"files": 454143, "initial_sql_ms": 21574.377059936523, "index_revision": 0}
+{"ms": 5.809545516967773, "aggregate_repeated": false, "idle_one_hour_run": 1}
+{"ms": 5.310297012329102, "aggregate_repeated": false, "idle_one_hour_run": 2}
+{"ms": 5.2661895751953125, "aggregate_repeated": false, "idle_one_hour_run": 3}

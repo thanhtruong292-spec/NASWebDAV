@@ -1,0 +1,2 @@
+3b7296691f7cbb1ad8f419afc0162e35c2a92d649a115bf9445e57cddc1359ee
+{"python": "3.5.3", "writer_break_rolled_back": true, "cache_reused": true, "open_writer_rejected": true, "same_size_same_mtime_change_rejected": true, "one_survivor": true, "crash_recovery_mapping_persisted": true, "opposite_concurrent_cleanup_preserved_one": true, "physical_alias_rejected": true}

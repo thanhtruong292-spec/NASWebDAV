@@ -13,6 +13,70 @@ if hasattr(signal, 'SIGIO') and threading.current_thread() is threading.main_thr
     signal.signal(signal.SIGIO, signal.SIG_IGN)
 
 
+_DUPLICATE_NAMESPACE_LOCK = '/run/naswebdav/namespace.lock'
+_DUPLICATE_NAMESPACE_MANIFEST = '/var/lib/naswebdav-namespace-guard.json'
+_DUPLICATE_NAMESPACE_FILES = ('/var/www/webdav/public/index.php',
+                              '/var/www/webdav/bootstrap/nas_namespace_guard.php',
+                              '/etc/tmpfiles.d/naswebdav-namespace.conf')
+
+
+def _duplicate_validate_namespace():
+    current = os.lstat(_DUPLICATE_NAMESPACE_MANIFEST)
+    if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022:
+        raise ValueError('Untrusted namespace guard manifest')
+    with open(_DUPLICATE_NAMESPACE_MANIFEST, 'r') as handle:
+        manifest = json.load(handle)
+    expected = set(_DUPLICATE_NAMESPACE_FILES)
+    files = manifest.get('files', {})
+    if manifest.get('lock_path') != _DUPLICATE_NAMESPACE_LOCK or set(files) != expected:
+        raise ValueError('WebDAV namespace guard is not installed')
+    for path, digest in files.items():
+        current = os.lstat(path)
+        if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022:
+            raise ValueError('Untrusted namespace guard source')
+        with open(path, 'rb') as handle:
+            actual = hashlib.sha256(handle.read()).hexdigest()
+        if actual != digest:
+            raise ValueError('WebDAV namespace guard source changed')
+
+
+def _duplicate_open_namespace_lock(exclusive):
+    import fcntl
+    parent = os.lstat(os.path.dirname(_DUPLICATE_NAMESPACE_LOCK))
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022:
+        raise ValueError('Unsafe namespace lock directory')
+    fd = os.open(_DUPLICATE_NAMESPACE_LOCK, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+    try:
+        current = os.fstat(fd)
+        if not stat.S_ISREG(current.st_mode) or current.st_uid != 0 or current.st_mode & 0o022 or current.st_nlink != 1:
+            raise ValueError('Unsafe namespace lock file')
+        operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(fd, operation | fcntl.LOCK_NB)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+@app.before_request
+def _duplicate_namespace_before_request():
+    if request.endpoint == 'api_disk_trash_batch' and request.method == 'POST':
+        try:
+            request.environ['nas.namespace.fd'] = _duplicate_open_namespace_lock(False)
+        except (OSError, ValueError):
+            response = jsonify({'error': 'NAS cleanup in progress'})
+            response.status_code = 503
+            response.headers['Retry-After'] = '1'
+            return response
+
+
+@app.teardown_request
+def _duplicate_namespace_teardown_request(error):
+    fd = request.environ.pop('nas.namespace.fd', None)
+    if fd is not None:
+        os.close(fd)
+
+
 def _duplicate_file_info(relative):
     if not isinstance(relative, str) or not relative or relative.startswith('/') or '\\' in relative:
         raise ValueError('Invalid public file path')
@@ -122,9 +186,9 @@ def _duplicate_work_dir():
 def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version, sha256):
     import fcntl
     import uuid
+    _duplicate_validate_namespace()
     directory = _duplicate_work_dir()
-    with open(os.path.join(directory, 'cleanup.lock'), 'a') as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with os.fdopen(_duplicate_open_namespace_lock(True), 'r') as lock:
         keeper = _duplicate_file_info(keeper_path)
         victim = _duplicate_file_info(victim_path)
         if keeper['file_id'] == victim['file_id']:
@@ -159,7 +223,7 @@ def _duplicate_cleanup(victim_path, keeper_path, victim_version, keeper_version,
                     raise ValueError('Survivor changed during cleanup')
                 if any(fcntl.fcntl(fd, fcntl.F_GETLEASE) != fcntl.F_RDLCK for fd in (keeper_fd, victim_fd)):
                     raise ValueError('File was requested for writing; cleanup cancelled')
-                # shortcut: external namespace deletes need shared WebDAV locking before production acceptance.
+                # shortcut: external root/SSH mutations are outside the managed namespace lock.
                 os.unlink(quarantine)
             except Exception:
                 if os.path.lexists(quarantine) and not os.path.lexists(victim['physical']):

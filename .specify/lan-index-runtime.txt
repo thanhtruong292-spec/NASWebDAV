@@ -1,0 +1,4 @@
+[FileIndex] Directory read incomplete: External/ (Excluded directory boundary or ancestor cycle)
+[FileIndex] Directory read incomplete: Downloads/ (Excluded directory boundary or ancestor cycle)
+[FileIndex] Directory read incomplete: Downloads/nested/ ([Errno 2] No such file or directory: '/srv/dev-disk-by-label-data/NAS-Index-Smoke-cr94ow8g/public/Downloads/nested')
+{"first": {"index_incomplete_reason": "", "index_generation": 1, "index_ready": true, "enumerated_dirs": 3, "checked_dirs": 3}, "alias_add_delete_restart_cycle_boundary": "passed", "unchanged": {"index_incomplete_reason": "", "index_generation": 1, "index_ready": true, "enumerated_dirs": 0, "checked_dirs": 3}, "unchanged_resolution_skipped": "passed", "python": "3.5.3", "retargeted_private_alias_denied": "passed", "in_place_growth_metadata_refreshed": "passed", "same_inode_ancestor_retarget_denied": "passed"}

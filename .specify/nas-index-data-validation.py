@@ -26,12 +26,13 @@ names = {'_remove_diacritics_py', '_init_index_db', '_scan_file_index',
          '_scan_file_index_pass', '_refresh_file_index_for_search',
          '_background_file_index_refresh', '_index_storage_boundary',
          '_index_resolve_directory', '_index_directory_stamp',
-         '_index_readiness', 'api_fast_search'}
+         '_index_readiness', 'api_fast_search', '_build_storage_summary'}
 nodes = [n for n in ast.parse(open(source).read()).body
          if isinstance(n, ast.FunctionDef) and n.name in names]
 app = Flask('validation')
 root = '/srv/dev-disk-by-label-data/New folder'
-ns = dict(sqlite3=sqlite3, os=os, time=time, mimetypes=mimetypes,
+ns = dict(sqlite3=sqlite3, os=os, time=time, mimetypes=mimetypes, json=json,
+          _STORAGE_SUMMARY_BUILD_LOCK=threading.Lock(),
           threading=threading, unicodedata=unicodedata, urllib=urllib,
           _index_lock=threading.Lock(), _index_scan_lock=threading.Lock(),
           INDEX_DB_PATH=path, _cfg_sqlite_timeout=lambda n, d: d,
@@ -72,3 +73,12 @@ with sqlite3.connect(path) as conn:
                       'downloads': conn.execute('SELECT COUNT(*) FROM file_index WHERE path>=? AND path<?',
                                                 ('Downloads/', 'Downloads0')).fetchone()[0],
                       'unready_directories': conn.execute('SELECT path FROM index_directories WHERE complete=0 OR stamp IS NULL LIMIT 10').fetchall()}))
+
+for n in range(4):
+    start = time.time()
+    summary = ns['_build_storage_summary'](refresh=(n == 0))
+    print(json.dumps({'summary_run': n + 1, 'forced_sql_refresh': n == 0,
+                      'ms': (time.time() - start) * 1000,
+                      'total_files': summary['total_files'],
+                      'source': summary['source'], 'partial': summary['partial']}))
+    sys.stdout.flush()

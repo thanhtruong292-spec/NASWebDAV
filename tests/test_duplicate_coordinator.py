@@ -70,6 +70,8 @@ class DuplicateCoordinatorTests(unittest.TestCase):
         directory = os.path.join(self.root, 'private')
         os.mkdir(directory)
         self.ns['_duplicate_work_dir'] = lambda: directory
+        self.ns['_duplicate_validate_namespace'] = lambda: None
+        self.ns['_duplicate_open_namespace_lock'] = lambda exclusive: os.open(os.path.join(directory, 'cleanup.lock'), os.O_RDONLY | os.O_CREAT)
         self.ns['_duplicate_sync_directory'] = lambda path: None
         return keeper, victim, digest, directory
 

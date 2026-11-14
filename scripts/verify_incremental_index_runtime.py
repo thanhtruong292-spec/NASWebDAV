@@ -87,6 +87,10 @@ def run(source, storage):
         refreshed = search("moi+%_")["results"][0]
         assert refreshed["contentLength"] == os.path.getsize(growing), "In-place file growth returned stale size"
         assert refreshed["lastModified"] == int(os.stat(growing).st_mtime * 1000), "In-place file growth returned stale mtime"
+        with sqlite3.connect(ns["INDEX_DB_PATH"]) as conn:
+            stored = conn.execute("SELECT size,mtime FROM file_index WHERE path=?", ("Downloads/nested/" + filename,)).fetchone()
+        conn.close()
+        assert stored == (refreshed["contentLength"], refreshed["lastModified"]), "Fresh metadata was not persisted"
         added = os.path.join(nested, "added.txt")
         with open(added, "w") as handle:
             handle.write("new")
@@ -165,7 +169,7 @@ def run(source, storage):
                           "unchanged": second, "alias_add_delete_restart_cycle_boundary": "passed",
                           "unchanged_resolution_skipped": "passed", "retargeted_private_alias_denied": "passed",
                           "same_inode_ancestor_retarget_denied": "passed",
-                          "in_place_growth_metadata_refreshed": "passed"}))
+                          "in_place_growth_metadata_refreshed": "passed", "fresh_metadata_persisted": "passed"}))
 
 
 if __name__ == "__main__":
